@@ -1,0 +1,5 @@
+{
+  "name": "Provd",
+  "description": "Deploy a Pegasus workflow — estimate resources, provision infrastructure, and generate site catalog",
+  "slash_command": "/provd"
+}

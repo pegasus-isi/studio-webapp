@@ -1,0 +1,87 @@
+# MAG (Metagenome-Assembled Genomes) Workflow Container
+#
+# This Dockerfile builds a container with all tools needed for the MAG workflow:
+# - FastQC: Quality control
+# - fastp: Read trimming
+# - MEGAHIT: Metagenome assembly
+# - SPAdes: Alternative assembler
+# - QUAST: Assembly QC
+# - Prodigal: Gene prediction
+# - MetaBAT2: Genome binning
+# - CheckM2: Bin quality assessment
+# - GTDB-Tk: Taxonomic classification
+# - Prokka: Genome annotation
+# - MultiQC: Report aggregation
+#
+# Build: docker build -f Docker/MAG_Dockerfile -t kthare10/mag-workflow:latest .
+# Push:  docker push kthare10/mag-workflow:latest
+
+FROM mambaorg/micromamba:1.5-jammy
+
+LABEL maintainer="Komal Thareja <kthare10@renci.org>"
+LABEL description="MAG Workflow - Metagenome Assembly, Binning, and Annotation"
+LABEL version="1.1.0"
+
+USER root
+
+# Install system dependencies
+# Added libgl1 and libfontconfig1 which are often required by QUAST's python dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    curl \
+    git \
+    unzip \
+    pigz \
+    parallel \
+    libgomp1 \
+    procps \
+    hmmer \
+    xvfb \
+    libgl1-mesa-glx \
+    libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/*
+
+USER $MAMBA_USER
+
+# Combined Installation
+# This ensures the solver finds a version of Python and libraries (like matplotlib)
+# that work for QUAST, CheckM2, and Prokka simultaneously.
+RUN micromamba install -y -n base -c conda-forge -c bioconda \
+    python=3.8 \
+    pandas \
+    numpy \
+    biopython \
+    fastqc \
+    fastp \
+    multiqc \
+    megahit \
+    spades \
+    quast \
+    prodigal \
+    metabat2 \
+    samtools \
+    bowtie2 \
+    checkm2 \
+    gtdbtk \
+    prokka \
+    && micromamba clean --all --yes
+
+# Copy wrapper scripts
+USER root
+COPY bin/*.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/*.sh
+
+# Create directories
+RUN mkdir -p /data /output /databases
+
+# Set environment variables
+# Ensure the micromamba bin is at the front of the PATH
+ENV PATH="/opt/conda/bin:$PATH"
+ENV LC_ALL=C.UTF-8
+ENV LANG=C.UTF-8
+
+WORKDIR /data
+
+# Use the micromamba entrypoint to ensure the 'base' environment is active
+ENTRYPOINT ["/usr/local/bin/_entrypoint.sh"]
+CMD ["bash"]

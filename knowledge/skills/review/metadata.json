@@ -1,0 +1,5 @@
+{
+  "name": "Review",
+  "description": "Review a Pegasus workflow for common pitfalls and best practices",
+  "slash_command": "/review"
+}

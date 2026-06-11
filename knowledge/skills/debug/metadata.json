@@ -1,0 +1,5 @@
+{
+  "name": "Debug",
+  "description": "Diagnose Pegasus workflow failures from error messages and logs",
+  "slash_command": "/debug"
+}

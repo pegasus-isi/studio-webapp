@@ -1,0 +1,231 @@
+"use client";
+
+import { useState, useRef, useCallback, useEffect } from "react";
+import { useChatStore } from "@/lib/stores/chat-store";
+import { useLLMConfig, useProviderConfigs, useProviders } from "@/lib/hooks/use-llm";
+import * as api from "@/lib/api/client";
+import { apiUrl } from "@/lib/urls";
+
+let _msgId = 0;
+
+export function ChatInput() {
+  const [input, setInput] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isStreaming = useChatStore((s) => s.isStreaming);
+  const addMessage = useChatStore((s) => s.addMessage);
+  const appendToLast = useChatStore((s) => s.appendToLast);
+  const addToolCall = useChatStore((s) => s.addToolCall);
+  const addToolResult = useChatStore((s) => s.addToolResult);
+  const setStreaming = useChatStore((s) => s.setStreaming);
+  const messages = useChatStore((s) => s.messages);
+  const agentId = useChatStore((s) => s.agentId);
+
+  // Provider/model overrides from store
+  const chatProvider = useChatStore((s) => s.provider);
+  const chatModel = useChatStore((s) => s.model);
+  const setChatProvider = useChatStore((s) => s.setProvider);
+  const setChatModel = useChatStore((s) => s.setModel);
+
+  // Load saved configs for defaults
+  const { data: config } = useLLMConfig();
+  const { data: providerData } = useProviders();
+  const { data: configData } = useProviderConfigs();
+  const presetProviders = providerData?.providers ?? [];
+  // Use saved provider configs if available, fall back to presets
+  const savedConfigs = configData?.configs ?? [];
+  const providers = savedConfigs.length > 0
+    ? savedConfigs.map((c) => ({
+        id: c.provider_id,
+        name: c.name,
+        default_model: c.default_model,
+        base_url: c.base_url,
+        api_key_env: null as string | null,
+      }))
+    : presetProviders;
+
+  // Initialize from saved config on first load
+  const [initialized, setInitialized] = useState(false);
+  useEffect(() => {
+    if (!initialized && config) {
+      if (!chatProvider) setChatProvider(config.provider || null);
+      if (!chatModel) setChatModel(config.model || null);
+      setInitialized(true);
+    }
+  }, [config, initialized, chatProvider, chatModel, setChatProvider, setChatModel]);
+
+  const handleSend = useCallback(async () => {
+    const text = input.trim();
+    if (!text || isStreaming) return;
+
+    setInput("");
+
+    // Add user message to store
+    const userMsg = {
+      id: `msg-${++_msgId}`,
+      role: "user" as const,
+      content: text,
+    };
+    addMessage(userMsg);
+
+    // Build message history for the API
+    const apiMessages = [
+      ...messages.map((m) => ({ role: m.role, content: m.content })),
+      { role: "user", content: text },
+    ];
+
+    const requestId = `req-${Date.now()}`;
+    setStreaming(true, requestId);
+
+    try {
+      const body: Record<string, unknown> = {
+        messages: apiMessages,
+        agent: agentId,
+        request_id: requestId,
+      };
+
+      // Include provider/model overrides if set
+      if (chatProvider) body.provider = chatProvider;
+      if (chatModel) body.model = chatModel;
+
+      const response = await fetch(apiUrl("/chat/stream"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.body) {
+        appendToLast("Error: No response body");
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6);
+          if (data === "[DONE]") break;
+
+          try {
+            const event = JSON.parse(data);
+            if (event.content) {
+              appendToLast(event.content);
+            } else if (event.tool_call) {
+              addToolCall(event.tool_call);
+            } else if (event.tool_result) {
+              addToolResult(event.tool_result);
+            } else if (event.error) {
+              appendToLast(`\n\nError: ${event.error}`);
+            }
+          } catch {
+            // Skip malformed SSE lines
+          }
+        }
+      }
+    } catch (err) {
+      appendToLast(`\n\nConnection error: ${(err as Error).message}`);
+    } finally {
+      setStreaming(false);
+    }
+  }, [
+    input,
+    isStreaming,
+    messages,
+    agentId,
+    chatProvider,
+    chatModel,
+    addMessage,
+    appendToLast,
+    addToolCall,
+    addToolResult,
+    setStreaming,
+  ]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const handleStop = () => {
+    api.stopChat(useChatStore.getState().requestId ?? undefined);
+    setStreaming(false);
+  };
+
+  return (
+    <div className="border-t border-gray-200 bg-white p-4">
+      <div className="mx-auto max-w-3xl space-y-2">
+        {/* Provider / Model selectors */}
+        <div className="flex items-center gap-2 text-xs">
+          <label className="text-gray-500">Provider:</label>
+          <select
+            value={chatProvider || ""}
+            onChange={(e) => {
+              const pid = e.target.value || null;
+              setChatProvider(pid);
+              // Auto-fill default model for this provider
+              const p = providers.find((p) => p.id === pid);
+              if (p) setChatModel(p.default_model);
+            }}
+            className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 focus:border-pegasus-500 focus:ring-pegasus-500"
+          >
+            <option value="">Default</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+
+          <label className="ml-2 text-gray-500">Model:</label>
+          <input
+            type="text"
+            value={chatModel || ""}
+            onChange={(e) => setChatModel(e.target.value || null)}
+            placeholder="default"
+            className="w-48 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 focus:border-pegasus-500 focus:ring-pegasus-500"
+          />
+        </div>
+
+        {/* Input area */}
+        <div className="flex gap-2">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask about Pegasus workflows... (Shift+Enter for newline)"
+            rows={1}
+            className="flex-1 resize-none rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+          />
+          {isStreaming ? (
+            <button
+              onClick={handleStop}
+              className="rounded-md bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className="rounded-md bg-pegasus-600 px-4 py-2 text-sm text-white hover:bg-pegasus-700 disabled:opacity-50"
+            >
+              Send
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

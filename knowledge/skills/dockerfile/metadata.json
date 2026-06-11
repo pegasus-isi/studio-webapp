@@ -1,0 +1,5 @@
+{
+  "name": "Dockerfile",
+  "description": "Generate a Dockerfile for a Pegasus workflow tool stack",
+  "slash_command": "/dockerfile"
+}

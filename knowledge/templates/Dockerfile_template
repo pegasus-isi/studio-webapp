@@ -1,0 +1,111 @@
+# =====================================================================
+# Option A: pip-based (simple Python/data science stacks)
+# =====================================================================
+# Use when: tools are available via pip or apt
+# See: earthquake-workflow/Docker/Earthquake_Dockerfile
+#      tnseq-workflow/Docker/Tnseq_Dockerfile
+
+# FROM python:3.8-slim
+#
+# # Install system dependencies
+# RUN apt-get update && \
+#     apt-get install -y --no-install-recommends \
+#         wget curl git \
+#         # [CUSTOMIZE] Add apt packages for your tools
+#     && rm -rf /var/lib/apt/lists/*
+#
+# # Install Python dependencies
+# RUN pip install --no-cache-dir \
+#     pandas \
+#     numpy \
+#     matplotlib \
+#     requests \
+#     scipy \
+#     scikit-learn
+#     # [CUSTOMIZE] Add pip packages for your tools
+#
+# # Set Python to not buffer output (important for Pegasus log capture)
+# ENV PYTHONUNBUFFERED=1
+#
+# WORKDIR /app
+# CMD ["/bin/bash"]
+
+
+# =====================================================================
+# Option B: micromamba-based (complex bioinformatics stacks)
+# =====================================================================
+# Use when: tools have conflicting dependencies, need conda/bioconda
+# See: mag-workflow/Docker/MAG_Dockerfile
+
+# FROM mambaorg/micromamba:1.5-jammy
+#
+# USER root
+#
+# # System dependencies (headless support for GUI tools)
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     wget curl git procps \
+#     xvfb libgl1-mesa-glx libfontconfig1 \
+#     && rm -rf /var/lib/apt/lists/*
+#
+# USER $MAMBA_USER
+#
+# # Install all tools in one solver pass
+# RUN micromamba install -y -n base -c conda-forge -c bioconda \
+#     python=3.8 \
+#     pandas numpy \
+#     # [CUSTOMIZE] Add bioinformatics tools
+#     && micromamba clean --all --yes
+#
+# # [CUSTOMIZE] If embedding wrapper scripts in the container
+# # (use with is_stageable=False in transformation catalog)
+# USER root
+# COPY bin/*.sh /usr/local/bin/
+# RUN chmod +x /usr/local/bin/*.sh
+#
+# ENV PATH="/opt/conda/bin:$PATH"
+# ENV LC_ALL=C.UTF-8
+# ENV LANG=C.UTF-8
+#
+# WORKDIR /data
+# ENTRYPOINT ["/usr/local/bin/_entrypoint.sh"]
+# CMD ["bash"]
+
+
+# =====================================================================
+# Option C: Ubuntu-based (apt + pip + manual installs)
+# =====================================================================
+# Use when: tools need both apt packages and pip, or manual compilation
+# See: tnseq-workflow/Docker/Tnseq_Dockerfile
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3 python3-pip \
+        wget curl git \
+        # [CUSTOMIZE] Add system packages your tools need
+    && rm -rf /var/lib/apt/lists/*
+
+# [CUSTOMIZE] Install Python packages
+RUN pip3 install --no-cache-dir \
+    pandas \
+    numpy \
+    matplotlib \
+    requests
+
+# [CUSTOMIZE] Install tools not available via apt/pip
+# Example: Install a tool from a release tarball
+# RUN wget -q https://github.com/org/tool/releases/download/v1.0/tool.tar.gz -O /tmp/tool.tar.gz && \
+#     tar -xzf /tmp/tool.tar.gz -C /usr/local/bin/ && \
+#     rm /tmp/tool.tar.gz
+
+# Ensure python3 is available as python
+RUN ln -sf /usr/bin/python3 /usr/bin/python
+
+# Set Python to not buffer output (important for Pegasus log capture)
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+CMD ["/bin/bash"]

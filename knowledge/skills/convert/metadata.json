@@ -1,0 +1,5 @@
+{
+  "name": "Convert",
+  "description": "Convert a Snakemake or Nextflow pipeline to a Pegasus workflow",
+  "slash_command": "/convert"
+}
