@@ -125,8 +125,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         log.warning("reconcile_error", error=str(e))
 
+    # Periodically reap terminal sessions nobody has been attached to for a
+    # long time (server-held shells survive reloads, not abandonment).
+    import asyncio
+    import os
+
+    from services import terminal_sessions
+
+    idle_secs = int(os.environ.get("STUDIO_TERMINAL_IDLE_SECONDS", "86400"))
+
+    async def _prune_terminals() -> None:
+        while True:
+            await asyncio.sleep(3600)
+            killed = terminal_sessions.prune_idle(idle_secs)
+            if killed:
+                log.info("terminal_sessions_pruned", count=killed)
+
+    prune_task = asyncio.create_task(_prune_terminals())
+
     yield
-    # Cleanup running tool processes
+    # Cleanup terminal sessions and running tool processes
+    prune_task.cancel()
+    for s in terminal_sessions.list_sessions():
+        terminal_sessions.kill(s["id"])
     from services.process_mgr import process_manager
 
     await process_manager.cleanup_all()
