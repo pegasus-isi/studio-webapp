@@ -14,7 +14,7 @@ import structlog
 
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import copy_agents_to_dir, copy_skills_to_dir
-from llm.providers import PROVIDERS, _resolve_api_key, _resolve_base_url
+from llm.providers import PROVIDERS, _resolve_api_key, _resolve_base_url, provider_type
 
 log = structlog.get_logger()
 
@@ -44,23 +44,24 @@ class OpenCodeAdapter(KnowledgeAdapter):
     def update_llm_config(self, workspace: str, llm_config: dict[str, Any]) -> None:
         """Rewrite opencode.json with the current provider config."""
         provider = llm_config.get("provider", "anthropic")
+        ptype = provider_type(provider)  # custom-<id> -> "custom", etc.
         model = llm_config.get("model")
         api_key = llm_config.get("api_key", "")
         base_url = llm_config.get("base_url", "")
 
-        preset = PROVIDERS.get(provider, PROVIDERS["anthropic"])
+        preset = PROVIDERS.get(ptype, PROVIDERS["anthropic"])
         if not model:
             model = preset.get("default_model", "claude-sonnet-4-5-20250929")
 
         # Build provider config
         options: dict[str, str] = {}
-        if provider == "anthropic":
+        if ptype == "anthropic":
             if api_key:
                 options["apiKey"] = api_key
-        elif provider == "openai":
+        elif ptype == "openai":
             if api_key:
                 options["apiKey"] = api_key
-        elif provider == "ollama":
+        elif ptype == "ollama":
             options["baseURL"] = base_url or "http://localhost:11434/v1"
             options["apiKey"] = "ollama"
         else:
