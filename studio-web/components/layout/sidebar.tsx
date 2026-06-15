@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { appRelativePath, jupyterUrl, stripAppBasePath } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 import { usePanelStore } from "@/lib/stores/panel-store";
+import { PegasusLogo } from "@/components/ui/pegasus-logo";
 
 const NAV_ITEMS: {
   href: string;
@@ -28,18 +29,19 @@ export function Sidebar() {
   const toggleTerminal = usePanelStore((s) => s.toggleTerminal);
 
   return (
-    <aside className="flex w-56 flex-col border-r border-gray-200 bg-white">
+    <aside className="flex w-56 flex-col border-r border-line bg-surface">
       {/* Logo */}
-      <div className="flex h-14 items-center gap-2 border-b border-gray-200 px-4">
-        <span className="text-lg font-bold text-pegasus-700">PegasusAI</span>
-        <span className="text-xs text-gray-400">Studio</span>
+      <div className="flex h-14 items-center gap-2 border-b border-line px-4">
+        <PegasusLogo size={22} />
+        <span className="text-lg font-bold text-pegasus-700 dark:text-pegasus-300">PegasusAI</span>
+        <span className="text-xs text-fgsubtle">Studio</span>
       </div>
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 p-3">
         {NAV_ITEMS.map((item) => {
           const classes =
-            "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors text-gray-600 hover:bg-gray-100 hover:text-gray-900";
+            "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors text-fgmuted hover:bg-muted hover:text-fg";
 
           // External links (e.g. JupyterLab) open in a new browser tab.
           if (item.external) {
@@ -53,7 +55,7 @@ export function Sidebar() {
               >
                 <span>{item.icon}</span>
                 {item.label}
-                <span className="ml-auto text-xs text-gray-400">↗</span>
+                <span className="ml-auto text-xs text-fgsubtle">↗</span>
               </a>
             );
           }
@@ -69,8 +71,8 @@ export function Sidebar() {
               className={cn(
                 "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                 active
-                  ? "bg-pegasus-50 text-pegasus-700"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                  ? "bg-pegasus-50 dark:bg-pegasus-400/10 text-pegasus-700 dark:text-pegasus-300"
+                  : "text-fgmuted hover:bg-muted hover:text-fg"
               )}
             >
               <span>{item.icon}</span>
@@ -80,8 +82,8 @@ export function Sidebar() {
         })}
 
         {/* Quick Access */}
-        <div className="mt-4 border-t border-gray-200 pt-3">
-          <p className="mb-1 px-3 text-xs font-medium uppercase tracking-wider text-gray-400">
+        <div className="mt-4 border-t border-line pt-3">
+          <p className="mb-1 px-3 text-xs font-medium uppercase tracking-wider text-fgsubtle">
             Quick Access
           </p>
           <button
@@ -89,8 +91,8 @@ export function Sidebar() {
             className={cn(
               "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
               chatOpen
-                ? "bg-pegasus-50 text-pegasus-700"
-                : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                ? "bg-pegasus-50 dark:bg-pegasus-400/10 text-pegasus-700 dark:text-pegasus-300"
+                : "text-fgmuted hover:bg-muted hover:text-fg"
             )}
           >
             <svg
@@ -113,7 +115,7 @@ export function Sidebar() {
               "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
               terminalOpen
                 ? "bg-gray-800 text-white"
-                : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                : "text-fgmuted hover:bg-muted hover:text-fg"
             )}
           >
             <svg
@@ -135,7 +137,7 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-gray-200 p-3 text-xs text-gray-400">
+      <div className="border-t border-line p-3 text-xs text-fgsubtle">
         v0.1.0
       </div>
     </aside>

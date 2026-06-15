@@ -1,5 +1,6 @@
 {
   "name": "Scaffold",
   "description": "Generate a complete Pegasus workflow project from a pipeline description",
-  "slash_command": "/scaffold"
+  "slash_command": "/scaffold",
+  "order": 1
 }

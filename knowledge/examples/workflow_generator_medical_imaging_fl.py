@@ -103,7 +103,7 @@ def build_transformation_catalog(cfg: dict) -> TransformationCatalog:
     container = Container(
         "fl-training",
         Container.DOCKER,
-        image=f"docker:///{cfg['execution']['container']}",
+        image=f"docker://{cfg['execution']['container']}",
         bypass_staging=True,
     )
     container.add_pegasus_profile(container_arguments="--shm-size=1g")

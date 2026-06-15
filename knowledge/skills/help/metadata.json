@@ -1,5 +1,6 @@
 {
   "name": "Help",
   "description": "Show available Pegasus workflow skills and usage",
-  "slash_command": "/help"
+  "slash_command": "/help",
+  "order": 9
 }

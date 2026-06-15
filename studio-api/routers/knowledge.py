@@ -24,31 +24,35 @@ KNOWLEDGE_ROOT = os.environ.get(
 async def list_skills() -> dict[str, list[SkillMetadata]]:
     """Scan KNOWLEDGE_ROOT/skills/*/metadata.json for skill definitions."""
     skills_dir = os.path.join(KNOWLEDGE_ROOT, "skills")
-    skills: list[SkillMetadata] = []
+    # Sort by the metadata "order" field (workflow-authoring importance),
+    # falling back to alphabetical for any skill without one.
+    collected: list[tuple[int, str, SkillMetadata]] = []
 
     if not os.path.isdir(skills_dir):
-        return {"skills": skills}
+        return {"skills": []}
 
-    for name in sorted(os.listdir(skills_dir)):
+    for name in os.listdir(skills_dir):
         meta_path = os.path.join(skills_dir, name, "metadata.json")
+        order = 1000  # unordered skills sink below ordered ones
         if os.path.isfile(meta_path):
             try:
                 with open(meta_path) as f:
                     data = json.load(f)
-                skills.append(SkillMetadata(
+                order = int(data.get("order", 1000))
+                collected.append((order, name, SkillMetadata(
                     name=data.get("name", name),
                     description=data.get("description", ""),
                     slash_command=data.get("slash_command"),
-                ))
+                )))
             except Exception:
-                skills.append(SkillMetadata(name=name))
+                collected.append((order, name, SkillMetadata(name=name)))
         else:
-            # Check for canonical.md directly
             canonical = os.path.join(skills_dir, name, "canonical.md")
             if os.path.isfile(canonical):
-                skills.append(SkillMetadata(name=name))
+                collected.append((order, name, SkillMetadata(name=name)))
 
-    return {"skills": skills}
+    collected.sort(key=lambda t: (t[0], t[1]))
+    return {"skills": [s for _, _, s in collected]}
 
 
 @router.get("/skills/{name}", response_model=SkillResponse)

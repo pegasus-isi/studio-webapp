@@ -46,10 +46,10 @@ export default function NotebooksPage() {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-3">
+      <div className="flex items-center justify-between border-b border-line bg-surface px-6 py-3">
         <div>
-          <h1 className="text-lg font-semibold text-gray-900">Notebooks</h1>
-          <p className="text-sm text-gray-500">JupyterLab environment</p>
+          <h1 className="text-lg font-semibold text-fg">Notebooks</h1>
+          <p className="text-sm text-fgmuted">JupyterLab environment</p>
         </div>
         {running && (
           <button
@@ -66,13 +66,13 @@ export default function NotebooksPage() {
       <div className="flex flex-1 items-center justify-center">
         {running ? (
           <div className="text-center">
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-50">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-50 dark:bg-emerald-500/10">
               <span className="text-3xl">&#x1F4D3;</span>
             </div>
-            <h2 className="text-lg font-medium text-gray-900">
+            <h2 className="text-lg font-medium text-fg">
               JupyterLab is running
             </h2>
-            <p className="mt-1 text-sm text-gray-500">
+            <p className="mt-1 text-sm text-fgmuted">
               Opens in a new browser tab.
             </p>
             <button
@@ -85,10 +85,10 @@ export default function NotebooksPage() {
         ) : (
           <div className="text-center">
             <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-4 border-pegasus-200 border-t-pegasus-600" />
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-fgmuted">
               Waiting for the JupyterLab service&hellip;
             </p>
-            <p className="mt-2 text-xs text-gray-400">
+            <p className="mt-2 text-xs text-fgsubtle">
               It starts automatically with the container.
             </p>
           </div>

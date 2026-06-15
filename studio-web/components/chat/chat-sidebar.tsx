@@ -30,13 +30,13 @@ export function ChatSidebar({ onClose }: ChatSidebarProps) {
   }, [loadHistory]);
 
   return (
-    <div className="flex w-[400px] flex-col border-l border-gray-200 bg-white">
+    <div className="flex w-[400px] flex-col border-l border-line bg-surface">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-        <h2 className="text-sm font-semibold text-gray-900">Chat</h2>
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-semibold text-fg">Chat</h2>
         <button
           onClick={onClose}
-          className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          className="rounded p-1 text-fgsubtle hover:bg-muted hover:text-fgmuted"
           aria-label="Close chat"
         >
           <svg

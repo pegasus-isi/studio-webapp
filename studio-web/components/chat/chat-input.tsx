@@ -163,11 +163,11 @@ export function ChatInput() {
   };
 
   return (
-    <div className="border-t border-gray-200 bg-white p-4">
+    <div className="border-t border-line bg-surface p-4">
       <div className="mx-auto max-w-3xl space-y-2">
         {/* Provider / Model selectors */}
         <div className="flex items-center gap-2 text-xs">
-          <label className="text-gray-500">Provider:</label>
+          <label className="text-fgmuted">Provider:</label>
           <select
             value={chatProvider || ""}
             onChange={(e) => {
@@ -177,7 +177,7 @@ export function ChatInput() {
               const p = providers.find((p) => p.id === pid);
               if (p) setChatModel(p.default_model);
             }}
-            className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 focus:border-pegasus-500 focus:ring-pegasus-500"
+            className="rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
           >
             <option value="">Default</option>
             {providers.map((p) => (
@@ -187,26 +187,26 @@ export function ChatInput() {
             ))}
           </select>
 
-          <label className="ml-2 text-gray-500">Model:</label>
+          <label className="ml-2 text-fgmuted">Model:</label>
           <input
             type="text"
             value={chatModel || ""}
             onChange={(e) => setChatModel(e.target.value || null)}
             placeholder="default"
-            className="w-48 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 focus:border-pegasus-500 focus:ring-pegasus-500"
+            className="w-48 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
           />
         </div>
 
         {/* Input area */}
-        <div className="flex gap-2">
+        <div className="flex items-end gap-2">
           <textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask about Pegasus workflows... (Shift+Enter for newline)"
-            rows={1}
-            className="flex-1 resize-none rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+            rows={3}
+            className="min-h-[72px] max-h-56 flex-1 resize-none rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
           />
           {isStreaming ? (
             <button

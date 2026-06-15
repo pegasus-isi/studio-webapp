@@ -47,7 +47,7 @@ export function GlobalTerminalPanel() {
 
   return (
     <div
-      className="flex flex-col border-t border-gray-300"
+      className="flex flex-col border-t border-line"
       style={{ height: "300px" }}
     >
       {/* Toolbar */}
@@ -59,7 +59,7 @@ export function GlobalTerminalPanel() {
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-white"
+              className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-fgsubtle hover:bg-gray-700 hover:text-white"
             >
               + New
               <svg
@@ -112,7 +112,7 @@ export function GlobalTerminalPanel() {
 
         <button
           onClick={() => setTerminalOpen(false)}
-          className="text-gray-400 hover:text-white"
+          className="text-fgsubtle hover:text-white"
           aria-label="Close terminal panel"
         >
           <svg
@@ -137,7 +137,7 @@ export function GlobalTerminalPanel() {
         {tabs.length > 0 ? (
           <TerminalTabs />
         ) : (
-          <div className="flex h-full items-center justify-center text-gray-500">
+          <div className="flex h-full items-center justify-center text-fgmuted">
             <p className="text-sm">
               Click &quot;+ New&quot; to open a bash session or AI tool
             </p>

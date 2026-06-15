@@ -35,7 +35,7 @@ export function TerminalTabs() {
                 e.stopPropagation();
                 removeTab(tab.id);
               }}
-              className="ml-1 text-gray-500 hover:text-white"
+              className="ml-1 text-fgmuted hover:text-white"
             >
               ×
             </button>

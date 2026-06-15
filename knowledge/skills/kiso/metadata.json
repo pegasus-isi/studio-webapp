@@ -1,5 +1,6 @@
 {
   "name": "Kiso",
   "description": "Generate a Kiso experiment.yml configuration for running Pegasus workflows on cloud infrastructure",
-  "slash_command": "/kiso"
+  "slash_command": "/kiso",
+  "order": 7
 }

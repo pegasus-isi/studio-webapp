@@ -26,10 +26,10 @@ export default function WorkflowsPage() {
   return (
     <div className="flex h-full">
       {/* Workflow list */}
-      <div className="w-96 border-r border-gray-200 bg-white">
-        <div className="border-b border-gray-200 px-4 py-3">
-          <h1 className="text-lg font-semibold text-gray-900">Workflows</h1>
-          <p className="text-sm text-gray-500">
+      <div className="w-96 border-r border-line bg-surface">
+        <div className="border-b border-line px-4 py-3">
+          <h1 className="text-lg font-semibold text-fg">Workflows</h1>
+          <p className="text-sm text-fgmuted">
             {isLoading
               ? "Scanning..."
               : `${totalCount} workflow${totalCount !== 1 ? "s" : ""} found`}
@@ -37,7 +37,7 @@ export default function WorkflowsPage() {
         </div>
 
         {runsError && (
-          <div className="m-4 rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <div className="m-4 rounded-md bg-red-50 dark:bg-rose-500/10 p-3 text-sm text-red-700 dark:text-rose-400">
             Failed to load workflows: {(runsError as Error).message}
           </div>
         )}
@@ -55,7 +55,7 @@ export default function WorkflowsPage() {
         ) : selectedRunId ? (
           <WorkflowDetail runId={selectedRunId} />
         ) : (
-          <div className="flex h-full items-center justify-center text-gray-400">
+          <div className="flex h-full items-center justify-center text-fgsubtle">
             Select a workflow to view details
           </div>
         )}

@@ -4,22 +4,42 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Fonts loaded via <link> in layout head (Google Fonts) — no build-time fetch. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --font-outfit: "Outfit", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* PegasusAI palette (from swarmourr.github.io/PegasusAI). Light is default;
+   .dark on <html> flips to the deep-navy dark theme. */
+:root {
+  --c-base: #f8fafc;
+  --c-surface: #ffffff;
+  --c-muted: #f1f5f9;
+  --c-line: #e2e8f0;
+  --c-fg: #0f172a;
+  --c-fgmuted: #475569;
+  --c-fgsubtle: #94a3b8;
+  --c-accent: #0ea5e9;
+  --c-accent-fg: #ffffff;
+}
+
+.dark {
+  --c-base: #0b162b;
+  --c-surface: #0f1e38;
+  --c-muted: #1a2b47;
+  --c-line: #24344f;
+  --c-fg: #f8fafc;
+  --c-fgmuted: #94a3b8;
+  --c-fgsubtle: #64748b;
+  --c-accent: #38bdf8;
+  --c-accent-fg: #04121f;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: system-ui, -apple-system, sans-serif;
+  color: var(--c-fg);
+  background: var(--c-base);
+  font-family: var(--font-outfit), system-ui, -apple-system, sans-serif;
 }
 
 /* xterm.js container fills its parent */

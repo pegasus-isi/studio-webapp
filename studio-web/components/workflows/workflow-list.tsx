@@ -17,11 +17,11 @@ export function WorkflowList({ projects, workflows }: Props) {
 
   if (projects.length === 0 && workflows.length === 0) {
     return (
-      <div className="p-4 text-sm text-gray-500">
+      <div className="p-4 text-sm text-fgmuted">
         No workflows discovered. Use the AI assistant to scaffold a workflow in{" "}
-        <code className="rounded bg-gray-100 px-1">~/work/workflows/</code>{" "}
+        <code className="rounded bg-muted px-1">~/work/workflows/</code>{" "}
         or run{" "}
-        <code className="rounded bg-gray-100 px-1">pegasus-plan --submit</code>{" "}
+        <code className="rounded bg-muted px-1">pegasus-plan --submit</code>{" "}
         in the terminal.
       </div>
     );
@@ -32,10 +32,10 @@ export function WorkflowList({ projects, workflows }: Props) {
       {/* Projects section */}
       {projects.length > 0 && (
         <div>
-          <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-fgsubtle">
             Projects
           </div>
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-line">
             {projects.map((proj) => {
               const active = selectedProjectId === proj.project_id;
 
@@ -51,11 +51,11 @@ export function WorkflowList({ projects, workflows }: Props) {
                     onClick={() => selectProject(proj.project_id)}
                     className={cn(
                       "w-full px-4 py-3 text-left transition-colors",
-                      active ? "bg-pegasus-50" : "hover:bg-gray-50"
+                      active ? "bg-pegasus-50 dark:bg-pegasus-400/10" : "hover:bg-base"
                     )}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-medium text-gray-900">
+                      <span className="font-medium text-fg">
                         {proj.name}
                       </span>
                       <span
@@ -68,7 +68,7 @@ export function WorkflowList({ projects, workflows }: Props) {
                       </span>
                     </div>
 
-                    <div className="mt-1 flex items-center gap-2 text-xs text-gray-400">
+                    <div className="mt-1 flex items-center gap-2 text-xs text-fgsubtle">
                       {proj.has_generator && <span>generator</span>}
                       {proj.has_workflow_yml && <span>yml</span>}
                       {proj.has_dockerfile && <span>docker</span>}
@@ -89,10 +89,10 @@ export function WorkflowList({ projects, workflows }: Props) {
       {/* Standalone runs section */}
       {workflows.length > 0 && (
         <div>
-          <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-fgsubtle">
             {projects.length > 0 ? "Other Runs" : "Runs"}
           </div>
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-line">
             {workflows.map((wf) => {
               const active = selectedRunId === wf.run_id;
               const progress =
@@ -106,11 +106,11 @@ export function WorkflowList({ projects, workflows }: Props) {
                     onClick={() => selectWorkflow(wf.run_id)}
                     className={cn(
                       "w-full px-4 py-3 text-left transition-colors",
-                      active ? "bg-pegasus-50" : "hover:bg-gray-50"
+                      active ? "bg-pegasus-50 dark:bg-pegasus-400/10" : "hover:bg-base"
                     )}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-medium text-gray-900">
+                      <span className="font-medium text-fg">
                         {wf.name}
                       </span>
                       <span
@@ -125,17 +125,17 @@ export function WorkflowList({ projects, workflows }: Props) {
 
                     {wf.total_jobs > 0 && (
                       <div className="mt-2">
-                        <div className="flex justify-between text-xs text-gray-500">
+                        <div className="flex justify-between text-xs text-fgmuted">
                           <span>
                             {wf.completed_jobs}/{wf.total_jobs} jobs
                           </span>
                           {wf.failed_jobs > 0 && (
-                            <span className="text-red-600">
+                            <span className="text-red-600 dark:text-rose-400">
                               {wf.failed_jobs} failed
                             </span>
                           )}
                         </div>
-                        <div className="mt-1 h-1.5 w-full rounded-full bg-gray-200">
+                        <div className="mt-1 h-1.5 w-full rounded-full bg-muted">
                           <div
                             className="h-1.5 rounded-full bg-pegasus-500 transition-all"
                             style={{ width: `${progress}%` }}
@@ -145,7 +145,7 @@ export function WorkflowList({ projects, workflows }: Props) {
                     )}
 
                     {wf.exec_site && (
-                      <div className="mt-1 text-xs text-gray-400">
+                      <div className="mt-1 text-xs text-fgsubtle">
                         Site: {wf.exec_site}
                       </div>
                     )}

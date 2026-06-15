@@ -87,10 +87,10 @@ export function WorkflowDetail({ runId }: Props) {
   return (
     <div className="h-full overflow-auto">
       {/* Header */}
-      <div className="border-b border-gray-200 bg-white px-6 py-4">
+      <div className="border-b border-line bg-surface px-6 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">
+            <h2 className="text-lg font-semibold text-fg">
               {run?.name ?? runId}
             </h2>
             {run && (
@@ -116,11 +116,11 @@ export function WorkflowDetail({ runId }: Props) {
         {/* Progress bar for running/completed workflows */}
         {totalJobs > 0 && (
           <div className="mt-4">
-            <div className="flex justify-between text-sm text-gray-600">
+            <div className="flex justify-between text-sm text-fgmuted">
               <span>{completedJobs}/{totalJobs} jobs completed</span>
               <span>{progress}%</span>
             </div>
-            <div className="mt-1 h-2 w-full rounded-full bg-gray-200">
+            <div className="mt-1 h-2 w-full rounded-full bg-muted">
               <div
                 className={cn(
                   "h-2 rounded-full transition-all",
@@ -130,7 +130,7 @@ export function WorkflowDetail({ runId }: Props) {
               />
             </div>
             {(isRunning || runningJobs > 0 || queuedJobs > 0 || failedJobs > 0) && (
-              <div className="mt-2 flex gap-4 text-xs text-gray-500">
+              <div className="mt-2 flex gap-4 text-xs text-fgmuted">
                 {runningJobs > 0 && (
                   <span className="text-blue-600">{runningJobs} running</span>
                 )}
@@ -138,7 +138,7 @@ export function WorkflowDetail({ runId }: Props) {
                   <span>{queuedJobs} queued</span>
                 )}
                 {failedJobs > 0 && (
-                  <span className="text-red-600">{failedJobs} failed</span>
+                  <span className="text-red-600 dark:text-rose-400">{failedJobs} failed</span>
                 )}
               </div>
             )}
@@ -149,11 +149,11 @@ export function WorkflowDetail({ runId }: Props) {
       {/* Jobs table */}
       <div className="p-6">
         {isLoading ? (
-          <p className="text-sm text-gray-500">Loading jobs...</p>
+          <p className="text-sm text-fgmuted">Loading jobs...</p>
         ) : data?.jobs && data.jobs.length > 0 ? (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500">
+              <tr className="border-b border-line text-left text-xs font-medium text-fgmuted">
                 <th className="pb-2 pr-4">Job ID</th>
                 <th className="pb-2 pr-4">Transformation</th>
                 <th className="pb-2 pr-4">Site</th>
@@ -162,9 +162,9 @@ export function WorkflowDetail({ runId }: Props) {
                 <th className="pb-2">Exit Code</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-line">
               {data.jobs.map((job: Record<string, unknown>, i: number) => (
-                <tr key={i} className="hover:bg-gray-50">
+                <tr key={i} className="hover:bg-base">
                   <td className="py-2 pr-4 font-mono text-xs">
                     {String(job.job_id ?? "")}
                   </td>
@@ -191,7 +191,7 @@ export function WorkflowDetail({ runId }: Props) {
             </tbody>
           </table>
         ) : (
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-fgmuted">
             No job data available. The workflow may not have a stampede database yet.
           </p>
         )}
@@ -199,7 +199,7 @@ export function WorkflowDetail({ runId }: Props) {
         {/* Analysis output */}
         {analysis && (
           <div className="mt-6">
-            <h3 className="mb-2 text-sm font-semibold text-gray-700">
+            <h3 className="mb-2 text-sm font-semibold text-fg">
               Analysis
             </h3>
             <pre className="max-h-96 overflow-auto rounded-md bg-gray-900 p-4 text-xs text-green-400">

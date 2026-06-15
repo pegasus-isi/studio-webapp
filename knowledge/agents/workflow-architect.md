@@ -45,7 +45,7 @@ class MyWorkflow:
         self.tc = TransformationCatalog()
         container = Container("my_container",
             container_type=Container.SINGULARITY,
-            image="docker://user/image:tag",
+            image="docker://docker.io/user/image:tag",  # ALWAYS fully qualified: bare library refs (docker://python:3.11) serialize to an invalid docker:/// triple slash
             image_site="docker_hub")
         tx = Transformation("step_name",
             site=exec_site_name,
@@ -144,7 +144,7 @@ def add_merge_jobs(wf, parents, max_parents=25):
 
 ```python
 # Docker
-container = Container('tools', Container.DOCKER, 'docker:///user/image:tag')
+container = Container('tools', Container.DOCKER, 'docker://docker.io/user/image:tag')
 
 # Singularity/Apptainer (local .sif)
 container = Container('tools', Container.SINGULARITY,

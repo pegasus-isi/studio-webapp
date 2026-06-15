@@ -188,7 +188,7 @@ class MyWorkflow:
         container = Container(
             "my_container",
             container_type=Container.SINGULARITY,
-            image="docker://username/image:latest",
+            image="docker://docker.io/username/image:latest",  # ALWAYS include the registry host: bare refs like docker://python:3.11-slim serialize to an invalid docker:/// triple slash and fail stage-in
             image_site="docker_hub",
         )
 
@@ -384,7 +384,7 @@ Dockerfile rules:
 
 ```python
 # Docker
-container = Container('tools', Container.DOCKER, 'docker:///user/image:tag')
+container = Container('tools', Container.DOCKER, 'docker://docker.io/user/image:tag')
 
 # Singularity/Apptainer (local .sif)
 container = Container('tools', Container.SINGULARITY,

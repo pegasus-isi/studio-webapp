@@ -49,17 +49,17 @@ export default function WorkbenchPage() {
   return (
     <div className="flex h-full flex-col">
       {/* Header bar */}
-      <div className="border-b border-gray-200 bg-white px-6 py-3">
+      <div className="border-b border-line bg-surface px-6 py-3">
         <div>
-          <h1 className="text-lg font-semibold text-gray-900">AI Workbench</h1>
-          <p className="text-sm text-gray-500">
+          <h1 className="text-lg font-semibold text-fg">AI Workbench</h1>
+          <p className="text-sm text-fgmuted">
             Launch terminals and AI coding tools for workflow development.
           </p>
         </div>
       </div>
 
       {/* Content area */}
-      <div className="flex-1 overflow-auto bg-gray-50 p-6">
+      <div className="flex-1 overflow-auto bg-base p-6">
         <div className="mx-auto max-w-5xl space-y-6">
           {/* Terminal panel notice */}
           {terminalOpen && tabs.length > 0 && (
@@ -74,14 +74,14 @@ export default function WorkbenchPage() {
 
           {/* Quick Launch */}
           <section>
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-500">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-fgmuted">
               Quick Launch
             </h2>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {/* Bash Terminal card */}
               <button
                 onClick={handleOpenBash}
-                className="group flex flex-col rounded-lg border border-gray-200 bg-white p-4 text-left transition-colors hover:border-gray-400"
+                className="group flex flex-col rounded-lg border border-line bg-surface p-4 text-left transition-colors hover:border-gray-400"
               >
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-md bg-gray-800 text-white">
@@ -100,10 +100,10 @@ export default function WorkbenchPage() {
                     </svg>
                   </div>
                   <div>
-                    <h3 className="text-sm font-medium text-gray-900">
+                    <h3 className="text-sm font-medium text-fg">
                       Bash Terminal
                     </h3>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-fgmuted">
                       Open a new shell session
                     </p>
                   </div>
@@ -125,10 +125,10 @@ export default function WorkbenchPage() {
                         : handleLaunchTool(tool.info.id, tool.info.name)
                     }
                     disabled={startTool.isPending}
-                    className="group flex flex-col rounded-lg border border-gray-200 bg-white p-4 text-left transition-colors hover:border-gray-400 disabled:opacity-50"
+                    className="group flex flex-col rounded-lg border border-line bg-surface p-4 text-left transition-colors hover:border-gray-400 disabled:opacity-50"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-md bg-pegasus-100 text-pegasus-700">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-md bg-pegasus-100 dark:bg-pegasus-400/15 text-pegasus-700 dark:text-pegasus-300">
                         <svg
                           width="18"
                           height="18"
@@ -146,16 +146,16 @@ export default function WorkbenchPage() {
                       </div>
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-medium text-gray-900">
+                          <h3 className="text-sm font-medium text-fg">
                             {tool.info.name}
                           </h3>
                           {tool.status === "running" && (
-                            <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">
+                            <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:text-emerald-400">
                               Running
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-gray-500">
+                        <p className="text-xs text-fgmuted">
                           {tool.info.vendor}
                         </p>
                       </div>
@@ -168,11 +168,11 @@ export default function WorkbenchPage() {
           {/* All Tools */}
           {tools.length > 0 && (
             <section>
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-500">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-fgmuted">
                 AI Tools
               </h2>
               {toolsLoading ? (
-                <p className="text-sm text-gray-400">Loading tools...</p>
+                <p className="text-sm text-fgsubtle">Loading tools...</p>
               ) : (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {tools.map((tool) => (
@@ -187,20 +187,20 @@ export default function WorkbenchPage() {
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             {/* Skills */}
             <section>
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-500">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-fgmuted">
                 Pegasus Skills
               </h2>
               {skillsLoading ? (
-                <p className="text-sm text-gray-400">Loading skills...</p>
+                <p className="text-sm text-fgsubtle">Loading skills...</p>
               ) : skills.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-gray-300 bg-white p-4">
-                  <p className="text-sm text-gray-500">
+                <div className="rounded-lg border border-dashed border-line bg-surface p-4">
+                  <p className="text-sm text-fgmuted">
                     No skills loaded. Check that the{" "}
-                    <code className="rounded bg-gray-100 px-1 py-0.5 text-xs">
+                    <code className="rounded bg-muted px-1 py-0.5 text-xs">
                       knowledge/skills/
                     </code>{" "}
                     directory contains skill definitions with{" "}
-                    <code className="rounded bg-gray-100 px-1 py-0.5 text-xs">
+                    <code className="rounded bg-muted px-1 py-0.5 text-xs">
                       metadata.json
                     </code>{" "}
                     files.
@@ -211,18 +211,18 @@ export default function WorkbenchPage() {
                   {skills.map((skill) => (
                     <div
                       key={skill.name}
-                      className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-2.5"
+                      className="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-2.5"
                     >
                       <div>
-                        <span className="text-sm font-medium text-gray-900">
+                        <span className="text-sm font-medium text-fg">
                           {skill.name}
                         </span>
-                        <p className="text-xs text-gray-500 line-clamp-1">
+                        <p className="text-xs text-fgmuted line-clamp-1">
                           {skill.description}
                         </p>
                       </div>
                       {skill.slash_command && (
-                        <code className="shrink-0 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+                        <code className="shrink-0 rounded bg-muted px-2 py-0.5 text-xs text-fgmuted">
                           {skill.slash_command}
                         </code>
                       )}
@@ -234,16 +234,16 @@ export default function WorkbenchPage() {
 
             {/* Agents */}
             <section>
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-500">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-fgmuted">
                 Agent Personas
               </h2>
               {skillsLoading ? (
-                <p className="text-sm text-gray-400">Loading agents...</p>
+                <p className="text-sm text-fgsubtle">Loading agents...</p>
               ) : agents.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-gray-300 bg-white p-4">
-                  <p className="text-sm text-gray-500">
+                <div className="rounded-lg border border-dashed border-line bg-surface p-4">
+                  <p className="text-sm text-fgmuted">
                     No agents loaded. Check that the{" "}
-                    <code className="rounded bg-gray-100 px-1 py-0.5 text-xs">
+                    <code className="rounded bg-muted px-1 py-0.5 text-xs">
                       knowledge/agents/
                     </code>{" "}
                     directory contains agent markdown files with YAML
@@ -255,17 +255,17 @@ export default function WorkbenchPage() {
                   {agents.map((agent) => (
                     <div
                       key={agent.id}
-                      className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-2.5"
+                      className="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-2.5"
                     >
                       <div>
-                        <span className="text-sm font-medium text-gray-900">
+                        <span className="text-sm font-medium text-fg">
                           {agent.name}
                         </span>
-                        <p className="text-xs text-gray-500 line-clamp-1">
+                        <p className="text-xs text-fgmuted line-clamp-1">
                           {agent.description}
                         </p>
                       </div>
-                      <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600">
+                      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-fgmuted">
                         {agent.id}
                       </span>
                     </div>

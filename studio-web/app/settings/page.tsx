@@ -21,20 +21,20 @@ export default function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-4xl p-6">
-      <h1 className="text-lg font-semibold text-gray-900">Settings</h1>
-      <p className="mt-1 text-sm text-gray-500">
+      <h1 className="text-lg font-semibold text-fg">Settings</h1>
+      <p className="mt-1 text-sm text-fgmuted">
         Configure LLM providers, manage AI tools, and set Pegasus options.
       </p>
 
       {/* Tab navigation */}
-      <div className="mt-4 flex border-b border-gray-200">
+      <div className="mt-4 flex border-b border-line">
         <button
           onClick={() => setActiveTab("providers")}
           className={cn(
             "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
             activeTab === "providers"
               ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
           )}
         >
           LLM Providers
@@ -45,7 +45,7 @@ export default function SettingsPage() {
             "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
             activeTab === "tools"
               ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
           )}
         >
           Tools
@@ -56,7 +56,7 @@ export default function SettingsPage() {
             "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
             activeTab === "pegasus"
               ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
           )}
         >
           Pegasus Options
@@ -110,19 +110,19 @@ function ProvidersTab() {
   );
 
   if (isLoading) {
-    return <p className="text-sm text-gray-400">Loading providers...</p>;
+    return <p className="text-sm text-fgsubtle">Loading providers...</p>;
   }
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-fgmuted">
         Add LLM providers and configure API keys. The active provider is used by
         the chat and propagated to all installed AI tools.
       </p>
 
       {/* Saved provider cards */}
       {savedConfigs.length === 0 && (
-        <p className="text-sm text-gray-400 italic">
+        <p className="text-sm text-fgsubtle italic">
           No providers configured. Add one below.
         </p>
       )}
@@ -147,12 +147,12 @@ function ProvidersTab() {
 
       {/* Add provider */}
       {showAdd ? (
-        <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4">
+        <div className="rounded-lg border border-dashed border-line bg-base p-4">
           <div className="flex items-center gap-2">
             <select
               value={newProviderId}
               onChange={(e) => setNewProviderId(e.target.value)}
-              className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm"
+              className="flex-1 rounded-md border border-line px-3 py-2 text-sm"
             >
               <option value="">Select a provider to add...</option>
               {availablePresets.map((p) => (
@@ -173,7 +173,7 @@ function ProvidersTab() {
                 setShowAdd(false);
                 setNewProviderId("");
               }}
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+              className="rounded-md border border-line px-3 py-2 text-sm text-fgmuted hover:bg-base"
             >
               Cancel
             </button>
@@ -183,7 +183,7 @@ function ProvidersTab() {
         <button
           onClick={() => setShowAdd(true)}
           disabled={availablePresets.length === 0}
-          className="w-full rounded-lg border border-dashed border-gray-300 py-3 text-sm text-gray-500 hover:border-gray-400 hover:text-gray-700 disabled:opacity-50"
+          className="w-full rounded-lg border border-dashed border-line py-3 text-sm text-fgmuted hover:border-gray-400 hover:text-fg disabled:opacity-50"
         >
           + Add Provider
         </button>
@@ -258,16 +258,16 @@ function ProviderCard({
   return (
     <div
       className={cn(
-        "rounded-lg border bg-white p-4",
-        config.is_active ? "border-pegasus-500 ring-1 ring-pegasus-200" : "border-gray-200"
+        "rounded-lg border bg-surface p-4",
+        config.is_active ? "border-pegasus-500 ring-1 ring-pegasus-200" : "border-line"
       )}
     >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h3 className="font-medium text-gray-900">{config.name}</h3>
+          <h3 className="font-medium text-fg">{config.name}</h3>
           {config.is_active && (
-            <span className="rounded-full bg-pegasus-100 px-2 py-0.5 text-xs font-medium text-pegasus-700">
+            <span className="rounded-full bg-pegasus-100 dark:bg-pegasus-400/15 px-2 py-0.5 text-xs font-medium text-pegasus-700 dark:text-pegasus-300">
               Active
             </span>
           )}
@@ -283,7 +283,7 @@ function ProviderCard({
           )}
           <button
             onClick={onDelete}
-            className="text-xs text-red-500 hover:text-red-700"
+            className="text-xs text-red-500 hover:text-red-700 dark:text-rose-400"
           >
             Remove
           </button>
@@ -293,10 +293,10 @@ function ProviderCard({
       <div className="mt-3 space-y-3">
         {/* API Key */}
         <div>
-          <label className="block text-xs font-medium text-gray-600">
+          <label className="block text-xs font-medium text-fgmuted">
             API Key
             {preset?.api_key_env && (
-              <span className="ml-1 font-normal text-gray-400">
+              <span className="ml-1 font-normal text-fgsubtle">
                 ({preset.api_key_env})
               </span>
             )}
@@ -306,13 +306,13 @@ function ProviderCard({
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder="Enter API key..."
-            className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+            className="mt-1 block w-full rounded-md border border-line px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
           />
         </div>
 
         {/* Model */}
         <div>
-          <label className="block text-xs font-medium text-gray-600">
+          <label className="block text-xs font-medium text-fgmuted">
             Model
           </label>
           <input
@@ -320,7 +320,7 @@ function ProviderCard({
             value={model}
             onChange={(e) => setModel(e.target.value)}
             placeholder={preset?.default_model || "model name"}
-            className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+            className="mt-1 block w-full rounded-md border border-line px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
           />
           {/* Show model chips from validation */}
           {validate.data?.valid && validate.data.models.length > 0 && (
@@ -332,8 +332,8 @@ function ProviderCard({
                   className={cn(
                     "rounded-full border px-2 py-0.5 text-xs",
                     m === model
-                      ? "border-pegasus-500 bg-pegasus-50 text-pegasus-700"
-                      : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                      ? "border-pegasus-500 bg-pegasus-50 dark:bg-pegasus-400/10 text-pegasus-700 dark:text-pegasus-300"
+                      : "border-line text-fgmuted hover:bg-base"
                   )}
                 >
                   {m}
@@ -346,7 +346,7 @@ function ProviderCard({
         {/* Base URL (custom/ollama) */}
         {needsBaseUrl && (
           <div>
-            <label className="block text-xs font-medium text-gray-600">
+            <label className="block text-xs font-medium text-fgmuted">
               Base URL
             </label>
             <input
@@ -354,7 +354,7 @@ function ProviderCard({
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder="https://..."
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+              className="mt-1 block w-full rounded-md border border-line px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
             />
           </div>
         )}
@@ -375,10 +375,10 @@ function ProviderCard({
             className={cn(
               "flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium",
               validate.data?.valid
-                ? "border-green-300 bg-green-50 text-green-700"
+                ? "border-green-300 bg-green-50 dark:bg-emerald-500/10 text-green-700 dark:text-emerald-400"
                 : validate.data && !validate.data.valid
-                  ? "border-red-300 bg-red-50 text-red-700"
-                  : "border-gray-300 text-gray-600 hover:bg-gray-50",
+                  ? "border-red-300 bg-red-50 dark:bg-rose-500/10 text-red-700 dark:text-rose-400"
+                  : "border-line text-fgmuted hover:bg-base",
               "disabled:opacity-50"
             )}
           >
@@ -411,14 +411,14 @@ function ToolsTab() {
   const { data, isLoading } = useTools();
 
   if (isLoading) {
-    return <p className="text-sm text-gray-400">Loading tools...</p>;
+    return <p className="text-sm text-fgsubtle">Loading tools...</p>;
   }
 
   const tools = data?.tools ?? [];
 
   if (tools.length === 0) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-fgmuted">
         No tools available. Check your tool registry configuration.
       </p>
     );
@@ -426,7 +426,7 @@ function ToolsTab() {
 
   return (
     <div>
-      <p className="mb-4 text-sm text-gray-500">
+      <p className="mb-4 text-sm text-fgmuted">
         Install or remove AI coding tools. Launch them from the Workbench.
       </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -459,67 +459,67 @@ function PegasusOptionsTab() {
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-fgmuted">
         Configure Pegasus WMS execution defaults for workflow planning and
         submission.
       </p>
 
       {/* Execution site */}
       <div>
-        <label className="block text-sm font-medium text-gray-700">
+        <label className="block text-sm font-medium text-fg">
           Execution Site
         </label>
         <select
           value={executionSite}
           onChange={(e) => setExecutionSite(e.target.value)}
-          className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+          className="mt-1 block w-full rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
         >
           <option value="local">local</option>
           <option value="condorpool">condorpool</option>
           <option value="slurm">slurm</option>
           <option value="sge">sge</option>
         </select>
-        <p className="mt-1 text-xs text-gray-400">
+        <p className="mt-1 text-xs text-fgsubtle">
           Target execution site for pegasus-plan --sites
         </p>
       </div>
 
       {/* Planning options */}
       <div>
-        <label className="block text-sm font-medium text-gray-700">
+        <label className="block text-sm font-medium text-fg">
           Default Planning Options
         </label>
         <div className="mt-2 space-y-2">
-          <label className="flex items-center gap-2 text-sm text-gray-600">
+          <label className="flex items-center gap-2 text-sm text-fgmuted">
             <input
               type="checkbox"
               checked={planningFlags.force}
               onChange={(e) =>
                 setPlanningFlags((f) => ({ ...f, force: e.target.checked }))
               }
-              className="rounded border-gray-300 text-pegasus-600 focus:ring-pegasus-500"
+              className="rounded border-line text-pegasus-600 focus:ring-pegasus-500"
             />
             --force (overwrite existing run directory)
           </label>
-          <label className="flex items-center gap-2 text-sm text-gray-600">
+          <label className="flex items-center gap-2 text-sm text-fgmuted">
             <input
               type="checkbox"
               checked={planningFlags.submit}
               onChange={(e) =>
                 setPlanningFlags((f) => ({ ...f, submit: e.target.checked }))
               }
-              className="rounded border-gray-300 text-pegasus-600 focus:ring-pegasus-500"
+              className="rounded border-line text-pegasus-600 focus:ring-pegasus-500"
             />
             --submit (automatically submit after planning)
           </label>
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-600">--cleanup</span>
+            <span className="text-sm text-fgmuted">--cleanup</span>
             <select
               value={planningFlags.cleanup}
               onChange={(e) =>
                 setPlanningFlags((f) => ({ ...f, cleanup: e.target.value }))
               }
-              className="rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+              className="rounded-md border border-line px-2 py-1 text-sm focus:border-pegasus-500 focus:ring-pegasus-500"
             >
               <option value="none">none</option>
               <option value="leaf">leaf</option>
@@ -531,7 +531,7 @@ function PegasusOptionsTab() {
 
       {/* Container registry */}
       <div>
-        <label className="block text-sm font-medium text-gray-700">
+        <label className="block text-sm font-medium text-fg">
           Container Registry Prefix
         </label>
         <input
@@ -539,9 +539,9 @@ function PegasusOptionsTab() {
           value={containerRegistry}
           onChange={(e) => setContainerRegistry(e.target.value)}
           placeholder="docker:///username/"
-          className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+          className="mt-1 block w-full rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
         />
-        <p className="mt-1 text-xs text-gray-400">
+        <p className="mt-1 text-xs text-fgsubtle">
           Prefix used for container transformation images (e.g.
           docker:///kthare10/)
         </p>
@@ -549,7 +549,7 @@ function PegasusOptionsTab() {
 
       {/* Pegasus install path */}
       <div>
-        <label className="block text-sm font-medium text-gray-700">
+        <label className="block text-sm font-medium text-fg">
           Pegasus Installation Path
         </label>
         <input
@@ -557,9 +557,9 @@ function PegasusOptionsTab() {
           value={pegasusPath}
           onChange={(e) => setPegasusPath(e.target.value)}
           placeholder="/usr/bin (auto-detected if empty)"
-          className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+          className="mt-1 block w-full rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
         />
-        <p className="mt-1 text-xs text-gray-400">
+        <p className="mt-1 text-xs text-fgsubtle">
           Leave empty to use Pegasus from PATH
         </p>
       </div>

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import glob as _glob
 import os
+import re
+import time
 
 import structlog
 
@@ -68,7 +70,7 @@ async def submit_workflow(
 
         if proc.returncode == 0:
             # Try to extract run directory from output
-            run_dir = _extract_run_dir(out)
+            run_dir = _extract_run_dir(out) or _newest_run_dir(workflow_dir)
             log.info(
                 "workflow_submitted",
                 workflow_dir=workflow_dir,
@@ -210,16 +212,42 @@ def _find_workflow_file(workflow_dir: str) -> str | None:
     return None
 
 
+_RUN_DIR_RE = re.compile(r"(/[^\s\"']+/run\d{4})\b")
+
+
 def _extract_run_dir(output: str) -> str | None:
     """Extract the run directory path from pegasus-plan output.
 
-    pegasus-plan prints something like:
-    Your workflow has been started and is running in the base directory:
-    /path/to/run/dir
+    Pegasus 5.x prefixes every output line with a timestamp + level
+    ("2026.06.12 ... [INFO] ..."), so a bare path never starts a line —
+    scan for /.../runNNNN tokens anywhere instead, keeping the last one
+    that exists on disk (the final summary repeats it).
     """
+    candidates = [
+        m.group(1)
+        for m in _RUN_DIR_RE.finditer(output)
+        if os.path.isdir(m.group(1))
+    ]
+    if candidates:
+        return candidates[-1]
+    # Legacy format: a bare path on its own line
     for line in output.split("\n"):
         line = line.strip()
-        if line.startswith("/") and "run" in line.lower():
-            if os.path.isdir(line):
-                return line
+        if line.startswith("/") and "run" in line.lower() and os.path.isdir(line):
+            return line
     return None
+
+
+def _newest_run_dir(workflow_dir: str) -> str | None:
+    """Filesystem fallback: the just-created run dir (fresh braindump.yml)."""
+    candidates: list[tuple[float, str]] = []
+    for bd in _glob.glob(
+        os.path.join(workflow_dir, "**", "braindump.yml"), recursive=True
+    ):
+        try:
+            mtime = os.path.getmtime(bd)
+        except OSError:
+            continue
+        if time.time() - mtime < 600:
+            candidates.append((mtime, os.path.dirname(bd)))
+    return max(candidates)[1] if candidates else None

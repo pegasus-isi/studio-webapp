@@ -13,7 +13,7 @@ export function StatusBar() {
   const tabCount = useToolStore((s) => s.tabs.length);
 
   return (
-    <div className="flex h-6 items-center justify-between border-t border-gray-300 bg-gray-100 px-3 text-xs select-none">
+    <div className="flex h-6 items-center justify-between border-t border-line bg-muted px-3 text-xs select-none">
       {/* Left: status indicators */}
       <div className="flex items-center gap-3">
         {/* JupyterLab status */}
@@ -27,7 +27,7 @@ export function StatusBar() {
                   : "bg-gray-400"
             }`}
           />
-          <span className="text-gray-600">
+          <span className="text-fgmuted">
             JupyterLab{" "}
             {jupyterStatus === "running"
               ? "Running"
@@ -39,7 +39,7 @@ export function StatusBar() {
 
         {/* Terminal tab count */}
         {tabCount > 0 && (
-          <span className="text-gray-500">
+          <span className="text-fgmuted">
             {tabCount} terminal{tabCount !== 1 ? "s" : ""}
           </span>
         )}
@@ -52,7 +52,7 @@ export function StatusBar() {
           className={`flex items-center gap-1.5 rounded px-2 py-0.5 transition-colors ${
             terminalOpen
               ? "bg-gray-800 text-white"
-              : "text-gray-600 hover:bg-gray-200"
+              : "text-fgmuted hover:bg-muted"
           }`}
           title="Toggle terminal panel"
         >
@@ -77,7 +77,7 @@ export function StatusBar() {
           className={`flex items-center gap-1.5 rounded px-2 py-0.5 transition-colors ${
             chatOpen
               ? "bg-pegasus-600 text-white"
-              : "text-gray-600 hover:bg-gray-200"
+              : "text-fgmuted hover:bg-muted"
           }`}
           title="Toggle chat panel"
         >

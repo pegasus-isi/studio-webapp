@@ -119,10 +119,16 @@ class MyWorkflow:
 
     def create_transformation_catalog(self, exec_site_name="condorpool"):
         self.tc = TransformationCatalog()
+        # IMPORTANT: always use a FULLY QUALIFIED image reference, including
+        # the registry host (docker://docker.io/...). Bare official-library
+        # references like docker://python:3.11-slim get mangled by the
+        # Pegasus API's URL serialization into docker:///python:3.11-slim
+        # (the ":tag" breaks hostname parsing), which Apptainer rejects with
+        # "invalid reference format" at stage-in.
         container = Container(
             "my_container",  # [CUSTOMIZE]
             container_type=Container.SINGULARITY,
-            image="docker://username/image:latest",  # [CUSTOMIZE]
+            image="docker://docker.io/username/image:latest",  # [CUSTOMIZE]
             image_site="docker_hub",
         )
         transformations = []
