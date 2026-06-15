@@ -47,3 +47,23 @@ export const useThemeStore = create<ThemeStore>()(
     { name: "studio-theme" }
   )
 );
+
+// Cross-document sync: the embedded chat (JupyterLab iframe) is a separate
+// document with its own store, so a toggle in the studio window must reach it.
+// localStorage "storage" events fire in OTHER same-origin documents; re-apply
+// the theme there. The equality guard prevents a persist/storage ping-pong.
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key && e.key !== "studio-theme") return;
+    try {
+      const t = JSON.parse(localStorage.getItem("studio-theme") || "{}").state
+        ?.theme as Theme | undefined;
+      if (t && t !== useThemeStore.getState().theme) {
+        applyTheme(t);
+        useThemeStore.setState({ theme: t });
+      }
+    } catch {
+      /* ignore */
+    }
+  });
+}

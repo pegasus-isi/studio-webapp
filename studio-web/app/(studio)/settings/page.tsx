@@ -92,11 +92,22 @@ function ProvidersTab() {
   const handleAdd = async () => {
     if (!newProviderId) return;
     const preset = presets.find((p) => p.id === newProviderId);
+    // "custom" can be added multiple times — each gets a unique id so several
+    // custom endpoints coexist. The user names/configures it in its card.
+    const isCustom = newProviderId === "custom";
+    const provider_id = isCustom
+      ? `custom-${Date.now().toString(36)}`
+      : newProviderId;
+    const customCount = savedConfigs.filter((c) =>
+      c.provider_id.startsWith("custom")
+    ).length;
     await upsertConfig.mutateAsync({
-      provider_id: newProviderId,
-      name: preset?.name || newProviderId,
-      base_url: preset?.base_url || "",
-      default_model: preset?.default_model || "",
+      provider_id,
+      name: isCustom
+        ? `Custom Endpoint${customCount ? " " + (customCount + 1) : ""}`
+        : preset?.name || newProviderId,
+      base_url: isCustom ? "" : preset?.base_url || "",
+      default_model: isCustom ? "" : preset?.default_model || "",
       api_key: "",
       is_active: savedConfigs.length === 0,
     });
@@ -104,9 +115,11 @@ function ProvidersTab() {
     setShowAdd(false);
   };
 
-  // Providers that haven't been added yet
+  // Presets not yet added — but "custom" stays available so you can add
+  // multiple distinct custom endpoints.
   const availablePresets = presets.filter(
-    (p) => !savedConfigs.some((c) => c.provider_id === p.id)
+    (p) =>
+      p.id === "custom" || !savedConfigs.some((c) => c.provider_id === p.id)
   );
 
   if (isLoading) {
@@ -221,6 +234,7 @@ function ProviderCard({
   const [apiKey, setApiKey] = useState(config.api_key || "");
   const [model, setModel] = useState(config.default_model || "");
   const [baseUrl, setBaseUrl] = useState(config.base_url || "");
+  const [name, setName] = useState(config.name || "");
   const [saved, setSaved] = useState(false);
 
   // Sync if config changes externally
@@ -228,16 +242,17 @@ function ProviderCard({
     setApiKey(config.api_key || "");
     setModel(config.default_model || "");
     setBaseUrl(config.base_url || "");
-  }, [config.api_key, config.default_model, config.base_url]);
+    setName(config.name || "");
+  }, [config.api_key, config.default_model, config.base_url, config.name]);
 
   const preset = presets.find((p) => p.id === config.provider_id);
-  const needsBaseUrl =
-    config.provider_id === "custom" || config.provider_id === "ollama";
+  const isCustom = config.provider_id.startsWith("custom");
+  const needsBaseUrl = isCustom || config.provider_id === "ollama";
 
   const handleSave = async () => {
     await onSave({
       provider_id: config.provider_id,
-      name: config.name,
+      name: name || config.name,
       api_key: apiKey,
       base_url: baseUrl,
       default_model: model,
@@ -291,6 +306,22 @@ function ProviderCard({
       </div>
 
       <div className="mt-3 space-y-3">
+        {/* Name (custom endpoints — so multiple are distinguishable) */}
+        {isCustom && (
+          <div>
+            <label className="block text-xs font-medium text-fgmuted">
+              Name
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. RENCI eLLM"
+              className="mt-1 block w-full rounded-md border border-line px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+            />
+          </div>
+        )}
+
         {/* API Key */}
         <div>
           <label className="block text-xs font-medium text-fgmuted">

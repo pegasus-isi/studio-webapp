@@ -566,12 +566,18 @@ async def chat_stream(request: Request) -> StreamingResponse:
     api_key = config.get("api_key", "")
     is_anthropic = provider == "anthropic"
 
-    # If a different provider was requested, look up its saved config
+    # If a different provider was requested, use ITS saved config — endpoint,
+    # model, and key — not just the key (lets multiple custom endpoints work).
     if provider_override and provider_override != config.get("provider"):
         prov_config = await db.get_provider_config(provider_override)
         if prov_config:
             api_key = prov_config.get("api_key", "") or api_key
             is_anthropic = provider_override == "anthropic"
+            config = {
+                **config,
+                "base_url": prov_config.get("base_url") or config.get("base_url"),
+                "model": prov_config.get("default_model") or config.get("model"),
+            }
 
     # Resolve base_url and default model
     from llm.providers import PROVIDER_DEFAULTS, PROVIDERS
