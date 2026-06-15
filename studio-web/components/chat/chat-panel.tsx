@@ -93,7 +93,7 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
         )}
       >
         {/* Main content */}
-        <div className="prose prose-sm max-w-none whitespace-pre-wrap">
+        <div className="prose prose-sm max-w-none whitespace-pre-wrap dark:prose-invert">
           {msg.content}
         </div>
 

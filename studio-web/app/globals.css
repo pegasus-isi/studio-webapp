@@ -30,8 +30,8 @@
   --c-muted: #1a2b47;
   --c-line: #24344f;
   --c-fg: #f8fafc;
-  --c-fgmuted: #94a3b8;
-  --c-fgsubtle: #64748b;
+  --c-fgmuted: #cbd5e1; /* lighter for readability on the navy base */
+  --c-fgsubtle: #94a3b8;
   --c-accent: #38bdf8;
   --c-accent-fg: #04121f;
 }
