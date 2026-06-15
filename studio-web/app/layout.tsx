@@ -2,11 +2,6 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
 import { Providers } from "./providers";
-import { Sidebar } from "@/components/layout/sidebar";
-import { GlobalChatPanel } from "@/components/layout/global-chat-panel";
-import { GlobalTerminalPanel } from "@/components/layout/global-terminal-panel";
-import { StatusBar } from "@/components/layout/status-bar";
-import { BrandControl } from "@/components/layout/brand-control";
 import { normalizeBasePath } from "@/lib/urls";
 
 export const metadata: Metadata = {
@@ -48,25 +43,7 @@ export default async function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: noFlashTheme }} />
       </head>
       <body className="antialiased">
-        <Providers>
-          <BrandControl />
-          <div className="flex h-screen overflow-hidden">
-            <Sidebar />
-            <div className="flex flex-1 flex-col overflow-hidden">
-              {/* Main content + optional chat sidebar */}
-              <div className="flex flex-1 overflow-hidden">
-                <main className="flex-1 overflow-auto bg-base">
-                  {children}
-                </main>
-                <GlobalChatPanel />
-              </div>
-              {/* Global terminal bottom pane */}
-              <GlobalTerminalPanel />
-              {/* VS Code-style status bar */}
-              <StatusBar />
-            </div>
-          </div>
-        </Providers>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

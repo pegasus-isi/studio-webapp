@@ -187,6 +187,22 @@ RUN mkdir -p /opt/npm-global && chmod 777 /opt/npm-global
 ENV NPM_CONFIG_PREFIX=/opt/npm-global
 ENV PATH="/opt/npm-global/bin:${PATH}"
 
+# ---- PegasusAI Chat JupyterLab extension ----
+# Docks the studio /chat panel inside JupyterLab (iframe; URL derived from the
+# per-user base path). Built with the bundled jlpm; --development True avoids
+# the license-webpack-plugin crash on Node 20. The extension dir ships a
+# .yarnrc.yml (nodeLinker: node-modules) so the federated build resolves.
+COPY jupyter-pegasusai-chat/ /opt/jupyter-pegasusai-chat/
+RUN cd /opt/jupyter-pegasusai-chat \
+    && touch yarn.lock \
+    && jlpm install \
+    && jlpm build:lib:prod \
+    && jupyter labextension build --development True . \
+    && EXTDIR="$(python3 -c 'import sys, os; print(os.path.join(sys.prefix, "share", "jupyter", "labextensions", "jupyter-pegasusai-chat"))')" \
+    && mkdir -p "$EXTDIR" \
+    && cp -r jupyter_pegasusai_chat/labextension/* "$EXTDIR/" \
+    && chmod -R a+rX "$EXTDIR"
+
 # ---- Studio API (Python backend) ----
 COPY studio-api/requirements.txt /opt/studio-api/requirements.txt
 RUN pip install --no-cache-dir -r /opt/studio-api/requirements.txt

@@ -31,17 +31,18 @@ export function Sidebar() {
     <aside className="flex w-56 flex-col border-r border-line bg-surface">
       {/* Official PegasusAI lockup (includes the name) — light/dark variants.
           Relative src resolves under the per-user <base href>. */}
-      <div className="flex h-14 items-center border-b border-line px-4">
+      <div className="flex h-14 items-center gap-1.5 border-b border-line px-4">
         <img
           src="pegasus-ai-logo-light.png"
-          alt="PegasusAI Studio"
+          alt="PegasusAI"
           className="block h-10 w-auto dark:hidden"
         />
         <img
           src="pegasus-ai-logo-dark.png"
-          alt="PegasusAI Studio"
+          alt="PegasusAI"
           className="hidden h-10 w-auto dark:block"
         />
+        <span className="text-sm font-medium text-fgsubtle">Studio</span>
       </div>
 
       {/* Navigation */}
