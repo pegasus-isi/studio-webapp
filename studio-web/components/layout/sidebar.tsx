@@ -4,7 +4,6 @@ import { usePathname } from "next/navigation";
 import { appRelativePath, jupyterUrl, stripAppBasePath } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 import { usePanelStore } from "@/lib/stores/panel-store";
-import { PegasusLogo } from "@/components/ui/pegasus-logo";
 
 const NAV_ITEMS: {
   href: string;
@@ -30,11 +29,19 @@ export function Sidebar() {
 
   return (
     <aside className="flex w-56 flex-col border-r border-line bg-surface">
-      {/* Logo */}
-      <div className="flex h-14 items-center gap-2 border-b border-line px-4">
-        <PegasusLogo size={22} />
-        <span className="text-lg font-bold text-pegasus-700 dark:text-pegasus-300">PegasusAI</span>
-        <span className="text-xs text-fgsubtle">Studio</span>
+      {/* Official PegasusAI lockup (includes the name) — light/dark variants.
+          Relative src resolves under the per-user <base href>. */}
+      <div className="flex h-14 items-center border-b border-line px-4">
+        <img
+          src="pegasus-ai-logo-light.png"
+          alt="PegasusAI Studio"
+          className="block h-10 w-auto dark:hidden"
+        />
+        <img
+          src="pegasus-ai-logo-dark.png"
+          alt="PegasusAI Studio"
+          className="hidden h-10 w-auto dark:block"
+        />
       </div>
 
       {/* Navigation */}
