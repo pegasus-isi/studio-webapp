@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 import logging_config as _  # noqa: F401 — triggers configure_logging()
@@ -183,3 +183,28 @@ app.include_router(terminal.router)
 app.include_router(ai_terminal.router)
 app.include_router(workflows.router)
 app.include_router(chat.router)
+
+
+@app.get("/api/whoami")
+async def whoami(request: Request) -> dict:
+    """Authenticated identity + JupyterHub control URLs for the user menu.
+
+    KubeSpawner injects JUPYTERHUB_USER / JUPYTERHUB_BASE_URL into the pod;
+    fall back to the gateway's X-Auth-User header. logout/control URLs point
+    at the Hub so the menu can sign out and stop/start the server.
+    """
+    import os
+
+    user = (
+        os.environ.get("JUPYTERHUB_USER")
+        or request.headers.get("x-auth-user", "").strip()
+        or None
+    )
+    hub_base = os.environ.get("JUPYTERHUB_BASE_URL", "/")
+    if not hub_base.endswith("/"):
+        hub_base += "/"
+    return {
+        "user": user,
+        "logout_url": f"{hub_base}hub/logout" if user else None,
+        "control_url": f"{hub_base}hub/home" if user else None,
+    }

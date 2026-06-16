@@ -2,7 +2,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { GlobalChatPanel } from "@/components/layout/global-chat-panel";
 import { GlobalTerminalPanel } from "@/components/layout/global-terminal-panel";
 import { StatusBar } from "@/components/layout/status-bar";
-import { BrandControl } from "@/components/layout/brand-control";
+import { UserMenu } from "@/components/layout/user-menu";
 
 /**
  * Studio shell — sidebar, panels, status bar, theme toggle. Applied to the
@@ -16,7 +16,7 @@ export default function StudioLayout({
 }) {
   return (
     <>
-      <BrandControl />
+      <UserMenu />
       <div className="flex h-screen overflow-hidden">
         <Sidebar />
         <div className="flex flex-1 flex-col overflow-hidden">
