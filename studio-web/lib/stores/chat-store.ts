@@ -1,8 +1,13 @@
 /**
- * Zustand store for built-in chat state.
+ * Zustand store for built-in chat — conversation-aware.
+ *
+ * Multiple conversations live client-side (localStorage): each has its own
+ * message list. `messages` always mirrors the active conversation, so the
+ * existing message API (addMessage/appendToLast/…) is unchanged for callers.
  */
 
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 export interface ChatMsg {
   id: string;
@@ -14,8 +19,17 @@ export interface ChatMsg {
   createdAt?: string;
 }
 
+export interface ConversationMeta {
+  id: string;
+  title: string;
+  createdAt: number;
+}
+
 interface ChatStore {
-  messages: ChatMsg[];
+  conversations: ConversationMeta[];
+  activeId: string;
+  messagesById: Record<string, ChatMsg[]>;
+  messages: ChatMsg[]; // mirror of messagesById[activeId]
   isStreaming: boolean;
   requestId: string | null;
   agentId: string;
@@ -32,64 +46,190 @@ interface ChatStore {
   setModel: (model: string | null) => void;
   clearMessages: () => void;
   loadHistory: (msgs: ChatMsg[]) => void;
+
+  newConversation: () => void;
+  switchConversation: (id: string) => void;
+  renameConversation: (id: string, title: string) => void;
+  deleteConversation: (id: string) => void;
 }
 
 let _msgCounter = 0;
+const newId = () => `c-${Math.random().toString(36).slice(2, 10)}`;
+const deriveTitle = (text: string) =>
+  text.trim().replace(/\s+/g, " ").slice(0, 40) || "New chat";
 
-export const useChatStore = create<ChatStore>((set) => ({
-  messages: [],
-  isStreaming: false,
-  requestId: null,
-  agentId: "general",
-  provider: null,
-  model: null,
+const _firstId = newId();
 
-  addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
+export const useChatStore = create<ChatStore>()(
+  persist(
+    (set) => ({
+      conversations: [{ id: _firstId, title: "New chat", createdAt: 0 }],
+      activeId: _firstId,
+      messagesById: { [_firstId]: [] },
+      messages: [],
+      isStreaming: false,
+      requestId: null,
+      agentId: "general",
+      provider: null,
+      model: null,
 
-  appendToLast: (text) =>
-    set((s) => {
-      const msgs = [...s.messages];
-      const last = msgs[msgs.length - 1];
-      if (last && last.role === "assistant") {
-        msgs[msgs.length - 1] = { ...last, content: last.content + text };
-      } else {
-        msgs.push({
-          id: `msg-${++_msgCounter}`,
-          role: "assistant",
-          content: text,
-        });
-      }
-      return { messages: msgs };
+      addMessage: (msg) =>
+        set((s) => {
+          const arr = [...(s.messagesById[s.activeId] || []), msg];
+          // Auto-title the conversation from the first user message.
+          let conversations = s.conversations;
+          if (msg.role === "user") {
+            const conv = s.conversations.find((c) => c.id === s.activeId);
+            if (conv && (!conv.title || conv.title === "New chat")) {
+              conversations = s.conversations.map((c) =>
+                c.id === s.activeId
+                  ? { ...c, title: deriveTitle(msg.content) }
+                  : c
+              );
+            }
+          }
+          return {
+            messagesById: { ...s.messagesById, [s.activeId]: arr },
+            messages: arr,
+            conversations,
+          };
+        }),
+
+      appendToLast: (text) =>
+        set((s) => {
+          const arr = [...(s.messagesById[s.activeId] || [])];
+          const last = arr[arr.length - 1];
+          if (last && last.role === "assistant") {
+            arr[arr.length - 1] = { ...last, content: last.content + text };
+          } else {
+            arr.push({
+              id: `msg-${++_msgCounter}`,
+              role: "assistant",
+              content: text,
+            });
+          }
+          return {
+            messagesById: { ...s.messagesById, [s.activeId]: arr },
+            messages: arr,
+          };
+        }),
+
+      addToolCall: (call) =>
+        set((s) => {
+          const arr = [...(s.messagesById[s.activeId] || [])];
+          const last = arr[arr.length - 1];
+          if (last && last.role === "assistant") {
+            arr[arr.length - 1] = {
+              ...last,
+              toolCalls: [...(last.toolCalls || []), call],
+            };
+          }
+          return {
+            messagesById: { ...s.messagesById, [s.activeId]: arr },
+            messages: arr,
+          };
+        }),
+
+      addToolResult: (result) =>
+        set((s) => {
+          const arr = [...(s.messagesById[s.activeId] || [])];
+          const last = arr[arr.length - 1];
+          if (last && last.role === "assistant") {
+            arr[arr.length - 1] = {
+              ...last,
+              toolResults: [...(last.toolResults || []), result],
+            };
+          }
+          return {
+            messagesById: { ...s.messagesById, [s.activeId]: arr },
+            messages: arr,
+          };
+        }),
+
+      setStreaming: (streaming, requestId) =>
+        set({ isStreaming: streaming, requestId: requestId ?? null }),
+
+      setAgent: (agentId) => set({ agentId }),
+      setProvider: (provider) => set({ provider }),
+      setModel: (model) => set({ model }),
+
+      clearMessages: () =>
+        set((s) => ({
+          messagesById: { ...s.messagesById, [s.activeId]: [] },
+          messages: [],
+        })),
+
+      loadHistory: (msgs) =>
+        set((s) => ({
+          messagesById: { ...s.messagesById, [s.activeId]: msgs },
+          messages: msgs,
+        })),
+
+      newConversation: () =>
+        set((s) => {
+          const id = newId();
+          return {
+            conversations: [
+              { id, title: "New chat", createdAt: Date.now() },
+              ...s.conversations,
+            ],
+            activeId: id,
+            messagesById: { ...s.messagesById, [id]: [] },
+            messages: [],
+          };
+        }),
+
+      switchConversation: (id) =>
+        set((s) => ({ activeId: id, messages: s.messagesById[id] || [] })),
+
+      renameConversation: (id, title) =>
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id === id ? { ...c, title: title || c.title } : c
+          ),
+        })),
+
+      deleteConversation: (id) =>
+        set((s) => {
+          const conversations = s.conversations.filter((c) => c.id !== id);
+          const messagesById = { ...s.messagesById };
+          delete messagesById[id];
+          if (conversations.length === 0) {
+            const nid = newId();
+            return {
+              conversations: [
+                { id: nid, title: "New chat", createdAt: Date.now() },
+              ],
+              messagesById: { [nid]: [] },
+              activeId: nid,
+              messages: [],
+            };
+          }
+          const activeId = s.activeId === id ? conversations[0].id : s.activeId;
+          return {
+            conversations,
+            messagesById,
+            activeId,
+            messages: messagesById[activeId] || [],
+          };
+        }),
     }),
-
-  addToolCall: (call) =>
-    set((s) => {
-      const msgs = [...s.messages];
-      const last = msgs[msgs.length - 1];
-      if (last && last.role === "assistant") {
-        const calls = [...(last.toolCalls || []), call];
-        msgs[msgs.length - 1] = { ...last, toolCalls: calls };
-      }
-      return { messages: msgs };
-    }),
-
-  addToolResult: (result) =>
-    set((s) => {
-      const msgs = [...s.messages];
-      const last = msgs[msgs.length - 1];
-      if (last && last.role === "assistant") {
-        const results = [...(last.toolResults || []), result];
-        msgs[msgs.length - 1] = { ...last, toolResults: results };
-      }
-      return { messages: msgs };
-    }),
-
-  setStreaming: (streaming, requestId) =>
-    set({ isStreaming: streaming, requestId: requestId ?? null }),
-
-  setAgent: (agentId) => set({ agentId }),
-  setProvider: (provider) => set({ provider }),
-  setModel: (model) => set({ model }),
-  clearMessages: () => set({ messages: [] }),
-  loadHistory: (msgs) => set({ messages: msgs }),
-}));
+    {
+      name: "studio-chat",
+      partialize: (s) => ({
+        conversations: s.conversations,
+        activeId: s.activeId,
+        messagesById: s.messagesById,
+        agentId: s.agentId,
+        provider: s.provider,
+        model: s.model,
+      }),
+      // messages mirrors messagesById[activeId] — recompute after rehydrate.
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.messages = state.messagesById[state.activeId] || [];
+        }
+      },
+    }
+  )
+);

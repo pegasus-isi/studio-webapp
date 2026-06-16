@@ -3,11 +3,10 @@
 import { useEffect } from "react";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { ChatInput } from "@/components/chat/chat-input";
+import { ConversationBar } from "@/components/chat/conversation-bar";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
-import { useChatStore } from "@/lib/stores/chat-store";
 import { useThemeStore, applyTheme } from "@/lib/stores/theme-store";
 import { useNotebookContextStore } from "@/lib/stores/notebook-context-store";
-import * as api from "@/lib/api/client";
 
 /**
  * Full-screen PegasusAI Chat, no studio chrome — embedded as an iframe panel
@@ -16,7 +15,6 @@ import * as api from "@/lib/api/client";
  * notebook-aware.
  */
 export default function ChatEmbedPage() {
-  const loadHistory = useChatStore((s) => s.loadHistory);
   const theme = useThemeStore((s) => s.theme);
   const activeNotebookPath = useNotebookContextStore((s) => s.activeNotebookPath);
   const include = useNotebookContextStore((s) => s.include);
@@ -46,29 +44,16 @@ export default function ChatEmbedPage() {
     return () => window.removeEventListener("message", onMessage);
   }, [setActiveNotebookPath]);
 
-  useEffect(() => {
-    api
-      .getChatHistory()
-      .then((data) => {
-        const msgs = data.messages.map((m, i) => ({
-          id: `hist-${i}`,
-          role: m.role as "user" | "assistant",
-          content: m.content,
-          agentId: m.agent_id ?? undefined,
-          createdAt: m.created_at ?? undefined,
-        }));
-        if (msgs.length > 0) loadHistory(msgs);
-      })
-      .catch(() => {});
-  }, [loadHistory]);
-
   const notebookName = activeNotebookPath?.split("/").pop();
 
   return (
     <div className="flex h-screen flex-col bg-base">
-      <div className="flex items-center gap-2 border-b border-line bg-surface px-4 py-2.5">
-        <PegasusLogo size={20} />
-        <span className="text-sm font-semibold text-fg">PegasusAI Chat</span>
+      <div className="flex items-center gap-2 border-b border-line bg-surface px-3 py-2">
+        <span className="flex shrink-0 items-center gap-1.5 text-sm font-semibold text-fg">
+          <PegasusLogo size={20} />
+          <span className="hidden sm:inline">PegasusAI</span>
+        </span>
+        <ConversationBar />
       </div>
       <div className="flex-1 overflow-hidden">
         <ChatPanel />
