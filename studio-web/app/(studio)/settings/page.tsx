@@ -344,33 +344,40 @@ function ProviderCard({
         {/* Model */}
         <div>
           <label className="block text-xs font-medium text-fgmuted">
-            Model
+            Default Model
           </label>
+          {/* After a successful test, pick from the endpoint's models. */}
+          {validate.data?.valid && validate.data.models.length > 0 && (
+            <select
+              value={validate.data.models.includes(model) ? model : ""}
+              onChange={(e) => e.target.value && setModel(e.target.value)}
+              className="mt-1 block w-full rounded-md border border-line px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+            >
+              <option value="">
+                Select a model ({validate.data.models.length} available)…
+              </option>
+              {validate.data.models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          )}
           <input
             type="text"
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder={preset?.default_model || "model name"}
+            placeholder={
+              validate.data?.valid
+                ? "…or type a model name"
+                : preset?.default_model || "model name (or Test to list models)"
+            }
             className="mt-1 block w-full rounded-md border border-line px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
           />
-          {/* Show model chips from validation */}
-          {validate.data?.valid && validate.data.models.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1">
-              {validate.data.models.slice(0, 10).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setModel(m)}
-                  className={cn(
-                    "rounded-full border px-2 py-0.5 text-xs",
-                    m === model
-                      ? "border-pegasus-500 bg-pegasus-50 dark:bg-pegasus-400/10 text-pegasus-700 dark:text-pegasus-300"
-                      : "border-line text-fgmuted hover:bg-base"
-                  )}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
+          {validate.data?.valid && validate.data.models.length === 0 && (
+            <p className="mt-1 text-xs text-fgsubtle">
+              Connected, but the endpoint listed no models — enter one manually.
+            </p>
           )}
         </div>
 

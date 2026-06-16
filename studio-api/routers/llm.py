@@ -6,7 +6,7 @@ import structlog
 from fastapi import APIRouter, HTTPException
 
 from llm.propagator import LLMPropagator
-from llm.providers import PROVIDER_DEFAULTS, PROVIDERS, fetch_models
+from llm.providers import PROVIDER_DEFAULTS, PROVIDERS, fetch_models, provider_type
 from models import (
     LLMConfigRequest,
     LLMConfigResponse,
@@ -74,13 +74,14 @@ async def list_providers() -> dict[str, list[ProviderInfo]]:
 @router.post("/validate", response_model=ValidateResponse)
 async def validate_provider(req: ValidateRequest) -> ValidateResponse:
     """Test API key connectivity by fetching models from the provider."""
-    provider = req.provider.value
-    preset = PROVIDERS.get(provider)
+    # Normalize custom-<id> (multiple custom endpoints) to the "custom" preset.
+    ptype = provider_type(req.provider)
+    preset = PROVIDERS.get(ptype)
     if not preset:
-        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider}")
 
     # Resolve base URL
-    defaults = PROVIDER_DEFAULTS.get(provider, {})
+    defaults = PROVIDER_DEFAULTS.get(ptype, {})
     base_url = req.base_url or defaults.get("base_url", "")
 
     if not base_url:
@@ -89,7 +90,7 @@ async def validate_provider(req: ValidateRequest) -> ValidateResponse:
         )
 
     # Anthropic doesn't have a standard /models endpoint
-    if provider == "anthropic":
+    if ptype == "anthropic":
         # Test with a simple API call
         import httpx
 

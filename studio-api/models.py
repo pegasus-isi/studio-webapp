@@ -125,7 +125,7 @@ class ProviderInfo(BaseModel):
 
 
 class ValidateRequest(BaseModel):
-    provider: LLMProvider
+    provider: str  # may be a custom-<id>; normalized server-side
     api_key: str
     base_url: str | None = None
 
