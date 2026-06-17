@@ -11,8 +11,8 @@ export function ChatPanel() {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Show a "thinking" indicator while streaming but before the assistant's
-  // first token (no assistant message yet). Once content arrives, the last
-  // message is the assistant's.
+  // first token (no assistant message yet — the model is reasoning / a tool
+  // is running). Once content arrives, the last message is the assistant's.
   const last = messages[messages.length - 1];
   const showThinking = isStreaming && (!last || last.role === "user");
 
@@ -76,24 +76,24 @@ function ThinkingIndicator() {
 
 function MessageBubble({ msg }: { msg: ChatMsg }) {
   const isUser = msg.role === "user";
+  const meta = msg.meta;
 
   return (
-    <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
-      {!isUser && (
-        <div className="mr-2 mt-1 shrink-0">
-          <PegasusLogo size={24} />
-        </div>
-      )}
+    <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
+      {/* Role label */}
+      <span className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
+        {isUser ? "You" : "AI"}
+      </span>
       <div
         className={cn(
-          "max-w-[80%] rounded-lg px-4 py-3 text-sm",
+          "max-w-[85%] rounded-lg px-4 py-3 text-sm",
           isUser
             ? "bg-pegasus-600 text-white"
             : "bg-surface border border-line text-fg"
         )}
       >
         {/* Main content */}
-        <div className="prose prose-sm max-w-none whitespace-pre-wrap dark:prose-invert">
+        <div className="prose prose-sm max-w-none whitespace-pre-wrap [overflow-wrap:anywhere] dark:prose-invert">
           {msg.content}
         </div>
 
@@ -116,9 +116,13 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
         {msg.toolResults && msg.toolResults.length > 0 && (
           <div className="mt-2 space-y-1 border-t border-line pt-2">
             {msg.toolResults.map((tr) => (
-              <details key={tr.id} className="rounded bg-base text-xs">
+              <details
+                key={tr.id}
+                className="rounded bg-base text-xs"
+              >
                 <summary className="cursor-pointer px-2 py-1 text-fgmuted">
-                  <span className="font-mono font-medium">{tr.name}</span> result
+                  <span className="font-mono font-medium">{tr.name}</span>{" "}
+                  result
                 </summary>
                 <pre className="max-h-40 overflow-auto px-2 pb-1 text-fgmuted">
                   {tr.result}
@@ -127,7 +131,23 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
             ))}
           </div>
         )}
+
+        {/* Per-turn metadata footer (tokens, tool calls, duration) */}
+        {!isUser && meta && (meta.tokens || meta.durationS) ? (
+          <div className="mt-2 border-t border-line pt-1.5 text-xs italic text-fgsubtle">
+            {formatMeta(meta)}
+          </div>
+        ) : null}
       </div>
     </div>
   );
+}
+
+function formatMeta(meta: NonNullable<ChatMsg["meta"]>): string {
+  const parts: string[] = [];
+  if (meta.tokens) parts.push(`~${meta.tokens.toLocaleString()} tokens`);
+  if (meta.toolCalls)
+    parts.push(`${meta.toolCalls} tool call${meta.toolCalls === 1 ? "" : "s"}`);
+  if (meta.durationS != null) parts.push(`${meta.durationS}s`);
+  return parts.join(", ");
 }

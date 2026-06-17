@@ -17,6 +17,13 @@ export interface ChatMsg {
   toolResults?: { id: string; name: string; result: string }[];
   agentId?: string;
   createdAt?: string;
+  meta?: {
+    tokens?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    toolCalls?: number;
+    durationS?: number;
+  };
 }
 
 export interface ConversationMeta {
@@ -40,6 +47,7 @@ interface ChatStore {
   appendToLast: (text: string) => void;
   addToolCall: (call: { id: string; name: string; arguments: unknown }) => void;
   addToolResult: (result: { id: string; name: string; result: string }) => void;
+  setLastMeta: (meta: NonNullable<ChatMsg["meta"]>) => void;
   setStreaming: (streaming: boolean, requestId?: string | null) => void;
   setAgent: (agentId: string) => void;
   setProvider: (provider: string | null) => void;
@@ -139,6 +147,19 @@ export const useChatStore = create<ChatStore>()(
               ...last,
               toolResults: [...(last.toolResults || []), result],
             };
+          }
+          return {
+            messagesById: { ...s.messagesById, [s.activeId]: arr },
+            messages: arr,
+          };
+        }),
+
+      setLastMeta: (meta) =>
+        set((s) => {
+          const arr = [...(s.messagesById[s.activeId] || [])];
+          const last = arr[arr.length - 1];
+          if (last && last.role === "assistant") {
+            arr[arr.length - 1] = { ...last, meta };
           }
           return {
             messagesById: { ...s.messagesById, [s.activeId]: arr },

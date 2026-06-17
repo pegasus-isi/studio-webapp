@@ -17,6 +17,7 @@ export function ChatInput() {
   const appendToLast = useChatStore((s) => s.appendToLast);
   const addToolCall = useChatStore((s) => s.addToolCall);
   const addToolResult = useChatStore((s) => s.addToolResult);
+  const setLastMeta = useChatStore((s) => s.setLastMeta);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const messages = useChatStore((s) => s.messages);
   const agentId = useChatStore((s) => s.agentId);
@@ -134,6 +135,14 @@ export function ChatInput() {
               addToolCall(event.tool_call);
             } else if (event.tool_result) {
               addToolResult(event.tool_result);
+            } else if (event.meta) {
+              setLastMeta({
+                tokens: event.meta.tokens,
+                inputTokens: event.meta.input_tokens,
+                outputTokens: event.meta.output_tokens,
+                toolCalls: event.meta.tool_calls,
+                durationS: event.meta.duration_s,
+              });
             } else if (event.error) {
               appendToLast(`\n\nError: ${event.error}`);
             }
@@ -158,6 +167,7 @@ export function ChatInput() {
     appendToLast,
     addToolCall,
     addToolResult,
+    setLastMeta,
     setStreaming,
   ]);
 
@@ -222,17 +232,26 @@ export function ChatInput() {
           {isStreaming ? (
             <button
               onClick={handleStop}
-              className="rounded-md bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
+              title="Stop"
+              aria-label="Stop"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700"
             >
-              Stop
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="1.5" />
+              </svg>
             </button>
           ) : (
             <button
               onClick={handleSend}
               disabled={!input.trim()}
-              className="rounded-md bg-pegasus-600 px-4 py-2 text-sm text-white hover:bg-pegasus-700 disabled:opacity-50"
+              title="Send"
+              aria-label="Send"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-pegasus-600 text-white hover:bg-pegasus-700 disabled:opacity-50"
             >
-              Send
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5" />
+                <polyline points="5 12 12 5 19 12" />
+              </svg>
             </button>
           )}
         </div>
