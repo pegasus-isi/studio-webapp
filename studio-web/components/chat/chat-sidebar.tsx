@@ -12,8 +12,9 @@ interface ChatSidebarProps {
 export function ChatSidebar({ onClose }: ChatSidebarProps) {
   return (
     <div className="flex w-[400px] flex-col border-l border-line bg-surface">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5">
+      {/* Header — pt clears the fixed UserMenu pill (top-right) so the
+          conversation controls and close button aren't hidden under it. */}
+      <div className="flex items-center justify-between gap-2 border-b border-line px-3 pb-2.5 pt-14">
         <h2 className="flex shrink-0 items-center gap-1.5 text-sm font-semibold text-fg">
           <PegasusLogo size={20} />
           <span className="hidden sm:inline">PegasusAI</span>
