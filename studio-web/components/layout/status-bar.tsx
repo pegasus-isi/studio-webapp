@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { useWorkspaceStore } from "@/lib/stores/workspace-store";
 import { useToolStore } from "@/lib/stores/tool-store";
+import * as api from "@/lib/api/client";
 
 export function StatusBar() {
   const chatOpen = usePanelStore((s) => s.chatOpen);
@@ -10,7 +12,32 @@ export function StatusBar() {
   const toggleChat = usePanelStore((s) => s.toggleChat);
   const toggleTerminal = usePanelStore((s) => s.toggleTerminal);
   const jupyterStatus = useWorkspaceStore((s) => s.jupyterStatus);
+  const setJupyterStatus = useWorkspaceStore((s) => s.setJupyterStatus);
   const tabCount = useToolStore((s) => s.tabs.length);
+
+  // The status bar is always mounted, so poll JupyterLab status here — the
+  // indicator must be correct on every page, not only on /notebooks.
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const res = await api.getJupyterStatus();
+        if (!active) return;
+        setJupyterStatus(
+          res.status as "stopped" | "starting" | "running",
+          res.port
+        );
+      } catch {
+        /* keep polling */
+      }
+    };
+    poll();
+    const id = setInterval(poll, 10000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [setJupyterStatus]);
 
   return (
     <div className="flex h-6 items-center justify-between border-t border-line bg-muted px-3 text-xs select-none">
