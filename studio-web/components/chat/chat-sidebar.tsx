@@ -2,41 +2,27 @@
 
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { ChatInput } from "@/components/chat/chat-input";
-import { useChatStore } from "@/lib/stores/chat-store";
-import { useEffect } from "react";
-import * as api from "@/lib/api/client";
+import { ConversationBar } from "@/components/chat/conversation-bar";
+import { PegasusLogo } from "@/components/ui/pegasus-logo";
 
 interface ChatSidebarProps {
   onClose: () => void;
 }
 
 export function ChatSidebar({ onClose }: ChatSidebarProps) {
-  const loadHistory = useChatStore((s) => s.loadHistory);
-
-  useEffect(() => {
-    api
-      .getChatHistory()
-      .then((data) => {
-        const msgs = data.messages.map((m, i) => ({
-          id: `hist-${i}`,
-          role: m.role as "user" | "assistant",
-          content: m.content,
-          agentId: m.agent_id ?? undefined,
-          createdAt: m.created_at ?? undefined,
-        }));
-        if (msgs.length > 0) loadHistory(msgs);
-      })
-      .catch(() => {});
-  }, [loadHistory]);
-
   return (
-    <div className="flex w-[400px] flex-col border-l border-gray-200 bg-white">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-        <h2 className="text-sm font-semibold text-gray-900">Chat</h2>
+    <div className="flex w-[400px] flex-col border-l border-line bg-surface">
+      {/* Header — pt clears the fixed UserMenu pill (top-right) so the
+          conversation controls and close button aren't hidden under it. */}
+      <div className="flex items-center justify-between gap-2 border-b border-line px-3 pb-2.5 pt-14">
+        <h2 className="flex shrink-0 items-center gap-1.5 text-sm font-semibold text-fg">
+          <PegasusLogo size={20} />
+          <span className="hidden sm:inline">PegasusAI</span>
+        </h2>
+        <ConversationBar />
         <button
           onClick={onClose}
-          className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          className="rounded p-1 text-fgsubtle hover:bg-muted hover:text-fgmuted"
           aria-label="Close chat"
         >
           <svg

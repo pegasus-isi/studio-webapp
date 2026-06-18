@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import glob
 import json
 import os
 
@@ -290,6 +291,132 @@ async def submit(
 
 
 # ── Run-specific endpoints (/{run_id} path parameter routes) ──
+
+
+# YAML files that live next to a workflow but aren't one (catalogs etc.)
+_NON_WORKFLOW_YML = {
+    "braindump.yml", "braindump.yaml",
+    "replicas.yml", "replicas.yaml", "rc.yml",
+    "sites.yml", "sites.yaml",
+    "transformations.yml", "transformations.yaml", "tc.yml",
+}
+
+
+def _project_workflow_file(project_dir: str) -> str | None:
+    """The project's abstract workflow YAML, if generated."""
+    candidates = sorted(
+        glob.glob(os.path.join(project_dir, "*.yml"))
+        + glob.glob(os.path.join(project_dir, "*.yaml"))
+    )
+    for f in candidates:
+        if os.path.basename(f) in ("workflow.yml", "workflow.yaml"):
+            return f
+    for f in candidates:
+        if os.path.basename(f) in _NON_WORKFLOW_YML:
+            continue
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                head = fh.read(4096)
+        except OSError:
+            continue
+        if "pegasus:" in head and "jobs:" in head:
+            return f
+    return None
+
+
+def _parse_workflow_graph(wf_path: str) -> dict:
+    """Abstract workflow YAML -> {name, nodes, edges} for the client-side
+    DAG visualizer (React Flow). Node ids are the abstract job ids."""
+    import yaml
+
+    try:
+        with open(wf_path, encoding="utf-8", errors="replace") as f:
+            doc = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError) as e:
+        raise HTTPException(
+            status_code=500, detail=f"Could not parse workflow file: {e}"
+        )
+
+    nodes = []
+    for j in doc.get("jobs") or []:
+        jid = str(j.get("id") or "")
+        if not jid:
+            continue
+        nodes.append({
+            "id": jid,
+            "label": str(j.get("name") or j.get("file") or jid),
+            "transformation": j.get("name"),
+            "status": "unsubmitted",
+        })
+    edges = []
+    for dep in doc.get("jobDependencies") or []:
+        parent = str(dep.get("id") or "")
+        for child in dep.get("children") or []:
+            edges.append({"source": parent, "target": str(child)})
+    return {
+        "name": doc.get("name") or os.path.basename(os.path.dirname(wf_path)),
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
+def _find_run_workflow_file(run_dir: str) -> str | None:
+    """Abstract workflow YAML for a run: in the run dir or an enclosing project."""
+    d = run_dir
+    for _ in range(5):
+        wf = _project_workflow_file(d)
+        if wf:
+            return wf
+        parent = os.path.dirname(d)
+        if parent == d or not parent.startswith(WORKSPACE_ROOT):
+            break
+        d = parent
+    return None
+
+
+@router.get("/projects/{project_id}/graph.json")
+async def project_graph_json(project_id: str) -> dict:
+    """Workflow structure for the interactive DAG viewer (no run statuses)."""
+    projects = discover_projects()
+    proj = next((p for p in projects if p["project_id"] == project_id), None)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    wf = _project_workflow_file(proj["project_dir"])
+    if not wf:
+        raise HTTPException(
+            status_code=404, detail="No workflow file yet — run Generate first"
+        )
+    return _parse_workflow_graph(wf)
+
+
+@router.get("/{run_id}/graph.json")
+async def run_graph_json(run_id: str) -> dict:
+    """Workflow structure with live job statuses joined from the run's
+    workflow-events.jsonl (exec job ids look like <transform>_<abstract-id>)."""
+    runs = discover_runs(WORKSPACE_ROOT)
+    run = next((r for r in runs if r["run_id"] == run_id), None)
+    if not run or not os.path.isdir(run["run_dir"]):
+        raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
+    wf = _find_run_workflow_file(run["run_dir"])
+    if not wf:
+        raise HTTPException(status_code=404, detail="No workflow file for this run")
+    graph = _parse_workflow_graph(wf)
+
+    jobs = await get_workflow_jobs(run["run_dir"])
+    by_node: dict[str, dict] = {n["id"]: n for n in graph["nodes"]}
+    for j in jobs:
+        exec_id = str(j.get("job_id") or "")
+        node = by_node.get(exec_id)
+        if node is None:
+            for nid, n in by_node.items():
+                if exec_id.endswith(f"_{nid}"):
+                    node = n
+                    break
+        if node is not None:
+            node["status"] = j.get("status") or node["status"]
+            node["exec_job_id"] = exec_id
+    graph["workflow_status"] = run.get("status")
+    return graph
 
 
 @router.get("/{run_id}")

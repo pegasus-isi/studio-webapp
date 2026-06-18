@@ -1,0 +1,6 @@
+node_modules/
+lib/
+jupyter_pegasusai_chat/
+.yarn/
+yarn.lock
+*.tsbuildinfo

@@ -66,6 +66,7 @@ class ToolInfo(BaseModel):
     supports_mcp: bool = False
     supports_web: bool = False
     required_env: list[str] = Field(default_factory=list)
+    paid: bool = False  # runs on the user's own LLM API tokens
     knowledge_adapter: str | None = None
     icon: str | None = None
     homepage: str | None = None
@@ -124,7 +125,7 @@ class ProviderInfo(BaseModel):
 
 
 class ValidateRequest(BaseModel):
-    provider: LLMProvider
+    provider: str  # may be a custom-<id>; normalized server-side
     api_key: str
     base_url: str | None = None
 

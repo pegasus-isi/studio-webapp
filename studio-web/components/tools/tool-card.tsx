@@ -50,11 +50,21 @@ export function ToolCard({ tool }: Props) {
   };
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-3">
+    <div className="rounded-lg border border-line bg-surface p-3">
       <div className="flex items-start justify-between">
         <div>
-          <h3 className="font-medium text-gray-900">{info.name}</h3>
-          <p className="text-xs text-gray-500">{info.vendor}</p>
+          <h3 className="flex items-center gap-1.5 font-medium text-fg">
+            {info.name}
+            {info.paid && (
+              <span
+                title="Runs on your own LLM API tokens"
+                className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+              >
+                Paid
+              </span>
+            )}
+          </h3>
+          <p className="text-xs text-fgmuted">{info.vendor}</p>
         </div>
         {status && (
           <span
@@ -68,7 +78,7 @@ export function ToolCard({ tool }: Props) {
         )}
       </div>
 
-      <p className="mt-1 text-xs text-gray-600 line-clamp-2">
+      <p className="mt-1 text-xs text-fgmuted line-clamp-2">
         {info.description}
       </p>
 
@@ -86,7 +96,7 @@ export function ToolCard({ tool }: Props) {
             {isTerminal && (
               <button
                 onClick={() => addTab(info.id, info.name)}
-                className="flex-1 rounded-md border border-pegasus-300 px-2 py-1 text-xs text-pegasus-700 hover:bg-pegasus-50"
+                className="flex-1 rounded-md border border-pegasus-300 px-2 py-1 text-xs text-pegasus-700 dark:text-pegasus-300 hover:bg-pegasus-50 dark:bg-pegasus-400/10"
               >
                 Open
               </button>
@@ -94,7 +104,7 @@ export function ToolCard({ tool }: Props) {
             <button
               onClick={() => stop.mutateAsync(info.id)}
               disabled={busy}
-              className="rounded-md border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
+              className="rounded-md border border-red-300 px-2 py-1 text-xs text-red-700 dark:text-rose-400 hover:bg-red-50 dark:bg-rose-500/10 disabled:opacity-50"
             >
               Stop
             </button>
@@ -111,7 +121,7 @@ export function ToolCard({ tool }: Props) {
             <button
               onClick={() => uninstall.mutateAsync(info.id)}
               disabled={busy}
-              className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-md border border-line px-2 py-1 text-xs text-fgmuted hover:bg-base disabled:opacity-50"
             >
               Remove
             </button>

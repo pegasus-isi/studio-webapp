@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useToolStore, type TerminalTab } from "@/lib/stores/tool-store";
 import { TerminalView } from "./terminal-view";
+import { apiUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
 export function TerminalTabs() {
@@ -9,6 +11,24 @@ export function TerminalTabs() {
   const activeTabId = useToolStore((s) => s.activeTabId);
   const setActiveTab = useToolStore((s) => s.setActiveTab);
   const removeTab = useToolStore((s) => s.removeTab);
+
+  // Tabs are restored from localStorage (persisted store); render only after
+  // mount so the SSR markup (empty store) doesn't mismatch on hydration.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const closeTab = (tab: TerminalTab) => {
+    // Closing the tab is the explicit "kill my shell" action — the backend
+    // session would otherwise linger until the idle pruner reaps it.
+    if (tab.sessionId) {
+      fetch(apiUrl(`terminals/${tab.sessionId}`), { method: "DELETE" }).catch(
+        () => {}
+      );
+    }
+    removeTab(tab.id);
+  };
+
+  if (!mounted) return null;
 
   return (
     <div className="flex h-full flex-col">
@@ -33,9 +53,9 @@ export function TerminalTabs() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                removeTab(tab.id);
+                closeTab(tab);
               }}
-              className="ml-1 text-gray-500 hover:text-white"
+              className="ml-1 text-fgmuted hover:text-white"
             >
               ×
             </button>

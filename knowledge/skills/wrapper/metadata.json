@@ -1,5 +1,6 @@
 {
   "name": "Wrapper",
   "description": "Generate a wrapper script for a single Pegasus pipeline step",
-  "slash_command": "/wrapper"
+  "slash_command": "/wrapper",
+  "order": 2
 }

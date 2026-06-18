@@ -1,7 +1,8 @@
 "use client";
 
-import { websocketUrl } from "@/lib/urls";
 import { useEffect, useRef } from "react";
+import { useToolStore } from "@/lib/stores/tool-store";
+import { apiUrl, websocketUrl } from "@/lib/urls";
 
 interface Props {
   tabId: string;
@@ -9,11 +10,14 @@ interface Props {
 }
 
 /**
- * Renders an xterm.js terminal connected via WebSocket to the backend PTY.
+ * xterm.js terminal attached to a server-held PTY session.
  *
- * The WebSocket URL is:
- * - ws/terminal          for bash
- * - ws/terminal/{toolId} for AI tools
+ * The backend owns the shell (services/terminal_sessions.py): this component
+ * resolves the tab's backend session (reusing the persisted session id after
+ * a reload, creating one otherwise), attaches via /ws/terminals/{id} — which
+ * replays the scrollback — and auto-reconnects after unexpected closes.
+ * URLs go through apiUrl()/websocketUrl() so they resolve under the per-user
+ * base path. Unmounting only detaches; the shell keeps running.
  */
 export function TerminalView({ tabId, toolId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -24,14 +28,46 @@ export function TerminalView({ tabId, toolId }: Props) {
     initialized.current = true;
 
     let ws: WebSocket | null = null;
-    let terminal: unknown = null;
+    let term: import("@xterm/xterm").Terminal | null = null;
+    let observer: ResizeObserver | null = null;
+    let reconnectTimer: number | undefined;
+    let disposed = false;
+
+    /** Reuse the tab's stored backend session if it's still alive; else create. */
+    async function resolveSession(): Promise<string> {
+      const stored = useToolStore
+        .getState()
+        .tabs.find((t) => t.id === tabId)?.sessionId;
+      if (stored) {
+        try {
+          const res = await fetch(apiUrl("terminals"));
+          if (res.ok) {
+            const list: { id: string }[] = await res.json();
+            if (list.some((s) => s.id === stored)) return stored;
+          }
+        } catch {
+          /* fall through to create */
+        }
+        useToolStore.getState().setTabSession(tabId, undefined);
+      }
+      const res = await fetch(apiUrl("terminals"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          toolId ? { type: "tool", tool_id: toolId } : { type: "bash" }
+        ),
+      });
+      if (!res.ok) throw new Error(`create failed: ${res.status}`);
+      const meta: { id: string } = await res.json();
+      useToolStore.getState().setTabSession(tabId, meta.id);
+      return meta.id;
+    }
 
     async function init() {
-      // Dynamic import to avoid SSR issues
       const { Terminal } = await import("@xterm/xterm");
       const { FitAddon } = await import("@xterm/addon-fit");
 
-      const term = new Terminal({
+      const t = new Terminal({
         fontSize: 13,
         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         theme: {
@@ -41,75 +77,75 @@ export function TerminalView({ tabId, toolId }: Props) {
         },
         cursorBlink: true,
       });
-
       const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.open(containerRef.current!);
+      t.loadAddon(fitAddon);
+      t.open(containerRef.current!);
       fitAddon.fit();
-      terminal = term;
+      term = t;
 
-      // Connect WebSocket
-      const wsPath = toolId
-        ? `/terminal/${toolId}`
-        : "/terminal";
-      ws = new WebSocket(websocketUrl(wsPath));
-
-      ws.onopen = () => {
-        // Send initial resize
-        const msg = JSON.stringify({
-          type: "resize",
-          cols: term.cols,
-          rows: term.rows,
-        });
-        ws!.send(msg);
+      const sendResize = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({ type: "resize", cols: t.cols, rows: t.rows })
+          );
+        }
       };
 
-      ws.onmessage = (event) => {
-        term.write(event.data);
+      const connect = async () => {
+        if (disposed) return;
+        let sessionId: string;
+        try {
+          sessionId = await resolveSession();
+        } catch {
+          t.write("\r\n\x1b[31m[Could not create terminal session]\x1b[0m\r\n");
+          return;
+        }
+        ws = new WebSocket(websocketUrl(`terminals/${sessionId}`));
+        ws.onopen = () => {
+          // The server replays the scrollback as the first message(s);
+          // start from a clean screen so nothing duplicates.
+          t.reset();
+          sendResize();
+        };
+        ws.onmessage = (event) => t.write(event.data);
+        ws.onclose = (event) => {
+          if (disposed) return;
+          if (event.code === 1000 || event.code === 4004) {
+            useToolStore.getState().setTabSession(tabId, undefined);
+            t.write("\r\n\x1b[33m[Session ended]\x1b[0m\r\n");
+          } else {
+            t.write("\r\n\x1b[33m[Disconnected — reconnecting…]\x1b[0m\r\n");
+            reconnectTimer = window.setTimeout(connect, 2000);
+          }
+        };
       };
 
-      ws.onclose = () => {
-        term.write("\r\n\x1b[33m[Session ended]\x1b[0m\r\n");
-      };
-
-      // Terminal → WebSocket
-      term.onData((data) => {
+      t.onData((data) => {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(data);
         }
       });
 
-      // Handle resize
-      const observer = new ResizeObserver(() => {
+      observer = new ResizeObserver(() => {
         fitAddon.fit();
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          const msg = JSON.stringify({
-            type: "resize",
-            cols: term.cols,
-            rows: term.rows,
-          });
-          ws.send(msg);
-        }
+        sendResize();
       });
       observer.observe(containerRef.current!);
 
-      return () => observer.disconnect();
+      await connect();
     }
 
     init();
 
     return () => {
-      if (ws) ws.close();
-      if (terminal && typeof (terminal as { dispose: () => void }).dispose === "function") {
-        (terminal as { dispose: () => void }).dispose();
-      }
+      // Detach only — the server-held shell keeps running for reattach.
+      disposed = true;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      observer?.disconnect();
+      ws?.close();
+      term?.dispose();
     };
   }, [tabId, toolId]);
 
-  return (
-    <div
-      ref={containerRef}
-      className="h-full w-full bg-[#0a0a0a]"
-    />
-  );
+  return <div ref={containerRef} className="h-full w-full bg-[#0a0a0a]" />;
 }

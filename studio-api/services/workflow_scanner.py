@@ -203,7 +203,33 @@ def get_run_status(run_dir: str) -> str:
     if events:
         return event_workflow_status(events)
 
-    # No JSONL yet — coarse fallback from monitord marker files.
+    # No JSONL — derive the authoritative completion status from jobstate.log,
+    # where monitord records "DAGMAN_FINISHED <code>" (0 = success, non-zero =
+    # failure). monitord.done existing only means monitord finished parsing —
+    # NOT that the workflow succeeded (a failed run also writes monitord.done).
+    jobstate = os.path.join(run_dir, "jobstate.log")
+    if os.path.isfile(jobstate):
+        finished_code: int | None = None
+        started = False
+        try:
+            with open(jobstate, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if "DAGMAN_FINISHED" in line:
+                        parts = line.split("DAGMAN_FINISHED", 1)[1].split()
+                        if parts:
+                            try:
+                                finished_code = int(parts[0])
+                            except ValueError:
+                                pass
+                    elif "DAGMAN_STARTED" in line:
+                        started = True
+        except OSError:
+            pass
+        if finished_code is not None:
+            return "succeeded" if finished_code == 0 else "failed"
+        if started:
+            return "running"
+
     monitord_pid = os.path.join(run_dir, "monitord.pid")
     if os.path.isfile(monitord_pid):
         try:
@@ -214,6 +240,9 @@ def get_run_status(run_dir: str) -> str:
         except (ValueError, IndexError, ProcessLookupError, PermissionError):
             return "failed"
 
+    # A rescue DAG means at least one node failed.
+    if glob.glob(os.path.join(run_dir, "*.dag.rescue*")):
+        return "failed"
     if os.path.isfile(os.path.join(run_dir, "monitord.done")):
         return "succeeded"
 

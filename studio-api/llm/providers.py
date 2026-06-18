@@ -98,13 +98,24 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
 PROXY_PROVIDERS = {"fabric", "nrp", "custom", "ollama"}
 
 
+def provider_type(provider_id: str) -> str:
+    """Normalize a provider_id to a known preset key. Multiple custom endpoints
+    are stored as `custom-<id>`; treat those (and any unknown id) as the
+    OpenAI-compatible "custom" type so adapters configure them correctly
+    instead of falling back to anthropic."""
+    if provider_id in PROVIDERS:
+        return provider_id
+    return "custom"
+
+
 def _resolve_base_url(pid: str, env_vars: dict[str, str] | None = None) -> str:
     """Resolve the actual base URL for a provider."""
     env_vars = env_vars or {}
-    preset = PROVIDERS[pid]
-    if pid == "custom":
+    ptype = provider_type(pid)
+    preset = PROVIDERS[ptype]
+    if ptype == "custom":
         return env_vars.get("CUSTOM_BASE_URL", env_vars.get("OPENAI_API_BASE", ""))
-    if pid == "ollama":
+    if ptype == "ollama":
         host = env_vars.get("OLLAMA_HOST", "http://localhost:11434")
         return f"{host}/v1"
     return preset["base_url"] or ""
@@ -113,8 +124,9 @@ def _resolve_base_url(pid: str, env_vars: dict[str, str] | None = None) -> str:
 def _resolve_api_key(pid: str, env_vars: dict[str, str] | None = None) -> str:
     """Resolve the API key for a provider from env vars."""
     env_vars = env_vars or {}
-    preset = PROVIDERS[pid]
-    if pid == "ollama":
+    ptype = provider_type(pid)
+    preset = PROVIDERS[ptype]
+    if ptype == "ollama":
         return "ollama"
     key_env = preset["api_key_env"]
     if key_env:

@@ -338,7 +338,9 @@ class Database:
                (run_id, name, run_dir, status, total_jobs, completed_jobs,
                 failed_jobs, exec_site, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(run_id) DO UPDATE SET
+               ON CONFLICT(run_dir) DO UPDATE SET
+                   run_id = excluded.run_id,
+                   name = excluded.name,
                    status = excluded.status,
                    total_jobs = excluded.total_jobs,
                    completed_jobs = excluded.completed_jobs,

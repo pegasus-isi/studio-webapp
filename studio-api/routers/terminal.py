@@ -1,18 +1,34 @@
-"""WebSocket PTY for plain bash terminal sessions."""
+"""Terminal sessions: server-held PTYs that survive browser reloads.
+
+Control plane (HTTP):
+    POST   /api/terminals               create a session (type: bash | tool)
+    GET    /api/terminals               list live sessions (for reattach)
+    DELETE /api/terminals/{id}          kill a session
+
+Data plane (WebSocket):
+    WS /ws/terminals/{id}               attach: replay scrollback, then stream.
+                                        Disconnect detaches — the shell keeps
+                                        running. (Plural path: the singular
+                                        /ws/terminal/{tool_id} is the legacy
+                                        spawn-on-connect AI-tool endpoint.)
+
+Legacy (kept until all clients migrate):
+    WS /ws/terminal                     spawn-on-connect bash, dies with the WS
+"""
 
 from __future__ import annotations
 
 import asyncio
-import fcntl
+import json
 import os
-import pty
-import signal
-import struct
-import subprocess
-import termios
+import shutil
 
 import structlog
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
+
+from services import terminal_sessions as ts
+from services.installer import get_tool_info
 
 log = structlog.get_logger()
 
@@ -24,88 +40,215 @@ WORKSPACE_ROOT = os.environ.get(
 )
 
 
+class CreateTerminalBody(BaseModel):
+    type: str = "bash"  # "bash" | "tool"
+    tool_id: str | None = None
+    label: str | None = None
+    cwd: str | None = None
+
+
+async def _llm_env() -> dict[str, str]:
+    """API-key env overlay from the current LLM config (never on the argv)."""
+    from main import db
+
+    env: dict[str, str] = {}
+    llm_config = await db.get_llm_config() or {}
+    api_key = llm_config.get("api_key", "")
+    key_map = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "fabric": "FABRIC_AI_API_KEY",
+        "nrp": "NRP_API_KEY",
+    }
+    env_key = key_map.get(llm_config.get("provider", ""))
+    if env_key and api_key:
+        env[env_key] = api_key
+    return env
+
+
+def _tool_command(tool_id: str) -> tuple[list[str], str]:
+    """(argv, label) for an AI tool session; falls back to a bash shell with
+    install instructions when the binary is missing."""
+    info = get_tool_info(tool_id)
+    if not info or info.get("type") != "terminal":
+        raise HTTPException(
+            status_code=400, detail=f"Tool not available as terminal: {tool_id}"
+        )
+    binary = info.get("binary")
+    if not binary:
+        raise HTTPException(status_code=400, detail="No binary configured")
+
+    label = info.get("name", tool_id)
+    binary_path = shutil.which(binary)
+    if binary_path:
+        return [binary_path], label
+
+    install_cmd = info.get("install_command", f"npm install -g {binary}")
+    log.warning("terminal_tool_binary_missing", tool_id=tool_id, binary=binary)
+    return [
+        "bash",
+        "-c",
+        f'echo "\\033[1;31mError: {binary} is not installed.\\033[0m"; '
+        f'echo ""; '
+        f'echo "Run the following command to install it:"; '
+        f'echo "  \\033[1;33m{install_cmd}\\033[0m"; '
+        f'echo ""; '
+        f"exec bash",
+    ], label
+
+
+@router.post("/api/terminals")
+async def create_terminal(body: CreateTerminalBody) -> dict:
+    """Create a server-held terminal session and return its metadata."""
+    cwd = body.cwd if (body.cwd and os.path.isdir(body.cwd)) else WORKSPACE_ROOT
+    if body.type == "bash":
+        session = ts.create(
+            type="bash",
+            command=["/bin/bash"],
+            label=body.label or "Terminal",
+            cwd=cwd,
+        )
+    elif body.type == "tool":
+        if not body.tool_id:
+            raise HTTPException(status_code=400, detail="tool_id is required")
+        command, label = _tool_command(body.tool_id)
+        session = ts.create(
+            type=f"tool:{body.tool_id}",
+            command=command,
+            label=body.label or label,
+            cwd=cwd,
+            env=await _llm_env(),
+        )
+    else:
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported terminal type: {body.type!r}"
+        )
+    return ts.meta(session)
+
+
+@router.get("/api/terminals")
+async def list_terminals() -> list[dict]:
+    """List live terminal sessions (so a reloaded client can reattach)."""
+    return ts.list_sessions()
+
+
+@router.delete("/api/terminals/{session_id}")
+async def delete_terminal(session_id: str) -> dict:
+    """Kill a terminal session (closes the shell for all attached clients)."""
+    if not ts.kill(session_id):
+        raise HTTPException(status_code=404, detail="No such terminal session")
+    return {"ok": True}
+
+
+@router.websocket("/ws/terminals/{session_id}")
+async def attach_terminal(websocket: WebSocket, session_id: str) -> None:
+    """Attach to a server-held session: replay scrollback, then stream live.
+
+    Disconnect detaches (the shell keeps running) — never kills. Multiple
+    clients attached to one session share a single view."""
+    session = ts.get(session_id)
+    if session is None or session.closed:
+        await websocket.close(code=4004, reason="No such terminal session")
+        return
+
+    await websocket.accept()
+    queue = session.attach()
+    log.info("terminal_attached", session_id=session_id, clients=session.attached)
+    try:
+        # Replay recent output so the (re)attaching client redraws its screen.
+        snap = session.snapshot()
+        if snap:
+            await websocket.send_text(snap)
+
+        async def pump_out() -> None:
+            while True:
+                chunk = await queue.get()
+                if chunk is None:  # session ended (shell exited)
+                    try:
+                        await websocket.close(code=1000)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    break
+                await websocket.send_text(chunk)
+
+        out_task = asyncio.create_task(pump_out())
+
+        while True:
+            try:
+                msg = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except Exception:  # noqa: BLE001
+                break
+            if msg.startswith("{"):
+                try:
+                    parsed = json.loads(msg)
+                except json.JSONDecodeError:
+                    session.write(msg)
+                    continue
+                if parsed.get("type") == "resize":
+                    session.resize(
+                        int(parsed.get("cols", 80)), int(parsed.get("rows", 24))
+                    )
+                elif parsed.get("type") == "input":
+                    session.write(parsed.get("data", ""))
+                else:
+                    # Pasted text that merely looks like JSON is still input
+                    session.write(msg)
+                continue
+            session.write(msg)
+
+        out_task.cancel()
+    finally:
+        session.detach(queue)
+        log.info(
+            "terminal_detached", session_id=session_id, clients=session.attached
+        )
+
+
+# ---------------------------------------------------------------------------
+# Legacy: spawn-on-connect bash whose shell dies with the WebSocket. Kept so
+# stale clients (cached SPA bundles) keep working during the transition.
+# ---------------------------------------------------------------------------
+
+
 @router.websocket("/ws/terminal")
 async def bash_terminal(websocket: WebSocket) -> None:
-    """WebSocket PTY for a plain bash shell."""
+    """Legacy WebSocket PTY for a plain bash shell (not reload-safe)."""
     await websocket.accept()
 
-    master_fd, slave_fd = pty.openpty()
-
-    env = os.environ.copy()
-    env["TERM"] = "xterm-256color"
-
-    proc = subprocess.Popen(
-        ["/bin/bash"],
-        stdin=slave_fd,
-        stdout=slave_fd,
-        stderr=slave_fd,
-        cwd=WORKSPACE_ROOT,
-        env=env,
-        preexec_fn=os.setsid,
+    session = ts.create(
+        type="bash", command=["/bin/bash"], label="Terminal", cwd=WORKSPACE_ROOT
     )
-    os.close(slave_fd)
-
-    log.info("bash_terminal_opened", pid=proc.pid)
-
+    queue = session.attach()
+    log.info("bash_terminal_opened_legacy", session_id=session.id)
     try:
-        await asyncio.gather(
-            _ws_to_pty(websocket, master_fd),
-            _pty_to_ws(master_fd, websocket),
-        )
-    except (WebSocketDisconnect, Exception):
-        pass
-    finally:
-        os.close(master_fd)
-        if proc.poll() is None:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
-        log.info("bash_terminal_closed", pid=proc.pid)
+        async def pump_out() -> None:
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    break
+                await websocket.send_text(chunk)
 
-
-async def _ws_to_pty(websocket: WebSocket, master_fd: int) -> None:
-    """Relay data from WebSocket to PTY master fd."""
-    import json
-
-    try:
+        out_task = asyncio.create_task(pump_out())
         while True:
-            data = await websocket.receive_text()
-
-            # Handle resize messages (JSON with "type":"resize")
+            try:
+                data = await websocket.receive_text()
+            except (WebSocketDisconnect, Exception):  # noqa: BLE001
+                break
             if data.startswith("{"):
                 try:
                     msg = json.loads(data)
                     if msg.get("type") == "resize":
-                        cols = msg.get("cols", 80)
-                        rows = msg.get("rows", 24)
-                        winsize = struct.pack("HHHH", rows, cols, 0, 0)
-                        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+                        session.resize(
+                            int(msg.get("cols", 80)), int(msg.get("rows", 24))
+                        )
                         continue
-                except (json.JSONDecodeError, OSError):
+                except json.JSONDecodeError:
                     pass
-
-            os.write(master_fd, data.encode("utf-8"))
-    except (WebSocketDisconnect, Exception):
-        pass
-
-
-async def _pty_to_ws(master_fd: int, websocket: WebSocket) -> None:
-    """Relay data from PTY master fd to WebSocket."""
-    loop = asyncio.get_event_loop()
-    try:
-        while True:
-            data = await loop.run_in_executor(None, _read_pty, master_fd)
-            if not data:
-                break
-            await websocket.send_text(data.decode("utf-8", errors="replace"))
-    except (WebSocketDisconnect, Exception):
-        pass
-
-
-def _read_pty(master_fd: int) -> bytes:
-    """Read from PTY, blocking in executor."""
-    try:
-        return os.read(master_fd, 4096)
-    except OSError:
-        return b""
+            session.write(data)
+        out_task.cancel()
+    finally:
+        session.detach(queue)
+        ts.kill(session.id)  # legacy semantics: shell dies with the socket
+        log.info("bash_terminal_closed_legacy", session_id=session.id)

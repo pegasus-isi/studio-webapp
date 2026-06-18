@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { useWorkspaceStore } from "@/lib/stores/workspace-store";
 import { useToolStore } from "@/lib/stores/tool-store";
+import * as api from "@/lib/api/client";
 
 export function StatusBar() {
   const chatOpen = usePanelStore((s) => s.chatOpen);
@@ -10,10 +12,35 @@ export function StatusBar() {
   const toggleChat = usePanelStore((s) => s.toggleChat);
   const toggleTerminal = usePanelStore((s) => s.toggleTerminal);
   const jupyterStatus = useWorkspaceStore((s) => s.jupyterStatus);
+  const setJupyterStatus = useWorkspaceStore((s) => s.setJupyterStatus);
   const tabCount = useToolStore((s) => s.tabs.length);
 
+  // The status bar is always mounted, so poll JupyterLab status here — the
+  // indicator must be correct on every page, not only on /notebooks.
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const res = await api.getJupyterStatus();
+        if (!active) return;
+        setJupyterStatus(
+          res.status as "stopped" | "starting" | "running",
+          res.port
+        );
+      } catch {
+        /* keep polling */
+      }
+    };
+    poll();
+    const id = setInterval(poll, 10000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [setJupyterStatus]);
+
   return (
-    <div className="flex h-6 items-center justify-between border-t border-gray-300 bg-gray-100 px-3 text-xs select-none">
+    <div className="flex h-6 items-center justify-between border-t border-line bg-muted px-3 text-xs select-none">
       {/* Left: status indicators */}
       <div className="flex items-center gap-3">
         {/* JupyterLab status */}
@@ -27,7 +54,7 @@ export function StatusBar() {
                   : "bg-gray-400"
             }`}
           />
-          <span className="text-gray-600">
+          <span className="text-fgmuted">
             JupyterLab{" "}
             {jupyterStatus === "running"
               ? "Running"
@@ -39,7 +66,7 @@ export function StatusBar() {
 
         {/* Terminal tab count */}
         {tabCount > 0 && (
-          <span className="text-gray-500">
+          <span className="text-fgmuted">
             {tabCount} terminal{tabCount !== 1 ? "s" : ""}
           </span>
         )}
@@ -52,7 +79,7 @@ export function StatusBar() {
           className={`flex items-center gap-1.5 rounded px-2 py-0.5 transition-colors ${
             terminalOpen
               ? "bg-gray-800 text-white"
-              : "text-gray-600 hover:bg-gray-200"
+              : "text-fgmuted hover:bg-muted"
           }`}
           title="Toggle terminal panel"
         >
@@ -77,7 +104,7 @@ export function StatusBar() {
           className={`flex items-center gap-1.5 rounded px-2 py-0.5 transition-colors ${
             chatOpen
               ? "bg-pegasus-600 text-white"
-              : "text-gray-600 hover:bg-gray-200"
+              : "text-fgmuted hover:bg-muted"
           }`}
           title="Toggle chat panel"
         >

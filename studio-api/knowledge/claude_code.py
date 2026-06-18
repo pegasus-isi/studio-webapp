@@ -15,7 +15,7 @@ import structlog
 
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import build_knowledge_appendix
-from llm.providers import PROVIDERS
+from llm.providers import PROVIDERS, provider_type
 
 log = structlog.get_logger()
 
@@ -81,11 +81,12 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
     def update_llm_config(self, workspace: str, llm_config: dict[str, Any]) -> None:
         """Set env vars and write settings.json with provider + plugin config."""
         provider = llm_config.get("provider", "anthropic")
+        ptype = provider_type(provider)  # custom-<id> -> "custom", etc.
         api_key = llm_config.get("api_key", "")
         model = llm_config.get("model", "")
         base_url = llm_config.get("base_url", "")
 
-        preset = PROVIDERS.get(provider, PROVIDERS.get("anthropic", {}))
+        preset = PROVIDERS.get(ptype, PROVIDERS.get("anthropic", {}))
         if not model:
             model = preset.get("default_model", "claude-sonnet-4-5-20250929")
 
@@ -96,7 +97,7 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
                 os.environ[env_var] = api_key
 
             # Claude Code always reads ANTHROPIC_API_KEY
-            if provider == "anthropic":
+            if ptype == "anthropic":
                 os.environ["ANTHROPIC_API_KEY"] = api_key
 
         # Build settings.json with both LLM config and plugin registration

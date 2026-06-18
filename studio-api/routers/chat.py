@@ -297,6 +297,11 @@ async def _anthropic_request(
                 "name": block["name"],
                 "arguments": block["input"],
             })
+    u = data.get("usage", {}) or {}
+    result["usage"] = {
+        "input": u.get("input_tokens", 0),
+        "output": u.get("output_tokens", 0),
+    }
     return result
 
 
@@ -344,6 +349,11 @@ async def _openai_request(
             "name": fn.get("name", ""),
             "arguments": args,
         })
+    u = data.get("usage", {}) or {}
+    result["usage"] = {
+        "input": u.get("prompt_tokens", 0),
+        "output": u.get("completion_tokens", 0),
+    }
     return result
 
 
@@ -442,10 +452,15 @@ async def _openai_responses_request(
                 "arguments": args,
             })
 
+    u = data.get("usage", {}) or {}
     return {
         "content": "".join(content_parts),
         "tool_calls": tool_calls,
         "stop_reason": data.get("status", ""),
+        "usage": {
+            "input": u.get("input_tokens", 0),
+            "output": u.get("output_tokens", 0),
+        },
     }
 
 
@@ -566,12 +581,18 @@ async def chat_stream(request: Request) -> StreamingResponse:
     api_key = config.get("api_key", "")
     is_anthropic = provider == "anthropic"
 
-    # If a different provider was requested, look up its saved config
+    # If a different provider was requested, use ITS saved config — endpoint,
+    # model, and key — not just the key (lets multiple custom endpoints work).
     if provider_override and provider_override != config.get("provider"):
         prov_config = await db.get_provider_config(provider_override)
         if prov_config:
             api_key = prov_config.get("api_key", "") or api_key
             is_anthropic = provider_override == "anthropic"
+            config = {
+                **config,
+                "base_url": prov_config.get("base_url") or config.get("base_url"),
+                "model": prov_config.get("default_model") or config.get("model"),
+            }
 
     # Resolve base_url and default model
     from llm.providers import PROVIDER_DEFAULTS, PROVIDERS
@@ -593,8 +614,25 @@ async def chat_stream(request: Request) -> StreamingResponse:
     system_prompt = _load_system_prompt(agent_id)
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        import time
+
         client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=30.0))
         _active_clients[request_id] = client
+
+        # Aggregate usage/timing across all tool-calling rounds for the footer.
+        t0 = time.monotonic()
+        tot_in = 0
+        tot_out = 0
+        tool_count = 0
+
+        def _meta_event() -> str:
+            return "data: " + json.dumps({"meta": {
+                "input_tokens": tot_in,
+                "output_tokens": tot_out,
+                "tokens": tot_in + tot_out,
+                "tool_calls": tool_count,
+                "duration_s": round(time.monotonic() - t0, 1),
+            }}) + "\n\n"
 
         try:
             # Convert messages to provider format
@@ -627,13 +665,21 @@ async def chat_stream(request: Request) -> StreamingResponse:
                     yield f"data: {json.dumps({'error': str(e)})}\n\n"
                     return
 
+                usage = result.get("usage") or {}
+                tot_in += usage.get("input", 0) or 0
+                tot_out += usage.get("output", 0) or 0
+
                 tool_calls = result.get("tool_calls", [])
+                tool_count += len(tool_calls)
 
                 if not tool_calls:
                     # Final text response
                     text = result.get("content", "")
                     if text:
                         yield f"data: {json.dumps({'content': text})}\n\n"
+
+                    # Per-turn usage/timing footer (tokens, tool calls, seconds).
+                    yield _meta_event()
 
                     # Save to chat history
                     try:

@@ -155,6 +155,7 @@ export interface ToolInfo {
   supports_mcp: boolean;
   supports_web: boolean;
   required_env: string[];
+  paid?: boolean;
   icon: string | null;
   homepage: string | null;
 }

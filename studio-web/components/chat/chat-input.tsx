@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useChatStore } from "@/lib/stores/chat-store";
+import { useNotebookContextStore } from "@/lib/stores/notebook-context-store";
 import { useLLMConfig, useProviderConfigs, useProviders } from "@/lib/hooks/use-llm";
 import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
@@ -16,6 +17,7 @@ export function ChatInput() {
   const appendToLast = useChatStore((s) => s.appendToLast);
   const addToolCall = useChatStore((s) => s.addToolCall);
   const addToolResult = useChatStore((s) => s.addToolResult);
+  const setLastMeta = useChatStore((s) => s.setLastMeta);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const messages = useChatStore((s) => s.messages);
   const agentId = useChatStore((s) => s.agentId);
@@ -67,10 +69,20 @@ export function ChatInput() {
     };
     addMessage(userMsg);
 
+    // When embedded in JupyterLab with a focused notebook, ride its path along
+    // in the API copy of the message (not the displayed one). Provider-safe:
+    // it's user text, not a system role.
+    const { activeNotebookPath, include } =
+      useNotebookContextStore.getState();
+    const apiText =
+      activeNotebookPath && include
+        ? `${text}\n\n[Active Jupyter notebook: ${activeNotebookPath} — when I refer to "this notebook", read this file with your tools.]`
+        : text;
+
     // Build message history for the API
     const apiMessages = [
       ...messages.map((m) => ({ role: m.role, content: m.content })),
-      { role: "user", content: text },
+      { role: "user", content: apiText },
     ];
 
     const requestId = `req-${Date.now()}`;
@@ -123,6 +135,14 @@ export function ChatInput() {
               addToolCall(event.tool_call);
             } else if (event.tool_result) {
               addToolResult(event.tool_result);
+            } else if (event.meta) {
+              setLastMeta({
+                tokens: event.meta.tokens,
+                inputTokens: event.meta.input_tokens,
+                outputTokens: event.meta.output_tokens,
+                toolCalls: event.meta.tool_calls,
+                durationS: event.meta.duration_s,
+              });
             } else if (event.error) {
               appendToLast(`\n\nError: ${event.error}`);
             }
@@ -147,6 +167,7 @@ export function ChatInput() {
     appendToLast,
     addToolCall,
     addToolResult,
+    setLastMeta,
     setStreaming,
   ]);
 
@@ -163,11 +184,11 @@ export function ChatInput() {
   };
 
   return (
-    <div className="border-t border-gray-200 bg-white p-4">
+    <div className="border-t border-line bg-surface p-4">
       <div className="mx-auto max-w-3xl space-y-2">
         {/* Provider / Model selectors */}
         <div className="flex items-center gap-2 text-xs">
-          <label className="text-gray-500">Provider:</label>
+          <label className="text-fgmuted">Provider:</label>
           <select
             value={chatProvider || ""}
             onChange={(e) => {
@@ -177,7 +198,7 @@ export function ChatInput() {
               const p = providers.find((p) => p.id === pid);
               if (p) setChatModel(p.default_model);
             }}
-            className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 focus:border-pegasus-500 focus:ring-pegasus-500"
+            className="rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
           >
             <option value="">Default</option>
             {providers.map((p) => (
@@ -187,41 +208,50 @@ export function ChatInput() {
             ))}
           </select>
 
-          <label className="ml-2 text-gray-500">Model:</label>
+          <label className="ml-2 text-fgmuted">Model:</label>
           <input
             type="text"
             value={chatModel || ""}
             onChange={(e) => setChatModel(e.target.value || null)}
             placeholder="default"
-            className="w-48 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 focus:border-pegasus-500 focus:ring-pegasus-500"
+            className="w-48 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
           />
         </div>
 
         {/* Input area */}
-        <div className="flex gap-2">
+        <div className="flex items-end gap-2">
           <textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask about Pegasus workflows... (Shift+Enter for newline)"
-            rows={1}
-            className="flex-1 resize-none rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+            rows={3}
+            className="min-h-[72px] max-h-56 flex-1 resize-none rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
           />
           {isStreaming ? (
             <button
               onClick={handleStop}
-              className="rounded-md bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
+              title="Stop"
+              aria-label="Stop"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700"
             >
-              Stop
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="1.5" />
+              </svg>
             </button>
           ) : (
             <button
               onClick={handleSend}
               disabled={!input.trim()}
-              className="rounded-md bg-pegasus-600 px-4 py-2 text-sm text-white hover:bg-pegasus-700 disabled:opacity-50"
+              title="Send"
+              aria-label="Send"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-pegasus-600 text-white hover:bg-pegasus-700 disabled:opacity-50"
             >
-              Send
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5" />
+                <polyline points="5 12 12 5 19 12" />
+              </svg>
             </button>
           )}
         </div>
