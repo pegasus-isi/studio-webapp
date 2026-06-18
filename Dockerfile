@@ -138,11 +138,6 @@ RUN ARCH=$(dpkg --print-architecture) && \
     rm -rf /var/lib/apt/lists/*
 COPY docker/htcondor/90-studio.conf /etc/condor/config.d/90-studio.conf
 
-# Resolve the KubeSpawner-injected UID (1000) to a real username so HTCondor
-# (which maps uid -> owner) can submit and run jobs. Group 100 (users) already
-# exists. Home is provided at runtime (NFS / KubeSpawner), so -M (no home dir).
-RUN useradd -u 1000 -g 100 -M -d /home/studio -s /bin/bash studio || true
-
 # Pin Pegasus's CLI tools (pegasus-preflight-check, etc.) explicitly to the
 # system Python 3.12 — the interpreter that carries Pegasus's DEB deps.
 ENV PEGASUS_PYTHON=/usr/bin/python3
