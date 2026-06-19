@@ -6,6 +6,7 @@ import asyncio
 import glob
 import json
 import os
+import re
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query
@@ -347,6 +348,7 @@ def _parse_workflow_graph(wf_path: str) -> dict:
             "label": str(j.get("name") or j.get("file") or jid),
             "transformation": j.get("name"),
             "status": "unsubmitted",
+            "pegasus": False,  # abstract workflow holds only user jobs
         })
     edges = []
     for dep in doc.get("jobDependencies") or []:
@@ -358,6 +360,68 @@ def _parse_workflow_graph(wf_path: str) -> dict:
         "nodes": nodes,
         "edges": edges,
     }
+
+
+# Pegasus-injected auxiliary jobs (added by pegasus-plan, not in the abstract
+# workflow): directory setup, data staging, cleanup, replica registration, chmod.
+_PEGASUS_AUX_RE = re.compile(
+    r"^(create_dir|stage_in|stage_out|stage_inter|stage_worker|"
+    r"clean_up|cleanup|register|chmod|pegasus_)",
+    re.IGNORECASE,
+)
+
+
+def _aux_label(job_id: str) -> str:
+    """Short, friendly label for a Pegasus auxiliary job id."""
+    m = _PEGASUS_AUX_RE.match(job_id)
+    return m.group(1).lower().rstrip("_") if m else job_id
+
+
+def _find_dag_file(run_dir: str) -> str | None:
+    """The run's executable HTCondor DAG (e.g. <name>-0.dag) in the submit dir."""
+    cands = [
+        p for p in glob.glob(os.path.join(run_dir, "*.dag")) if os.path.isfile(p)
+    ]
+    return sorted(cands)[0] if cands else None
+
+
+def _parse_executable_dag(dag_path: str) -> dict:
+    """Executable DAGMan file -> {nodes, edges} including the Pegasus auxiliary
+    jobs (stage-in/out, create-dir, cleanup, register). Each node carries a
+    `pegasus` flag so the client can show/hide them."""
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen: set[str] = set()
+    try:
+        with open(dag_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                parts = line.split()
+                if not parts:
+                    continue
+                kw = parts[0].upper()
+                if kw == "JOB" and len(parts) >= 2:
+                    jid = parts[1]
+                    if jid in seen:
+                        continue
+                    seen.add(jid)
+                    aux = bool(_PEGASUS_AUX_RE.match(jid))
+                    nodes.append({
+                        "id": jid,
+                        "label": _aux_label(jid) if aux else jid,
+                        "transformation": None,
+                        "status": "unsubmitted",
+                        "pegasus": aux,
+                    })
+                elif kw == "PARENT" and "CHILD" in parts:
+                    ci = parts.index("CHILD")
+                    for p in parts[1:ci]:
+                        for c in parts[ci + 1:]:
+                            edges.append({"source": p, "target": c})
+    except OSError as e:
+        raise HTTPException(
+            status_code=500, detail=f"Could not parse DAG file: {e}"
+        )
+    return {"nodes": nodes, "edges": edges}
 
 
 def _find_run_workflow_file(run_dir: str) -> str | None:
@@ -390,17 +454,29 @@ async def project_graph_json(project_id: str) -> dict:
 
 
 @router.get("/{run_id}/graph.json")
-async def run_graph_json(run_id: str) -> dict:
+async def run_graph_json(run_id: str, include_pegasus: bool = False) -> dict:
     """Workflow structure with live job statuses joined from the run's
-    workflow-events.jsonl (exec job ids look like <transform>_<abstract-id>)."""
+    workflow-events.jsonl (exec job ids look like <transform>_<abstract-id>).
+
+    By default returns the abstract workflow (user jobs only). With
+    `include_pegasus=true` returns the executable DAG, which also includes the
+    Pegasus auxiliary jobs (stage-in/out, create-dir, cleanup, register)."""
     runs = discover_runs(WORKSPACE_ROOT)
     run = next((r for r in runs if r["run_id"] == run_id), None)
     if not run or not os.path.isdir(run["run_dir"]):
         raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
-    wf = _find_run_workflow_file(run["run_dir"])
-    if not wf:
-        raise HTTPException(status_code=404, detail="No workflow file for this run")
-    graph = _parse_workflow_graph(wf)
+
+    dag = _find_dag_file(run["run_dir"]) if include_pegasus else None
+    if dag:
+        graph = _parse_executable_dag(dag)
+        graph["name"] = os.path.basename(os.path.dirname(dag)) or run_id
+    else:
+        wf = _find_run_workflow_file(run["run_dir"])
+        if not wf:
+            raise HTTPException(
+                status_code=404, detail="No workflow file for this run"
+            )
+        graph = _parse_workflow_graph(wf)
 
     jobs = await get_workflow_jobs(run["run_dir"])
     by_node: dict[str, dict] = {n["id"]: n for n in graph["nodes"]}

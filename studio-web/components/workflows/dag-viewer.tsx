@@ -17,6 +17,7 @@ interface GraphNode {
   transformation?: string | null;
   status: string;
   exec_job_id?: string;
+  pegasus?: boolean; // Pegasus auxiliary job (stage-in/out, create-dir, cleanup…)
 }
 
 interface GraphData {
@@ -63,24 +64,28 @@ function layout(data: GraphData): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = data.nodes.map((n) => {
     const pos = g.node(n.id);
     const s = STATUS_STYLE[n.status] ?? STATUS_STYLE.unsubmitted;
+    const aux = !!n.pegasus;
     return {
       id: n.id,
       position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
-      data: { label: `${n.label}\n${n.id}` },
+      data: { label: aux ? `⚙ ${n.label}\n${n.id}` : `${n.label}\n${n.id}` },
       style: {
         width: NODE_W,
         height: NODE_H,
         background: s.bg,
-        border: `2px solid ${s.border}`,
+        // Pegasus auxiliary jobs: dashed border + slightly muted to set them
+        // apart from the user's compute jobs.
+        border: `2px ${aux ? "dashed" : "solid"} ${s.border}`,
         borderRadius: 8,
         color: s.fg,
         fontSize: 11,
+        opacity: aux ? 0.8 : 1,
         whiteSpace: "pre" as const,
         animation:
           n.status === "running" ? "pulse 2s ease-in-out infinite" : undefined,
       },
       // Tooltip: exec job id + status
-      title: `${n.exec_job_id ?? n.id} — ${n.status}`,
+      title: `${n.exec_job_id ?? n.id} — ${n.status}${aux ? " (Pegasus)" : ""}`,
     } as Node & { title: string };
   });
 
@@ -108,9 +113,17 @@ function layout(data: GraphData): { nodes: Node[]; edges: Edge[] } {
 export function DagViewer({ graphUrl, title, live = false, onClose }: Props) {
   const [data, setData] = useState<GraphData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Pegasus auxiliary jobs (stage-in/out, create-dir, cleanup, register) only
+  // exist in a run's executable DAG, so the toggle is offered for run graphs.
+  const [showPegasus, setShowPegasus] = useState(false);
+
+  const effectiveUrl = useMemo(() => {
+    if (!showPegasus) return graphUrl;
+    return graphUrl + (graphUrl.includes("?") ? "&" : "?") + "include_pegasus=true";
+  }, [graphUrl, showPegasus]);
 
   const fetchGraph = useCallback(() => {
-    return fetch(graphUrl)
+    return fetch(effectiveUrl)
       .then(async (r) => {
         if (!r.ok) {
           const detail = await r
@@ -123,9 +136,10 @@ export function DagViewer({ graphUrl, title, live = false, onClose }: Props) {
       })
       .then((d: GraphData) => {
         setData(d);
+        setError(null);
         return d;
       });
-  }, [graphUrl]);
+  }, [effectiveUrl]);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -176,13 +190,29 @@ export function DagViewer({ graphUrl, title, live = false, onClose }: Props) {
               </span>
             )}
           </h3>
-          <button
-            onClick={onClose}
-            className="rounded p-1 text-fgsubtle hover:bg-muted hover:text-fgmuted"
-            aria-label="Close"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-3">
+            {live && (
+              <label
+                className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-fgmuted"
+                title="Show Pegasus auxiliary jobs (stage-in/out, create-dir, cleanup, register)"
+              >
+                <input
+                  type="checkbox"
+                  checked={showPegasus}
+                  onChange={(e) => setShowPegasus(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-pegasus-600"
+                />
+                Show Pegasus jobs
+              </label>
+            )}
+            <button
+              onClick={onClose}
+              className="rounded p-1 text-fgsubtle hover:bg-muted hover:text-fgmuted"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         <div className="relative flex-1">
@@ -221,6 +251,14 @@ export function DagViewer({ graphUrl, title, live = false, onClose }: Props) {
                 {k}
               </span>
             ))}
+          {showPegasus && (
+            <span className="flex items-center gap-1">
+              <span
+                className="inline-block h-3 w-3 rounded border-2 border-dashed border-fgsubtle opacity-70"
+              />
+              ⚙ Pegasus job
+            </span>
+          )}
           {live && <span className="ml-auto text-fgsubtle">live · 4s</span>}
         </div>
       </div>
