@@ -33,15 +33,20 @@ import structlog
 
 log = structlog.get_logger()
 
-EVENTS_FILENAME = "workflow-events.jsonl"
+# Event-log filenames, in priority order. Both share the same schema:
+#   workflow-events.jsonl — from `workflow-monitor --serve`
+#   wfevents.jsonl        — from the pegasus-monitord `wfevents` plugin (emitted
+#                           automatically for every run; see studio-system VM)
+EVENTS_FILENAMES = ("workflow-events.jsonl", "wfevents.jsonl")
+EVENTS_FILENAME = EVENTS_FILENAMES[0]
 
 
 def find_events_file(run_dir: str) -> str | None:
-    """Locate the workflow-events.jsonl for a run dir (or its submit_dir)."""
-    direct = os.path.join(run_dir, EVENTS_FILENAME)
-    if os.path.isfile(direct):
-        return direct
+    """Locate a workflow event log for a run dir (or its submit_dir).
 
+    Prefers workflow-events.jsonl, then the wfevents plugin's wfevents.jsonl.
+    """
+    candidate_dirs = [run_dir]
     braindump = os.path.join(run_dir, "braindump.yml")
     if os.path.isfile(braindump):
         try:
@@ -50,12 +55,16 @@ def find_events_file(run_dir: str) -> str | None:
             with open(braindump) as f:
                 bd = yaml.safe_load(f) or {}
             submit_dir = bd.get("submit_dir")
-            if submit_dir:
-                alt = os.path.join(submit_dir, EVENTS_FILENAME)
-                if os.path.isfile(alt):
-                    return alt
+            if submit_dir and submit_dir != run_dir:
+                candidate_dirs.append(submit_dir)
         except Exception:
             pass
+
+    for d in candidate_dirs:
+        for fname in EVENTS_FILENAMES:
+            path = os.path.join(d, fname)
+            if os.path.isfile(path):
+                return path
     return None
 
 

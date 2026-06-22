@@ -208,6 +208,7 @@ export async function getToolStatus(id: string) {
 
 export interface WorkflowRun {
   run_id: string;
+  run_name: string; // submit-dir name (e.g. "run0001") for display
   name: string;
   run_dir: string;
   status: string;
@@ -261,6 +262,7 @@ export async function submitWorkflow(
 
 export interface WorkflowProjectRun {
   run_id: string;
+  run_name: string; // submit-dir name (e.g. "run0001") for display
   name: string;
   run_dir: string;
   status: string;

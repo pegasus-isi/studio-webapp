@@ -299,8 +299,11 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                     )}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-mono text-sm text-fg">
-                        {run.run_id.slice(0, 12)}...
+                      <span
+                        className="font-mono text-sm text-fg"
+                        title={run.run_id}
+                      >
+                        {run.run_name || `${run.run_id.slice(0, 12)}...`}
                       </span>
                       <span className="flex items-center gap-2">
                         <span
@@ -310,7 +313,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                               url: apiUrl(
                                 `workflows/${run.run_id}/graph.json`
                               ),
-                              title: `Run ${run.run_id.slice(0, 12)} — DAG`,
+                              title: `${run.run_name || run.run_id.slice(0, 12)} — DAG`,
                               live: true,
                             });
                           }}

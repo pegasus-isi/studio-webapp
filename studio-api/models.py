@@ -25,6 +25,7 @@ class ToolType(str, enum.Enum):
 
 class WorkflowStatus(str, enum.Enum):
     PLANNING = "planning"
+    PLANNED = "planned"  # planned (DAG ready) but not yet submitted
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -161,6 +162,7 @@ class ProviderConfigResponse(BaseModel):
 
 class WorkflowRunResponse(BaseModel):
     run_id: str
+    run_name: str = ""  # submit-dir name (e.g. "run0001") for display
     name: str
     run_dir: str
     status: WorkflowStatus
@@ -178,6 +180,7 @@ class WorkflowListResponse(BaseModel):
 
 class WorkflowProjectRunResponse(BaseModel):
     run_id: str
+    run_name: str = ""  # submit-dir name (e.g. "run0001") for display
     name: str
     run_dir: str
     status: str

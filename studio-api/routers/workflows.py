@@ -72,6 +72,7 @@ async def list_workflows() -> WorkflowListResponse:
 
         wf = WorkflowRunResponse(
             run_id=run["run_id"],
+            run_name=run.get("run_name", ""),
             name=run["name"],
             run_dir=run_dir,
             status=detail.get("status", status),
