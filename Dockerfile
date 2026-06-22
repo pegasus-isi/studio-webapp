@@ -131,7 +131,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
         -o /etc/apt/sources.list.d/htcondor.list && \
     curl -fsSL https://download.pegasus.isi.edu/pegasus/gpg.txt \
         | gpg --dearmor -o /usr/share/keyrings/pegasus.gpg && \
-    echo "deb [trusted=yes] https://download.pegasus.isi.edu/pegasus/development/5.2/ubuntu noble main" \
+    echo "deb [trusted=yes] https://download.pegasus.isi.edu/pegasus/development/6.0/ubuntu noble main" \
         > /etc/apt/sources.list.d/pegasus.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends condor pegasus && \
