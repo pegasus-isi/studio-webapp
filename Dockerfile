@@ -137,6 +137,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
     apt-get install -y --no-install-recommends condor pegasus && \
     rm -rf /var/lib/apt/lists/*
 COPY docker/htcondor/90-studio.conf /etc/condor/config.d/90-studio.conf
+COPY docker/pegasus/pegasus.properties /etc/pegasus/pegasus.properties
 
 # Pin Pegasus's CLI tools (pegasus-preflight-check, etc.) explicitly to the
 # system Python 3.12 — the interpreter that carries Pegasus's DEB deps.
