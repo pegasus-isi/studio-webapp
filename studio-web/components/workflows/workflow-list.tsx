@@ -110,8 +110,13 @@ export function WorkflowList({ projects, workflows }: Props) {
                     )}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-medium text-fg">
+                      <span className="font-medium text-fg" title={wf.run_id}>
                         {wf.name}
+                        {wf.run_name && (
+                          <span className="ml-1.5 font-mono text-xs font-normal text-fgmuted">
+                            {wf.run_name}
+                          </span>
+                        )}
                       </span>
                       <span
                         className={cn(

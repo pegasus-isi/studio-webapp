@@ -3,6 +3,7 @@ import { GlobalChatPanel } from "@/components/layout/global-chat-panel";
 import { GlobalTerminalPanel } from "@/components/layout/global-terminal-panel";
 import { StatusBar } from "@/components/layout/status-bar";
 import { UserMenu } from "@/components/layout/user-menu";
+import { ToastContainer } from "@/components/notifications/toast-container";
 
 /**
  * Studio shell — sidebar, panels, status bar, theme toggle. Applied to the
@@ -17,6 +18,7 @@ export default function StudioLayout({
   return (
     <>
       <UserMenu />
+      <ToastContainer />
       <div className="flex h-screen overflow-hidden">
         <Sidebar />
         <div className="flex flex-1 flex-col overflow-hidden">

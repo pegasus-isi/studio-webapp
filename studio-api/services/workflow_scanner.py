@@ -45,6 +45,9 @@ def discover_runs(workspace: str | None = None) -> list[dict[str, Any]]:
             name = bd.get("pegasus_wf_name", os.path.basename(run_dir))
             runs.append({
                 "run_id": run_id,
+                # Human-friendly submit-dir name (e.g. "run0001") for display;
+                # run_id stays the globally-unique wf_uuid used for routing.
+                "run_name": os.path.basename(run_dir),
                 "name": name,
                 "run_dir": run_dir,
                 "submit_dir": bd.get("submit_dir", run_dir),
@@ -125,12 +128,16 @@ def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
                 run_status = get_run_status(run_dir)
                 submitted_runs.append({
                     "run_id": run_id,
+                    "run_name": os.path.basename(run_dir),
                     "name": bd.get("pegasus_wf_name", os.path.basename(run_dir)),
                     "run_dir": run_dir,
                     "status": run_status,
                 })
             except Exception as exc:
                 log.warning("project_run_parse_failed", path=bd_path, error=str(exc))
+
+        # Newest run first (run0011 before run0001).
+        submitted_runs.sort(key=lambda r: r.get("run_name", ""), reverse=True)
 
         # Derive overall project status
         if submitted_runs:
@@ -191,59 +198,103 @@ def _parse_braindump(path: str) -> dict[str, str]:
     return result
 
 
+def _jobstate_terminal_status(run_dir: str) -> str | None:
+    """Definitive terminal status from jobstate.log, where monitord records
+    ``DAGMAN_FINISHED <code>`` (0 = success, non-zero = failure). Returns
+    "succeeded"/"failed" if the DAG finished, "running" if it started but has
+    not finished, or None if jobstate.log is absent/inconclusive.
+
+    The last DAGMAN_FINISHED wins (a re-run appends a fresh one). monitord.done
+    only means monitord finished parsing — a failed run writes it too — so it is
+    NOT used as a success signal.
+    """
+    jobstate = os.path.join(run_dir, "jobstate.log")
+    if not os.path.isfile(jobstate):
+        return None
+    finished_code: int | None = None
+    started = False
+    try:
+        with open(jobstate, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if "DAGMAN_FINISHED" in line:
+                    parts = line.split("DAGMAN_FINISHED", 1)[1].split()
+                    if parts:
+                        try:
+                            finished_code = int(parts[0])
+                        except ValueError:
+                            pass
+                elif "DAGMAN_STARTED" in line:
+                    started = True
+    except OSError:
+        return None
+    if finished_code is not None:
+        return "succeeded" if finished_code == 0 else "failed"
+    if started:
+        return "running"
+    return None
+
+
+def _pegasus_status(run_dir: str) -> str | None:
+    """Authoritative live status via ``pegasus-status``. Parses the DAG STATE
+    column (Success/Failure/Running). Returns None if pegasus-status is
+    unavailable, times out, or reports no DAG (not yet submitted)."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["pegasus-status", "-l", run_dir],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    out = proc.stdout or ""
+    # Summary line, e.g. "Summary: 1 DAG total (Success:1)" / "(Failure:1)" /
+    # "(Running:1)". Fall back to the per-DAG STATE column word.
+    low = out.lower()
+    if "failure" in low:
+        return "failed"
+    if "success" in low:
+        return "succeeded"
+    if "running" in low:
+        return "running"
+    return None
+
+
 def get_run_status(run_dir: str) -> str:
     """Determine workflow status for a run directory.
 
-    Status is derived from the workflow-monitor JSONL event log
-    (``workflow-events.jsonl``), which is the single source of truth for the
-    studio. When no JSONL exists yet (monitor not started / still planning),
-    we fall back to monitord marker files.
+    Resolution order (most authoritative first):
+      1. The workflow event log (workflow-events.jsonl / wfevents.jsonl).
+      2. jobstate.log DAGMAN_FINISHED — definitive terminal succeeded/failed.
+      3. pegasus-status — authoritative live state for submitted-but-unfinished
+         runs (also detects "not submitted").
+      4. On-disk shape: planned-but-not-submitted vs in-planning.
     """
     events = read_events(run_dir)
     if events:
         return event_workflow_status(events)
 
-    # No JSONL — derive the authoritative completion status from jobstate.log,
-    # where monitord records "DAGMAN_FINISHED <code>" (0 = success, non-zero =
-    # failure). monitord.done existing only means monitord finished parsing —
-    # NOT that the workflow succeeded (a failed run also writes monitord.done).
-    jobstate = os.path.join(run_dir, "jobstate.log")
-    if os.path.isfile(jobstate):
-        finished_code: int | None = None
-        started = False
-        try:
-            with open(jobstate, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if "DAGMAN_FINISHED" in line:
-                        parts = line.split("DAGMAN_FINISHED", 1)[1].split()
-                        if parts:
-                            try:
-                                finished_code = int(parts[0])
-                            except ValueError:
-                                pass
-                    elif "DAGMAN_STARTED" in line:
-                        started = True
-        except OSError:
-            pass
-        if finished_code is not None:
-            return "succeeded" if finished_code == 0 else "failed"
-        if started:
-            return "running"
+    # Terminal status from jobstate.log is fast and definitive — trust it and
+    # skip the (slower, condor-querying) pegasus-status call.
+    terminal = _jobstate_terminal_status(run_dir)
+    if terminal in ("succeeded", "failed"):
+        return terminal
 
-    monitord_pid = os.path.join(run_dir, "monitord.pid")
-    if os.path.isfile(monitord_pid):
-        try:
-            with open(monitord_pid) as f:
-                pid = int(f.read().split()[0])
-            os.kill(pid, 0)
-            return "running"
-        except (ValueError, IndexError, ProcessLookupError, PermissionError):
-            return "failed"
+    # Submitted but not terminal (jobstate says running, or a submitted DAG with
+    # no jobstate yet): ask pegasus-status for the authoritative live state.
+    submitted = terminal == "running" or os.path.isfile(
+        os.path.join(run_dir, "monitord.log")
+    ) or bool(glob.glob(os.path.join(run_dir, "*.dag.dagman.out")))
+    if submitted:
+        live = _pegasus_status(run_dir)
+        if live:
+            return live
+        return "running"
 
-    # A rescue DAG means at least one node failed.
-    if glob.glob(os.path.join(run_dir, "*.dag.rescue*")):
-        return "failed"
-    if os.path.isfile(os.path.join(run_dir, "monitord.done")):
-        return "succeeded"
-
+    # Not submitted: a planned run has the DAGMan submit file but never ran.
+    # Distinguish "planned" (ready to submit, idle) from "planning" (in progress).
+    if glob.glob(os.path.join(run_dir, "*.dag.condor.sub")) or glob.glob(
+        os.path.join(run_dir, "*.dag")
+    ):
+        return "planned"
     return "planning"

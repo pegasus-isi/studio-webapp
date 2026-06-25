@@ -208,6 +208,7 @@ export async function getToolStatus(id: string) {
 
 export interface WorkflowRun {
   run_id: string;
+  run_name: string; // submit-dir name (e.g. "run0001") for display
   name: string;
   run_dir: string;
   status: string;
@@ -261,6 +262,7 @@ export async function submitWorkflow(
 
 export interface WorkflowProjectRun {
   run_id: string;
+  run_name: string; // submit-dir name (e.g. "run0001") for display
   name: string;
   run_dir: string;
   status: string;
@@ -419,4 +421,84 @@ export async function stopJupyter() {
 
 export async function getJupyterStatus() {
   return request<{ status: string; port: number | null }>("/jupyter/status");
+}
+
+// --- Notifications ---
+
+export type NotificationSeverity = "info" | "success" | "warning" | "error";
+
+export interface Notification {
+  id: string;
+  kind: string; // workflow_state | job_failure | resource | manual
+  severity: NotificationSeverity;
+  title: string;
+  body: string | null;
+  run_id: string | null;
+  link: string | null;
+  meta: Record<string, unknown>;
+  read: boolean;
+  created_at: string;
+}
+
+export interface NotificationList {
+  notifications: Notification[];
+  unread: number;
+}
+
+export async function getNotifications(limit = 100, unreadOnly = false) {
+  return request<NotificationList>(
+    `/notifications?limit=${limit}&unread_only=${unreadOnly}`
+  );
+}
+
+export async function createNotification(data: {
+  title: string;
+  body?: string;
+  kind?: string;
+  severity?: NotificationSeverity;
+  run_id?: string;
+  link?: string;
+  dedup_key?: string;
+}) {
+  return request<Notification>("/notifications", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function markNotificationRead(id: string) {
+  return request<{ status: string }>(`/notifications/${id}/read`, {
+    method: "POST",
+  });
+}
+
+export async function markAllNotificationsRead() {
+  return request<{ status: string }>("/notifications/read-all", {
+    method: "POST",
+  });
+}
+
+export async function deleteNotification(id: string) {
+  return request<{ status: string }>(`/notifications/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function clearNotifications() {
+  return request<{ status: string }>("/notifications", { method: "DELETE" });
+}
+
+export interface NotificationPrefs {
+  muted: string[]; // notification kinds that are suppressed
+}
+
+export async function getNotificationPrefs() {
+  return request<NotificationPrefs>("/notifications/prefs");
+}
+
+export async function updateNotificationPrefs(muted: string[]) {
+  return request<NotificationPrefs>("/notifications/prefs", {
+    method: "PUT",
+    body: JSON.stringify({ muted }),
+  });
 }
