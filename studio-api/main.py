@@ -20,6 +20,7 @@ from routers import (
     jupyter,
     knowledge,
     llm,
+    notifications,
     settings,
     terminal,
     tools,
@@ -143,8 +144,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     prune_task = asyncio.create_task(_prune_terminals())
 
+    # Start the notification engine: watches workflow runs for state changes /
+    # failures and fans alerts out to subscribers (SSE). Other code raises
+    # alerts via `engine.notify(...)`.
+    from services.notification_engine import engine as notification_engine
+
+    workspace_root = os.environ.get(
+        "STUDIO_WORKSPACE_DIR",
+        os.path.join(os.environ.get("HOME", "/tmp"), "work"),
+    )
+    notification_engine.start(db, workspace_root)
+    await notification_engine.refresh_prefs()
+
     yield
     # Cleanup terminal sessions and running tool processes
+    await notification_engine.stop()
     prune_task.cancel()
     for s in terminal_sessions.list_sessions():
         terminal_sessions.kill(s["id"])
@@ -183,6 +197,7 @@ app.include_router(terminal.router)
 app.include_router(ai_terminal.router)
 app.include_router(workflows.router)
 app.include_router(chat.router)
+app.include_router(notifications.router)
 
 
 @app.get("/api/whoami")

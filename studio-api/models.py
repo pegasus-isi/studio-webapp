@@ -297,3 +297,43 @@ class ChatHistoryResponse(BaseModel):
 class JupyterStatusResponse(BaseModel):
     status: str  # "running" | "stopped" | "starting"
     port: int | None = None
+
+
+# --- Notification models ---
+
+
+class NotificationResponse(BaseModel):
+    id: str
+    kind: str  # workflow_state | job_failure | resource | manual
+    severity: str = "info"  # info | success | warning | error
+    title: str
+    body: str | None = None
+    run_id: str | None = None
+    link: str | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+    read: bool = False
+    created_at: str
+
+
+class NotificationListResponse(BaseModel):
+    notifications: list[NotificationResponse]
+    unread: int
+
+
+class NotificationCreateRequest(BaseModel):
+    """Raise an ad-hoc notification from another service or the UI."""
+
+    title: str
+    body: str | None = None
+    kind: str = "manual"
+    severity: str = "info"
+    run_id: str | None = None
+    link: str | None = None
+    dedup_key: str | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class NotificationPrefs(BaseModel):
+    """Muted notification categories (kinds suppressed entirely)."""
+
+    muted: list[str] = Field(default_factory=list)

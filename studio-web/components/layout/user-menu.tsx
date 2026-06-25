@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiUrl, appRelativePath } from "@/lib/urls";
 import { useThemeStore, applyTheme, type Theme } from "@/lib/stores/theme-store";
+import { NotificationCenter } from "@/components/notifications/notification-center";
 
 /**
  * Top-right user menu: username + dropdown (theme, Settings, JupyterHub server
@@ -55,7 +56,9 @@ export function UserMenu() {
   const initial = user ? user[0]?.toUpperCase() ?? "?" : "⚙";
 
   return (
-    <div ref={menuRef} className="fixed right-4 top-2.5 z-50">
+    <div className="fixed right-4 top-2.5 z-50 flex items-center gap-2">
+      <NotificationCenter />
+      <div ref={menuRef} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-2 rounded-full border border-line bg-surface py-1 pl-1 pr-3 text-sm shadow-sm transition-colors hover:bg-muted"
@@ -147,6 +150,7 @@ export function UserMenu() {
           </nav>
         </div>
       )}
+      </div>
     </div>
   );
 }

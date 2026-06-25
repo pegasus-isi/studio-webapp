@@ -77,6 +77,29 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     tool_calls      TEXT,
     created_at      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id              TEXT PRIMARY KEY,
+    kind            TEXT NOT NULL,          -- workflow_state | job_failure | resource | manual
+    severity        TEXT NOT NULL DEFAULT 'info',  -- info | success | warning | error
+    title           TEXT NOT NULL,
+    body            TEXT,
+    run_id          TEXT,                   -- associated workflow run, if any
+    link            TEXT,                   -- optional in-app path to open
+    dedup_key       TEXT,                   -- collapse repeated events
+    meta            TEXT DEFAULT '{}',
+    read            INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_created
+    ON notifications (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key             TEXT PRIMARY KEY,
+    value           TEXT NOT NULL,          -- JSON-encoded
+    updated_at      TEXT NOT NULL
+);
 """
 
 
@@ -407,3 +430,148 @@ class Database:
                 })
         results.reverse()
         return results
+
+    # --- Notifications ---
+
+    async def add_notification(
+        self,
+        kind: str,
+        title: str,
+        body: str | None = None,
+        severity: str = "info",
+        run_id: str | None = None,
+        link: str | None = None,
+        dedup_key: str | None = None,
+        meta: dict[str, Any] | None = None,
+        read: bool = False,
+    ) -> dict[str, Any]:
+        """Insert a notification and return the stored row.
+
+        If ``dedup_key`` matches an existing notification, that row is refreshed
+        (bumped to now, read-state reset to the new value) instead of inserting
+        a duplicate — this keeps repeated state polls from flooding the feed.
+
+        ``read=True`` records the notification as already-read: it lands in
+        history but does not count toward the unread badge (used for muted
+        categories, which are recorded but non-interrupting).
+        """
+        now = _now()
+        read_int = 1 if read else 0
+        if dedup_key:
+            async with self.db.execute(
+                """SELECT id FROM notifications
+                   WHERE dedup_key = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (dedup_key,),
+            ) as cursor:
+                existing = await cursor.fetchone()
+            if existing:
+                await self.db.execute(
+                    """UPDATE notifications
+                       SET title = ?, body = ?, severity = ?, run_id = ?,
+                           link = ?, meta = ?, read = ?, created_at = ?
+                       WHERE id = ?""",
+                    (title, body, severity, run_id, link,
+                     json.dumps(meta or {}), read_int, now, existing["id"]),
+                )
+                await self.db.commit()
+                return await self.get_notification(existing["id"])  # type: ignore[return-value]
+
+        nid = _gen_id()
+        await self.db.execute(
+            """INSERT INTO notifications
+               (id, kind, severity, title, body, run_id, link, dedup_key,
+                meta, read, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (nid, kind, severity, title, body, run_id, link, dedup_key,
+             json.dumps(meta or {}), read_int, now),
+        )
+        await self.db.commit()
+        return await self.get_notification(nid)  # type: ignore[return-value]
+
+    @staticmethod
+    def _notification_row(row: aiosqlite.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "kind": row["kind"],
+            "severity": row["severity"],
+            "title": row["title"],
+            "body": row["body"],
+            "run_id": row["run_id"],
+            "link": row["link"],
+            "meta": json.loads(row["meta"]) if row["meta"] else {},
+            "read": bool(row["read"]),
+            "created_at": row["created_at"],
+        }
+
+    async def get_notification(self, notification_id: str) -> dict[str, Any] | None:
+        async with self.db.execute(
+            "SELECT * FROM notifications WHERE id = ?", (notification_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return self._notification_row(row) if row else None
+
+    async def list_notifications(
+        self, limit: int = 100, unread_only: bool = False
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM notifications"
+        if unread_only:
+            query += " WHERE read = 0"
+        query += " ORDER BY created_at DESC LIMIT ?"
+        results = []
+        async with self.db.execute(query, (limit,)) as cursor:
+            async for row in cursor:
+                results.append(self._notification_row(row))
+        return results
+
+    async def unread_notification_count(self) -> int:
+        async with self.db.execute(
+            "SELECT COUNT(*) AS n FROM notifications WHERE read = 0"
+        ) as cursor:
+            row = await cursor.fetchone()
+        return int(row["n"]) if row else 0
+
+    async def mark_notification_read(self, notification_id: str) -> None:
+        await self.db.execute(
+            "UPDATE notifications SET read = 1 WHERE id = ?", (notification_id,)
+        )
+        await self.db.commit()
+
+    async def mark_all_notifications_read(self) -> None:
+        await self.db.execute("UPDATE notifications SET read = 1 WHERE read = 0")
+        await self.db.commit()
+
+    async def delete_notification(self, notification_id: str) -> None:
+        await self.db.execute(
+            "DELETE FROM notifications WHERE id = ?", (notification_id,)
+        )
+        await self.db.commit()
+
+    async def clear_notifications(self) -> None:
+        await self.db.execute("DELETE FROM notifications")
+        await self.db.commit()
+
+    # --- App settings (generic JSON key-value) ---
+
+    async def get_setting(self, key: str, default: Any = None) -> Any:
+        async with self.db.execute(
+            "SELECT value FROM app_settings WHERE key = ?", (key,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return default
+        try:
+            return json.loads(row["value"])
+        except (ValueError, TypeError):
+            return default
+
+    async def set_setting(self, key: str, value: Any) -> None:
+        await self.db.execute(
+            """INSERT INTO app_settings (key, value, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at""",
+            (key, json.dumps(value), _now()),
+        )
+        await self.db.commit()

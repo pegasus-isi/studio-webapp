@@ -13,8 +13,38 @@ import { useTools } from "@/lib/hooks/use-tools";
 import { ToolCard } from "@/components/tools/tool-card";
 import { cn } from "@/lib/utils";
 import type { ProviderConfig } from "@/lib/api/client";
+import * as api from "@/lib/api/client";
 
-type Tab = "providers" | "tools" | "pegasus";
+type Tab = "providers" | "tools" | "pegasus" | "notifications";
+
+// Notification categories the engine emits, with friendly labels for the
+// mute toggles. `kind` matches the backend `kind` field.
+const NOTIFICATION_CATEGORIES: {
+  kind: string;
+  label: string;
+  description: string;
+}[] = [
+  {
+    kind: "workflow_state",
+    label: "Workflow state changes",
+    description: "When a run starts, succeeds, or fails.",
+  },
+  {
+    kind: "job_failure",
+    label: "Job failures",
+    description: "When jobs within a running workflow fail.",
+  },
+  {
+    kind: "resource",
+    label: "Resource provisioning",
+    description: "When a run needs more capacity (e.g. idle/held jobs).",
+  },
+  {
+    kind: "manual",
+    label: "Other alerts",
+    description: "Manual and miscellaneous notifications.",
+  },
+];
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("providers");
@@ -61,6 +91,17 @@ export default function SettingsPage() {
         >
           Pegasus Options
         </button>
+        <button
+          onClick={() => setActiveTab("notifications")}
+          className={cn(
+            "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
+            activeTab === "notifications"
+              ? "border-pegasus-600 text-pegasus-600"
+              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
+          )}
+        >
+          Notifications
+        </button>
       </div>
 
       {/* Tab content */}
@@ -68,6 +109,7 @@ export default function SettingsPage() {
         {activeTab === "providers" && <ProvidersTab />}
         {activeTab === "tools" && <ToolsTab />}
         {activeTab === "pegasus" && <PegasusOptionsTab />}
+        {activeTab === "notifications" && <NotificationsTab />}
       </div>
     </div>
   );
@@ -609,6 +651,93 @@ function PegasusOptionsTab() {
           Save Options
         </button>
         {saved && <span className="text-sm text-green-600">Saved</span>}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Notifications Tab ─── */
+
+function NotificationsTab() {
+  const [muted, setMuted] = useState<string[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getNotificationPrefs()
+      .then((p) => setMuted(p.muted))
+      .catch((e) => setError((e as Error).message));
+  }, []);
+
+  const toggle = async (kind: string, enabled: boolean) => {
+    if (muted === null) return;
+    // "enabled" = not muted. Build the next muted list and persist.
+    const next = enabled
+      ? muted.filter((k) => k !== kind)
+      : Array.from(new Set([...muted, kind]));
+    const prev = muted;
+    setMuted(next); // optimistic
+    try {
+      const saved = await api.updateNotificationPrefs(next);
+      setMuted(saved.muted);
+    } catch (e) {
+      setMuted(prev); // revert on failure
+      setError((e as Error).message);
+    }
+  };
+
+  if (error) {
+    return (
+      <p className="text-sm text-red-600 dark:text-rose-400">
+        Failed to load notification settings: {error}
+      </p>
+    );
+  }
+
+  if (muted === null) {
+    return <p className="text-sm text-fgsubtle">Loading...</p>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-fgmuted">
+        Choose which categories raise pop-up notifications. Muted categories are
+        still recorded in the notification center (as already-read) but raise no
+        toast and don&rsquo;t affect the unread badge.
+      </p>
+
+      <div className="divide-y divide-line rounded-lg border border-line bg-surface">
+        {NOTIFICATION_CATEGORIES.map((cat) => {
+          const enabled = !muted.includes(cat.kind);
+          return (
+            <div
+              key={cat.kind}
+              className="flex items-center justify-between gap-4 px-4 py-3"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-fg">{cat.label}</p>
+                <p className="text-xs text-fgmuted">{cat.description}</p>
+              </div>
+              <button
+                role="switch"
+                aria-checked={enabled}
+                aria-label={`${enabled ? "Mute" : "Enable"} ${cat.label}`}
+                onClick={() => toggle(cat.kind, !enabled)}
+                className={cn(
+                  "relative h-6 w-11 shrink-0 rounded-full transition-colors",
+                  enabled ? "bg-pegasus-600" : "bg-muted"
+                )}
+              >
+                <span
+                  className={cn(
+                    "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
+                    enabled ? "translate-x-[1.375rem]" : "translate-x-0.5"
+                  )}
+                />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

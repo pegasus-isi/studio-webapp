@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useWorkflows, useWorkflowProjects } from "@/lib/hooks/use-workflows";
 import { WorkflowList } from "@/components/workflows/workflow-list";
 import { WorkflowDetail } from "@/components/workflows/workflow-detail";
@@ -11,6 +12,15 @@ export default function WorkflowsPage() {
   const { data: projectsData, isLoading: projectsLoading } = useWorkflowProjects();
   const selectedRunId = useWorkflowStore((s) => s.selectedRunId);
   const selectedProjectId = useWorkflowStore((s) => s.selectedProjectId);
+  const selectWorkflow = useWorkflowStore((s) => s.selectWorkflow);
+
+  // Deep-link support: `/workflows?run=<id>` (e.g. from a notification) opens
+  // that run on arrival. Read from the URL once on mount so later manual
+  // selections aren't overridden.
+  useEffect(() => {
+    const run = new URLSearchParams(window.location.search).get("run");
+    if (run) selectWorkflow(run);
+  }, [selectWorkflow]);
 
   const isLoading = runsLoading || projectsLoading;
   const projects = projectsData?.projects ?? [];
