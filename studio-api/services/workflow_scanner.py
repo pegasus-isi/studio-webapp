@@ -23,16 +23,24 @@ WORKSPACE_ROOT = os.environ.get(
 
 WORKFLOWS_DIR = os.path.join(WORKSPACE_ROOT, "workflows")
 
+# Root under which discover_runs() looks for Pegasus run directories. Defaults
+# to the whole home dir so runs submitted outside $HOME/work are still found.
+# Override with STUDIO_SCAN_DIR.
+SCAN_ROOT = os.environ.get(
+    "STUDIO_SCAN_DIR",
+    os.environ.get("HOME", "/tmp"),
+)
+
 
 def discover_runs(workspace: str | None = None) -> list[dict[str, Any]]:
-    """Find all Pegasus run directories in the workspace.
+    """Find all Pegasus run directories under the scan root.
 
     Looks for braindump.yml files which Pegasus creates in every run
     directory after pegasus-plan.
 
     Returns list of dicts with keys: run_id, name, run_dir, status.
     """
-    workspace = workspace or WORKSPACE_ROOT
+    workspace = workspace or SCAN_ROOT
     runs: list[dict[str, Any]] = []
 
     # Pegasus creates braindump.yml in the submit directory

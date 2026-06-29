@@ -60,7 +60,7 @@ async def list_workflows() -> WorkflowListResponse:
     """List discovered workflow runs from the workspace."""
     from main import db
 
-    runs = discover_runs(WORKSPACE_ROOT)
+    runs = discover_runs()
     workflows = []
 
     for run in runs:
@@ -462,7 +462,7 @@ async def run_graph_json(run_id: str, include_pegasus: bool = False) -> dict:
     By default returns the abstract workflow (user jobs only). With
     `include_pegasus=true` returns the executable DAG, which also includes the
     Pegasus auxiliary jobs (stage-in/out, create-dir, cleanup, register)."""
-    runs = discover_runs(WORKSPACE_ROOT)
+    runs = discover_runs()
     run = next((r for r in runs if r["run_id"] == run_id), None)
     if not run or not os.path.isdir(run["run_dir"]):
         raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
@@ -511,7 +511,7 @@ async def get_workflow(run_id: str) -> dict:
 
     if not run_dir:
         # Try scanning
-        runs = discover_runs(WORKSPACE_ROOT)
+        runs = discover_runs()
         for r in runs:
             if r["run_id"] == run_id:
                 run_dir = r["run_dir"]

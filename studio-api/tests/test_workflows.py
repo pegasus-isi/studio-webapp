@@ -25,17 +25,11 @@ def test_list_workflows_with_braindump(client):
         f.write("pegasus_wf_name: test-workflow\n")
         f.write("wf_uuid: test-uuid-001\n")
 
-    # Patch the scanner's WORKSPACE_ROOT
+    # Patch the scanner's SCAN_ROOT — the directory discover_runs() walks.
     import services.workflow_scanner as scanner
 
-    old_root = scanner.WORKSPACE_ROOT
-    scanner.WORKSPACE_ROOT = workspace
-
-    # Also patch the router's WORKSPACE_ROOT
-    import routers.workflows as wf_router
-
-    old_wf_root = wf_router.WORKSPACE_ROOT
-    wf_router.WORKSPACE_ROOT = workspace
+    old_root = scanner.SCAN_ROOT
+    scanner.SCAN_ROOT = workspace
 
     try:
         resp = client.get("/api/workflows")
@@ -46,8 +40,7 @@ def test_list_workflows_with_braindump(client):
         assert wf["name"] == "test-workflow"
         assert wf["run_id"] == "test-uuid-001"
     finally:
-        scanner.WORKSPACE_ROOT = old_root
-        wf_router.WORKSPACE_ROOT = old_wf_root
+        scanner.SCAN_ROOT = old_root
 
 
 def test_get_workflow_not_found(client):
