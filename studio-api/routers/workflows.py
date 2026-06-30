@@ -28,7 +28,11 @@ from services.workflow_monitor import (
     tail_workflow_events,
 )
 from services.workflow_scanner import discover_projects, discover_runs, get_run_status
-from services.workflow_submitter import cancel_workflow, submit_workflow
+from services.workflow_submitter import (
+    cancel_workflow,
+    run_planned_workflow,
+    submit_workflow,
+)
 
 
 class GenerateRequest(BaseModel):
@@ -38,10 +42,13 @@ class GenerateRequest(BaseModel):
 
 
 class PlanRequest(BaseModel):
-    """pegasus-plan options for Plan/Submit."""
+    """pegasus-plan options for Plan/Run."""
 
     site: str = "condorpool"
     output_site: str = "local"
+    # Run action: the planned run dir (from a prior Plan) to submit via
+    # pegasus-run. When omitted, the server locates the newest planned dir.
+    run_dir: str | None = None
 
 log = structlog.get_logger()
 
@@ -60,6 +67,8 @@ async def list_workflows() -> WorkflowListResponse:
     """List discovered workflow runs from the workspace."""
     from main import db
 
+    # discover_runs scans SCAN_ROOT and excludes cloned-repo / test-fixture
+    # braindumps, so only genuine runs are listed.
     runs = discover_runs()
     workflows = []
 
@@ -243,8 +252,16 @@ async def plan_workflow(
             output += f"\nstderr:\n{err}"
 
         if proc.returncode == 0:
-            log.info("workflow_planned", project_id=project_id)
-            return {"status": "planned", "output": output}
+            # Capture the planned run dir so the Run action can submit it via
+            # pegasus-run without re-planning.
+            from services.workflow_submitter import (
+                _extract_run_dir,
+                _newest_run_dir,
+            )
+
+            run_dir = _extract_run_dir(out) or _newest_run_dir(project_dir)
+            log.info("workflow_planned", project_id=project_id, run_dir=run_dir)
+            return {"status": "planned", "output": output, "run_dir": run_dir or ""}
         else:
             return {"status": "error", "output": output}
 
@@ -260,14 +277,21 @@ async def plan_workflow(
 async def submit_project(
     project_id: str, req: PlanRequest = PlanRequest()
 ) -> dict:
-    """Run pegasus-plan --submit on a project."""
+    """Run a planned workflow via pegasus-run (the "Run" action).
+
+    Submits the dir a prior Plan produced instead of re-planning. Falls back to
+    plan+submit if nothing has been planned yet.
+    """
     projects = discover_projects()
     proj = next((p for p in projects if p["project_id"] == project_id), None)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
 
-    result = await submit_workflow(
-        proj["project_dir"], site=req.site, output_site=req.output_site
+    result = await run_planned_workflow(
+        proj["project_dir"],
+        run_dir=req.run_dir,
+        site=req.site,
+        output_site=req.output_site,
     )
     return {"project_id": project_id, **result}
 

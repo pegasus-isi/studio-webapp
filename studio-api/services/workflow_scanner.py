@@ -31,12 +31,33 @@ SCAN_ROOT = os.environ.get(
     os.environ.get("HOME", "/tmp"),
 )
 
+# Path fragments that mark a braindump.yml as NOT a real user run — e.g. the
+# Pegasus source tree's own analyzer/status test fixtures, dependency installs,
+# or VCS internals. A run dir whose path contains any of these is skipped so a
+# cloned repo (e.g. ~/pegasus) can't pollute the run list with sample data.
+_EXCLUDE_RUN_PATH_FRAGMENTS = (
+    os.sep + "test" + os.sep,
+    os.sep + "tests" + os.sep,
+    "analyzer_samples_dir",
+    "status_sample_files",
+    "site-packages",
+    os.sep + ".git" + os.sep,
+    os.sep + "node_modules" + os.sep,
+)
+
+
+def _is_excluded_run_dir(run_dir: str) -> bool:
+    """True for run dirs that belong to cloned repos / test fixtures."""
+    return any(frag in run_dir for frag in _EXCLUDE_RUN_PATH_FRAGMENTS)
+
 
 def discover_runs(workspace: str | None = None) -> list[dict[str, Any]]:
     """Find all Pegasus run directories under the scan root.
 
-    Looks for braindump.yml files which Pegasus creates in every run
-    directory after pegasus-plan.
+    Looks for braindump.yml files which Pegasus creates in every run directory
+    after pegasus-plan. Scans SCAN_ROOT (the home dir by default, overridable
+    via STUDIO_SCAN_DIR) and skips paths that belong to cloned repos or test
+    fixtures, so unrelated braindumps don't show up as runs.
 
     Returns list of dicts with keys: run_id, name, run_dir, status.
     """
@@ -47,6 +68,8 @@ def discover_runs(workspace: str | None = None) -> list[dict[str, Any]]:
     pattern = os.path.join(workspace, "**", "braindump.yml")
     for braindump_path in glob.glob(pattern, recursive=True):
         run_dir = os.path.dirname(braindump_path)
+        if _is_excluded_run_dir(run_dir):
+            continue
         try:
             bd = _parse_braindump(braindump_path)
             run_id = bd.get("wf_uuid", os.path.basename(run_dir))
@@ -130,6 +153,8 @@ def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
             os.path.join(project_dir, "**", "braindump.yml"), recursive=True
         ):
             run_dir = os.path.dirname(bd_path)
+            if _is_excluded_run_dir(run_dir):
+                continue
             try:
                 bd = _parse_braindump(bd_path)
                 run_id = bd.get("wf_uuid", os.path.basename(run_dir))
