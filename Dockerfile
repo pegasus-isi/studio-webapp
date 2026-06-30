@@ -139,6 +139,11 @@ RUN ARCH=$(dpkg --print-architecture) && \
 COPY docker/htcondor/90-studio.conf /etc/condor/config.d/90-studio.conf
 COPY docker/pegasus/pegasus.properties /etc/pegasus/pegasus.properties
 
+# for now, use a special Pegasus with the monitord plugin patch
+RUN wget https://download.pegasus.isi.edu/pegasus-ai/pegasus_6.0.0~-dev.0202606301145-1+ubuntu24_amd64.deb && \
+    dpkg -i --force-downgrade ./pegasus_6.0.0~-dev.0202606301145-1+ubuntu24_amd64.deb && \
+    rm -f pegasus_6.0.0~-dev.0202606301145-1+ubuntu24_amd64.deb
+
 # Pin Pegasus's CLI tools (pegasus-preflight-check, etc.) explicitly to the
 # system Python 3.12 — the interpreter that carries Pegasus's DEB deps.
 ENV PEGASUS_PYTHON=/usr/bin/python3
