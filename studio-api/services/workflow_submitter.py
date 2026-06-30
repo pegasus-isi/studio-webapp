@@ -103,24 +103,116 @@ async def submit_workflow(
         return {"status": "error", "output": f"Error: {e}"}
 
 
+async def run_planned_workflow(
+    workflow_dir: str,
+    run_dir: str | None = None,
+    site: str = "condorpool",
+    output_site: str = "local",
+) -> dict[str, str]:
+    """Submit an already-planned run directory via ``pegasus-run``.
+
+    This is the "Run" action: it submits the workflow that a prior "Plan"
+    produced, instead of re-planning. ``run_dir`` is the dir returned by Plan;
+    if it's missing or invalid (e.g. the page was refreshed), fall back to the
+    most recent planned dir under ``workflow_dir``. If no planned dir exists at
+    all, fall back to a full plan+submit so Run still works standalone.
+
+    Returns dict with status, run_dir (if successful), and output.
+    """
+    target: str | None = None
+    if run_dir:
+        candidate = os.path.realpath(os.path.expanduser(run_dir))
+        if os.path.isdir(candidate) and os.path.isfile(
+            os.path.join(candidate, "braindump.yml")
+        ):
+            target = candidate
+    if target is None:
+        target = _newest_run_dir_any(workflow_dir)
+
+    # Nothing planned yet — plan and submit in one step.
+    if target is None:
+        return await submit_workflow(
+            workflow_dir, site=site, output_site=output_site
+        )
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "pegasus-run", target,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=_CMD_TIMEOUT
+        )
+        out = stdout.decode("utf-8", errors="replace")
+        err = stderr.decode("utf-8", errors="replace")
+        output = out + (f"\nstderr:\n{err}" if err else "")
+
+        if proc.returncode == 0:
+            log.info("workflow_run_submitted", run_dir=target, site=site)
+            await _start_monitor(target)
+            return {"status": "submitted", "run_dir": target, "output": output}
+
+        log.warning(
+            "workflow_run_failed", run_dir=target, returncode=proc.returncode
+        )
+        return {"status": "error", "run_dir": target, "output": output}
+
+    except FileNotFoundError:
+        return {"status": "error", "output": "pegasus-run not found"}
+    except asyncio.TimeoutError:
+        return {"status": "error", "output": "pegasus-run timed out"}
+    except Exception as e:
+        return {"status": "error", "output": f"Error: {e}"}
+
+
 async def _start_monitor(run_dir: str) -> None:
     """Launch `workflow-monitor --serve` for a run dir (best-effort).
 
     The monitor daemonizes (double-fork) and writes
     ``<submit_dir>/workflow-events.jsonl`` continuously. Failure to start is
-    logged but never blocks submission.
+    logged but never blocks submission. The studio also reads the stampede DB
+    directly (see services.stampede_reader), so a missing monitor degrades the
+    live view but never hides completed-run data.
     """
+    import shutil
+
+    binary = shutil.which("workflow-monitor")
+    if not binary:
+        # Surface this clearly — previously this path failed silently, leaving
+        # no JSONL and no explanation in the logs.
+        log.warning(
+            "workflow_monitor_missing", run_dir=run_dir, path_env=os.environ.get("PATH", "")
+        )
+        return
+
     try:
         proc = await asyncio.create_subprocess_exec(
-            "workflow-monitor", "--serve", run_dir,
+            binary, "--serve", run_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        # --serve double-forks and the launcher exits promptly; just reap it.
-        await asyncio.wait_for(proc.communicate(), timeout=30)
-        log.info("workflow_monitor_started", run_dir=run_dir)
-    except FileNotFoundError:
-        log.warning("workflow_monitor_missing", run_dir=run_dir)
+        # --serve double-forks, so the launcher should exit promptly.
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except asyncio.TimeoutError:
+            # Daemon is presumably running; don't block submission on it.
+            log.info("workflow_monitor_launch_slow", run_dir=run_dir)
+            return
+
+        rc = proc.returncode
+        if rc == 0:
+            log.info("workflow_monitor_started", run_dir=run_dir, binary=binary)
+        else:
+            # Don't swallow non-zero exits — log the reason (e.g. bad flag,
+            # missing htcondor bindings) so the failure is diagnosable.
+            err = (stderr or b"").decode("utf-8", errors="replace").strip()
+            log.warning(
+                "workflow_monitor_start_failed",
+                run_dir=run_dir,
+                returncode=rc,
+                stderr=err[-800:],
+            )
     except Exception as e:
         log.warning("workflow_monitor_start_failed", run_dir=run_dir, error=str(e))
 
@@ -250,4 +342,22 @@ def _newest_run_dir(workflow_dir: str) -> str | None:
             continue
         if time.time() - mtime < 600:
             candidates.append((mtime, os.path.dirname(bd)))
+    return max(candidates)[1] if candidates else None
+
+
+def _newest_run_dir_any(workflow_dir: str) -> str | None:
+    """The most recent runNNNN dir under workflow_dir, regardless of age.
+
+    Used by the Run action to locate the dir a prior Plan produced (which may
+    be older than the 600s window ``_newest_run_dir`` uses for fresh submits).
+    """
+    candidates: list[tuple[float, str]] = []
+    for bd in _glob.glob(
+        os.path.join(workflow_dir, "**", "braindump.yml"), recursive=True
+    ):
+        try:
+            mtime = os.path.getmtime(bd)
+        except OSError:
+            continue
+        candidates.append((mtime, os.path.dirname(bd)))
     return max(candidates)[1] if candidates else None

@@ -69,10 +69,18 @@ def find_events_file(run_dir: str) -> str | None:
 
 
 def read_events(run_dir: str) -> list[dict[str, Any]]:
-    """Read and parse all events from a run's JSONL log (empty if none yet)."""
+    """Read and parse all events for a run.
+
+    Prefers the JSONL log (workflow-monitor / wfevents plugin). When no JSONL
+    exists, falls back to synthesizing events from the Pegasus stampede DB,
+    which monitord writes for every run — so jobs/status/DAG still populate
+    even if the monitor never ran.
+    """
     path = find_events_file(run_dir)
     if not path:
-        return []
+        from services.stampede_reader import read_stampede_events
+
+        return read_stampede_events(run_dir)
 
     events: list[dict[str, Any]] = []
     try:

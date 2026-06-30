@@ -45,6 +45,10 @@ export function WorkflowProjectDetail({ projectId }: Props) {
   const submit = useSubmitWorkflowProject();
 
   const [output, setOutput] = useState<string | null>(null);
+  const [outputCollapsed, setOutputCollapsed] = useState(false);
+  // Run dir produced by the last Plan, so Run can submit it via pegasus-run
+  // instead of re-planning.
+  const [plannedRunDir, setPlannedRunDir] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [values, setValues] = useState<ParamValues>({});
   const [dag, setDag] = useState<{
@@ -95,25 +99,36 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     output_site: String(values["output_site"] ?? "local"),
   });
 
+  const showOutput = (text: string) => {
+    setOutput(text);
+    setOutputCollapsed(false);
+  };
+
   const handleGenerate = async () => {
     setOutput(null);
+    // Regenerating invalidates any prior plan.
+    setPlannedRunDir(null);
     const result = await generate.mutateAsync({
       projectId,
       args: buildArgs(genParams, values),
     });
-    setOutput(result.output);
+    showOutput(result.output);
   };
 
   const handlePlan = async () => {
     setOutput(null);
     const result = await plan.mutateAsync({ projectId, opts: planOpts() });
-    setOutput(result.output);
+    setPlannedRunDir(result.run_dir || null);
+    showOutput(result.output);
   };
 
-  const handleSubmit = async () => {
+  const handleRun = async () => {
     setOutput(null);
-    const result = await submit.mutateAsync({ projectId, opts: planOpts() });
-    setOutput(result.output ?? "Submitted");
+    const result = await submit.mutateAsync({
+      projectId,
+      opts: { ...planOpts(), run_dir: plannedRunDir ?? undefined },
+    });
+    showOutput(result.output ?? "Submitted");
   };
 
   const isBusy = generate.isPending || plan.isPending || submit.isPending;
@@ -241,11 +256,12 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                   {plan.isPending ? "Planning..." : "Plan"}
                 </button>
                 <button
-                  onClick={handleSubmit}
+                  onClick={handleRun}
                   disabled={isBusy}
+                  title="Submit the planned workflow (pegasus-run) without re-planning"
                   className="rounded-md bg-pegasus-600 px-4 py-2 text-sm text-white hover:bg-pegasus-700 disabled:opacity-50"
                 >
-                  {submit.isPending ? "Submitting..." : "Submit"}
+                  {submit.isPending ? "Running..." : "Run"}
                 </button>
                 <button
                   onClick={() =>
@@ -269,12 +285,31 @@ export function WorkflowProjectDetail({ projectId }: Props) {
         {/* Command output */}
         {output && (
           <div>
-            <h3 className="mb-2 text-sm font-semibold text-fg">
-              Output
-            </h3>
-            <pre className="max-h-64 w-full overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] break-all rounded-md bg-gray-900 p-4 text-xs text-green-400">
-              {output}
-            </pre>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-fg">Output</h3>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setOutputCollapsed((c) => !c)}
+                  className="rounded px-2 py-0.5 text-xs text-fgmuted hover:bg-base hover:text-fg"
+                  title={outputCollapsed ? "Expand output" : "Collapse output"}
+                >
+                  {outputCollapsed ? "Expand" : "Collapse"}
+                </button>
+                <button
+                  onClick={() => setOutput(null)}
+                  className="rounded px-2 py-0.5 text-xs text-fgmuted hover:bg-base hover:text-fg"
+                  title="Close output"
+                  aria-label="Close output"
+                >
+                  {"✕"}
+                </button>
+              </div>
+            </div>
+            {!outputCollapsed && (
+              <pre className="max-h-64 w-full overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] break-all rounded-md bg-gray-900 p-4 text-xs text-green-400">
+                {output}
+              </pre>
+            )}
           </div>
         )}
 

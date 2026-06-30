@@ -14,40 +14,44 @@ def test_list_workflows_empty(client):
 
 
 def test_list_workflows_with_braindump(client):
-    """Create a mock Pegasus run directory and verify it's discovered."""
+    """A run dir under ~/work/workflows is discovered; a cloned-repo/test
+    fixture braindump elsewhere in the tree is excluded."""
     home = os.environ.get("HOME", "/tmp")
-    workspace = os.path.join(home, "work")
-    run_dir = os.path.join(workspace, "test-run-001")
-    os.makedirs(run_dir, exist_ok=True)
+    workflows_dir = os.path.join(home, "work", "workflows")
 
-    # Write a minimal braindump.yml
+    # A genuine run dir — should be discovered.
+    run_dir = os.path.join(workflows_dir, "test-run-001")
+    os.makedirs(run_dir, exist_ok=True)
     with open(os.path.join(run_dir, "braindump.yml"), "w") as f:
         f.write("pegasus_wf_name: test-workflow\n")
         f.write("wf_uuid: test-uuid-001\n")
 
-    # Patch the scanner's WORKSPACE_ROOT
+    # A braindump inside a cloned repo's test fixtures — must be ignored.
+    fixture_dir = os.path.join(
+        workflows_dir, "pegasus-clone", "test", "analyzer_samples_dir", "sample1"
+    )
+    os.makedirs(fixture_dir, exist_ok=True)
+    with open(os.path.join(fixture_dir, "braindump.yml"), "w") as f:
+        f.write("pegasus_wf_name: fixture-should-be-hidden\n")
+        f.write("wf_uuid: fixture-uuid\n")
+
+    # discover_runs() defaults to WORKFLOWS_DIR; point it at our temp tree.
     import services.workflow_scanner as scanner
 
-    old_root = scanner.WORKSPACE_ROOT
-    scanner.WORKSPACE_ROOT = workspace
-
-    # Also patch the router's WORKSPACE_ROOT
-    import routers.workflows as wf_router
-
-    old_wf_root = wf_router.WORKSPACE_ROOT
-    wf_router.WORKSPACE_ROOT = workspace
+    old_root = scanner.WORKFLOWS_DIR
+    scanner.WORKFLOWS_DIR = workflows_dir
 
     try:
         resp = client.get("/api/workflows")
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["workflows"]) >= 1
-        wf = data["workflows"][0]
-        assert wf["name"] == "test-workflow"
+        names = [w["name"] for w in data["workflows"]]
+        assert "test-workflow" in names
+        assert "fixture-should-be-hidden" not in names
+        wf = next(w for w in data["workflows"] if w["name"] == "test-workflow")
         assert wf["run_id"] == "test-uuid-001"
     finally:
-        scanner.WORKSPACE_ROOT = old_root
-        wf_router.WORKSPACE_ROOT = old_wf_root
+        scanner.WORKFLOWS_DIR = old_root
 
 
 def test_get_workflow_not_found(client):

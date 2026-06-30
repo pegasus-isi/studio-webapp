@@ -318,10 +318,12 @@ export async function generateWorkflow(projectId: string, args: string[] = []) {
 export interface PlanOptions {
   site?: string;
   output_site?: string;
+  // Run action only: the planned run dir (from a prior Plan) to submit.
+  run_dir?: string;
 }
 
 export async function planWorkflow(projectId: string, opts: PlanOptions = {}) {
-  return request<{ status: string; output: string }>(
+  return request<{ status: string; output: string; run_dir?: string }>(
     `/workflows/projects/${encodeURIComponent(projectId)}/plan`,
     { method: "POST", body: JSON.stringify(opts) }
   );
