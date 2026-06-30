@@ -6,6 +6,7 @@ Ported from opencode-extension/config_builder.py — converted urllib to async h
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import httpx
@@ -13,8 +14,22 @@ import structlog
 
 log = structlog.get_logger()
 
+# Baked-in default LLM gateway. Studio ships pointed at an internal,
+# OpenAI-compatible gateway so users get a working chat out of the box with
+# zero configuration. Both values are overridable via env for other
+# deployments.
+GATEWAY_BASE_URL = os.environ.get("STUDIO_LLM_GATEWAY_URL", "http://gateway.llm:4000/v1")
+GATEWAY_DEFAULT_MODEL = os.environ.get("STUDIO_LLM_DEFAULT_MODEL", "Default")
+
 # Provider presets — mirrors config_builder.PROVIDERS
 PROVIDERS: dict[str, dict[str, Any]] = {
+    "gateway": {
+        "name": "LLM Gateway",
+        "npm": "@ai-sdk/openai-compatible",
+        "base_url": GATEWAY_BASE_URL,
+        "default_model": GATEWAY_DEFAULT_MODEL,
+        "api_key_env": None,
+    },
     "anthropic": {
         "name": "Anthropic",
         "npm": "@ai-sdk/anthropic",
@@ -67,6 +82,10 @@ PROVIDERS: dict[str, dict[str, Any]] = {
 }
 
 PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
+    "gateway": {
+        "base_url": GATEWAY_BASE_URL,
+        "model": GATEWAY_DEFAULT_MODEL,
+    },
     "anthropic": {
         "base_url": "https://api.anthropic.com/v1",
         "model": "claude-sonnet-4-5-20250929",
