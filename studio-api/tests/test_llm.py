@@ -7,7 +7,10 @@ def test_get_llm_config_default(client):
     resp = client.get("/api/llm/config")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["provider"] == "anthropic"
+    # Ships pointed at the internal gateway with zero configuration.
+    assert data["provider"] == "gateway"
+    assert data["model"] == "Default"
+    assert data["base_url"] == "http://gateway.llm:4000/v1"
 
 
 def test_put_llm_config(client):
@@ -39,6 +42,7 @@ def test_list_providers(client):
     data = resp.json()
     assert "providers" in data
     provider_ids = [p["id"] for p in data["providers"]]
+    assert "gateway" in provider_ids
     assert "anthropic" in provider_ids
     assert "openai" in provider_ids
     assert "fabric" in provider_ids

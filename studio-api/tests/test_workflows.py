@@ -35,11 +35,11 @@ def test_list_workflows_with_braindump(client):
         f.write("pegasus_wf_name: fixture-should-be-hidden\n")
         f.write("wf_uuid: fixture-uuid\n")
 
-    # discover_runs() defaults to WORKFLOWS_DIR; point it at our temp tree.
+    # discover_runs() walks SCAN_ROOT; point it at our temp workflows tree.
     import services.workflow_scanner as scanner
 
-    old_root = scanner.WORKFLOWS_DIR
-    scanner.WORKFLOWS_DIR = workflows_dir
+    old_root = scanner.SCAN_ROOT
+    scanner.SCAN_ROOT = workflows_dir
 
     try:
         resp = client.get("/api/workflows")
@@ -51,7 +51,7 @@ def test_list_workflows_with_braindump(client):
         wf = next(w for w in data["workflows"] if w["name"] == "test-workflow")
         assert wf["run_id"] == "test-uuid-001"
     finally:
-        scanner.WORKFLOWS_DIR = old_root
+        scanner.SCAN_ROOT = old_root
 
 
 def test_get_workflow_not_found(client):

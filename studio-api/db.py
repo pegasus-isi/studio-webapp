@@ -138,13 +138,32 @@ class Database:
 
     # --- LLM Config ---
 
+    async def llm_config_exists(self) -> bool:
+        """Whether the user has explicitly saved an LLM config row."""
+        async with self.db.execute(
+            "SELECT 1 FROM llm_config WHERE id = 1"
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
     async def get_llm_config(self) -> dict[str, Any] | None:
         async with self.db.execute(
             "SELECT * FROM llm_config WHERE id = 1"
         ) as cursor:
             row = await cursor.fetchone()
             if row is None:
-                return None
+                # Ship a working default: an internal OpenAI-compatible gateway,
+                # so chat/tools work with zero configuration. Users can override
+                # this in Settings, which writes a real row.
+                from llm.providers import GATEWAY_BASE_URL, GATEWAY_DEFAULT_MODEL
+
+                return {
+                    "provider": "gateway",
+                    "model": GATEWAY_DEFAULT_MODEL,
+                    "api_key": "",
+                    "base_url": GATEWAY_BASE_URL,
+                    "extra_config": {},
+                    "updated_at": None,
+                }
             return {
                 "provider": row["provider"],
                 "model": row["model"],
@@ -356,22 +375,23 @@ class Database:
         exec_site: str | None = None,
     ) -> None:
         now = _now()
+        # A run can collide on either unique key: run_dir (replanned in place)
+        # or run_id/wf_uuid (rerun produces a new submit dir with the same uuid).
+        # ON CONFLICT can only target one column, so use INSERT OR REPLACE, which
+        # resolves a conflict on either key. Preserve the earliest created_at of
+        # any row we're replacing so the original discovery time survives.
         await self.db.execute(
-            """INSERT INTO workflow_runs
+            """INSERT OR REPLACE INTO workflow_runs
                (run_id, name, run_dir, status, total_jobs, completed_jobs,
                 failed_jobs, exec_site, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(run_dir) DO UPDATE SET
-                   run_id = excluded.run_id,
-                   name = excluded.name,
-                   status = excluded.status,
-                   total_jobs = excluded.total_jobs,
-                   completed_jobs = excluded.completed_jobs,
-                   failed_jobs = excluded.failed_jobs,
-                   exec_site = excluded.exec_site,
-                   updated_at = excluded.updated_at""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+                       COALESCE(
+                           (SELECT MIN(created_at) FROM workflow_runs
+                            WHERE run_id = ? OR run_dir = ?),
+                           ?),
+                       ?)""",
             (run_id, name, run_dir, status, total_jobs, completed_jobs,
-             failed_jobs, exec_site, now, now),
+             failed_jobs, exec_site, run_id, run_dir, now, now),
         )
         await self.db.commit()
 
