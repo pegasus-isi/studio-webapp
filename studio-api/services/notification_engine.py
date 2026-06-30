@@ -190,7 +190,16 @@ class NotificationEngine:
         for run in runs:
             run_dir = run["run_dir"]
             run_id = run["run_id"]
-            label = run.get("run_name") or run["name"] or run_id
+            # Include the workflow name (dax label) so notifications are
+            # attributable to a project — "run0001" alone isn't unique across
+            # workflows. e.g. "csv_summary / run0001".
+            run_name = run.get("run_name") or run_id
+            wf_name = run.get("name")
+            label = (
+                f"{wf_name} / {run_name}"
+                if wf_name and wf_name != run_name
+                else run_name
+            )
 
             detail = await get_workflow_detail(run_dir)
             status = detail.get("status") or get_run_status(run_dir)
