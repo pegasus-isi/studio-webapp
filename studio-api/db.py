@@ -138,13 +138,32 @@ class Database:
 
     # --- LLM Config ---
 
+    async def llm_config_exists(self) -> bool:
+        """Whether the user has explicitly saved an LLM config row."""
+        async with self.db.execute(
+            "SELECT 1 FROM llm_config WHERE id = 1"
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
     async def get_llm_config(self) -> dict[str, Any] | None:
         async with self.db.execute(
             "SELECT * FROM llm_config WHERE id = 1"
         ) as cursor:
             row = await cursor.fetchone()
             if row is None:
-                return None
+                # Ship a working default: an internal OpenAI-compatible gateway,
+                # so chat/tools work with zero configuration. Users can override
+                # this in Settings, which writes a real row.
+                from llm.providers import GATEWAY_BASE_URL, GATEWAY_DEFAULT_MODEL
+
+                return {
+                    "provider": "gateway",
+                    "model": GATEWAY_DEFAULT_MODEL,
+                    "api_key": "",
+                    "base_url": GATEWAY_BASE_URL,
+                    "extra_config": {},
+                    "updated_at": None,
+                }
             return {
                 "provider": row["provider"],
                 "model": row["model"],

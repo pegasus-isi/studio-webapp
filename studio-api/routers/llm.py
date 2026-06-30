@@ -28,7 +28,12 @@ async def get_llm_config() -> LLMConfigResponse:
 
     data = await db.get_llm_config()
     if data is None:
-        return LLMConfigResponse(provider="anthropic")
+        # get_llm_config() bakes in the gateway default, so this is defensive.
+        return LLMConfigResponse(
+            provider="gateway",
+            model=PROVIDER_DEFAULTS["gateway"]["model"],
+            base_url=PROVIDER_DEFAULTS["gateway"]["base_url"],
+        )
     return LLMConfigResponse(**data)
 
 

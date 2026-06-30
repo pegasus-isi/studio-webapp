@@ -41,6 +41,7 @@ class ProjectStatus(str, enum.Enum):
 
 
 class LLMProvider(str, enum.Enum):
+    GATEWAY = "gateway"
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     GOOGLE = "google"
