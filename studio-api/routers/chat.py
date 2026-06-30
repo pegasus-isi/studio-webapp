@@ -39,6 +39,18 @@ _RESPONSES_HINTS = (
     "Unsupported parameter: 'messages'",
 )
 
+# Models that only speak the Responses API (no Chat Completions). For these we
+# go straight to /responses instead of probing /chat/completions first — which
+# is what Codex does (it hardcodes wire_api = "responses"). Matches e.g.
+# gpt-5.5 on the FABRIC/RENCI proxy and OpenAI reasoning models (o1/o3/o4).
+_RESPONSES_MODEL_PREFIXES = ("gpt-5", "o1", "o1-", "o3", "o4")
+
+
+def _is_responses_model(model: str) -> bool:
+    """Heuristic: True if the model id implies a Responses-only endpoint."""
+    m = (model or "").lower().split("/")[-1]  # drop any "provider/" prefix
+    return any(m.startswith(p) for p in _RESPONSES_MODEL_PREFIXES)
+
 # Max tool-calling rounds
 _MAX_TOOL_ROUNDS = 50
 
@@ -471,33 +483,54 @@ async def _openai_dispatch(
     model: str,
     messages: list[dict],
     system_prompt: str,
+    wire_api: str = "auto",
 ) -> dict[str, Any]:
-    """Call Chat Completions, transparently falling back to the Responses API.
+    """Call Chat Completions or the Responses API, picking the right transport.
 
-    Some OpenAI-compatible endpoints (e.g. gpt-5.5 on the FABRIC/RENCI proxy)
-    only accept the Responses API and reject ``messages`` with a 400. We detect
-    that, remember the endpoint, and retry against /responses.
+    ``wire_api`` controls the choice:
+      - "responses": always use /responses (no Chat-Completions probe).
+      - "chat":      always use /chat/completions (no fallback).
+      - "auto" (default): use /responses if the model is Responses-only
+        (e.g. gpt-5.5 on the FABRIC/RENCI proxy) or the endpoint was already
+        learned to require it; otherwise try /chat/completions and fall back
+        to /responses on a clear signal — a 400 with a known hint, a 404/405,
+        a 5xx, or a transport-level failure (some proxies reset the connection
+        for unsupported routes, which surfaces as a generic "network error").
     """
-    if base_url in _RESPONSES_ENDPOINTS:
-        return await _openai_responses_request(
-            client, base_url, api_key, model, messages, system_prompt
-        )
+    responses = lambda: _openai_responses_request(  # noqa: E731
+        client, base_url, api_key, model, messages, system_prompt
+    )
+    chat = lambda: _openai_request(  # noqa: E731
+        client, base_url, api_key, model, messages, system_prompt
+    )
+
+    if wire_api == "responses" or base_url in _RESPONSES_ENDPOINTS or (
+        wire_api == "auto" and _is_responses_model(model)
+    ):
+        return await responses()
+    if wire_api == "chat":
+        return await chat()
+
     try:
-        return await _openai_request(
-            client, base_url, api_key, model, messages, system_prompt
-        )
+        return await chat()
     except httpx.HTTPStatusError as e:
-        body = e.response.text if e.response is not None else ""
-        if (
-            e.response is not None
-            and e.response.status_code == 400
-            and any(h in body for h in _RESPONSES_HINTS)
-        ):
+        resp = e.response
+        status = resp.status_code if resp is not None else None
+        body = resp.text if resp is not None else ""
+        signal = (
+            (status == 400 and any(h in body for h in _RESPONSES_HINTS))
+            or status in (404, 405)
+            or (status is not None and status >= 500)
+        )
+        if signal:
             _RESPONSES_ENDPOINTS.add(base_url)
-            return await _openai_responses_request(
-                client, base_url, api_key, model, messages, system_prompt
-            )
+            return await responses()
         raise
+    except httpx.RequestError:
+        # Transport-level failure on /chat/completions — retry /responses once
+        # for this call. Don't memoize: a true outage would fail both, and we
+        # don't want a transient blip to pin the endpoint to Responses forever.
+        return await responses()
 
 
 # --- Slash commands ---
@@ -611,6 +644,11 @@ async def chat_stream(request: Request) -> StreamingResponse:
     if not base_url:
         return _error_sse(f"No base URL configured for provider: {provider}")
 
+    # Optional explicit transport override: extra_config.wire_api =
+    # "auto" | "chat" | "responses". Lets an operator force the Responses API
+    # for a provider whose model id isn't auto-detected.
+    wire_api = (config.get("extra_config") or {}).get("wire_api", "auto")
+
     system_prompt = _load_system_prompt(agent_id)
 
     async def event_generator() -> AsyncGenerator[str, None]:
@@ -655,7 +693,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                     else:
                         result = await _openai_dispatch(
                             client, base_url, api_key, model,
-                            conv_messages, system_prompt,
+                            conv_messages, system_prompt, wire_api,
                         )
                 except httpx.HTTPStatusError as e:
                     error_body = e.response.text[:500] if e.response else str(e)
