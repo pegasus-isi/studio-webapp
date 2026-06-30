@@ -22,6 +22,16 @@ import structlog
 
 log = structlog.get_logger()
 
+# Max chars of captured stderr to attach to a failed job (keep payloads small).
+_STDERR_LIMIT = 4000
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 
 def _candidate_dirs(run_dir: str) -> list[str]:
     """run_dir plus the braindump's submit_dir (where the DB actually lives)."""
@@ -87,7 +97,8 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
         inst_by_job: dict[Any, sqlite3.Row] = {}
         for r in con.execute(
             "SELECT job_id, job_instance_id, site, exitcode, stdout_file, "
-            "stderr_file FROM job_instance ORDER BY job_submit_seq"
+            "stderr_file, stderr_text, local_duration, cluster_duration "
+            "FROM job_instance ORDER BY job_submit_seq"
         ):
             inst_by_job[r["job_id"]] = r
 
@@ -101,7 +112,8 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
         # job_instance_id -> invocation (maxrss / exitcode / transformation)
         inv_by_inst: dict[Any, sqlite3.Row] = {}
         for r in con.execute(
-            "SELECT job_instance_id, exitcode, maxrss, transformation FROM invocation"
+            "SELECT job_instance_id, exitcode, maxrss, transformation, "
+            "remote_duration FROM invocation"
         ):
             inv_by_inst.setdefault(r["job_instance_id"], r)
 
@@ -148,6 +160,23 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
         exitcode = inst["exitcode"]
         if exitcode is None and inv is not None:
             exitcode = inv["exitcode"]
+
+        # Wall-clock duration: prefer the job's local_duration, fall back to
+        # cluster_duration, then the task's remote_duration.
+        duration = inst["local_duration"] or inst["cluster_duration"]
+        if duration is None and inv is not None:
+            duration = inv["remote_duration"]
+        if isinstance(duration, (int, float)):
+            duration = round(float(duration), 1)
+
+        # Captured stderr — only attach for failed jobs, truncated, so the
+        # failure reason is visible inline without running the analyzer.
+        stderr = None
+        if _as_int(exitcode) not in (None, 0):
+            text = inst["stderr_text"]
+            if text:
+                stderr = text.strip()[-_STDERR_LIMIT:]
+
         events.append({
             "event_type": "job_state",
             "job_id": jr["job_id"],
@@ -158,6 +187,9 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
             "stdout_file": inst["stdout_file"],
             "stderr_file": inst["stderr_file"],
             "maxrss": inv["maxrss"] if inv else None,
+            "site": inst["site"],
+            "duration": duration,
+            "stderr": stderr,
             "transformation": task_tx.get(jr["job_id"])
             or (inv["transformation"] if inv else None),
         })

@@ -31,12 +31,13 @@ def _make_stampede_db(run_dir: str) -> None:
             type_desc TEXT);
         CREATE TABLE job_instance (job_id INTEGER, job_instance_id INTEGER,
             site TEXT, exitcode INTEGER, stdout_file TEXT, stderr_file TEXT,
+            stderr_text TEXT, local_duration REAL, cluster_duration REAL,
             job_submit_seq INTEGER);
         CREATE TABLE jobstate (job_instance_id INTEGER, state TEXT,
             jobstate_submit_seq INTEGER);
         CREATE TABLE task (job_id INTEGER, transformation TEXT);
         CREATE TABLE invocation (job_instance_id INTEGER, exitcode INTEGER,
-            maxrss INTEGER, transformation TEXT);
+            maxrss INTEGER, transformation TEXT, remote_duration REAL);
         """
     )
     con.execute(
@@ -60,14 +61,18 @@ def _make_stampede_db(run_dir: str) -> None:
     ]
     con.executemany("INSERT INTO job VALUES (?,1,?,?)", jobs)
     con.execute("INSERT INTO task VALUES (1,'summarize_csv')")
-    # instances: job1 failed (256), jobs 2/3/4 succeeded (0)
+    # instances: job1 failed (256), jobs 2/3/4 succeeded (0).
+    # cols: job_id, jiid, site, exitcode, stdout, stderr_file, stderr_text,
+    #       local_duration, cluster_duration, job_submit_seq
     instances = [
-        (1, 101, "condorpool", 256, "out1", "err1", 4),
-        (2, 102, "local", 0, "out2", "err2", 1),
-        (3, 103, "local", 0, "out3", "err3", 2),
-        (4, 104, "local", 0, "out4", "err4", 3),
+        (1, 101, "condorpool", 256, "out1", "err1", "Traceback: boom\n", 12.3, None, 4),
+        (2, 102, "local", 0, "out2", "err2", None, 1.5, None, 1),
+        (3, 103, "local", 0, "out3", "err3", None, 0.4, None, 2),
+        (4, 104, "local", 0, "out4", "err4", None, 2.0, None, 3),
     ]
-    con.executemany("INSERT INTO job_instance VALUES (?,?,?,?,?,?,?)", instances)
+    con.executemany(
+        "INSERT INTO job_instance VALUES (?,?,?,?,?,?,?,?,?,?)", instances
+    )
     con.executemany(
         "INSERT INTO jobstate VALUES (?,?,?)",
         [
@@ -78,8 +83,11 @@ def _make_stampede_db(run_dir: str) -> None:
         ],
     )
     con.executemany(
-        "INSERT INTO invocation VALUES (?,?,?,?)",
-        [(101, 256, 2048, "summarize_csv"), (102, 0, 512, "pegasus::transfer")],
+        "INSERT INTO invocation VALUES (?,?,?,?,?)",
+        [
+            (101, 256, 2048, "summarize_csv", 11.0),
+            (102, 0, 512, "pegasus::transfer", 1.2),
+        ],
     )
     con.commit()
     con.close()
@@ -99,14 +107,22 @@ def test_stampede_fallback_reconstructs_jobs_and_status(tmp_path):
     assert len(jobs) == 8  # all abstract jobs listed
     by_name = {j["job_id"]: j for j in jobs}
 
-    # The compute job failed (exit 256), transformation surfaced.
+    # The compute job failed (exit 256), with site, duration, and stderr.
     compute = by_name["summarize_csv_x"]
     assert compute["status"] == "failed"
     assert compute["transformation"] == "summarize_csv"
     assert compute["maxrss"] == 2048
+    assert compute["site"] == "condorpool"
+    assert compute["duration"] == 12.3
+    assert compute["stderr"] and "boom" in compute["stderr"]
 
-    # Jobs that produced a 0-exit instance succeeded.
-    assert by_name["stage_in_x"]["status"] == "succeeded"
+    # Jobs that produced a 0-exit instance succeeded, with site/duration and
+    # no stderr attached (only failed jobs carry it).
+    succeeded = by_name["stage_in_x"]
+    assert succeeded["status"] == "succeeded"
+    assert succeeded["site"] == "local"
+    assert succeeded["duration"] == 1.5
+    assert succeeded["stderr"] is None
     # Jobs that never ran stay pending (DAG would render them gray).
     assert by_name["cleanup_a"]["status"] == "pending"
 

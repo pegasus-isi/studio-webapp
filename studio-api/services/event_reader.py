@@ -178,6 +178,9 @@ def jobs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "stdout_file": None,
                 "stderr_file": None,
                 "maxrss": None,
+                "site": None,
+                "duration": None,
+                "stderr": None,
             }
             roster[jid] = entry
             order.append(jid)
@@ -209,6 +212,12 @@ def jobs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             entry["maxrss"] = ev["maxrss"]
         if ev.get("transformation"):
             entry["transformation"] = ev["transformation"]
+        if ev.get("site"):
+            entry["site"] = ev["site"]
+        if ev.get("duration") is not None:
+            entry["duration"] = ev["duration"]
+        if ev.get("stderr"):
+            entry["stderr"] = ev["stderr"]
         entry["status"] = _job_status(entry["state"], entry["exitcode"])
 
     return [roster[k] for k in order]
