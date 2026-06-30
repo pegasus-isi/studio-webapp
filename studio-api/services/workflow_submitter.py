@@ -77,11 +77,8 @@ async def submit_workflow(
                 run_dir=run_dir,
                 site=site,
             )
-            # Start the workflow-monitor server so it continuously writes
-            # workflow-events.jsonl — the studio drives all status/job views
-            # from that log.
-            if run_dir:
-                await _start_monitor(run_dir)
+            # The integrated pegasus-monitord writes workflow-events.jsonl on
+            # its own, so there's no separate monitor to start here.
             return {
                 "status": "submitted",
                 "run_dir": run_dir or "",
@@ -150,7 +147,6 @@ async def run_planned_workflow(
 
         if proc.returncode == 0:
             log.info("workflow_run_submitted", run_dir=target, site=site)
-            await _start_monitor(target)
             return {"status": "submitted", "run_dir": target, "output": output}
 
         log.warning(
@@ -164,57 +160,6 @@ async def run_planned_workflow(
         return {"status": "error", "output": "pegasus-run timed out"}
     except Exception as e:
         return {"status": "error", "output": f"Error: {e}"}
-
-
-async def _start_monitor(run_dir: str) -> None:
-    """Launch `workflow-monitor --serve` for a run dir (best-effort).
-
-    The monitor daemonizes (double-fork) and writes
-    ``<submit_dir>/workflow-events.jsonl`` continuously. Failure to start is
-    logged but never blocks submission. The studio also reads the stampede DB
-    directly (see services.stampede_reader), so a missing monitor degrades the
-    live view but never hides completed-run data.
-    """
-    import shutil
-
-    binary = shutil.which("workflow-monitor")
-    if not binary:
-        # Surface this clearly — previously this path failed silently, leaving
-        # no JSONL and no explanation in the logs.
-        log.warning(
-            "workflow_monitor_missing", run_dir=run_dir, path_env=os.environ.get("PATH", "")
-        )
-        return
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            binary, "--serve", run_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        # --serve double-forks, so the launcher should exit promptly.
-        try:
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except asyncio.TimeoutError:
-            # Daemon is presumably running; don't block submission on it.
-            log.info("workflow_monitor_launch_slow", run_dir=run_dir)
-            return
-
-        rc = proc.returncode
-        if rc == 0:
-            log.info("workflow_monitor_started", run_dir=run_dir, binary=binary)
-        else:
-            # Don't swallow non-zero exits — log the reason (e.g. bad flag,
-            # missing htcondor bindings) so the failure is diagnosable.
-            err = (stderr or b"").decode("utf-8", errors="replace").strip()
-            log.warning(
-                "workflow_monitor_start_failed",
-                run_dir=run_dir,
-                returncode=rc,
-                stderr=err[-800:],
-            )
-    except Exception as e:
-        log.warning("workflow_monitor_start_failed", run_dir=run_dir, error=str(e))
 
 
 async def cancel_workflow(run_dir: str) -> dict[str, str]:

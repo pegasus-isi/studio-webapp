@@ -41,10 +41,29 @@ async def get_workflow_detail(run_dir: str) -> dict[str, Any]:
 
 
 async def get_workflow_jobs(run_dir: str) -> list[dict[str, Any]]:
-    """Get job-level detail from the workflow-monitor JSONL log."""
+    """Get job-level detail for a run.
+
+    Jobs come from the event log (JSONL or stampede fallback). The integrated
+    monitord's JSONL job_state events omit site/duration/stderr, so enrich each
+    job from the stampede DB — which always has them — filling only fields the
+    events didn't provide.
+    """
+    from services.stampede_reader import read_stampede_job_details
+
     loop = asyncio.get_event_loop()
     events = await loop.run_in_executor(None, read_events, run_dir)
-    return event_jobs(events)
+    jobs = event_jobs(events)
+
+    details = await loop.run_in_executor(None, read_stampede_job_details, run_dir)
+    if details:
+        for j in jobs:
+            d = details.get(j.get("job_id"))
+            if not d:
+                continue
+            for key in ("site", "duration", "stderr", "transformation", "maxrss"):
+                if j.get(key) in (None, "") and d.get(key) is not None:
+                    j[key] = d[key]
+    return jobs
 
 
 async def tail_workflow_events(

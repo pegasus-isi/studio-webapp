@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import sqlite3
 
@@ -140,3 +142,54 @@ def test_read_events_uses_stampede_when_no_jsonl(tmp_path):
     events = event_reader.read_events(run_dir)
     assert event_reader.workflow_status(events) == "failed"
     assert len(event_reader.jobs(events)) == 8
+
+
+def test_stampede_job_details_map(tmp_path):
+    from services.stampede_reader import read_stampede_job_details
+
+    run_dir = str(tmp_path / "run0009")
+    _make_stampede_db(run_dir)
+    details = read_stampede_job_details(run_dir)
+
+    compute = details["summarize_csv_x"]
+    assert compute["site"] == "condorpool"
+    assert compute["duration"] == 12.3
+    assert compute["stderr"] and "boom" in compute["stderr"]
+    assert compute["transformation"] == "summarize_csv"
+
+    # A job that never ran has no instance data.
+    assert details["cleanup_a"]["site"] is None
+    assert details["cleanup_a"]["duration"] is None
+
+
+def test_get_workflow_jobs_enriches_jsonl_from_stampede(tmp_path):
+    """When a JSONL exists but its job_state lacks site/duration/stderr, those
+    fields are filled from the stampede DB."""
+    from services.workflow_monitor import get_workflow_jobs
+
+    run_dir = str(tmp_path / "run0010")
+    _make_stampede_db(run_dir)  # also writes braindump.yml (submit_dir=run_dir)
+
+    # A JSONL that wins over the stampede fallback but omits site/duration/stderr.
+    events = [
+        {"event_type": "workflow_start", "submit_dir": run_dir},
+        {"event_type": "jobs_init", "total_jobs": 1,
+         "jobs": [{"job_id": 1, "exec_job_id": "summarize_csv_x",
+                   "type_desc": "compute"}]},
+        {"event_type": "job_state", "job_id": 1,
+         "exec_job_id": "summarize_csv_x", "type_desc": "compute",
+         "state": "POST_SCRIPT_FAILED", "exitcode": 256},
+        {"event_type": "workflow_end", "wf_state": "WORKFLOW_TERMINATED",
+         "wf_status": 1, "total_jobs": 1},
+    ]
+    with open(os.path.join(run_dir, "workflow-events.jsonl"), "w") as f:
+        for e in events:
+            f.write(json.dumps(e) + "\n")
+
+    jobs = asyncio.run(get_workflow_jobs(run_dir))
+    compute = next(j for j in jobs if j["job_id"] == "summarize_csv_x")
+    assert compute["status"] == "failed"        # from JSONL exitcode
+    assert compute["site"] == "condorpool"       # enriched from stampede
+    assert compute["duration"] == 12.3           # enriched from stampede
+    assert compute["stderr"] and "boom" in compute["stderr"]  # enriched
+    assert compute["transformation"] == "summarize_csv"        # enriched

@@ -171,14 +171,13 @@ RUN curl -fsSL "https://github.com/apptainer/apptainer/releases/download/v${APPT
     # symlink so it picks up apptainer regardless of which name it looks for.
     { command -v singularity >/dev/null 2>&1 || ln -sf /usr/bin/apptainer /usr/bin/singularity; }
 
-# ---- workflow-monitor ----
-# The studio drives all workflow status/job/stats views from the JSONL event
-# log produced by `workflow-monitor --serve` (started automatically on submit),
-# rather than parsing the stampede DB itself. Installed into the single system
-# Python 3.12. HTCondor pool polling uses the condor CLI (already on PATH), so
-# the optional [htcondor] bindings extra is intentionally omitted.
-RUN pip install --no-cache-dir \
-    "git+https://github.com/pegasus-isi/workflow-monitor"
+# ---- workflow event log ----
+# The studio drives workflow status/job/stats views from the JSONL event log
+# (workflow-events.jsonl). That log is now produced by the integrated
+# pegasus-monitord build (workflow-monitor is bundled with monitord), so the
+# standalone workflow-monitor package is no longer installed explicitly here.
+# As a safety net, the studio also reads the stampede DB directly when no JSONL
+# is present (see services/stampede_reader.py).
 
 # ---- Node.js runtime (for Next.js standalone server) ----
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \

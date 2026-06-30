@@ -215,3 +215,79 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
         })
 
     return events
+
+
+def read_stampede_job_details(run_dir: str) -> dict[str, dict[str, Any]]:
+    """Per-job extras keyed by exec_job_id, read straight from the stampede DB.
+
+    Used to enrich JSONL-sourced jobs: the integrated monitord's job_state
+    events omit site/duration/stderr (and per-job transformation), but the
+    stampede DB always has them. Returns {} if there's no DB.
+    """
+    db_path = find_stampede_db(run_dir)
+    if not db_path:
+        return {}
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+    except sqlite3.Error as e:
+        log.warning("stampede_open_failed", run_dir=run_dir, error=str(e))
+        return {}
+
+    out: dict[str, dict[str, Any]] = {}
+    try:
+        task_tx: dict[Any, str] = {}
+        for r in con.execute("SELECT job_id, transformation FROM task"):
+            task_tx.setdefault(r["job_id"], r["transformation"])
+        inst_by_job: dict[Any, sqlite3.Row] = {}
+        for r in con.execute(
+            "SELECT job_id, job_instance_id, site, exitcode, stderr_text, "
+            "local_duration, cluster_duration FROM job_instance "
+            "ORDER BY job_submit_seq"
+        ):
+            inst_by_job[r["job_id"]] = r
+        inv_by_inst: dict[Any, sqlite3.Row] = {}
+        for r in con.execute(
+            "SELECT job_instance_id, maxrss, exitcode, transformation, "
+            "remote_duration FROM invocation"
+        ):
+            inv_by_inst.setdefault(r["job_instance_id"], r)
+
+        for jr in con.execute("SELECT job_id, exec_job_id FROM job"):
+            detail: dict[str, Any] = {
+                "transformation": task_tx.get(jr["job_id"]),
+                "site": None,
+                "duration": None,
+                "stderr": None,
+                "maxrss": None,
+            }
+            inst = inst_by_job.get(jr["job_id"])
+            if inst is not None:
+                inv = inv_by_inst.get(inst["job_instance_id"])
+                exitcode = inst["exitcode"]
+                if exitcode is None and inv is not None:
+                    exitcode = inv["exitcode"]
+                duration = inst["local_duration"] or inst["cluster_duration"]
+                if duration is None and inv is not None:
+                    duration = inv["remote_duration"]
+                if isinstance(duration, (int, float)):
+                    duration = round(float(duration), 1)
+                stderr = None
+                if _as_int(exitcode) not in (None, 0) and inst["stderr_text"]:
+                    stderr = inst["stderr_text"].strip()[-_STDERR_LIMIT:]
+                detail.update({
+                    "site": inst["site"],
+                    "duration": duration,
+                    "stderr": stderr,
+                    "maxrss": inv["maxrss"] if inv else None,
+                    "transformation": task_tx.get(jr["job_id"])
+                    or (inv["transformation"] if inv else None),
+                })
+            out[jr["exec_job_id"]] = detail
+    except sqlite3.Error as e:
+        log.warning("stampede_read_failed", run_dir=run_dir, error=str(e))
+        return {}
+    finally:
+        con.close()
+
+    return out
