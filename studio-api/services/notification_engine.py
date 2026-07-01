@@ -210,13 +210,52 @@ class NotificationEngine:
             self._seen[run_dir] = _RunState(status, failed, total)
 
             if seed_only or prev is None:
-                # First sighting — record baseline, don't alert.
+                # First sighting — record baseline. Normally we don't alert,
+                # but if the run is already terminal and we've never notified
+                # about it (it finished while the engine was down, or completed
+                # within one poll interval), emit the state notification now.
+                # notification_exists keeps this idempotent across restarts.
+                if status in ("succeeded", "failed"):
+                    await self._notify_terminal_if_new(
+                        run_id, label, status, failed, total
+                    )
                 continue
 
             await self._diff(run_id, label, prev, status, failed, total)
 
             # Resource-pressure extension point (see _check_resources docstring).
             await self._check_resources(run_id, label, detail)
+
+    async def _notify_terminal_if_new(
+        self, run_id: str, label: str, status: str, failed: int, total: int
+    ) -> None:
+        """Emit a terminal-state notification once, if none exists yet.
+
+        Shares ``state:<run>:<status>`` with _diff, so a transition already
+        alerted won't duplicate; notification_exists makes it idempotent across
+        engine restarts (add_notification refreshes on dedup_key)."""
+        dedup_key = f"state:{run_id}:{status}"
+        if self._db is not None and await self._db.notification_exists(dedup_key):
+            return
+        if status == "succeeded":
+            title = f"Workflow “{label}” completed"
+            body = f"All jobs finished successfully ({total} jobs)."
+        else:  # failed
+            title = f"Workflow “{label}” failed"
+            body = (
+                f"{failed} job(s) failed."
+                if failed
+                else "The workflow ended in a failed state."
+            )
+        await self.notify(
+            kind="workflow_state",
+            title=title,
+            body=body,
+            severity=_SEVERITY_FOR_STATUS.get(status, "info"),
+            run_id=run_id,
+            link=f"/workflows?run={run_id}",
+            dedup_key=dedup_key,
+        )
 
     async def _diff(
         self,

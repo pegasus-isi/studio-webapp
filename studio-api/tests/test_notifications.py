@@ -97,3 +97,115 @@ def test_delete_and_clear(client):
 
     client.delete("/api/notifications")
     assert client.get("/api/notifications").json()["notifications"] == []
+
+
+# --- run-start (#1) and seed-terminal (#2) notifications ---
+
+
+def test_notification_exists_helper(tmp_path):
+    import asyncio
+
+    from db import Database
+
+    async def go():
+        db = Database(str(tmp_path / "n.db"))
+        await db.connect()
+        assert await db.notification_exists("k1") is False
+        await db.add_notification(kind="workflow_state", title="x", dedup_key="k1")
+        assert await db.notification_exists("k1") is True
+        await db.close()
+
+    asyncio.run(go())
+
+
+def test_seed_emits_terminal_notification_once(tmp_path, monkeypatch):
+    """A run already terminal at first sighting gets one notification, and a
+    second seed (engine restart) does not duplicate it."""
+    import asyncio
+
+    from db import Database
+    import services.notification_engine as ne
+
+    async def go():
+        db = Database(str(tmp_path / "n.db"))
+        await db.connect()
+
+        runs = [{
+            "run_dir": str(tmp_path / "run0001"),
+            "run_id": "uuid-1",
+            "run_name": "run0001",
+            "name": "csv_summary",
+        }]
+        monkeypatch.setattr(ne, "discover_runs", lambda ws=None: runs)
+
+        async def fake_detail(run_dir):
+            return {"status": "failed", "failed_jobs": 1, "total_jobs": 8}
+
+        monkeypatch.setattr(ne, "get_workflow_detail", fake_detail)
+        monkeypatch.setattr(ne, "get_run_status", lambda rd: "failed")
+
+        eng = ne.NotificationEngine()
+        eng._db = db
+        eng._workspace_root = str(tmp_path)
+
+        await eng._scan(seed_only=True)
+        notes = await db.list_notifications()
+        assert len(notes) == 1
+        assert "failed" in notes[0]["title"].lower()
+        assert "csv_summary / run0001" in notes[0]["title"]
+
+        # Simulate an engine restart: fresh instance, same db -> no duplicate.
+        eng2 = ne.NotificationEngine()
+        eng2._db = db
+        eng2._workspace_root = str(tmp_path)
+        await eng2._scan(seed_only=True)
+        assert len(await db.list_notifications()) == 1
+
+        await db.close()
+
+    asyncio.run(go())
+
+
+def test_notify_run_started(tmp_path, monkeypatch):
+    """The submit helper raises a 'run started' alert labelled by workflow."""
+    import asyncio
+
+    from routers import workflows as wf
+    import services.notification_engine as ne
+
+    run_dir = tmp_path / "run0007"
+    run_dir.mkdir()
+    (run_dir / "braindump.yml").write_text(
+        "wf_uuid: abc-123\npegasus_wf_name: csv_summary\n"
+    )
+
+    captured: dict = {}
+
+    async def fake_notify(**kw):
+        captured.update(kw)
+        return None
+
+    monkeypatch.setattr(ne.engine, "notify", fake_notify)
+
+    asyncio.run(
+        wf._notify_run_started({"status": "submitted", "run_dir": str(run_dir)})
+    )
+    assert captured["run_id"] == "abc-123"
+    assert captured["title"] == "Workflow “csv_summary / run0007” run started"
+    assert captured["dedup_key"] == "run-started:abc-123"
+
+
+def test_notify_run_started_skips_non_submitted(monkeypatch):
+    import asyncio
+
+    from routers import workflows as wf
+    import services.notification_engine as ne
+
+    called = {"n": 0}
+
+    async def fake_notify(**kw):
+        called["n"] += 1
+
+    monkeypatch.setattr(ne.engine, "notify", fake_notify)
+    asyncio.run(wf._notify_run_started({"status": "error", "output": "boom"}))
+    assert called["n"] == 0
