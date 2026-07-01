@@ -61,7 +61,13 @@ export default function WorkflowsPage() {
       {/* Detail panel */}
       <div className="flex-1">
         {selectedProjectId ? (
-          <WorkflowProjectDetail projectId={selectedProjectId} />
+          // key forces a fresh mount per project so per-workflow UI state
+          // (Output panel, planned run dir, selected run) doesn't leak from
+          // the previously selected workflow.
+          <WorkflowProjectDetail
+            key={selectedProjectId}
+            projectId={selectedProjectId}
+          />
         ) : selectedRunId ? (
           <WorkflowDetail runId={selectedRunId} />
         ) : (
