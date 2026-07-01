@@ -273,6 +273,55 @@ async def plan_workflow(
         return {"status": "error", "output": f"Error: {e}"}
 
 
+async def _notify_run_started(result: dict) -> None:
+    """Raise a 'run started' notification for a successful submit.
+
+    Submit-time alert (independent of the poll-based state-transition engine),
+    so every Run — including a re-run that produces no status change — surfaces
+    at least one notification.
+    """
+    if result.get("status") != "submitted":
+        return
+    run_dir = result.get("run_dir")
+    if not run_dir:
+        return
+
+    run_id = os.path.basename(run_dir)
+    label = run_id
+    bd_path = os.path.join(run_dir, "braindump.yml")
+    if os.path.isfile(bd_path):
+        try:
+            from services.workflow_scanner import _parse_braindump
+
+            bd = _parse_braindump(bd_path)
+            run_id = bd.get("wf_uuid", run_id)
+            wf_name = bd.get("pegasus_wf_name")
+            run_name = os.path.basename(run_dir)
+            label = (
+                f"{wf_name} / {run_name}"
+                if wf_name and wf_name != run_name
+                else run_name
+            )
+        except Exception:
+            pass
+
+    try:
+        from services.notification_engine import engine
+
+        await engine.notify(
+            kind="workflow_state",
+            title=f"Workflow “{label}” run started",
+            severity="info",
+            run_id=run_id,
+            link=f"/workflows?run={run_id}",
+            # Refreshes on a re-run of the same dir (same wf_uuid) so it
+            # re-surfaces; a fresh run gets a distinct uuid -> distinct alert.
+            dedup_key=f"run-started:{run_id}",
+        )
+    except Exception as e:  # never let a notification failure break submit
+        log.warning("run_started_notify_failed", run_dir=run_dir, error=str(e))
+
+
 @router.post("/projects/{project_id}/submit")
 async def submit_project(
     project_id: str, req: PlanRequest = PlanRequest()
@@ -293,6 +342,7 @@ async def submit_project(
         site=req.site,
         output_site=req.output_site,
     )
+    await _notify_run_started(result)
     return {"project_id": project_id, **result}
 
 
@@ -313,6 +363,7 @@ async def submit(
         )
 
     result = await submit_workflow(resolved, site=site, output_site=output_site)
+    await _notify_run_started(result)
     return result
 
 

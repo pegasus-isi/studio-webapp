@@ -524,6 +524,18 @@ class Database:
             "created_at": row["created_at"],
         }
 
+    async def notification_exists(self, dedup_key: str) -> bool:
+        """Whether a notification with this dedup_key has ever been stored.
+
+        Used to make seed-time / first-sighting alerts idempotent across engine
+        restarts (add_notification refreshes on dedup_key, so callers that must
+        fire only once check this first)."""
+        async with self.db.execute(
+            "SELECT 1 FROM notifications WHERE dedup_key = ? LIMIT 1",
+            (dedup_key,),
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
     async def get_notification(self, notification_id: str) -> dict[str, Any] | None:
         async with self.db.execute(
             "SELECT * FROM notifications WHERE id = ?", (notification_id,)
