@@ -21,6 +21,29 @@ interface Props {
 
 type ParamValues = Record<string, string | boolean>;
 
+// Recognize common pegasus-plan / pegasus-run failures in the raw output and
+// return a short, actionable hint shown above the log. null = no hint.
+function outputHint(output: string | null): string | null {
+  if (!output) return null;
+  const o = output;
+  if (/already running/i.test(o) && /monitord\.pid/i.test(o)) {
+    return "This run is already running — or a previous run left a stale lock. If it has finished, just click Run again to start a fresh run; otherwise remove the run's monitord.pid file and retry.";
+  }
+  if (/Illegal key .* for element workflow/i.test(o)) {
+    return "pegasus-plan was handed a catalog file instead of the abstract workflow. Regenerate the workflow (Generate Workflow) and try again.";
+  }
+  if (/PegasusLite: exitcode|\.lof:.*No such file/i.test(o)) {
+    return "A job failed inside the PegasusLite wrapper before your code ran. Open the run below and click Run Analyzer for the failure detail.";
+  }
+  if (/exit(code)?\s*[:=]?\s*[1-9]/i.test(o) && /fail/i.test(o)) {
+    return "A job exited non-zero. Open the run below and click Run Analyzer to see which job failed and why.";
+  }
+  if (/not found|No such file or directory/i.test(o)) {
+    return "A required file or command wasn't found. Check the paths/inputs and that the workflow was generated, then try again.";
+  }
+  return null;
+}
+
 function buildArgs(params: WorkflowParam[], values: ParamValues): string[] {
   const args: string[] = [];
   for (const p of params) {
@@ -305,6 +328,11 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                 </button>
               </div>
             </div>
+            {!outputCollapsed && outputHint(output) && (
+              <div className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                {outputHint(output)}
+              </div>
+            )}
             {!outputCollapsed && (
               <pre className="max-h-64 w-full overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] break-all rounded-md bg-gray-900 p-4 text-xs text-green-400">
                 {output}

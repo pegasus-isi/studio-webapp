@@ -119,14 +119,20 @@ async def run_planned_workflow(
     target: str | None = None
     if run_dir:
         candidate = os.path.realpath(os.path.expanduser(run_dir))
-        if os.path.isdir(candidate) and os.path.isfile(
-            os.path.join(candidate, "braindump.yml")
+        # Reuse the freshly-planned dir from Plan only if it hasn't already
+        # been submitted — pegasus-run on an already-running/submitted dir
+        # fails with "workflow already running (remove monitord.pid)".
+        if (
+            os.path.isdir(candidate)
+            and os.path.isfile(os.path.join(candidate, "braindump.yml"))
+            and not _is_submitted(candidate)
         ):
             target = candidate
-    if target is None:
-        target = _newest_run_dir_any(workflow_dir)
 
-    # Nothing planned yet — plan and submit in one step.
+    # No reusable planned dir (no Plan handshake for this run, or it was
+    # already submitted) — plan and submit a fresh run. We never re-run an
+    # existing dir, which would either hit "workflow already running" or
+    # re-submit a stale plan.
     if target is None:
         return await submit_workflow(
             workflow_dir, site=site, output_site=output_site
@@ -290,19 +296,15 @@ def _newest_run_dir(workflow_dir: str) -> str | None:
     return max(candidates)[1] if candidates else None
 
 
-def _newest_run_dir_any(workflow_dir: str) -> str | None:
-    """The most recent runNNNN dir under workflow_dir, regardless of age.
+def _is_submitted(run_dir: str) -> bool:
+    """True if a run dir has already been submitted (DAGMan / monitord ran).
 
-    Used by the Run action to locate the dir a prior Plan produced (which may
-    be older than the 600s window ``_newest_run_dir`` uses for fresh submits).
+    pegasus-run refuses such a dir ("workflow already running — remove the
+    monitord.pid file"), so the Run action must not re-run it. A plan-only dir
+    (pegasus-plan without --submit) has none of these markers.
     """
-    candidates: list[tuple[float, str]] = []
-    for bd in _glob.glob(
-        os.path.join(workflow_dir, "**", "braindump.yml"), recursive=True
+    if os.path.exists(os.path.join(run_dir, "monitord.pid")) or os.path.exists(
+        os.path.join(run_dir, "monitord.started")
     ):
-        try:
-            mtime = os.path.getmtime(bd)
-        except OSError:
-            continue
-        candidates.append((mtime, os.path.dirname(bd)))
-    return max(candidates)[1] if candidates else None
+        return True
+    return bool(_glob.glob(os.path.join(run_dir, "*.dag.dagman.out")))

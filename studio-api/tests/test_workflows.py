@@ -68,3 +68,63 @@ def test_submit_workflow_forbidden(client):
 def test_workflow_jobs_not_found(client):
     resp = client.get("/api/workflows/nonexistent/jobs")
     assert resp.status_code == 404
+
+
+def test_is_submitted_detects_markers(tmp_path):
+    """A run dir counts as submitted once monitord/DAGMan have started."""
+    from services.workflow_submitter import _is_submitted
+
+    planned = tmp_path / "run0001"
+    planned.mkdir()
+    (planned / "braindump.yml").write_text("x: 1\n")
+    assert _is_submitted(str(planned)) is False  # plan-only
+
+    for marker in ("monitord.pid", "monitord.started", "wf-0.dag.dagman.out"):
+        d = tmp_path / marker.replace(".", "_")
+        d.mkdir()
+        (d / "braindump.yml").write_text("x: 1\n")
+        (d / marker).write_text("")
+        assert _is_submitted(str(d)) is True, marker
+
+
+def test_run_reuses_planned_dir_only_if_unsubmitted(tmp_path, monkeypatch):
+    """run_planned_workflow pegasus-runs a provided unsubmitted dir, but
+    plan+submits fresh when that dir is already submitted."""
+    import asyncio
+    import services.workflow_submitter as ws
+
+    planned = tmp_path / "run0006"
+    planned.mkdir()
+    (planned / "braindump.yml").write_text("x: 1\n")
+
+    ran: dict = {}
+
+    async def fake_pegasus_run(*cmd, **kw):
+        ran["target"] = cmd[-1]
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return (b"", b"")
+
+        return P()
+
+    async def fake_submit(workflow_dir, **kw):
+        ran["fresh_plan_submit"] = True
+        return {"status": "submitted", "run_dir": "fresh", "output": ""}
+
+    monkeypatch.setattr(ws.asyncio, "create_subprocess_exec", fake_pegasus_run)
+    monkeypatch.setattr(ws, "submit_workflow", fake_submit)
+
+    # Unsubmitted planned dir -> reused via pegasus-run.
+    asyncio.run(ws.run_planned_workflow(str(tmp_path), run_dir=str(planned)))
+    assert ran.get("target") == str(planned)
+    assert "fresh_plan_submit" not in ran
+
+    # Same dir, now submitted -> Run must NOT re-run it; plan+submit fresh.
+    ran.clear()
+    (planned / "monitord.started").write_text("")
+    asyncio.run(ws.run_planned_workflow(str(tmp_path), run_dir=str(planned)))
+    assert ran.get("fresh_plan_submit") is True
+    assert "target" not in ran
