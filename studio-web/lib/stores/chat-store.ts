@@ -15,6 +15,9 @@ export interface ChatMsg {
   content: string;
   toolCalls?: { id: string; name: string; arguments: unknown }[];
   toolResults?: { id: string; name: string; result: string }[];
+  // Transient error for this turn (connection/stream failure). Kept separate
+  // from `content` so it's shown to the user but never re-sent to the model.
+  error?: string;
   agentId?: string;
   createdAt?: string;
   meta?: {
@@ -44,10 +47,20 @@ interface ChatStore {
   model: string | null;
 
   addMessage: (msg: ChatMsg) => void;
-  appendToLast: (text: string) => void;
-  addToolCall: (call: { id: string; name: string; arguments: unknown }) => void;
-  addToolResult: (result: { id: string; name: string; result: string }) => void;
-  setLastMeta: (meta: NonNullable<ChatMsg["meta"]>) => void;
+  // Streaming actions accept an optional target conversation id so a response
+  // that started in conversation A keeps landing in A even if the user switches
+  // to B mid-stream. Defaults to the active conversation.
+  appendToLast: (text: string, convId?: string) => void;
+  addToolCall: (
+    call: { id: string; name: string; arguments: unknown },
+    convId?: string
+  ) => void;
+  addToolResult: (
+    result: { id: string; name: string; result: string },
+    convId?: string
+  ) => void;
+  setLastMeta: (meta: NonNullable<ChatMsg["meta"]>, convId?: string) => void;
+  setLastError: (error: string, convId?: string) => void;
   setStreaming: (streaming: boolean, requestId?: string | null) => void;
   setAgent: (agentId: string) => void;
   setProvider: (provider: string | null) => void;
@@ -61,8 +74,15 @@ interface ChatStore {
   deleteConversation: (id: string) => void;
 }
 
-let _msgCounter = 0;
-const newId = () => `c-${Math.random().toString(36).slice(2, 10)}`;
+// Stable unique id for messages and conversations. crypto.randomUUID is
+// available in secure contexts (the studio is served over https via the
+// gateway); the Math.random fallback keeps non-secure/dev origins working.
+export const genId = (): string => {
+  const c = typeof crypto !== "undefined" ? crypto : undefined;
+  if (c?.randomUUID) return c.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+};
+const newId = () => `c-${genId()}`;
 const deriveTitle = (text: string) =>
   text.trim().replace(/\s+/g, " ").slice(0, 40) || "New chat";
 
@@ -103,28 +123,26 @@ export const useChatStore = create<ChatStore>()(
           };
         }),
 
-      appendToLast: (text) =>
+      appendToLast: (text, convId) =>
         set((s) => {
-          const arr = [...(s.messagesById[s.activeId] || [])];
+          const cid = convId ?? s.activeId;
+          const arr = [...(s.messagesById[cid] || [])];
           const last = arr[arr.length - 1];
           if (last && last.role === "assistant") {
             arr[arr.length - 1] = { ...last, content: last.content + text };
           } else {
-            arr.push({
-              id: `msg-${++_msgCounter}`,
-              role: "assistant",
-              content: text,
-            });
+            arr.push({ id: genId(), role: "assistant", content: text });
           }
           return {
-            messagesById: { ...s.messagesById, [s.activeId]: arr },
-            messages: arr,
+            messagesById: { ...s.messagesById, [cid]: arr },
+            ...(cid === s.activeId ? { messages: arr } : {}),
           };
         }),
 
-      addToolCall: (call) =>
+      addToolCall: (call, convId) =>
         set((s) => {
-          const arr = [...(s.messagesById[s.activeId] || [])];
+          const cid = convId ?? s.activeId;
+          const arr = [...(s.messagesById[cid] || [])];
           const last = arr[arr.length - 1];
           if (last && last.role === "assistant") {
             arr[arr.length - 1] = {
@@ -133,14 +151,15 @@ export const useChatStore = create<ChatStore>()(
             };
           }
           return {
-            messagesById: { ...s.messagesById, [s.activeId]: arr },
-            messages: arr,
+            messagesById: { ...s.messagesById, [cid]: arr },
+            ...(cid === s.activeId ? { messages: arr } : {}),
           };
         }),
 
-      addToolResult: (result) =>
+      addToolResult: (result, convId) =>
         set((s) => {
-          const arr = [...(s.messagesById[s.activeId] || [])];
+          const cid = convId ?? s.activeId;
+          const arr = [...(s.messagesById[cid] || [])];
           const last = arr[arr.length - 1];
           if (last && last.role === "assistant") {
             arr[arr.length - 1] = {
@@ -149,21 +168,40 @@ export const useChatStore = create<ChatStore>()(
             };
           }
           return {
-            messagesById: { ...s.messagesById, [s.activeId]: arr },
-            messages: arr,
+            messagesById: { ...s.messagesById, [cid]: arr },
+            ...(cid === s.activeId ? { messages: arr } : {}),
           };
         }),
 
-      setLastMeta: (meta) =>
+      setLastMeta: (meta, convId) =>
         set((s) => {
-          const arr = [...(s.messagesById[s.activeId] || [])];
+          const cid = convId ?? s.activeId;
+          const arr = [...(s.messagesById[cid] || [])];
           const last = arr[arr.length - 1];
           if (last && last.role === "assistant") {
             arr[arr.length - 1] = { ...last, meta };
           }
           return {
-            messagesById: { ...s.messagesById, [s.activeId]: arr },
-            messages: arr,
+            messagesById: { ...s.messagesById, [cid]: arr },
+            ...(cid === s.activeId ? { messages: arr } : {}),
+          };
+        }),
+
+      setLastError: (error, convId) =>
+        set((s) => {
+          const cid = convId ?? s.activeId;
+          const arr = [...(s.messagesById[cid] || [])];
+          const last = arr[arr.length - 1];
+          if (last && last.role === "assistant") {
+            arr[arr.length - 1] = { ...last, error };
+          } else {
+            // No assistant bubble yet (error before first token) — create one to
+            // carry the error, with empty content so nothing is sent as history.
+            arr.push({ id: genId(), role: "assistant", content: "", error });
+          }
+          return {
+            messagesById: { ...s.messagesById, [cid]: arr },
+            ...(cid === s.activeId ? { messages: arr } : {}),
           };
         }),
 

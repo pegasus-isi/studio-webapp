@@ -45,6 +45,16 @@ async def _reconcile_installed_tools() -> None:
     installed = await db.list_tools()
     for tool in installed:
         tool_id = tool["tool_id"]
+
+        # No tool process survives a container restart, so a persisted "running"
+        # status is always stale here. Reset it (terminal tools carry no pid, so
+        # the list_tools pid-liveness check can't correct them on its own).
+        if tool.get("status") == "running":
+            try:
+                await db.update_tool_status(tool_id, "installed")
+            except Exception:
+                pass
+
         info = get_tool_info(tool_id)
         if not info:
             continue
@@ -135,12 +145,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     idle_secs = int(os.environ.get("STUDIO_TERMINAL_IDLE_SECONDS", "86400"))
 
+    chat_max_rows = int(os.environ.get("STUDIO_CHAT_MAX_ROWS", "5000"))
+    runs_max_rows = int(os.environ.get("STUDIO_RUNS_MAX_ROWS", "1000"))
+
     async def _prune_terminals() -> None:
         while True:
             await asyncio.sleep(3600)
             killed = terminal_sessions.prune_idle(idle_secs)
             if killed:
                 log.info("terminal_sessions_pruned", count=killed)
+            # Also cap the chat_messages / workflow_runs tables so they can't
+            # grow unbounded on a long-lived container.
+            try:
+                deleted = await db.prune_chat_messages(chat_max_rows)
+                if deleted:
+                    log.info("chat_messages_pruned", count=deleted)
+            except Exception as e:
+                log.warning("chat_prune_failed", error=str(e))
+            try:
+                deleted = await db.prune_workflow_runs(runs_max_rows)
+                if deleted:
+                    log.info("workflow_runs_pruned", count=deleted)
+            except Exception as e:
+                log.warning("runs_prune_failed", error=str(e))
 
     prune_task = asyncio.create_task(_prune_terminals())
 
@@ -176,10 +203,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow all origins for V1 single-user container
+# CORS — the frontend, API and WS are same-origin (one container port behind the
+# gateway), so same-origin requests need no CORS at all. Never pair a wildcard
+# origin with credentials: the gateway's session cookie rides along automatically,
+# so reflecting an arbitrary Origin would let any site the user visits drive this
+# API in their browser. Extra origins (e.g. a `next dev` server) via
+# STUDIO_ALLOWED_ORIGINS.
+from security import allowed_origins as _allowed_origins  # noqa: E402
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -210,11 +244,20 @@ async def whoami(request: Request) -> dict:
     """
     import os
 
-    user = (
-        os.environ.get("JUPYTERHUB_USER")
-        or request.headers.get("x-auth-user", "").strip()
-        or None
+    # JUPYTERHUB_USER is server-injected and trusted. X-Auth-User is only
+    # trustworthy if the gateway strips any client-supplied copy and sets its
+    # own; otherwise a client could spoof the *displayed* identity (it's not an
+    # auth boundary — the gateway session is — but don't trust it blindly).
+    # Gate the header fallback behind an env flag so operators opt in when their
+    # gateway guarantees the header.
+    user = os.environ.get("JUPYTERHUB_USER")
+    trust_header = os.environ.get("STUDIO_TRUST_AUTH_HEADER", "1").lower() in (
+        "1",
+        "true",
+        "yes",
     )
+    if not user and trust_header:
+        user = request.headers.get("x-auth-user", "").strip() or None
     hub_base = os.environ.get("JUPYTERHUB_BASE_URL", "/")
     if not hub_base.endswith("/"):
         hub_base += "/"

@@ -112,9 +112,11 @@ async def validate_provider(req: ValidateRequest) -> ValidateResponse:
                     data = resp.json()
                     models = [m["id"] for m in data.get("data", [])]
                     return ValidateResponse(valid=True, models=models)
+                # Report the status (e.g. 401 for a bad key) without echoing the
+                # raw upstream body back to the client.
                 return ValidateResponse(
                     valid=False,
-                    error=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                    error=f"HTTP {resp.status_code} {resp.reason_phrase}".strip(),
                 )
         except Exception as e:
             return ValidateResponse(valid=False, error=str(e))

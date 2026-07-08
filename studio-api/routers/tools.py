@@ -48,8 +48,11 @@ async def list_tools() -> dict[str, list[ToolDetailResponse]]:
         status = inst["status"] if inst else None
         pid = inst["process_pid"] if inst else None
 
-        # Auto-correct stale "running" status when process is dead
-        if status == "running" and not _is_pid_alive(pid):
+        # Auto-correct stale "running" status when a tracked process is dead.
+        # Only applies to tools that have a real manager process (web tools):
+        # terminal tools carry no pid (their PTY is owned by the WS session), so
+        # a None pid here means "no process to check", not "process died".
+        if status == "running" and pid is not None and not _is_pid_alive(pid):
             await db.update_tool_status(tool_id, "installed")
             status = "installed"
             pid = None
@@ -175,13 +178,15 @@ async def start_tool(tool_id: str) -> dict[str, str | int | None]:
                 msg="Binary not in PATH; terminal will show install instructions",
             )
 
-        proc_info = process_manager.start_terminal_tool(tool_id, binary, env)
-        await db.update_tool_status(
-            tool_id, "running", process_pid=proc_info.pid,
-        )
+        # Do NOT spawn a process here. A terminal tool's real PTY is owned by
+        # the WebSocket session (services/terminal_sessions.py, created via
+        # POST /api/terminals when the tab opens). Spawning one here produced a
+        # duplicate, unread PTY child that blocked forever once its ~64KB buffer
+        # filled — a process + fd leak. /start just flips the UI status.
+        await db.update_tool_status(tool_id, "running")
         return {
             "status": "running",
-            "pid": proc_info.pid,
+            "pid": None,
             "binary_found": binary_found,
         }
 
@@ -190,9 +195,11 @@ async def start_tool(tool_id: str) -> dict[str, str | int | None]:
 async def stop_tool(tool_id: str) -> dict[str, str]:
     from main import db
 
+    # stop_tool handles web tools (and any legacy tracked process). Terminal
+    # tools have no tracked process, so always reset the DB status so the "stop"
+    # actually clears the UI's running badge.
     stopped = process_manager.stop_tool(tool_id)
-    if stopped:
-        await db.update_tool_status(tool_id, "installed")
+    await db.update_tool_status(tool_id, "installed")
     return {"status": "stopped" if stopped else "not_running"}
 
 

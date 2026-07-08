@@ -27,6 +27,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from security import reject_ws_if_cross_origin
 from services import terminal_sessions as ts
 from services.installer import get_tool_info
 
@@ -45,6 +46,22 @@ class CreateTerminalBody(BaseModel):
     tool_id: str | None = None
     label: str | None = None
     cwd: str | None = None
+
+
+def _contained_cwd(cwd: str | None) -> str:
+    """Resolve a requested cwd, confining it to the workspace.
+
+    A shell can `cd` anywhere once open, so this isn't a hard sandbox — but it
+    keeps the boundary consistent with /api/workflows/submit and stops a session
+    from being *rooted* outside the workspace (e.g. by a cross-origin caller)."""
+    root = os.path.realpath(WORKSPACE_ROOT)
+    if not cwd:
+        return root
+    resolved = os.path.realpath(os.path.expanduser(cwd))
+    if resolved == root or resolved.startswith(root + os.sep):
+        if os.path.isdir(resolved):
+            return resolved
+    return root
 
 
 async def _llm_env() -> dict[str, str]:
@@ -100,7 +117,7 @@ def _tool_command(tool_id: str) -> tuple[list[str], str]:
 @router.post("/api/terminals")
 async def create_terminal(body: CreateTerminalBody) -> dict:
     """Create a server-held terminal session and return its metadata."""
-    cwd = body.cwd if (body.cwd and os.path.isdir(body.cwd)) else WORKSPACE_ROOT
+    cwd = _contained_cwd(body.cwd)
     if body.type == "bash":
         session = ts.create(
             type="bash",
@@ -146,6 +163,9 @@ async def attach_terminal(websocket: WebSocket, session_id: str) -> None:
 
     Disconnect detaches (the shell keeps running) — never kills. Multiple
     clients attached to one session share a single view."""
+    # Reject cross-origin handshakes (CSWSH → shell access). See security.py.
+    if await reject_ws_if_cross_origin(websocket):
+        return
     session = ts.get(session_id)
     if session is None or session.closed:
         await websocket.close(code=4004, reason="No such terminal session")
@@ -215,6 +235,9 @@ async def attach_terminal(websocket: WebSocket, session_id: str) -> None:
 @router.websocket("/ws/terminal")
 async def bash_terminal(websocket: WebSocket) -> None:
     """Legacy WebSocket PTY for a plain bash shell (not reload-safe)."""
+    # Reject cross-origin handshakes (CSWSH → shell access). See security.py.
+    if await reject_ws_if_cross_origin(websocket):
+        return
     await websocket.accept()
 
     session = ts.create(

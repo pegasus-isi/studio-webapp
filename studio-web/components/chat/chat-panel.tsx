@@ -1,14 +1,60 @@
 "use client";
 
-import { useChatStore, type ChatMsg } from "@/lib/stores/chat-store";
+import { useChatStore, genId, type ChatMsg } from "@/lib/stores/chat-store";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
+import { ChatMarkdown } from "@/components/chat/markdown";
+import * as api from "@/lib/api/client";
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 
 export function ChatPanel() {
   const messages = useChatStore((s) => s.messages);
   const isStreaming = useChatStore((s) => s.isStreaming);
+  const activeId = useChatStore((s) => s.activeId);
+  const loadHistory = useChatStore((s) => s.loadHistory);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Conversations we've already tried to hydrate from the server this session.
+  const syncedRef = useRef<Set<string>>(new Set());
+
+  // Hydrate an empty conversation from the DB (fresh device / cleared local
+  // storage). Client localStorage is the live store, so only fetch when this
+  // conversation has no local messages and we're not mid-stream — never clobber
+  // live state. Server text becomes the source of truth for restored turns.
+  const messagesCount = messages.length;
+  useEffect(() => {
+    if (isStreaming || messagesCount > 0 || syncedRef.current.has(activeId)) {
+      return;
+    }
+    syncedRef.current.add(activeId);
+    let cancelled = false;
+    (async () => {
+      try {
+        const { messages: rows } = await api.getChatHistory(200, activeId);
+        if (cancelled || rows.length === 0) return;
+        const st = useChatStore.getState();
+        if (
+          st.activeId === activeId &&
+          (st.messagesById[activeId]?.length ?? 0) === 0
+        ) {
+          loadHistory(
+            rows.map((r) => ({
+              id: genId(),
+              role: r.role as ChatMsg["role"],
+              content: r.content,
+              agentId: r.agent_id ?? undefined,
+              createdAt: r.created_at ?? undefined,
+            }))
+          );
+        }
+      } catch {
+        /* offline / no history — keep the empty state */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, messagesCount, isStreaming, loadHistory]);
 
   // Show a "thinking" indicator while streaming but before the assistant's
   // first token (no assistant message yet — the model is reasoning / a tool
@@ -16,12 +62,20 @@ export function ChatPanel() {
   const last = messages[messages.length - 1];
   const showThinking = isStreaming && (!last || last.role === "user");
 
+  // Only auto-scroll when the user is already near the bottom, so a token burst
+  // doesn't yank them away while they're reading earlier output.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (nearBottom) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages, showThinking]);
 
   return (
-    <div className="h-full overflow-auto p-4">
+    <div ref={scrollRef} className="h-full overflow-auto p-4">
       {messages.length === 0 ? (
         <div className="flex h-full items-center justify-center">
           <div className="text-center text-fgsubtle">
@@ -92,10 +146,23 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
             : "bg-surface border border-line text-fg"
         )}
       >
-        {/* Main content */}
-        <div className="prose prose-sm max-w-none whitespace-pre-wrap [overflow-wrap:anywhere] dark:prose-invert">
-          {msg.content}
-        </div>
+        {/* Main content: render assistant output as markdown (code blocks,
+            lists, tables); keep user text verbatim so it isn't reformatted. */}
+        {isUser ? (
+          <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+            {msg.content}
+          </div>
+        ) : msg.content ? (
+          <ChatMarkdown content={msg.content} />
+        ) : null}
+
+        {/* Transient error for this turn (shown, but never sent to the model). */}
+        {msg.error && (
+          <div className="mt-2 flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1.5 text-xs text-rose-600 dark:text-rose-400">
+            <span className="font-semibold">Error:</span>
+            <span className="[overflow-wrap:anywhere]">{msg.error}</span>
+          </div>
+        )}
 
         {/* Tool calls */}
         {msg.toolCalls && msg.toolCalls.length > 0 && (

@@ -56,6 +56,11 @@ class ProcessManager:
         """Start a terminal-based AI tool with a PTY.
 
         Returns ProcessInfo with master_fd for WebSocket relay.
+
+        Deprecated / unused: terminal tools' PTYs are owned by the WebSocket
+        session (services/terminal_sessions.py). /api/tools/{id}/start no longer
+        calls this — it produced a duplicate, unread PTY child that blocked once
+        its buffer filled. Kept only for reference.
         """
         import pty
 

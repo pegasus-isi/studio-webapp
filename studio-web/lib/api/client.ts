@@ -394,12 +394,14 @@ export interface ChatMessage {
   role: string;
   content: string;
   agent_id?: string | null;
-  tool_calls?: Record<string, unknown> | null;
+  tool_calls?: unknown;
   created_at?: string | null;
 }
 
-export async function getChatHistory(limit = 100) {
-  return request<{ messages: ChatMessage[] }>(`/chat/history?limit=${limit}`);
+export async function getChatHistory(limit = 100, conversationId?: string) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (conversationId) params.set("conversation_id", conversationId);
+  return request<{ messages: ChatMessage[] }>(`/chat/history?${params}`);
 }
 
 export async function stopChat(requestId?: string) {
