@@ -1,23 +1,23 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useChatStore } from "@/lib/stores/chat-store";
+import { useChatStore, genId } from "@/lib/stores/chat-store";
 import { useNotebookContextStore } from "@/lib/stores/notebook-context-store";
 import { useLLMConfig, useProviderConfigs, useProviders } from "@/lib/hooks/use-llm";
 import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
 
-let _msgId = 0;
-
 export function ChatInput() {
   const [input, setInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const addMessage = useChatStore((s) => s.addMessage);
   const appendToLast = useChatStore((s) => s.appendToLast);
   const addToolCall = useChatStore((s) => s.addToolCall);
   const addToolResult = useChatStore((s) => s.addToolResult);
   const setLastMeta = useChatStore((s) => s.setLastMeta);
+  const setLastError = useChatStore((s) => s.setLastError);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const messages = useChatStore((s) => s.messages);
   const agentId = useChatStore((s) => s.agentId);
@@ -61,9 +61,13 @@ export function ChatInput() {
 
     setInput("");
 
+    // Pin the conversation this turn belongs to, so streamed tokens keep
+    // landing here even if the user switches conversations mid-response.
+    const convId = useChatStore.getState().activeId;
+
     // Add user message to store
     const userMsg = {
-      id: `msg-${++_msgId}`,
+      id: genId(),
       role: "user" as const,
       content: text,
     };
@@ -79,20 +83,28 @@ export function ChatInput() {
         ? `${text}\n\n[Active Jupyter notebook: ${activeNotebookPath} — when I refer to "this notebook", read this file with your tools.]`
         : text;
 
-    // Build message history for the API
+    // Build message history for the API. Skip empty-content messages (e.g. an
+    // assistant bubble that only carried a transient error) so failures never
+    // become part of the model-visible transcript.
     const apiMessages = [
-      ...messages.map((m) => ({ role: m.role, content: m.content })),
+      ...messages
+        .filter((m) => m.content.trim().length > 0)
+        .map((m) => ({ role: m.role, content: m.content })),
       { role: "user", content: apiText },
     ];
 
-    const requestId = `req-${Date.now()}`;
+    const requestId = `req-${genId()}`;
     setStreaming(true, requestId);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       const body: Record<string, unknown> = {
         messages: apiMessages,
         agent: agentId,
         request_id: requestId,
+        conversation_id: convId,
       };
 
       // Include provider/model overrides if set
@@ -103,10 +115,11 @@ export function ChatInput() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
 
       if (!response.body) {
-        appendToLast("Error: No response body");
+        setLastError("No response body", convId);
         return;
       }
 
@@ -130,21 +143,24 @@ export function ChatInput() {
           try {
             const event = JSON.parse(data);
             if (event.content) {
-              appendToLast(event.content);
+              appendToLast(event.content, convId);
             } else if (event.tool_call) {
-              addToolCall(event.tool_call);
+              addToolCall(event.tool_call, convId);
             } else if (event.tool_result) {
-              addToolResult(event.tool_result);
+              addToolResult(event.tool_result, convId);
             } else if (event.meta) {
-              setLastMeta({
-                tokens: event.meta.tokens,
-                inputTokens: event.meta.input_tokens,
-                outputTokens: event.meta.output_tokens,
-                toolCalls: event.meta.tool_calls,
-                durationS: event.meta.duration_s,
-              });
+              setLastMeta(
+                {
+                  tokens: event.meta.tokens,
+                  inputTokens: event.meta.input_tokens,
+                  outputTokens: event.meta.output_tokens,
+                  toolCalls: event.meta.tool_calls,
+                  durationS: event.meta.duration_s,
+                },
+                convId
+              );
             } else if (event.error) {
-              appendToLast(`\n\nError: ${event.error}`);
+              setLastError(event.error, convId);
             }
           } catch {
             // Skip malformed SSE lines
@@ -152,8 +168,12 @@ export function ChatInput() {
         }
       }
     } catch (err) {
-      appendToLast(`\n\nConnection error: ${(err as Error).message}`);
+      // A user-initiated stop aborts the fetch — that's not an error to show.
+      if ((err as Error).name !== "AbortError") {
+        setLastError(`Connection error: ${(err as Error).message}`, convId);
+      }
     } finally {
+      abortRef.current = null;
       setStreaming(false);
     }
   }, [
@@ -168,17 +188,31 @@ export function ChatInput() {
     addToolCall,
     addToolResult,
     setLastMeta,
+    setLastError,
     setStreaming,
   ]);
 
+  // Abort any in-flight stream if the component unmounts mid-response.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Don't send while an IME composition is active (CJK input commits with
+    // Enter) — nativeEvent.isComposing is the reliable signal.
+    if (
+      e.key === "Enter" &&
+      !e.shiftKey &&
+      !(e.nativeEvent as { isComposing?: boolean }).isComposing
+    ) {
       e.preventDefault();
       handleSend();
     }
   };
 
   const handleStop = () => {
+    // Abort the client-side fetch first so the reader loop stops consuming and
+    // no trailing error event gets appended, then tell the server to cancel.
+    abortRef.current?.abort();
+    abortRef.current = null;
     api.stopChat(useChatStore.getState().requestId ?? undefined);
     setStreaming(false);
   };

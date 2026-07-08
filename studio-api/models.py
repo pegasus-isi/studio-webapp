@@ -284,7 +284,9 @@ class ChatMessage(BaseModel):
     role: str
     content: str
     agent_id: str | None = None
-    tool_calls: dict[str, Any] | None = None
+    # Either a list of tool names (assistant turns) or a legacy dict; keep it
+    # permissive so history restores don't fail validation.
+    tool_calls: Any | None = None
     created_at: str | None = None
 
 

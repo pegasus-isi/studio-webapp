@@ -26,29 +26,40 @@ def _http_error(status: int, text: str = "bad") -> httpx.HTTPStatusError:
 
 
 def _patch(monkeypatch, chat_outcome):
-    """Record which transport ran; chat_outcome is an Exception to raise or None."""
+    """Record which transport ran; chat_outcome is an Exception to raise or None.
+
+    The transports are now streaming async generators; the fakes mirror that —
+    they record the call then either raise (before the first yield, matching a
+    handshake failure) or yield a single result event.
+    """
     calls: list[str] = []
 
     async def fake_chat(*a, **k):
         calls.append("chat")
         if isinstance(chat_outcome, Exception):
             raise chat_outcome
-        return {"content": "chat", "tool_calls": [], "usage": {}}
+        yield {"type": "result", "result": {"content": "chat", "tool_calls": [], "usage": {}}}
 
     async def fake_responses(*a, **k):
         calls.append("responses")
-        return {"content": "responses", "tool_calls": [], "usage": {}}
+        yield {"type": "result", "result": {"content": "responses", "tool_calls": [], "usage": {}}}
 
-    monkeypatch.setattr(chat, "_openai_request", fake_chat)
-    monkeypatch.setattr(chat, "_openai_responses_request", fake_responses)
+    monkeypatch.setattr(chat, "_openai_stream", fake_chat)
+    monkeypatch.setattr(chat, "_openai_responses_stream", fake_responses)
     chat._RESPONSES_ENDPOINTS.clear()  # avoid cross-test leakage
     return calls
 
 
 def _dispatch(model, wire_api="auto", base_url="http://endpoint/v1"):
-    return asyncio.run(
-        chat._openai_dispatch(None, base_url, "key", model, [], "sys", wire_api)
-    )
+    async def run():
+        out = []
+        async for ev in chat._openai_dispatch(
+            None, base_url, "key", model, [], "sys", wire_api
+        ):
+            out.append(ev)
+        return out
+
+    return asyncio.run(run())
 
 
 def test_wire_api_responses_forced(monkeypatch):

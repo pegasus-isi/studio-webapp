@@ -109,11 +109,16 @@ async def _tail_jsonl(path: str) -> AsyncGenerator[dict[str, Any], None]:
         yield {"type": "error", "message": str(e)}
 
 
+_POLL_INTERVAL_S = 2.0
+_POLL_MAX_SECONDS = 3600  # cap polling at 1 hour
+_POLL_MAX_ITERS = int(_POLL_MAX_SECONDS / _POLL_INTERVAL_S)
+
+
 async def _poll_stampede(run_dir: str) -> AsyncGenerator[dict[str, Any], None]:
     """Poll the stampede DB periodically and yield state-change events."""
     prev_stats: dict[str, Any] = {}
 
-    for _ in range(3600):  # Max 1 hour of polling
+    for _ in range(_POLL_MAX_ITERS):  # ~1 hour at _POLL_INTERVAL_S
         stats = await get_workflow_detail(run_dir)
 
         # Emit event if anything changed
@@ -133,7 +138,7 @@ async def _poll_stampede(run_dir: str) -> AsyncGenerator[dict[str, Any], None]:
                 yield {"type": "workflow_complete", "status": stats["status"]}
                 return
 
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(_POLL_INTERVAL_S)
 
 
 async def run_pegasus_analyzer(run_dir: str) -> str:

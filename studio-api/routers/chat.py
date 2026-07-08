@@ -54,6 +54,44 @@ def _is_responses_model(model: str) -> bool:
 # Max tool-calling rounds
 _MAX_TOOL_ROUNDS = 50
 
+# Context-window management. The frontend re-sends the whole conversation each
+# turn, and tool results (especially read_file, up to 100KB) can be large. Bound
+# both so a long session doesn't blow past the model's context and 400.
+_MAX_HISTORY_MESSAGES = 40         # most-recent turns fed back to the model
+_MAX_TOOL_RESULT_CHARS = 16000     # per tool result fed back to the model
+_MAX_UI_RESULT_CHARS = 2000        # per tool result shown in the UI
+
+# stop_reason values that mean the model was cut off at the output-token cap.
+_TRUNCATED_STOP_REASONS = {"length", "max_tokens", "incomplete"}
+
+
+def _clip_ui_result(text: str) -> str:
+    """Cap a tool result shown in the UI, with a visible marker when clipped."""
+    if len(text) <= _MAX_UI_RESULT_CHARS:
+        return text
+    return (
+        text[:_MAX_UI_RESULT_CHARS]
+        + f"\n[... truncated for display, {len(text)} chars total ...]"
+    )
+
+
+def _trim_history(msgs: list[dict]) -> list[dict]:
+    """Keep only the most recent messages so context stays bounded. The final
+    (newest) user message is always within the tail, so the current ask is
+    never dropped."""
+    if len(msgs) > _MAX_HISTORY_MESSAGES:
+        return msgs[-_MAX_HISTORY_MESSAGES:]
+    return msgs
+
+
+def _clip_tool_result(text: str) -> str:
+    """Cap a tool result fed back to the model, with a visible marker."""
+    if len(text) <= _MAX_TOOL_RESULT_CHARS:
+        return text
+    kept = text[:_MAX_TOOL_RESULT_CHARS]
+    dropped = len(text) - _MAX_TOOL_RESULT_CHARS
+    return f"{kept}\n\n[... {dropped} characters truncated ...]"
+
 # Tool definitions for the built-in chat (file ops + Pegasus commands)
 TOOL_DEFINITIONS = [
     {
@@ -253,7 +291,10 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
     )
 
     # Agent persona
-    if agent_id and agent_id != "general":
+    # agent_id is client-supplied; constrain it to a bare slug so it can't
+    # traverse out of the agents directory (e.g. "../../../etc/passwd") and
+    # leak arbitrary files into the system prompt.
+    if agent_id and agent_id != "general" and re.fullmatch(r"[A-Za-z0-9_-]+", agent_id):
         agent_path = os.path.join(KNOWLEDGE_ROOT, "agents", f"{agent_id}.md")
         if os.path.isfile(agent_path):
             try:
@@ -272,15 +313,32 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
 
 # --- LLM request helpers ---
 
-async def _anthropic_request(
+async def _raise_for_stream_status(resp: httpx.Response) -> None:
+    """Read the body and raise on an error status for a *streaming* response.
+
+    httpx defers body reads on streamed responses, so `raise_for_status()`
+    alone would give an HTTPStatusError whose `.response.text` isn't populated —
+    the transport-fallback logic needs that text, so read it first.
+    """
+    if resp.status_code >= 400:
+        await resp.aread()
+        resp.raise_for_status()
+
+
+async def _anthropic_stream(
     client: httpx.AsyncClient,
     base_url: str,
     api_key: str,
     model: str,
     messages: list[dict],
     system_prompt: str,
-) -> dict[str, Any]:
-    """Non-streaming request to Anthropic Messages API."""
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Stream the Anthropic Messages API.
+
+    Yields ``{"type": "text", "text": delta}`` as tokens arrive and a final
+    ``{"type": "result", "result": {...}}`` with the aggregated content, tool
+    calls and usage (same shape the tool-calling loop expects).
+    """
     url = f"{base_url}/v1/messages"
     headers = {
         "x-api-key": api_key,
@@ -293,39 +351,92 @@ async def _anthropic_request(
         "system": system_prompt,
         "messages": messages,
         "tools": TOOL_DEFINITIONS_ANTHROPIC,
+        "stream": True,
     }
 
-    resp = await client.post(url, json=body, headers=headers)
-    resp.raise_for_status()
-    data = resp.json()
+    content = ""
+    tool_blocks: dict[int, dict[str, str]] = {}
+    order: list[int] = []
+    usage_in = 0
+    usage_out = 0
+    stop_reason = ""
 
-    result: dict[str, Any] = {"content": "", "tool_calls": [], "stop_reason": data.get("stop_reason", "")}
-    for block in data.get("content", []):
-        if block["type"] == "text":
-            result["content"] += block["text"]
-        elif block["type"] == "tool_use":
-            result["tool_calls"].append({
-                "id": block["id"],
-                "name": block["name"],
-                "arguments": block["input"],
-            })
-    u = data.get("usage", {}) or {}
-    result["usage"] = {
-        "input": u.get("input_tokens", 0),
-        "output": u.get("output_tokens", 0),
+    async with client.stream("POST", url, json=body, headers=headers) as resp:
+        await _raise_for_stream_status(resp)
+        async for line in resp.aiter_lines():
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data:
+                continue
+            try:
+                evt = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            etype = evt.get("type")
+            if etype == "message_start":
+                u = (evt.get("message", {}) or {}).get("usage", {}) or {}
+                usage_in = u.get("input_tokens", 0) or 0
+            elif etype == "content_block_start":
+                idx = evt.get("index")
+                block = evt.get("content_block", {}) or {}
+                if block.get("type") == "tool_use":
+                    tool_blocks[idx] = {
+                        "id": block.get("id", ""),
+                        "name": block.get("name", ""),
+                        "json": "",
+                    }
+                    order.append(idx)
+            elif etype == "content_block_delta":
+                idx = evt.get("index")
+                delta = evt.get("delta", {}) or {}
+                dtype = delta.get("type")
+                if dtype == "text_delta":
+                    t = delta.get("text", "")
+                    if t:
+                        content += t
+                        yield {"type": "text", "text": t}
+                elif dtype == "input_json_delta" and idx in tool_blocks:
+                    tool_blocks[idx]["json"] += delta.get("partial_json", "")
+            elif etype == "message_delta":
+                d = evt.get("delta", {}) or {}
+                if d.get("stop_reason"):
+                    stop_reason = d["stop_reason"]
+                u = evt.get("usage", {}) or {}
+                usage_out = u.get("output_tokens", usage_out) or usage_out
+
+    tool_calls = []
+    for idx in order:
+        tb = tool_blocks[idx]
+        try:
+            args = json.loads(tb["json"]) if tb["json"] else {}
+        except json.JSONDecodeError:
+            args = {}
+        tool_calls.append({"id": tb["id"], "name": tb["name"], "arguments": args})
+
+    yield {
+        "type": "result",
+        "result": {
+            "content": content,
+            "tool_calls": tool_calls,
+            "stop_reason": stop_reason,
+            "usage": {"input": usage_in, "output": usage_out},
+        },
     }
-    return result
 
 
-async def _openai_request(
+async def _openai_stream(
     client: httpx.AsyncClient,
     base_url: str,
     api_key: str,
     model: str,
     messages: list[dict],
     system_prompt: str,
-) -> dict[str, Any]:
-    """Non-streaming request to OpenAI-compatible chat completions."""
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Stream an OpenAI-compatible /chat/completions response.
+
+    Yields text deltas then a final aggregated result (see _anthropic_stream).
+    """
     url = f"{base_url}/chat/completions"
     headers: dict[str, str] = {"content-type": "application/json"}
     if api_key:
@@ -337,36 +448,82 @@ async def _openai_request(
         "messages": full_messages,
         "tools": TOOL_DEFINITIONS,
         "max_tokens": 8192,
+        "stream": True,
+        # Ask for usage in the terminal chunk (OpenAI + most compatible proxies).
+        "stream_options": {"include_usage": True},
     }
 
-    resp = await client.post(url, json=body, headers=headers)
-    resp.raise_for_status()
-    data = resp.json()
+    content = ""
+    tool_frags: dict[int, dict[str, str]] = {}
+    order: list[int] = []
+    usage_in = 0
+    usage_out = 0
+    stop_reason = ""
 
-    choice = data["choices"][0]
-    msg = choice["message"]
-    result: dict[str, Any] = {
-        "content": msg.get("content", "") or "",
-        "tool_calls": [],
-        "stop_reason": choice.get("finish_reason", ""),
-    }
-    for tc in msg.get("tool_calls", []) or []:
-        fn = tc.get("function", {})
+    async with client.stream("POST", url, json=body, headers=headers) as resp:
+        await _raise_for_stream_status(resp)
+        async for line in resp.aiter_lines():
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data:
+                continue
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            u = chunk.get("usage")
+            if u:
+                usage_in = u.get("prompt_tokens", usage_in) or usage_in
+                usage_out = u.get("completion_tokens", usage_out) or usage_out
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            ch = choices[0]
+            if ch.get("finish_reason"):
+                stop_reason = ch["finish_reason"]
+            delta = ch.get("delta", {}) or {}
+            t = delta.get("content")
+            if t:
+                content += t
+                yield {"type": "text", "text": t}
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                if idx not in tool_frags:
+                    tool_frags[idx] = {"id": "", "name": "", "args": ""}
+                    order.append(idx)
+                if tc.get("id"):
+                    tool_frags[idx]["id"] = tc["id"]
+                fn = tc.get("function", {}) or {}
+                if fn.get("name"):
+                    tool_frags[idx]["name"] = fn["name"]
+                if fn.get("arguments"):
+                    tool_frags[idx]["args"] += fn["arguments"]
+
+    tool_calls = []
+    for idx in order:
+        tf = tool_frags[idx]
         try:
-            args = json.loads(fn.get("arguments", "{}"))
+            args = json.loads(tf["args"]) if tf["args"] else {}
         except json.JSONDecodeError:
             args = {}
-        result["tool_calls"].append({
-            "id": tc.get("id", str(uuid.uuid4())),
-            "name": fn.get("name", ""),
+        tool_calls.append({
+            "id": tf["id"] or str(uuid.uuid4()),
+            "name": tf["name"],
             "arguments": args,
         })
-    u = data.get("usage", {}) or {}
-    result["usage"] = {
-        "input": u.get("prompt_tokens", 0),
-        "output": u.get("completion_tokens", 0),
+
+    yield {
+        "type": "result",
+        "result": {
+            "content": content,
+            "tool_calls": tool_calls,
+            "stop_reason": stop_reason,
+            "usage": {"input": usage_in, "output": usage_out},
+        },
     }
-    return result
 
 
 def _tools_for_responses() -> list[dict[str, Any]]:
@@ -419,32 +576,8 @@ def _messages_to_responses_input(messages: list[dict]) -> list[dict[str, Any]]:
     return items
 
 
-async def _openai_responses_request(
-    client: httpx.AsyncClient,
-    base_url: str,
-    api_key: str,
-    model: str,
-    messages: list[dict],
-    system_prompt: str,
-) -> dict[str, Any]:
-    """Non-streaming request to the OpenAI Responses API (/responses)."""
-    url = f"{base_url}/responses"
-    headers: dict[str, str] = {"content-type": "application/json"}
-    if api_key:
-        headers["authorization"] = f"Bearer {api_key}"
-
-    body = {
-        "model": model,
-        "instructions": system_prompt,
-        "input": _messages_to_responses_input(messages),
-        "tools": _tools_for_responses(),
-        "max_output_tokens": 8192,
-    }
-
-    resp = await client.post(url, json=body, headers=headers)
-    resp.raise_for_status()
-    data = resp.json()
-
+def _parse_responses_output(data: dict[str, Any]) -> dict[str, Any]:
+    """Extract content/tool_calls/usage from a Responses-API response object."""
     content_parts: list[str] = []
     tool_calls: list[dict[str, Any]] = []
     for item in data.get("output", []) or []:
@@ -463,7 +596,6 @@ async def _openai_responses_request(
                 "name": item.get("name", ""),
                 "arguments": args,
             })
-
     u = data.get("usage", {}) or {}
     return {
         "content": "".join(content_parts),
@@ -476,6 +608,71 @@ async def _openai_responses_request(
     }
 
 
+async def _openai_responses_stream(
+    client: httpx.AsyncClient,
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    system_prompt: str,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Stream the OpenAI Responses API (/responses).
+
+    Text deltas are forwarded live; tool calls and usage come from the terminal
+    ``response.completed`` event (whose payload matches the non-streaming shape).
+    """
+    url = f"{base_url}/responses"
+    headers: dict[str, str] = {"content-type": "application/json"}
+    if api_key:
+        headers["authorization"] = f"Bearer {api_key}"
+
+    body = {
+        "model": model,
+        "instructions": system_prompt,
+        "input": _messages_to_responses_input(messages),
+        "tools": _tools_for_responses(),
+        "max_output_tokens": 8192,
+        "stream": True,
+    }
+
+    content = ""
+    final: dict[str, Any] | None = None
+
+    async with client.stream("POST", url, json=body, headers=headers) as resp:
+        await _raise_for_stream_status(resp)
+        async for line in resp.aiter_lines():
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                evt = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            etype = evt.get("type")
+            if etype == "response.output_text.delta":
+                t = evt.get("delta", "")
+                if t:
+                    content += t
+                    yield {"type": "text", "text": t}
+            elif etype in (
+                "response.completed",
+                "response.incomplete",
+                "response.failed",
+            ):
+                final = evt.get("response") or final
+
+    result = _parse_responses_output(final or {})
+    # If text arrived only in the final object (no deltas), surface it now.
+    if not content and result["content"]:
+        yield {"type": "text", "text": result["content"]}
+    elif content:
+        result["content"] = content
+
+    yield {"type": "result", "result": result}
+
+
 async def _openai_dispatch(
     client: httpx.AsyncClient,
     base_url: str,
@@ -484,10 +681,11 @@ async def _openai_dispatch(
     messages: list[dict],
     system_prompt: str,
     wire_api: str = "auto",
-) -> dict[str, Any]:
-    """Call Chat Completions or the Responses API, picking the right transport.
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Stream via Chat Completions or the Responses API, picking the transport.
 
-    ``wire_api`` controls the choice:
+    Yields the same event dicts as the underlying stream generators. ``wire_api``
+    controls the choice:
       - "responses": always use /responses (no Chat-Completions probe).
       - "chat":      always use /chat/completions (no fallback).
       - "auto" (default): use /responses if the model is Responses-only
@@ -496,41 +694,73 @@ async def _openai_dispatch(
         to /responses on a clear signal — a 400 with a known hint, a 404/405,
         a 5xx, or a transport-level failure (some proxies reset the connection
         for unsupported routes, which surfaces as a generic "network error").
+
+    The transport is chosen by the *handshake*: each stream generator opens the
+    connection and validates the status before its first yield, so a fallback
+    only ever happens before any token is emitted — never mid-stream.
     """
-    responses = lambda: _openai_responses_request(  # noqa: E731
-        client, base_url, api_key, model, messages, system_prompt
-    )
-    chat = lambda: _openai_request(  # noqa: E731
-        client, base_url, api_key, model, messages, system_prompt
-    )
+    def responses() -> AsyncGenerator[dict[str, Any], None]:
+        return _openai_responses_stream(
+            client, base_url, api_key, model, messages, system_prompt
+        )
+
+    def chat() -> AsyncGenerator[dict[str, Any], None]:
+        return _openai_stream(
+            client, base_url, api_key, model, messages, system_prompt
+        )
 
     if wire_api == "responses" or base_url in _RESPONSES_ENDPOINTS or (
         wire_api == "auto" and _is_responses_model(model)
     ):
-        return await responses()
+        async for ev in responses():
+            yield ev
+        return
     if wire_api == "chat":
-        return await chat()
+        async for ev in chat():
+            yield ev
+        return
 
+    # auto: probe /chat/completions; fall back to /responses if the handshake
+    # fails before any token is streamed.
+    gen = chat()
     try:
-        return await chat()
+        first = await gen.__anext__()
+    except StopAsyncIteration:
+        return
     except httpx.HTTPStatusError as e:
         resp = e.response
         status = resp.status_code if resp is not None else None
         body = resp.text if resp is not None else ""
-        signal = (
-            (status == 400 and any(h in body for h in _RESPONSES_HINTS))
-            or status in (404, 405)
-            or (status is not None and status >= 500)
-        )
-        if signal:
+        # A 400 that explicitly says "use the Responses API" is definitive —
+        # memoize so we skip the chat probe next time.
+        if status == 400 and any(h in body for h in _RESPONSES_HINTS):
             _RESPONSES_ENDPOINTS.add(base_url)
-            return await responses()
+            async for ev in responses():
+                yield ev
+            return
+        # 404/405 (route missing) or 5xx (maybe transient): retry /responses and
+        # memoize only if it actually starts streaming, so one flaky 500 from a
+        # healthy Chat-Completions endpoint can't pin all traffic to /responses.
+        if status in (404, 405) or (status is not None and status >= 500):
+            rgen = responses()
+            rfirst = await rgen.__anext__()
+            _RESPONSES_ENDPOINTS.add(base_url)
+            yield rfirst
+            async for ev in rgen:
+                yield ev
+            return
         raise
     except httpx.RequestError:
         # Transport-level failure on /chat/completions — retry /responses once
         # for this call. Don't memoize: a true outage would fail both, and we
         # don't want a transient blip to pin the endpoint to Responses forever.
-        return await responses()
+        async for ev in responses():
+            yield ev
+        return
+
+    yield first
+    async for ev in gen:
+        yield ev
 
 
 # --- Slash commands ---
@@ -592,16 +822,10 @@ async def chat_stream(request: Request) -> StreamingResponse:
     provider_override = body.get("provider", "")
     agent_id = body.get("agent", "general")
     request_id = body.get("request_id", str(uuid.uuid4()))
+    conversation_id = body.get("conversation_id")
 
     if not messages:
         return _error_sse("No messages provided")
-
-    # Process slash commands in the last user message
-    last_msg = messages[-1]
-    if last_msg.get("role") == "user" and isinstance(last_msg.get("content"), str):
-        processed, skill = _process_slash_command(last_msg["content"])
-        if skill:
-            messages[-1] = {**last_msg, "content": processed}
 
     # Load LLM config
     from main import db
@@ -619,7 +843,11 @@ async def chat_stream(request: Request) -> StreamingResponse:
     if provider_override and provider_override != config.get("provider"):
         prov_config = await db.get_provider_config(provider_override)
         if prov_config:
-            api_key = prov_config.get("api_key", "") or api_key
+            # Use the override provider's OWN key. Do NOT fall back to the
+            # default provider's key — that would send e.g. an Anthropic key as
+            # a bearer token to a different provider's endpoint. An empty key is
+            # correct for keyless providers (gateway, ollama).
+            api_key = prov_config.get("api_key", "") or ""
             is_anthropic = provider_override == "anthropic"
             config = {
                 **config,
@@ -637,7 +865,12 @@ async def chat_stream(request: Request) -> StreamingResponse:
         or PROVIDERS.get(provider, {}).get("default_model", "")
     )
     if is_anthropic:
-        base_url = "https://api.anthropic.com"
+        # Honor a configured Anthropic-compatible base URL (proxy/gateway);
+        # fall back to the public API. _anthropic_request appends
+        # "/v1/messages", so strip a trailing "/v1" to avoid ".../v1/v1/...".
+        base_url = (config.get("base_url") or "").rstrip("/") or "https://api.anthropic.com"
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3]
     else:
         base_url = config.get("base_url") or defaults.get("base_url", "")
 
@@ -673,34 +906,80 @@ async def chat_stream(request: Request) -> StreamingResponse:
             }}) + "\n\n"
 
         try:
-            # Convert messages to provider format
-            conv_messages = [
-                {"role": m["role"], "content": m["content"]}
-                for m in messages
-                if m.get("role") in ("user", "assistant")
-            ]
+            # Convert messages to provider format. Expand slash commands in
+            # every user message (not just the latest) so a `/scaffold …` from
+            # an earlier turn keeps its injected skill prompt on later turns —
+            # the frontend re-sends the raw command in history. Expansion is
+            # idempotent: expanded text no longer starts with "/".
+            conv_messages = []
+            for m in messages:
+                if m.get("role") not in ("user", "assistant"):
+                    continue
+                content = m["content"]
+                if m.get("role") == "user" and isinstance(content, str):
+                    content, _ = _process_slash_command(content)
+                conv_messages.append({"role": m["role"], "content": content})
+
+            # Bound the history fed to the model so long sessions don't 400.
+            conv_messages = _trim_history(conv_messages)
+
+            # Persist the new user turn (the last message) so history is complete
+            # — previously only assistant text was saved. Store the raw text the
+            # user typed, not the slash-expanded copy.
+            last = messages[-1]
+            if last.get("role") == "user" and isinstance(last.get("content"), str):
+                try:
+                    await db.add_chat_message(
+                        "user", last["content"], agent_id=agent_id,
+                        conversation_id=conversation_id,
+                    )
+                except Exception:
+                    pass
+
+            # Names of tools invoked this turn, saved alongside the assistant msg.
+            tools_used: list[str] = []
 
             for _ in range(_MAX_TOOL_ROUNDS):
                 if request_id not in _active_clients:
                     return
 
+                # Heartbeat before each round: keeps a proxy from dropping the
+                # connection while the model spins up / reasons before token 1
+                # (SSE comment line — ignored by the client parser).
+                yield ": ping\n\n"
+
+                result: dict[str, Any] | None = None
                 try:
                     if is_anthropic:
-                        result = await _anthropic_request(
+                        stream = _anthropic_stream(
                             client, base_url, api_key, model,
                             conv_messages, system_prompt,
                         )
                     else:
-                        result = await _openai_dispatch(
+                        stream = _openai_dispatch(
                             client, base_url, api_key, model,
                             conv_messages, system_prompt, wire_api,
                         )
+                    async for ev in stream:
+                        # Client cancelled mid-stream — stop and release the HTTP
+                        # connection instead of draining the whole response.
+                        if request_id not in _active_clients:
+                            await stream.aclose()
+                            return
+                        if ev["type"] == "text":
+                            yield f"data: {json.dumps({'content': ev['text']})}\n\n"
+                        elif ev["type"] == "result":
+                            result = ev["result"]
                 except httpx.HTTPStatusError as e:
-                    error_body = e.response.text[:500] if e.response else str(e)
-                    yield f"data: {json.dumps({'error': f'LLM API error ({e.response.status_code}): {error_body}'})}\n\n"
+                    status = e.response.status_code if e.response is not None else "?"
+                    error_body = e.response.text[:500] if e.response is not None else str(e)
+                    yield f"data: {json.dumps({'error': f'LLM API error ({status}): {error_body}'})}\n\n"
                     return
                 except Exception as e:
                     yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                    return
+
+                if result is None:
                     return
 
                 usage = result.get("usage") or {}
@@ -709,28 +988,32 @@ async def chat_stream(request: Request) -> StreamingResponse:
 
                 tool_calls = result.get("tool_calls", [])
                 tool_count += len(tool_calls)
+                tools_used.extend(tc.get("name", "") for tc in tool_calls)
 
                 if not tool_calls:
-                    # Final text response
-                    text = result.get("content", "")
-                    if text:
-                        yield f"data: {json.dumps({'content': text})}\n\n"
+                    # Text already streamed as deltas above. If the model was cut
+                    # off at the output-token cap, tell the user (otherwise the
+                    # reply just ends mid-sentence with no explanation).
+                    final_text = result.get("content", "")
+                    if str(result.get("stop_reason", "")).lower() in _TRUNCATED_STOP_REASONS:
+                        notice = "\n\n_[Response truncated at the output-token limit.]_"
+                        yield f"data: {json.dumps({'content': notice})}\n\n"
+                        final_text += notice
 
-                    # Per-turn usage/timing footer (tokens, tool calls, seconds).
+                    # Per-turn usage/timing footer and persist the full text
+                    # (with the tools used this turn) scoped to the conversation.
                     yield _meta_event()
-
-                    # Save to chat history
                     try:
                         await db.add_chat_message(
-                            "assistant", text, agent_id=agent_id,
+                            "assistant", final_text, agent_id=agent_id,
+                            tool_calls=tools_used or None,
+                            conversation_id=conversation_id,
                         )
                     except Exception:
                         pass
                     return
 
-                # Stream any prefatory text
-                if result.get("content"):
-                    yield f"data: {json.dumps({'content': result['content']})}\n\n"
+                # Prefatory text (if any) was already streamed as deltas.
 
                 # Execute tool calls
                 if is_anthropic:
@@ -751,11 +1034,11 @@ async def chat_stream(request: Request) -> StreamingResponse:
                     for tc in tool_calls:
                         yield f"data: {json.dumps({'tool_call': {'id': tc['id'], 'name': tc['name'], 'arguments': tc['arguments']}})}\n\n"
                         tool_result = await _execute_tool(tc["name"], tc["arguments"])
-                        yield f"data: {json.dumps({'tool_result': {'id': tc['id'], 'name': tc['name'], 'result': tool_result[:2000]}})}\n\n"
+                        yield f"data: {json.dumps({'tool_result': {'id': tc['id'], 'name': tc['name'], 'result': _clip_ui_result(tool_result)}})}\n\n"
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tc["id"],
-                            "content": tool_result,
+                            "content": _clip_tool_result(tool_result),
                         })
                     conv_messages.append({"role": "user", "content": tool_results})
 
@@ -781,12 +1064,30 @@ async def chat_stream(request: Request) -> StreamingResponse:
                     for tc in tool_calls:
                         yield f"data: {json.dumps({'tool_call': {'id': tc['id'], 'name': tc['name'], 'arguments': tc['arguments']}})}\n\n"
                         tool_result = await _execute_tool(tc["name"], tc["arguments"])
-                        yield f"data: {json.dumps({'tool_result': {'id': tc['id'], 'name': tc['name'], 'result': tool_result[:2000]}})}\n\n"
+                        yield f"data: {json.dumps({'tool_result': {'id': tc['id'], 'name': tc['name'], 'result': _clip_ui_result(tool_result)}})}\n\n"
                         conv_messages.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
-                            "content": tool_result,
+                            "content": _clip_tool_result(tool_result),
                         })
+
+            # Reached the tool-round cap without a final text answer — tell the
+            # user instead of ending on a silent spinner, and persist the notice
+            # so the saved history reflects the truncated turn.
+            notice = (
+                f"\n\n_[Response stopped: reached the maximum of "
+                f"{_MAX_TOOL_ROUNDS} tool-calling rounds.]_"
+            )
+            yield f"data: {json.dumps({'content': notice})}\n\n"
+            yield _meta_event()
+            try:
+                await db.add_chat_message(
+                    "assistant", notice.strip(), agent_id=agent_id,
+                    tool_calls=tools_used or None,
+                    conversation_id=conversation_id,
+                )
+            except Exception:
+                pass
 
         finally:
             _active_clients.pop(request_id, None)
@@ -818,14 +1119,19 @@ async def stop_chat(request: Request) -> dict:
         await client.aclose()
         return {"status": "stopped", "request_id": request_id}
 
-    # Stop all
-    for rid, client in list(_active_clients.items()):
-        try:
-            await client.aclose()
-        except Exception:
-            pass
-    _active_clients.clear()
-    return {"status": "stopped", "cleared": True}
+    # Stop-all only when explicitly requested. Previously an empty/unknown
+    # request_id fell through to cancelling *every* active stream, so stopping
+    # one tab could kill another tab's (or another user's) in-flight turn.
+    if body.get("all"):
+        for _rid, client in list(_active_clients.items()):
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+        _active_clients.clear()
+        return {"status": "stopped", "cleared": True}
+
+    return {"status": "noop", "request_id": request_id}
 
 
 @router.get("/agents")
@@ -837,11 +1143,13 @@ async def list_agents() -> dict:
 
 
 @router.get("/history", response_model=ChatHistoryResponse)
-async def get_history(limit: int = 100) -> ChatHistoryResponse:
-    """Get chat history from the database."""
+async def get_history(
+    limit: int = 100, conversation_id: str | None = None
+) -> ChatHistoryResponse:
+    """Get chat history from the database, optionally scoped to a conversation."""
     from main import db
 
-    rows = await db.get_chat_history(limit=limit)
+    rows = await db.get_chat_history(limit=limit, conversation_id=conversation_id)
     messages = [
         ChatMessage(
             role=r["role"],

@@ -18,6 +18,7 @@ import termios
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from security import reject_ws_if_cross_origin
 from services.installer import get_tool_info
 from services.process_mgr import process_manager
 
@@ -34,6 +35,10 @@ WORKSPACE_ROOT = os.environ.get(
 @router.websocket("/ws/terminal/{tool_id}")
 async def ai_tool_terminal(websocket: WebSocket, tool_id: str) -> None:
     """WebSocket PTY for a specific AI coding tool."""
+    # Reject cross-origin handshakes: this endpoint hands out an interactive
+    # shell, and WS bypasses CORS/SOP, so an unchecked Origin is a CSWSH → RCE.
+    if await reject_ws_if_cross_origin(websocket):
+        return
     await websocket.accept()
 
     info = get_tool_info(tool_id)
@@ -102,10 +107,20 @@ async def ai_tool_terminal(websocket: WebSocket, tool_id: str) -> None:
     log.info("ai_terminal_opened", tool_id=tool_id, pid=proc.pid)
 
     try:
-        await asyncio.gather(
-            _ws_to_pty(websocket, master_fd),
-            _pty_to_ws(master_fd, websocket),
+        # Run both relays and stop as soon as EITHER finishes. Waiting for both
+        # (asyncio.gather) hangs when the client disconnects while the shell is
+        # idle: _pty_to_ws stays blocked in a threadpool os.read that never
+        # returns, so cleanup never runs and the child process + worker leak.
+        tasks = [
+            asyncio.create_task(_ws_to_pty(websocket, master_fd)),
+            asyncio.create_task(_pty_to_ws(master_fd, websocket)),
+        ]
+        done, pending = await asyncio.wait(
+            tasks, return_when=asyncio.FIRST_COMPLETED
         )
+        for t in pending:
+            t.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
     except (WebSocketDisconnect, Exception):
         pass
     finally:

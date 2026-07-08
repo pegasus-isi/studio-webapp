@@ -71,12 +71,16 @@ CREATE TABLE IF NOT EXISTS provider_configs (
 
 CREATE TABLE IF NOT EXISTS chat_messages (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT,
     role            TEXT NOT NULL,
     content         TEXT NOT NULL,
     agent_id        TEXT,
     tool_calls      TEXT,
     created_at      TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_conv
+    ON chat_messages (conversation_id, id);
 
 CREATE TABLE IF NOT EXISTS notifications (
     id              TEXT PRIMARY KEY,
@@ -123,8 +127,23 @@ class Database:
         self._db = await aiosqlite.connect(self._path)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(_SCHEMA)
+        await self._migrate()
         await self._db.commit()
         log.info("database_connected", path=self._path)
+
+    async def _migrate(self) -> None:
+        """Lightweight, idempotent column migrations for pre-existing DBs.
+
+        `CREATE TABLE IF NOT EXISTS` won't add new columns to a table that
+        already exists, so add them explicitly if missing.
+        """
+        async with self.db.execute("PRAGMA table_info(chat_messages)") as cur:
+            cols = {row["name"] for row in await cur.fetchall()}
+        if "conversation_id" not in cols:
+            await self.db.execute(
+                "ALTER TABLE chat_messages ADD COLUMN conversation_id TEXT"
+            )
+            log.info("db_migrated", change="chat_messages.conversation_id")
 
     async def close(self) -> None:
         if self._db:
@@ -422,23 +441,44 @@ class Database:
         role: str,
         content: str,
         agent_id: str | None = None,
-        tool_calls: dict[str, Any] | None = None,
+        tool_calls: Any | None = None,
+        conversation_id: str | None = None,
     ) -> int:
         now = _now()
         async with self.db.execute(
-            """INSERT INTO chat_messages (role, content, agent_id, tool_calls, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (role, content, agent_id, json.dumps(tool_calls) if tool_calls else None, now),
+            """INSERT INTO chat_messages
+                   (conversation_id, role, content, agent_id, tool_calls, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                conversation_id,
+                role,
+                content,
+                agent_id,
+                json.dumps(tool_calls) if tool_calls else None,
+                now,
+            ),
         ) as cursor:
             msg_id = cursor.lastrowid
         await self.db.commit()
         return msg_id or 0
 
-    async def get_chat_history(self, limit: int = 100) -> list[dict[str, Any]]:
+    async def get_chat_history(
+        self, limit: int = 100, conversation_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Most-recent `limit` messages, oldest-first. Scoped to a conversation
+        when `conversation_id` is given."""
+        if conversation_id is not None:
+            query = (
+                "SELECT * FROM chat_messages WHERE conversation_id = ? "
+                "ORDER BY id DESC LIMIT ?"
+            )
+            params: tuple[Any, ...] = (conversation_id, limit)
+        else:
+            query = "SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?"
+            params = (limit,)
+
         results = []
-        async with self.db.execute(
-            "SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?", (limit,)
-        ) as cursor:
+        async with self.db.execute(query, params) as cursor:
             async for row in cursor:
                 results.append({
                     "id": row["id"],
@@ -450,6 +490,31 @@ class Database:
                 })
         results.reverse()
         return results
+
+    async def prune_chat_messages(self, max_rows: int = 5000) -> int:
+        """Cap total stored chat messages, deleting the oldest beyond `max_rows`.
+        Returns the number deleted. Keeps the table from growing unbounded on a
+        long-lived container."""
+        async with self.db.execute(
+            "DELETE FROM chat_messages WHERE id NOT IN "
+            "(SELECT id FROM chat_messages ORDER BY id DESC LIMIT ?)",
+            (max_rows,),
+        ) as cursor:
+            deleted = cursor.rowcount or 0
+        await self.db.commit()
+        return deleted
+
+    async def prune_workflow_runs(self, max_rows: int = 1000) -> int:
+        """Cap stored workflow-run records, deleting the oldest (by created_at)
+        beyond `max_rows`. Bounds table growth on a long-lived container."""
+        async with self.db.execute(
+            "DELETE FROM workflow_runs WHERE run_id NOT IN "
+            "(SELECT run_id FROM workflow_runs ORDER BY created_at DESC LIMIT ?)",
+            (max_rows,),
+        ) as cursor:
+            deleted = cursor.rowcount or 0
+        await self.db.commit()
+        return deleted
 
     # --- Notifications ---
 
