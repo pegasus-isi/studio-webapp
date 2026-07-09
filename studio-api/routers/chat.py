@@ -6,6 +6,7 @@ Supports both Anthropic Messages API and OpenAI-compatible endpoints.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -53,6 +54,39 @@ def _is_responses_model(model: str) -> bool:
 
 # Max tool-calling rounds
 _MAX_TOOL_ROUNDS = 50
+
+# Transient transport failures (proxy connection resets, read timeouts) talking
+# to the LLM endpoint. On a long multi-round agent session an external proxy
+# will occasionally drop the stream; retry the round a few times — but only
+# before any token has been emitted — so a single blip doesn't kill a long
+# generation (e.g. scaffolding a whole workflow).
+_MAX_STREAM_RETRIES = 2
+_STREAM_RETRY_DELAY_S = 1.5
+
+
+def _transport_error_message(
+    exc: Exception, base_url: str, mid_stream: bool
+) -> str:
+    """User-facing message for a network-level drop to the LLM endpoint."""
+    host = base_url
+    try:
+        from urllib.parse import urlparse
+
+        host = urlparse(base_url).hostname or base_url
+    except Exception:
+        pass
+    detail = type(exc).__name__
+    if mid_stream:
+        return (
+            f"Lost the connection to the LLM endpoint ({host}) partway through "
+            f"the response ({detail}). This is usually a transient drop from the "
+            "provider; some steps may have already run — please retry."
+        )
+    return (
+        f"Could not reach the LLM endpoint ({host}) after {_MAX_STREAM_RETRIES + 1} "
+        f"attempts ({detail}). This is usually a transient provider/network "
+        "drop — please retry in a moment."
+    )
 
 # Context-window management. The frontend re-sends the whole conversation each
 # turn, and tool results (especially read_file, up to 100KB) can be large. Bound
@@ -949,35 +983,54 @@ async def chat_stream(request: Request) -> StreamingResponse:
                 yield ": ping\n\n"
 
                 result: dict[str, Any] | None = None
-                try:
-                    if is_anthropic:
-                        stream = _anthropic_stream(
-                            client, base_url, api_key, model,
-                            conv_messages, system_prompt,
-                        )
-                    else:
-                        stream = _openai_dispatch(
-                            client, base_url, api_key, model,
-                            conv_messages, system_prompt, wire_api,
-                        )
-                    async for ev in stream:
-                        # Client cancelled mid-stream — stop and release the HTTP
-                        # connection instead of draining the whole response.
-                        if request_id not in _active_clients:
-                            await stream.aclose()
-                            return
-                        if ev["type"] == "text":
-                            yield f"data: {json.dumps({'content': ev['text']})}\n\n"
-                        elif ev["type"] == "result":
-                            result = ev["result"]
-                except httpx.HTTPStatusError as e:
-                    status = e.response.status_code if e.response is not None else "?"
-                    error_body = e.response.text[:500] if e.response is not None else str(e)
-                    yield f"data: {json.dumps({'error': f'LLM API error ({status}): {error_body}'})}\n\n"
-                    return
-                except Exception as e:
-                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
-                    return
+                # Retry the round on a transient transport drop, but only while
+                # nothing has been streamed to the client yet — retrying after
+                # tokens were emitted would duplicate them.
+                emitted_text = False
+                retry = 0
+                while True:
+                    try:
+                        if is_anthropic:
+                            stream = _anthropic_stream(
+                                client, base_url, api_key, model,
+                                conv_messages, system_prompt,
+                            )
+                        else:
+                            stream = _openai_dispatch(
+                                client, base_url, api_key, model,
+                                conv_messages, system_prompt, wire_api,
+                            )
+                        async for ev in stream:
+                            # Client cancelled mid-stream — stop and release the
+                            # HTTP connection instead of draining the response.
+                            if request_id not in _active_clients:
+                                await stream.aclose()
+                                return
+                            if ev["type"] == "text":
+                                emitted_text = True
+                                yield f"data: {json.dumps({'content': ev['text']})}\n\n"
+                            elif ev["type"] == "result":
+                                result = ev["result"]
+                        break  # stream completed cleanly
+                    except httpx.HTTPStatusError as e:
+                        status = e.response.status_code if e.response is not None else "?"
+                        error_body = e.response.text[:500] if e.response is not None else str(e)
+                        yield f"data: {json.dumps({'error': f'LLM API error ({status}): {error_body}'})}\n\n"
+                        return
+                    except httpx.TransportError as e:
+                        # Transient network drop to the LLM endpoint. Retry only
+                        # if no tokens were emitted this round yet; otherwise a
+                        # retry would duplicate already-streamed content.
+                        if not emitted_text and retry < _MAX_STREAM_RETRIES:
+                            retry += 1
+                            await asyncio.sleep(_STREAM_RETRY_DELAY_S * retry)
+                            yield ": reconnecting\n\n"  # SSE comment heartbeat
+                            continue
+                        yield f"data: {json.dumps({'error': _transport_error_message(e, base_url, emitted_text)})}\n\n"
+                        return
+                    except Exception as e:
+                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                        return
 
                 if result is None:
                     return
