@@ -35,6 +35,12 @@ if [ ! -f "${MARKER}" ]; then
     echo "[studio] Initialization complete."
 fi
 
-cd /opt/studio-api && ${PYTHON} propagate_llm.py 2>/dev/null || true
+# Propagate saved LLM config to installed tool adapters. Run in the background
+# with a hard timeout so it can NEVER gate supervisord startup: this touches the
+# NFS-backed SQLite DB, and a blocked write here would otherwise stall the
+# notebook server past JupyterHub's 30s spawn timeout. Non-fatal; logged for
+# inspection rather than discarded.
+( cd /opt/studio-api && timeout 20 "${PYTHON}" propagate_llm.py \
+    >"${STUDIO_DIR}/propagate_llm.log" 2>&1 || true ) &
 
 exec supervisord -c /etc/supervisor/supervisord.conf

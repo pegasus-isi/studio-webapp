@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -12,6 +13,17 @@ import aiosqlite
 import structlog
 
 log = structlog.get_logger()
+
+# Connection tuning. On this deployment the SQLite file lives on an NFS home,
+# where acquiring an exclusive write lock (e.g. the one-time ALTER TABLE in
+# `_migrate`) can otherwise block indefinitely on a stale NFSv4 lock lease.
+# Bound every lock wait so a contended write fails fast (SQLITE_BUSY) rather
+# than hanging the process — `connect()` runs at container start, before
+# supervisord, so a hang there stalls the whole notebook server past
+# JupyterHub's spawn timeout.
+_BUSY_TIMEOUT_MS = 5000
+_CONNECT_ATTEMPTS = 3
+_CONNECT_RETRY_DELAY_S = 2.0
 
 def _default_workspace() -> str:
     explicit = os.environ.get("STUDIO_WORKSPACE_DIR")
@@ -79,8 +91,11 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     created_at      TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_chat_messages_conv
-    ON chat_messages (conversation_id, id);
+-- NOTE: the idx_chat_messages_conv index is created in `_migrate()`, NOT here.
+-- On a pre-existing DB, `CREATE TABLE IF NOT EXISTS` is a no-op so the
+-- `conversation_id` column doesn't exist until `_migrate()` adds it; creating
+-- the index here would reference a missing column and abort the whole schema
+-- script.
 
 CREATE TABLE IF NOT EXISTS notifications (
     id              TEXT PRIMARY KEY,
@@ -124,12 +139,36 @@ class Database:
 
     async def connect(self) -> None:
         os.makedirs(os.path.dirname(self._path), exist_ok=True)
-        self._db = await aiosqlite.connect(self._path)
-        self._db.row_factory = aiosqlite.Row
-        await self._db.executescript(_SCHEMA)
-        await self._migrate()
-        await self._db.commit()
-        log.info("database_connected", path=self._path)
+        last_err: Exception | None = None
+        for attempt in range(1, _CONNECT_ATTEMPTS + 1):
+            try:
+                self._db = await aiosqlite.connect(self._path)
+                self._db.row_factory = aiosqlite.Row
+                # Bound lock waits so a contended write can't hang forever on
+                # NFS — SQLite returns SQLITE_BUSY after this many ms instead.
+                await self._db.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+                await self._db.executescript(_SCHEMA)
+                await self._migrate()
+                await self._db.commit()
+                log.info("database_connected", path=self._path)
+                return
+            except Exception as e:  # noqa: BLE001 — retry any connect/migrate error
+                last_err = e
+                log.warning(
+                    "database_connect_failed",
+                    path=self._path,
+                    attempt=attempt,
+                    error=str(e),
+                )
+                if self._db is not None:
+                    try:
+                        await self._db.close()
+                    finally:
+                        self._db = None
+                if attempt < _CONNECT_ATTEMPTS:
+                    await asyncio.sleep(_CONNECT_RETRY_DELAY_S)
+        assert last_err is not None
+        raise last_err
 
     async def _migrate(self) -> None:
         """Lightweight, idempotent column migrations for pre-existing DBs.
@@ -140,10 +179,22 @@ class Database:
         async with self.db.execute("PRAGMA table_info(chat_messages)") as cur:
             cols = {row["name"] for row in await cur.fetchall()}
         if "conversation_id" not in cols:
-            await self.db.execute(
-                "ALTER TABLE chat_messages ADD COLUMN conversation_id TEXT"
-            )
-            log.info("db_migrated", change="chat_messages.conversation_id")
+            try:
+                await self.db.execute(
+                    "ALTER TABLE chat_messages ADD COLUMN conversation_id TEXT"
+                )
+                log.info("db_migrated", change="chat_messages.conversation_id")
+            except Exception as e:  # noqa: BLE001
+                # A concurrent connector (propagate_llm.py now runs alongside
+                # studio-api) may have added the column first; tolerate that.
+                if "duplicate column" not in str(e).lower():
+                    raise
+        # Create the index only now that `conversation_id` is guaranteed to
+        # exist (whether from CREATE TABLE on a fresh DB or the ALTER above).
+        await self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_messages_conv "
+            "ON chat_messages (conversation_id, id)"
+        )
 
     async def close(self) -> None:
         if self._db:
