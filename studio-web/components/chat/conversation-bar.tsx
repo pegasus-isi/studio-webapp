@@ -73,7 +73,7 @@ export function ConversationBar() {
       </button>
 
       {open && mounted && (
-        <div className="absolute left-0 top-8 z-50 max-h-80 w-64 overflow-auto rounded-lg border border-line bg-surface py-1 shadow-lg">
+        <div className="absolute right-0 top-8 z-50 max-h-80 w-64 overflow-auto rounded-lg border border-line bg-surface py-1 shadow-lg">
           <button
             onClick={() => {
               newConversation();
