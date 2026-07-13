@@ -12,7 +12,9 @@ const NAV_ITEMS: {
   icon: string;
   external?: boolean;
 }[] = [
+  { href: "/", label: "Dashboard", icon: "🏠" },
   { href: "/workflows", label: "Workflows", icon: "📊" },
+  { href: "/provisioning", label: "Provisioning", icon: "🖥️" },
   { href: "/workbench", label: "Workbench", icon: "🔧" },
   // Notebooks opens the prefix-aware JupyterLab in a new tab.
   { href: "/jupyter/lab", label: "Notebooks", icon: "📓", external: true },
@@ -109,9 +111,10 @@ export function Sidebar() {
             );
           }
           const active =
-            activePathname === item.href ||
-            activePathname.startsWith(item.href + "/") ||
-            (activePathname === "/" && item.href === "/workflows");
+            item.href === "/"
+              ? activePathname === "/"
+              : activePathname === item.href ||
+                activePathname.startsWith(item.href + "/");
           return (
             <a
               key={item.href}

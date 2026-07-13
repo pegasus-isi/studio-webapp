@@ -34,6 +34,15 @@ export function useAnalyzeWorkflow() {
   });
 }
 
+export function useWorkflowEstimate(runId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["workflows", runId, "estimate"],
+    queryFn: () => api.getWorkflowEstimate(runId),
+    enabled: !!runId && enabled,
+    refetchInterval: 15_000,
+  });
+}
+
 export function useDeleteWorkflow() {
   const qc = useQueryClient();
   return useMutation({

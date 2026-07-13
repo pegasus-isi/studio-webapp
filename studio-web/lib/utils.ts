@@ -6,6 +6,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** Human-friendly duration: 45s, 12m, 1h 05m. */
+export function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.max(0, Math.round(seconds))}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}h ${String(rest).padStart(2, "0")}m` : `${hours}h`;
+}
+
 /** Format a status string into a display badge color (light + dark variants). */
 export function statusColor(status: string): string {
   switch (status) {

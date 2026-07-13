@@ -1,9 +1,14 @@
 "use client";
 
-import { useWorkflowJobs, useAnalyzeWorkflow, useWorkflows } from "@/lib/hooks/use-workflows";
+import {
+  useWorkflowJobs,
+  useAnalyzeWorkflow,
+  useWorkflows,
+  useWorkflowEstimate,
+} from "@/lib/hooks/use-workflows";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { apiUrl } from "@/lib/urls";
-import { cn, statusColor } from "@/lib/utils";
+import { cn, formatDuration, statusColor } from "@/lib/utils";
 import { useEffect, useState, useRef } from "react";
 
 interface Props {
@@ -34,6 +39,10 @@ export function WorkflowDetail({ runId }: Props) {
   // Find the run metadata
   const run = runsData?.workflows.find((w) => w.run_id === runId);
   const isRunning = run?.status === "running";
+
+  // Remaining-time estimate (historical-mean heuristic) — running runs only.
+  const { data: estimateData } = useWorkflowEstimate(runId, isRunning);
+  const estimate = isRunning ? estimateData?.estimate ?? null : null;
 
   // Connect to SSE for running workflows
   useEffect(() => {
@@ -75,6 +84,11 @@ export function WorkflowDetail({ runId }: Props) {
     const result = await analyze.mutateAsync(runId);
     setAnalysis(result.analysis);
   };
+
+  // Failed jobs with captured stderr feed the Diagnostics panel below.
+  const failedJobDetails = (data?.jobs ?? []).filter(
+    (job: Record<string, unknown>) => job.status === "failed" && job.stderr
+  );
 
   // Use live stats if available, otherwise fall back to run data
   const totalJobs = liveStats?.total_jobs ?? run?.total_jobs ?? 0;
@@ -140,6 +154,13 @@ export function WorkflowDetail({ runId }: Props) {
                 {failedJobs > 0 && (
                   <span className="text-red-600 dark:text-rose-400">{failedJobs} failed</span>
                 )}
+                {estimate && estimate.remaining_seconds > 0 && (
+                  <span
+                    title={`Historical per-transformation mean over ${estimate.remaining_jobs} remaining job(s); ${estimate.confidence} confidence`}
+                  >
+                    ~{formatDuration(estimate.remaining_seconds)} remaining
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -196,15 +217,48 @@ export function WorkflowDetail({ runId }: Props) {
           </p>
         )}
 
-        {/* Analysis output */}
-        {analysis && (
+        {/* Diagnostics: failed-job stderr beside pegasus-analyzer output, so
+            the failure reason is visible without leaving the run page. */}
+        {(failedJobDetails.length > 0 || analysis) && (
           <div className="mt-6">
-            <h3 className="mb-2 text-sm font-semibold text-fg">
-              Analysis
-            </h3>
-            <pre className="max-h-96 w-full overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] break-all rounded-md bg-gray-900 p-4 text-xs text-green-400">
-              {analysis}
-            </pre>
+            <h3 className="mb-2 text-sm font-semibold text-fg">Diagnostics</h3>
+
+            {failedJobDetails.length > 0 && (
+              <div className="mb-4 space-y-3">
+                {failedJobDetails.map((job, i) => (
+                  <div
+                    key={i}
+                    className="rounded-md border border-red-200 bg-red-50 p-3 dark:border-rose-500/30 dark:bg-rose-500/10"
+                  >
+                    <p className="text-xs font-semibold text-red-700 dark:text-rose-300">
+                      {String(job.job_id ?? "")}
+                      {job.exitcode != null && (
+                        <span className="font-normal">
+                          {" "}
+                          — exit code {String(job.exitcode)}
+                        </span>
+                      )}
+                    </p>
+                    <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] break-all text-xs text-red-800 dark:text-rose-200">
+                      {String(job.stderr)}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {analysis && (
+              <pre className="max-h-96 w-full overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] break-all rounded-md bg-gray-900 p-4 text-xs text-green-400">
+                {analysis}
+              </pre>
+            )}
+
+            {!analysis && failedJobDetails.length > 0 && (
+              <p className="text-xs text-fgmuted">
+                Run the analyzer for Pegasus&apos;s full diagnosis of these
+                failures.
+              </p>
+            )}
           </div>
         )}
       </div>

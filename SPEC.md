@@ -89,8 +89,9 @@ Primary routes:
 
 | Route | Purpose |
 |-------|---------|
-| `/` | Redirect/home entry |
+| `/` | Dashboard: workflow summary, recent runs, resources, quick actions |
 | `/workflows` | Workflow projects, runs, actions, and details |
+| `/provisioning` | Pool inventory, workflow demand, pressure findings (read-only) |
 | `/workbench` | AI tool terminal/workbench surface |
 | `/notebooks` | Opens JupyterLab at `/jupyter/lab` |
 | `/settings` | LLM provider and application settings |
@@ -115,9 +116,11 @@ Router groups:
 | `files` | Workspace file operations |
 | `terminal` | Browser bash PTY |
 | `ai_terminal` | AI tool PTYs |
-| `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze |
+| `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate |
 | `chat` | Built-in PegasusAI SSE chat |
 | `jupyter` | Status plus back-compat start/stop no-ops |
+| `dashboard` | Aggregate landing-page data (projects, runs, resources, versions) |
+| `provisioning` | HTCondor pool inventory + queue demand + pressure (read-only) |
 
 JupyterLab is not started or stopped by the API. `/api/jupyter/start` and
 `/api/jupyter/stop` remain as compatibility no-ops and return current status.
@@ -258,6 +261,9 @@ Common endpoints:
 | `GET` | `/api/workflows/{run_id}/jobs` | Job status |
 | `GET` | `/api/workflows/{run_id}/events` | Workflow event stream |
 | `POST` | `/api/workflows/{run_id}/analyze` | Run diagnostics |
+| `GET` | `/api/workflows/{run_id}/estimate` | Remaining-time estimate (historical mean) |
+| `GET` | `/api/dashboard` | Aggregate landing-page snapshot |
+| `GET` | `/api/provisioning/status` | Pool inventory, demand, pressure findings |
 | `POST` | `/api/chat/stream` | Built-in SSE chat |
 | `GET` | `/api/jupyter/status` | JupyterLab status |
 | `WS` | `/ws/terminal` | Bash PTY |

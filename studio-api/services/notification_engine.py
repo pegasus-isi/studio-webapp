@@ -313,17 +313,41 @@ class NotificationEngine:
     async def _check_resources(
         self, run_id: str, label: str, detail: dict[str, Any]
     ) -> None:
-        """Resource-provisioning extension point.
+        """Flag a running workflow whose jobs are starved for pool capacity.
 
-        Intended to flag when a run needs more capacity — e.g. jobs sitting
-        idle/held in HTCondor with no slots to run them. The studio backend
-        does not yet expose per-run HTCondor idle/held counts (the
-        workflow-monitor `--why-idle` data is the natural source), so this is a
-        deliberate stub: wire that signal in here and call ``self.notify(
-        kind="resource", severity="warning", ...)`` with a
-        ``dedup_key`` such as ``f"resource:{run_id}:idle"``.
+        Demand comes from ``condor_q`` job ads (Pegasus stamps each job with
+        ``pegasus_wf_uuid``, so demand is attributable to this run); supply
+        from ``condor_status``. Both arrive via the condor_pool TTL cache, so
+        per-run calls inside the 10s scan cost one condor round per TTL
+        window. Explainable thresholds only — the notification says what is
+        missing and why; acting on it stays manual (Phase 3 adds actions).
         """
-        return
+        if detail.get("status") != "running":
+            return
+
+        from services import condor_pool
+
+        status = await condor_pool.get_status()
+        if not status.get("available"):
+            return  # no condor — nothing to observe (Condor-optional mode)
+
+        wf_demand = (status.get("demand") or {}).get("by_workflow", {}).get(run_id)
+        finding = condor_pool.run_pressure(wf_demand, status["pool"])
+        if not finding:
+            return
+
+        await self.notify(
+            kind="resource",
+            title=f"Workflow “{label}” needs resources",
+            body=finding["body"],
+            severity="warning",
+            run_id=run_id,
+            link="/provisioning",
+            # One live alert per (run, pressure kind); add_notification
+            # refreshes on dedup_key so the numbers stay current without spam.
+            dedup_key=f"resource:{run_id}:{finding['kind']}",
+            meta={"pressure": finding["kind"], "delta": finding["delta"]},
+        )
 
 
 # Process-wide singleton.

@@ -104,6 +104,8 @@ Tools share the canonical knowledge base in
 | `CUSTOM_BASE_URL` / `CUSTOM_API_KEY` | unset | Custom OpenAI-compatible endpoint |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 | `NPM_CONFIG_PREFIX` | `/opt/npm-global` | npm global install prefix |
+| `STUDIO_POOL_CACHE_TTL` | `15` | Seconds between HTCondor pool/queue snapshots (provisioning + dashboard) |
+| `STUDIO_RESOURCE_WAIT_SECONDS` | `300` | Idle-job queue wait past which a resource alert is raised |
 
 The Settings page can update LLM configuration at runtime; values are stored in
 the workspace SQLite database.
