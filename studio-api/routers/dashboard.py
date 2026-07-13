@@ -13,6 +13,7 @@ import structlog
 from fastapi import APIRouter
 
 from routers.health import _run_version_cmd
+from routers.knowledge import list_agents, list_skills
 from services import condor_pool
 from services.workflow_monitor import get_workflow_detail
 from services.workflow_scanner import discover_projects, discover_runs
@@ -68,7 +69,17 @@ async def dashboard() -> dict:
     except Exception:
         unread = 0
 
+    # Built-in AI capabilities for the landing-page showcase (same source of
+    # truth as the knowledge endpoints — skills carry name/description/slash
+    # command, agents are the chat personas).
+    try:
+        skills = (await list_skills())["skills"]
+        agents = (await list_agents())["agents"]
+    except Exception:
+        skills, agents = [], []
+
     return {
+        "ai": {"skills": skills, "agents": agents},
         "projects": {"total": len(projects), "by_status": project_status},
         "runs": {
             "total": len(run_rows),

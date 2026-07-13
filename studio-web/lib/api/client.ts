@@ -357,6 +357,10 @@ export async function getWorkflowEstimate(id: string) {
 // --- Dashboard ---
 
 export interface DashboardData {
+  ai: {
+    skills: SkillMeta[];
+    agents: AgentInfo[];
+  };
   projects: { total: number; by_status: Record<string, number> };
   runs: {
     total: number;
