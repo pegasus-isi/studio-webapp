@@ -1,8 +1,63 @@
 "use client";
 
+import type { SkillMeta } from "@/lib/api/client";
 import { useDashboard } from "@/lib/hooks/use-dashboard";
+import { usePanelStore } from "@/lib/stores/panel-store";
 import { appRelativePath, jupyterUrl } from "@/lib/urls";
 import { cn, statusColor } from "@/lib/utils";
+
+// Novice-friendly framing for the built-in AI skills: what task the skill
+// does for you, keyed by slash command. Unknown skills fall back to their
+// knowledge-layer name/description, so new skills appear automatically.
+const SKILL_CARDS: Record<string, { icon: string; task: string }> = {
+  "/scaffold": { icon: "🧱", task: "Create a new workflow" },
+  "/wrapper": { icon: "📜", task: "Wrap a script as a workflow step" },
+  "/dockerfile": { icon: "🐳", task: "Containerize your tools" },
+  "/convert": { icon: "🔁", task: "Convert an existing pipeline" },
+  "/review": { icon: "🔍", task: "Review a workflow for pitfalls" },
+  "/debug": { icon: "🩺", task: "Debug a failed run" },
+  "/kiso": { icon: "☁️", task: "Set up a cloud experiment" },
+  "/provd": { icon: "🚀", task: "Estimate resources & deploy" },
+  "/help": { icon: "❓", task: "See everything the AI can do" },
+};
+
+function SkillCard({
+  skill,
+  onOpenChat,
+}: {
+  skill: SkillMeta;
+  onOpenChat: () => void;
+}) {
+  const friendly = skill.slash_command
+    ? SKILL_CARDS[skill.slash_command]
+    : undefined;
+  return (
+    <button
+      onClick={onOpenChat}
+      title={
+        skill.slash_command
+          ? `Opens PegasusAI Chat — type ${skill.slash_command} to start`
+          : "Opens PegasusAI Chat"
+      }
+      className="group flex flex-col rounded-lg border border-line bg-surface p-4 text-left transition-colors hover:border-pegasus-300 hover:bg-base"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-xl">{friendly?.icon ?? "✨"}</span>
+        <span className="text-sm font-semibold text-fg">
+          {friendly?.task ?? skill.name}
+        </span>
+      </div>
+      <p className="mt-1.5 flex-1 text-xs leading-relaxed text-fgmuted">
+        {skill.description}
+      </p>
+      {skill.slash_command && (
+        <span className="mt-2 self-start rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-fgmuted group-hover:text-pegasus-700 dark:group-hover:text-pegasus-300">
+          {skill.slash_command}
+        </span>
+      )}
+    </button>
+  );
+}
 
 function StatCard({
   label,
@@ -29,7 +84,11 @@ function StatCard({
 
 export default function DashboardPage() {
   const { data, isLoading, error } = useDashboard();
+  const setChatOpen = usePanelStore((s) => s.setChatOpen);
+  const openChat = () => setChatOpen(true);
 
+  const skills = data?.ai?.skills ?? [];
+  const personas = (data?.ai?.agents ?? []).filter((a) => a.id !== "general");
   const resources = data?.resources;
   const pool = resources?.pool;
   const poolUp = !!pool?.available;
@@ -129,6 +188,72 @@ export default function DashboardPage() {
             </a>
           </div>
         )}
+
+        {/* Built-in AI toolkit — capability cards for first-time users */}
+        <section className="rounded-lg border border-line bg-surface">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
+            <div>
+              <h2 className="text-sm font-semibold text-fg">
+                What can Studio&apos;s AI help you do?
+              </h2>
+              <p className="text-xs text-fgmuted">
+                Built-in Pegasus skills — click a card to open Chat, then type
+                the command or just describe what you want.
+              </p>
+            </div>
+            <button
+              onClick={openChat}
+              className="rounded-md bg-pegasus-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-pegasus-700"
+            >
+              💬 Open PegasusAI Chat
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
+            {skills.map((skill) => (
+              <SkillCard key={skill.name} skill={skill} onOpenChat={openChat} />
+            ))}
+            {/* Workbench is a capability of its own: bring your own AI tool */}
+            <a
+              href={appRelativePath("/workbench")}
+              className="group flex flex-col rounded-lg border border-dashed border-line bg-surface p-4 transition-colors hover:border-pegasus-300 hover:bg-base"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🛠️</span>
+                <span className="text-sm font-semibold text-fg">
+                  Bring your own AI tool
+                </span>
+              </div>
+              <p className="mt-1.5 flex-1 text-xs leading-relaxed text-fgmuted">
+                Install and launch Claude Code, Codex CLI, OpenCode, or
+                Antigravity in the Workbench — preloaded with the same Pegasus
+                knowledge.
+              </p>
+              <span className="mt-2 text-xs font-medium text-pegasus-600 dark:text-pegasus-300">
+                Open Workbench →
+              </span>
+            </a>
+          </div>
+
+          {personas.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-2.5 text-xs text-fgmuted">
+              <span>Chat personas:</span>
+              {personas.map((a) => (
+                <span
+                  key={a.id}
+                  title={a.description}
+                  className="rounded-full bg-muted px-2 py-0.5 font-medium text-fg"
+                >
+                  {a.name}
+                </span>
+              ))}
+              <span className="ml-auto">
+                Not sure where to start? Open Chat and type{" "}
+                <span className="font-mono">/help</span>.
+              </span>
+            </div>
+          )}
+        </section>
 
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Recent runs */}

@@ -26,6 +26,42 @@ def test_dashboard_shape_empty_workspace(client, monkeypatch):
     assert body["resources"]["available"] is False
     assert body["notifications"]["unread"] == 0
     assert "pegasus" in body["versions"]
+    # AI showcase: empty knowledge root -> no skills, just the General persona.
+    assert body["ai"]["skills"] == []
+    assert [a["id"] for a in body["ai"]["agents"]] == ["general"]
+
+
+def test_dashboard_lists_skills(client, monkeypatch, tmp_path):
+    """Skills found under KNOWLEDGE_ROOT surface in the ai payload."""
+    import json
+    import os
+
+    from routers import knowledge
+    from services import condor_pool
+
+    skills_dir = tmp_path / "skills" / "scaffold"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "metadata.json").write_text(json.dumps({
+        "name": "Scaffold",
+        "description": "Generate a complete Pegasus workflow project",
+        "slash_command": "/scaffold",
+        "order": 1,
+    }))
+    os.makedirs(tmp_path / "agents", exist_ok=True)
+    monkeypatch.setattr(knowledge, "KNOWLEDGE_ROOT", str(tmp_path))
+
+    async def fake_status(force=False):
+        return {"available": False, "pool": {"available": False},
+                "demand": {"available": False}, "pressure": []}
+
+    monkeypatch.setattr(condor_pool, "get_status", fake_status)
+
+    body = client.get("/api/dashboard").json()
+    assert body["ai"]["skills"] == [{
+        "name": "Scaffold",
+        "description": "Generate a complete Pegasus workflow project",
+        "slash_command": "/scaffold",
+    }]
 
 
 def test_dashboard_aggregates_runs(client, monkeypatch):
