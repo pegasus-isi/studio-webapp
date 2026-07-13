@@ -339,6 +339,115 @@ export async function submitWorkflowProject(
   );
 }
 
+export interface RunEstimate {
+  remaining_seconds: number;
+  method: string;
+  confidence: "low" | "medium" | "high";
+  coverage: number;
+  remaining_jobs: number;
+  parallelism: number;
+}
+
+export async function getWorkflowEstimate(id: string) {
+  return request<{ run_id: string; estimate: RunEstimate | null }>(
+    `/workflows/${encodeURIComponent(id)}/estimate`
+  );
+}
+
+// --- Dashboard ---
+
+export interface DashboardData {
+  projects: { total: number; by_status: Record<string, number> };
+  runs: {
+    total: number;
+    by_status: Record<string, number>;
+    recent: {
+      run_id: string;
+      run_name: string;
+      name: string;
+      status: string;
+      total_jobs: number;
+      completed_jobs: number;
+      failed_jobs: number;
+      timestamp: string | null;
+    }[];
+  };
+  resources: ProvisioningStatus;
+  versions: { pegasus: string | null; condor: string | null };
+  notifications: { unread: number };
+}
+
+export async function getDashboard() {
+  return request<DashboardData>("/dashboard");
+}
+
+// --- Provisioning ---
+
+export interface PoolBucket {
+  label?: string;
+  total_cpus: number;
+  idle_cpus: number;
+  total_gpus: number;
+  idle_gpus: number;
+  total_memory_mb: number;
+  idle_memory_mb: number;
+  machines: number;
+  slots: number;
+}
+
+export interface PoolSummary extends PoolBucket {
+  available: boolean;
+  error?: string;
+  pools: Record<string, PoolBucket>;
+}
+
+export interface WorkflowDemand {
+  name: string | null;
+  idle_jobs: number;
+  running_jobs: number;
+  held_jobs: number;
+  idle_cpus_requested: number;
+  idle_gpus_requested: number;
+  idle_memory_mb_requested: number;
+  oldest_idle_seconds: number | null;
+  held_reason: string | null;
+}
+
+export interface QueueDemand {
+  available: boolean;
+  error?: string;
+  total_jobs: number;
+  idle_jobs: number;
+  running_jobs: number;
+  held_jobs: number;
+  idle_cpus_requested: number;
+  idle_gpus_requested: number;
+  idle_memory_mb_requested: number;
+  oldest_idle_seconds: number | null;
+  held_reasons: string[];
+  by_workflow: Record<string, WorkflowDemand>;
+}
+
+export interface PressureFinding {
+  kind: string;
+  severity: string;
+  title: string;
+  detail: string;
+  delta: Record<string, number>;
+}
+
+export interface ProvisioningStatus {
+  available: boolean;
+  pool: Partial<PoolSummary> & { available: boolean; error?: string };
+  demand: Partial<QueueDemand> & { available: boolean; error?: string };
+  pressure: PressureFinding[];
+  checked_at?: number;
+}
+
+export async function getProvisioningStatus() {
+  return request<ProvisioningStatus>("/provisioning/status");
+}
+
 // --- Knowledge ---
 
 export interface SkillMeta {

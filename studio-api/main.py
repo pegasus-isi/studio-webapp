@@ -15,12 +15,14 @@ from db import Database
 from routers import (
     ai_terminal,
     chat,
+    dashboard,
     files,
     health,
     jupyter,
     knowledge,
     llm,
     notifications,
+    provisioning,
     settings,
     terminal,
     tools,
@@ -232,6 +234,8 @@ app.include_router(ai_terminal.router)
 app.include_router(workflows.router)
 app.include_router(chat.router)
 app.include_router(notifications.router)
+app.include_router(dashboard.router)
+app.include_router(provisioning.router)
 
 
 @app.get("/api/whoami")

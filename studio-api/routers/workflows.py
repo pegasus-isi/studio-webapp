@@ -651,6 +651,35 @@ async def workflow_events(run_id: str) -> StreamingResponse:
     )
 
 
+@router.get("/{run_id}/estimate")
+async def estimate_workflow(run_id: str) -> dict:
+    """Estimated remaining wall-clock for a run (historical-mean heuristic)."""
+    from main import db
+
+    db_runs = await db.list_workflow_runs()
+    run_dir = None
+    for r in db_runs:
+        if r["run_id"] == run_id:
+            run_dir = r["run_dir"]
+            break
+
+    if not run_dir:
+        runs = discover_runs()
+        for r in runs:
+            if r["run_id"] == run_id:
+                run_dir = r["run_dir"]
+                break
+
+    if not run_dir or not os.path.isdir(run_dir):
+        raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
+
+    from services.runtime_estimate import estimate_remaining
+
+    loop = asyncio.get_event_loop()
+    estimate = await loop.run_in_executor(None, estimate_remaining, run_dir)
+    return {"run_id": run_id, "estimate": estimate}
+
+
 @router.post("/{run_id}/analyze")
 async def analyze_workflow(run_id: str) -> dict:
     """Run pegasus-analyzer on a workflow."""
