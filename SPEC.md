@@ -259,8 +259,10 @@ Common endpoints:
 | `GET` | `/api/workflows/projects` | List workflow projects |
 | `GET` | `/api/workflows/projects/{id}/params` | Introspect generator params |
 | `POST` | `/api/workflows/projects/{id}/generate` | Generate workflow files |
+| `POST` | `/api/workflows/projects/{id}/build` | Build & push the project's container image (SSE log) |
 | `POST` | `/api/workflows/projects/{id}/plan` | Plan a workflow |
 | `POST` | `/api/workflows/projects/{id}/submit` | Submit a workflow |
+| `GET/PUT` | `/api/settings/registry` | Container registry + credentials for Build |
 | `GET` | `/api/workflows/{run_id}/jobs` | Job status |
 | `GET` | `/api/workflows/{run_id}/events` | Workflow event stream |
 | `POST` | `/api/workflows/{run_id}/analyze` | Run diagnostics |

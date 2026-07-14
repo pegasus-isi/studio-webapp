@@ -4,12 +4,48 @@ from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from models import LLMConfigRequest, LLMConfigResponse, SettingsResponse
 
 log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+
+class RegistryRequest(BaseModel):
+    """Container registry configuration for the image Build action."""
+
+    registry: str = ""
+    username: str = ""
+    # Omitted/None keeps the stored password; empty string clears it.
+    password: str | None = None
+
+
+@router.get("/registry")
+async def get_registry() -> dict:
+    """Registry config for the settings UI. The password is never echoed."""
+    from main import db
+
+    return {
+        "registry": await db.get_setting("container_registry", "") or "",
+        "username": await db.get_setting("container_registry_username", "") or "",
+        "has_password": bool(
+            await db.get_setting("container_registry_password", "")
+        ),
+    }
+
+
+@router.put("/registry")
+async def update_registry(req: RegistryRequest) -> dict:
+    """Persist registry config (same SQLite-storage caveat as LLM keys — S7)."""
+    from main import db
+
+    await db.set_setting("container_registry", req.registry.strip())
+    await db.set_setting("container_registry_username", req.username.strip())
+    if req.password is not None:
+        await db.set_setting("container_registry_password", req.password)
+    return await get_registry()
 
 
 @router.get("", response_model=SettingsResponse)

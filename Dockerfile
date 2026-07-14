@@ -171,6 +171,16 @@ RUN curl -fsSL "https://github.com/apptainer/apptainer/releases/download/v${APPT
     # symlink so it picks up apptainer regardless of which name it looks for.
     { command -v singularity >/dev/null 2>&1 || ln -sf /usr/bin/apptainer /usr/bin/singularity; }
 
+# ---- Podman (daemonless image builds) ----
+# The workflow page's Build Image action builds project Dockerfiles with
+# podman (rootless, no daemon — there is no dockerd in this container) and
+# pushes to the registry configured in Settings. fuse-overlayfs backs the
+# rootless storage driver; podman falls back to vfs where userns/fuse are
+# unavailable (slower but correct).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      podman fuse-overlayfs slirp4netns && \
+    rm -rf /var/lib/apt/lists/*
+
 # ---- workflow event log ----
 # The studio drives workflow status/job/stats views from the JSONL event log
 # (workflow-events.jsonl). That log is now produced by the integrated

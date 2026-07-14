@@ -110,6 +110,7 @@ Tools share the canonical knowledge base in
 | `STUDIO_OPENCODE_BIN` | `opencode` | OpenCode binary used by the chat engine |
 | `STUDIO_DEFAULT_TOOLS` | `opencode` | Image-bundled tools registered as installed at startup (csv; empty disables) |
 | `STUDIO_CHAT_ENGINE_DEFAULT` | `opencode` | Chat engine when the user hasn't picked one (`opencode` or `builtin`); builtin remains the automatic fallback if OpenCode is unavailable |
+| `STUDIO_BUILD_TIMEOUT` | `1800` | Seconds before a Build Image action (podman build/push) is aborted |
 
 The Settings page can update LLM configuration at runtime; values are stored in
 the workspace SQLite database.

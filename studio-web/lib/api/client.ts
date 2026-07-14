@@ -47,6 +47,29 @@ export async function getSettings() {
   }>("/settings");
 }
 
+// --- Container registry (image Build action) ---
+
+export interface RegistrySettings {
+  registry: string;
+  username: string;
+  has_password: boolean;
+}
+
+export async function getRegistrySettings() {
+  return request<RegistrySettings>("/settings/registry");
+}
+
+export async function updateRegistrySettings(data: {
+  registry: string;
+  username: string;
+  password?: string; // omit to keep the stored password; "" clears it
+}) {
+  return request<RegistrySettings>("/settings/registry", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
 // --- LLM ---
 
 export interface LLMConfig {
