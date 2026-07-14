@@ -56,7 +56,7 @@ _SESSION_MAP_MAX = 200
 _HEALTH_TIMEOUT = 3.0
 _SPAWN_WAIT_S = 20.0
 _TURN_TIMEOUT_S = 600.0
-_PING_INTERVAL_S = 15.0
+_PING_INTERVAL_S = 10.0
 
 # Result text shown in the tool chip is display-only; keep it bounded like the
 # built-in chat's _clip_ui_result.
@@ -355,15 +355,24 @@ class OpenCodeEngine:
                     return
 
             deadline = time.monotonic() + _TURN_TIMEOUT_S
+            last_emit = time.monotonic()
             while time.monotonic() < deadline:
                 # Stop pressed: the registry entry is gone (client closed).
                 if request_id not in active_clients:
                     aborted = True
                     return
-                try:
-                    ev = await asyncio.wait_for(queue.get(), timeout=_PING_INTERVAL_S)
-                except asyncio.TimeoutError:
+                # Ping on silence toward the CLIENT, not queue inactivity —
+                # filtered events (other sessions, global chatter, status
+                # churn) keep the queue busy without emitting a byte, and an
+                # idle-timeout proxy would kill the response mid-turn.
+                wait = _PING_INTERVAL_S - (time.monotonic() - last_emit)
+                if wait <= 0:
                     yield ": ping\n\n"
+                    last_emit = time.monotonic()
+                    continue
+                try:
+                    ev = await asyncio.wait_for(queue.get(), timeout=wait)
+                except asyncio.TimeoutError:
                     continue
                 if ev is None:  # event stream ended underneath us
                     yield _sse({"error": "OpenCode event stream disconnected."})
@@ -398,6 +407,7 @@ class OpenCodeEngine:
                                 "id": call_id, "name": tool,
                                 "arguments": state.get("input") or {},
                             }})
+                            last_emit = time.monotonic()
                         elif status in ("completed", "error") and f"{call_id}:result" not in tool_phase_seen:
                             tool_phase_seen.add(f"{call_id}:result")
                             result = state.get("output") or state.get("error") or status
@@ -405,6 +415,7 @@ class OpenCodeEngine:
                                 "id": call_id, "name": tool,
                                 "result": str(result)[:_UI_RESULT_LIMIT],
                             }})
+                            last_emit = time.monotonic()
 
                 elif etype == "message.part.delta":
                     # Reasoning parts also stream text deltas — only forward
@@ -418,6 +429,7 @@ class OpenCodeEngine:
                         if delta:
                             emitted_text.append(delta)
                             yield _sse({"content": delta})
+                            last_emit = time.monotonic()
 
                 elif etype == "message.updated":
                     info = props.get("info") or {}
