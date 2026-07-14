@@ -16,10 +16,11 @@ const SKILL_CARDS: Record<string, { icon: string; task: string }> = {
   "/convert": { icon: "🔁", task: "Convert an existing pipeline" },
   "/review": { icon: "🔍", task: "Review a workflow for pitfalls" },
   "/debug": { icon: "🩺", task: "Debug a failed run" },
-  "/kiso": { icon: "☁️", task: "Set up a cloud experiment" },
-  "/provd": { icon: "🚀", task: "Estimate resources & deploy" },
-  "/help": { icon: "❓", task: "See everything the AI can do" },
 };
+
+// Skills kept out of the dashboard showcase (still available in Chat):
+// meta or infrastructure-heavy, not first-workflow tasks.
+const HIDDEN_SKILLS = new Set(["/kiso", "/provd", "/help"]);
 
 function SkillCard({
   skill,
@@ -87,7 +88,9 @@ export default function DashboardPage() {
   const setChatOpen = usePanelStore((s) => s.setChatOpen);
   const openChat = () => setChatOpen(true);
 
-  const skills = data?.ai?.skills ?? [];
+  const skills = (data?.ai?.skills ?? []).filter(
+    (s) => !s.slash_command || !HIDDEN_SKILLS.has(s.slash_command)
+  );
   const personas = (data?.ai?.agents ?? []).filter((a) => a.id !== "general");
   const resources = data?.resources;
   const pool = resources?.pool;
@@ -248,8 +251,7 @@ export default function DashboardPage() {
                 </span>
               ))}
               <span className="ml-auto">
-                Not sure where to start? Open Chat and type{" "}
-                <span className="font-mono">/help</span>.
+                Not sure where to start? Open Chat and describe what you want.
               </span>
             </div>
           )}
