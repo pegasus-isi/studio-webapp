@@ -524,6 +524,30 @@ export async function stopChat(requestId?: string) {
   });
 }
 
+// --- Chat engine (builtin | opencode) ---
+
+export interface ChatEngineStatus {
+  engine: "builtin" | "opencode";
+  error?: string | null;
+  opencode: {
+    installed: boolean;
+    running: boolean;
+    url: string;
+    attach_command: string;
+  };
+}
+
+export async function getChatEngine() {
+  return request<ChatEngineStatus>("/chat/engine");
+}
+
+export async function updateChatEngine(engine: "builtin" | "opencode") {
+  return request<ChatEngineStatus>("/chat/engine", {
+    method: "PUT",
+    body: JSON.stringify({ engine }),
+  });
+}
+
 // --- Jupyter ---
 
 export async function startJupyter() {

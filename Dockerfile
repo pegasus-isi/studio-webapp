@@ -192,6 +192,14 @@ RUN mkdir -p /opt/npm-global && chmod 777 /opt/npm-global
 ENV NPM_CONFIG_PREFIX=/opt/npm-global
 ENV PATH="/opt/npm-global/bin:${PATH}"
 
+# ---- default AI tools ----
+# OpenCode ships in the image so the chat panel's OpenCode engine and
+# `opencode attach` work out of the box. Version pinned: the chat engine's
+# event translation is validated against this release's API (/doc OpenAPI).
+# The startup seeding step (main._seed_default_tools) registers it as
+# installed and runs its knowledge adapter on first boot.
+RUN npm install -g opencode-ai@1.17.20 && opencode --version
+
 # ---- PegasusAI Chat JupyterLab extension ----
 # Docks the studio /chat panel inside JupyterLab (iframe; URL derived from the
 # per-user base path). Built with the bundled jlpm; --development True avoids

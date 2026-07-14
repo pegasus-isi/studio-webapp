@@ -36,6 +36,44 @@ log = structlog.get_logger()
 db = Database()
 
 
+async def _seed_default_tools() -> None:
+    """Register image-bundled tools (binary already present) as installed.
+
+    Tools baked into the container (e.g. OpenCode, for the chat engine and
+    `opencode attach`) have their binary on PATH but no DB row on first boot,
+    so the Workbench would show them as uninstalled and their knowledge
+    adapter (AGENTS.md, .opencode/…, provider config) would never run.
+    installer.install() skips npm when the binary exists, so seeding is just
+    adapter + DB row. Override the set with STUDIO_DEFAULT_TOOLS (csv; empty
+    disables).
+    """
+    import os
+    import shutil
+
+    from services.installer import get_tool_info
+    from routers.tools import installer as tool_installer
+
+    default_tools = [
+        t.strip()
+        for t in os.environ.get("STUDIO_DEFAULT_TOOLS", "opencode").split(",")
+        if t.strip()
+    ]
+    if not default_tools:
+        return
+    installed_ids = {t["tool_id"] for t in await db.list_tools()}
+    for tool_id in default_tools:
+        if tool_id in installed_ids:
+            continue
+        info = get_tool_info(tool_id)
+        if not info or not shutil.which(info.get("binary") or ""):
+            continue  # not bundled in this image — stays an on-demand install
+        try:
+            await tool_installer.install(tool_id, db)
+            log.info("default_tool_seeded", tool_id=tool_id)
+        except Exception as e:
+            log.warning("default_tool_seed_failed", tool_id=tool_id, error=str(e))
+
+
 async def _reconcile_installed_tools() -> None:
     """Re-install binaries for tools the DB says are installed but are missing."""
     import asyncio
@@ -132,7 +170,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await db.connect()
     log.info("studio_api_started", version=__version__)
 
-    # Re-install any tools whose binaries are missing (e.g. after container restart)
+    # Register image-bundled tools (OpenCode) on first boot, then re-install
+    # any tools whose binaries are missing (e.g. after container restart).
+    try:
+        await _seed_default_tools()
+    except Exception as e:
+        log.warning("default_tool_seed_error", error=str(e))
     try:
         await _reconcile_installed_tools()
     except Exception as e:
@@ -188,6 +231,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
     # Cleanup terminal sessions and running tool processes
     await notification_engine.stop()
+    from services.opencode_engine import engine as opencode_engine
+
+    await opencode_engine.stop()
     prune_task.cancel()
     for s in terminal_sessions.list_sessions():
         terminal_sessions.kill(s["id"])
