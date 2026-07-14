@@ -69,6 +69,8 @@ export function WorkflowProjectDetail({ projectId }: Props) {
 
   const [output, setOutput] = useState<string | null>(null);
   const [outputCollapsed, setOutputCollapsed] = useState(false);
+  const [building, setBuilding] = useState(false);
+  const [builtImage, setBuiltImage] = useState<string | null>(null);
   // Run dir produced by the last Plan, so Run can submit it via pegasus-run
   // instead of re-planning.
   const [plannedRunDir, setPlannedRunDir] = useState<string | null>(null);
@@ -154,7 +156,71 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     showOutput(result.output ?? "Submitted");
   };
 
-  const isBusy = generate.isPending || plan.isPending || submit.isPending;
+  // Build the project's container image, streaming the build/push log into
+  // the output panel as it happens (SSE over a fetch POST).
+  const handleBuild = async () => {
+    setBuilding(true);
+    setBuiltImage(null);
+    setOutputCollapsed(false);
+    const lines: string[] = [];
+    const append = (line: string) => {
+      lines.push(line);
+      setOutput(lines.join("\n"));
+    };
+    try {
+      const res = await fetch(
+        apiUrl(`workflows/projects/${encodeURIComponent(projectId)}/build`),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tag: "latest", push: true }),
+        }
+      );
+      if (!res.ok || !res.body) {
+        throw new Error(`${res.status}: ${await res.text().catch(() => "")}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const chunks = buf.split("\n\n");
+        buf = chunks.pop() ?? "";
+        for (const chunk of chunks) {
+          const line = chunk.trim();
+          if (!line.startsWith("data:")) continue; // ": ping" heartbeats
+          const payload = line.slice(5).trim();
+          if (payload === "[DONE]") continue;
+          try {
+            const ev = JSON.parse(payload);
+            if (ev.phase) append(`── ${ev.phase} ──`);
+            if (ev.line) append(ev.line);
+            if (ev.status === "success") {
+              setBuiltImage(ev.image);
+              append(
+                ev.pushed
+                  ? `✓ pushed ${ev.image}`
+                  : `✓ built ${ev.image} (not pushed)`
+              );
+            } else if (ev.status === "error") {
+              append(`✗ ${ev.error}`);
+            }
+          } catch {
+            // ignore malformed event
+          }
+        }
+      }
+    } catch (e) {
+      append(`Build stream failed: ${String(e)}`);
+    } finally {
+      setBuilding(false);
+    }
+  };
+
+  const isBusy =
+    generate.isPending || plan.isPending || submit.isPending || building;
 
   return (
     <div className="h-full overflow-auto">
@@ -269,6 +335,17 @@ export function WorkflowProjectDetail({ projectId }: Props) {
               </button>
             )}
 
+            {project.has_dockerfile && (
+              <button
+                onClick={handleBuild}
+                disabled={isBusy}
+                title="Build the project's Dockerfile and push it to the configured registry (Settings → Pegasus Options)"
+                className="rounded-md bg-sky-700 px-4 py-2 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+              >
+                {building ? "Building..." : "Build Image"}
+              </button>
+            )}
+
             {project.has_workflow_yml && (
               <>
                 <button
@@ -303,6 +380,12 @@ export function WorkflowProjectDetail({ projectId }: Props) {
               </>
             )}
           </div>
+          {builtImage && (
+            <p className="mt-2 text-xs text-fgmuted">
+              Latest image:{" "}
+              <span className="font-mono text-fg">{builtImage}</span>
+            </p>
+          )}
         </div>
 
         {/* Command output */}

@@ -50,6 +50,13 @@ class PlanRequest(BaseModel):
     # pegasus-run. When omitted, the server locates the newest planned dir.
     run_dir: str | None = None
 
+
+class BuildRequest(BaseModel):
+    """Options for the container image Build action."""
+
+    tag: str = "latest"
+    push: bool = True
+
 log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -204,6 +211,56 @@ async def generate_workflow(
         return {"status": "error", "output": "workflow_generator.py timed out"}
     except Exception as e:
         return {"status": "error", "output": f"Error: {e}"}
+
+
+@router.post("/projects/{project_id}/build")
+async def build_project_image(
+    project_id: str, req: BuildRequest = BuildRequest()
+) -> StreamingResponse:
+    """Build (and push) the project's container image, streaming the log.
+
+    Registry + credentials come from settings (see /api/settings/registry);
+    without a registry the image is built locally and push is skipped.
+    """
+    from main import db
+
+    projects = discover_projects()
+    proj = next((p for p in projects if p["project_id"] == project_id), None)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    if not proj["has_dockerfile"]:
+        raise HTTPException(status_code=400, detail="Project has no Dockerfile")
+
+    registry = await db.get_setting("container_registry", "") or ""
+    username = await db.get_setting("container_registry_username", "") or ""
+    password = await db.get_setting("container_registry_password", "") or ""
+
+    from services.image_builder import stream_build
+
+    async def event_stream():
+        try:
+            async for chunk in stream_build(
+                project_id=project_id,
+                project_dir=proj["project_dir"],
+                registry=registry,
+                username=username,
+                password=password,
+                tag=req.tag,
+                push=req.push,
+            ):
+                yield chunk
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/projects/{project_id}/plan")

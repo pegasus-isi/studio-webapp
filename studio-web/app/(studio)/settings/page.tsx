@@ -669,6 +669,104 @@ function ChatTab() {
   );
 }
 
+/* ─── Container registry (persisted; used by the Build Image action) ─── */
+
+function RegistrySection() {
+  const [registry, setRegistry] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [hasPassword, setHasPassword] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getRegistrySettings()
+      .then((r) => {
+        setRegistry(r.registry);
+        setUsername(r.username);
+        setHasPassword(r.has_password);
+      })
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  const handleSave = async () => {
+    setError(null);
+    try {
+      const res = await api.updateRegistrySettings({
+        registry,
+        username,
+        // Blank input keeps the stored token; typing overwrites it.
+        ...(password !== "" ? { password } : {}),
+      });
+      setHasPassword(res.has_password);
+      setPassword("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-line p-4">
+      <label className="block text-sm font-medium text-fg">
+        Container Registry
+      </label>
+      <p className="mt-1 text-xs text-fgsubtle">
+        Where the Build Image action pushes workflow images — workers pull
+        from here at run time. Accepts docker:///user/, user, or
+        registry.host/org.
+      </p>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <input
+          type="text"
+          value={registry}
+          onChange={(e) => setRegistry(e.target.value)}
+          placeholder="docker:///kthare10/"
+          className="rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+        />
+        <input
+          type="text"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="Registry username"
+          autoComplete="off"
+          className="rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+        />
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder={
+            hasPassword ? "Token stored — type to replace" : "Access token"
+          }
+          autoComplete="new-password"
+          className="rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+        />
+      </div>
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          onClick={handleSave}
+          className="rounded-md bg-pegasus-600 px-3 py-1.5 text-sm text-white hover:bg-pegasus-700"
+        >
+          Save Registry
+        </button>
+        {saved && (
+          <span className="text-sm text-green-600 dark:text-emerald-400">
+            Saved
+          </span>
+        )}
+        {error && (
+          <span className="text-sm text-red-600 dark:text-rose-400">
+            {error}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PegasusOptionsTab() {
   const [executionSite, setExecutionSite] = useState("local");
   const [planningFlags, setPlanningFlags] = useState({
@@ -676,7 +774,6 @@ function PegasusOptionsTab() {
     submit: true,
     cleanup: "none" as string,
   });
-  const [containerRegistry, setContainerRegistry] = useState("docker:///kthare10/");
   const [pegasusPath, setPegasusPath] = useState("");
   const [saved, setSaved] = useState(false);
 
@@ -758,23 +855,8 @@ function PegasusOptionsTab() {
         </div>
       </div>
 
-      {/* Container registry */}
-      <div>
-        <label className="block text-sm font-medium text-fg">
-          Container Registry Prefix
-        </label>
-        <input
-          type="text"
-          value={containerRegistry}
-          onChange={(e) => setContainerRegistry(e.target.value)}
-          placeholder="docker:///username/"
-          className="mt-1 block w-full rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
-        />
-        <p className="mt-1 text-xs text-fgsubtle">
-          Prefix used for container transformation images (e.g.
-          docker:///kthare10/)
-        </p>
-      </div>
+      {/* Container registry — persisted; drives the Build Image action */}
+      <RegistrySection />
 
       {/* Pegasus install path */}
       <div>
