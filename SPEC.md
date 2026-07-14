@@ -58,6 +58,9 @@ container runtime.
 - Pegasus WMS and HTCondor: installed from native DEB packages.
 - Apptainer: installed from the upstream `.deb`, with `singularity` compatibility.
 - JupyterLab: installed via pip without `jupyter-ai` or collaboration extensions.
+- OpenCode: bundled in the image (pinned npm version) and registered as an
+  installed tool at first boot, so the OpenCode chat engine and
+  `opencode attach` work out of the box. Other AI tools install on demand.
 - Process supervision: `supervisor` Python package.
 - npm global prefix: `/opt/npm-global`.
 
@@ -117,7 +120,7 @@ Router groups:
 | `terminal` | Browser bash PTY |
 | `ai_terminal` | AI tool PTYs |
 | `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate |
-| `chat` | Built-in PegasusAI SSE chat |
+| `chat` | PegasusAI SSE chat; pluggable engine — shared `opencode serve` proxy (default) or builtin loop (fallback) |
 | `jupyter` | Status plus back-compat start/stop no-ops |
 | `dashboard` | Aggregate landing-page data (projects, runs, resources, versions) |
 | `provisioning` | HTCondor pool inventory + queue demand + pressure (read-only) |
@@ -264,7 +267,8 @@ Common endpoints:
 | `GET` | `/api/workflows/{run_id}/estimate` | Remaining-time estimate (historical mean) |
 | `GET` | `/api/dashboard` | Aggregate landing-page snapshot |
 | `GET` | `/api/provisioning/status` | Pool inventory, demand, pressure findings |
-| `POST` | `/api/chat/stream` | Built-in SSE chat |
+| `POST` | `/api/chat/stream` | Built-in SSE chat (engine-dispatched) |
+| `GET/PUT` | `/api/chat/engine` | Chat engine selection (builtin / opencode) + attach info |
 | `GET` | `/api/jupyter/status` | JupyterLab status |
 | `WS` | `/ws/terminal` | Bash PTY |
 | `WS` | `/ws/terminal/{tool_id}` | AI tool PTY |
