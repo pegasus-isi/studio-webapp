@@ -468,6 +468,12 @@ export interface ProvisioningStatus {
   pool: Partial<PoolSummary> & { available: boolean; error?: string };
   demand: Partial<QueueDemand> & { available: boolean; error?: string };
   pressure: PressureFinding[];
+  // OSPool (OSG) inventory via condor_status -pool; own longer cache.
+  ospool?: Partial<PoolSummary> & {
+    available: boolean;
+    error?: string;
+    cm?: string | null;
+  };
   checked_at?: number;
 }
 

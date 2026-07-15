@@ -39,6 +39,13 @@ _CACHE_TTL = float(os.environ.get("STUDIO_POOL_CACHE_TTL", "15"))
 # An idle job waiting longer than this (seconds) counts as resource pressure.
 WAIT_THRESHOLD = int(os.environ.get("STUDIO_RESOURCE_WAIT_SECONDS", "300"))
 
+# OSPool (OSG) central manager. condor_status -pool <cm> pulls its slot
+# inventory. It's a large, remote pool, so it gets a longer timeout and its
+# own longer cache. Set STUDIO_OSPOOL_CM="" to disable the OSPool panel.
+OSPOOL_CM = os.environ.get("STUDIO_OSPOOL_CM", "cm-1.ospool.osg-htc.org")
+_OSPOOL_CMD_TIMEOUT = int(os.environ.get("STUDIO_OSPOOL_CMD_TIMEOUT", "45"))
+_OSPOOL_CACHE_TTL = float(os.environ.get("STUDIO_OSPOOL_CACHE_TTL", "120"))
+
 _POOL_LABELS = {
     "base": "Base Condor pool",
     "annex": "Provisioned (Annex)",
@@ -63,7 +70,9 @@ def _lower_keys(ad: dict[str, Any]) -> dict[str, Any]:
     return {str(k).lower(): v for k, v in ad.items()}
 
 
-async def _run_json(cmd: list[str]) -> tuple[list[dict[str, Any]] | None, str | None]:
+async def _run_json(
+    cmd: list[str], timeout: float = _CMD_TIMEOUT
+) -> tuple[list[dict[str, Any]] | None, str | None]:
     """Run a condor CLI command with -json output. Returns (ads, error)."""
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -72,7 +81,7 @@ async def _run_json(cmd: list[str]) -> tuple[list[dict[str, Any]] | None, str | 
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=_CMD_TIMEOUT
+            proc.communicate(), timeout=timeout
         )
     except FileNotFoundError:
         return None, f"{cmd[0]} not found"
@@ -407,6 +416,35 @@ def run_pressure(
 _cache: dict[str, Any] = {"ts": 0.0, "data": None}
 _cache_lock = asyncio.Lock()
 
+_ospool_cache: dict[str, Any] = {"ts": 0.0, "data": None}
+_ospool_lock = asyncio.Lock()
+
+
+async def get_ospool_status(force: bool = False) -> dict[str, Any]:
+    """OSPool slot inventory via ``condor_status -pool OSPOOL_CM``.
+
+    Cached longer than the local pool (it's a large remote query). Returns
+    ``{"available": False, ...}`` when disabled or unreachable.
+    """
+    if not OSPOOL_CM:
+        return {"available": False, "error": "OSPool disabled", "cm": None}
+    async with _ospool_lock:
+        age = time.monotonic() - _ospool_cache["ts"]
+        if not force and _ospool_cache["data"] is not None and age < _OSPOOL_CACHE_TTL:
+            return _ospool_cache["data"]
+
+        ads, err = await _run_json(
+            ["condor_status", "-pool", OSPOOL_CM, "-json"],
+            timeout=_OSPOOL_CMD_TIMEOUT,
+        )
+        if ads is None:
+            data: dict[str, Any] = {"available": False, "error": err, "cm": OSPOOL_CM}
+        else:
+            data = {**summarize_slots(ads), "cm": OSPOOL_CM}
+        _ospool_cache["ts"] = time.monotonic()
+        _ospool_cache["data"] = data
+        return data
+
 
 async def get_status(force: bool = False) -> dict[str, Any]:
     """Combined supply/demand/pressure snapshot, cached for _CACHE_TTL seconds."""
@@ -427,11 +465,16 @@ async def get_status(force: bool = False) -> dict[str, Any]:
         else:
             demand = summarize_queue(job_ads)
 
+        # OSPool inventory rides its own (longer) cache so the fast local
+        # snapshot isn't gated on the slow remote query.
+        ospool = await get_ospool_status()
+
         status = {
             "available": pool.get("available", False),
             "pool": pool,
             "demand": demand,
             "pressure": evaluate_pressure(pool, demand),
+            "ospool": ospool,
             "checked_at": time.time(),
         }
         if slot_err or job_err:

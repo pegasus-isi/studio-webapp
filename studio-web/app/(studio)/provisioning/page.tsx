@@ -224,7 +224,49 @@ export default function ProvisioningPage() {
             </div>
           </>
         )}
+
+        {/* OSPool (OSG) — shown independently of the local pool. */}
+        {!isLoading && data?.ospool && <OSPoolPanel ospool={data.ospool} />}
       </div>
+    </div>
+  );
+}
+
+function OSPoolPanel({
+  ospool,
+}: {
+  ospool: NonNullable<import("@/lib/api/client").ProvisioningStatus["ospool"]>;
+}) {
+  return (
+    <div className="rounded-lg border border-line bg-surface">
+      <div className="border-b border-line px-4 py-3">
+        <h2 className="text-sm font-semibold text-fg">OSPool (OSG)</h2>
+        <p className="text-xs text-fgmuted">
+          Open Science Pool capacity via {ospool.cm ?? "the OSG collector"}
+        </p>
+      </div>
+      {!ospool.available ? (
+        <p className="p-4 text-sm text-fgmuted">
+          OSPool not reachable{ospool.error ? ` (${ospool.error})` : ""}.
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 gap-4 p-4 lg:grid-cols-4">
+          <Metric
+            label="Idle / total CPUs"
+            value={`${ospool.idle_cpus ?? 0}/${ospool.total_cpus ?? 0}`}
+          />
+          <Metric
+            label="Idle / total GPUs"
+            value={
+              (ospool.total_gpus ?? 0) > 0
+                ? `${ospool.idle_gpus ?? 0}/${ospool.total_gpus}`
+                : "—"
+            }
+          />
+          <Metric label="Machines" value={ospool.machines ?? 0} />
+          <Metric label="Slots" value={ospool.slots ?? 0} />
+        </div>
+      )}
     </div>
   );
 }

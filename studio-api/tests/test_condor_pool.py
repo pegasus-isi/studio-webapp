@@ -180,11 +180,13 @@ def test_run_pressure_none_without_demand():
 
 
 def test_get_status_unavailable(monkeypatch):
-    async def fake_run(cmd):
+    async def fake_run(cmd, timeout=20):
         return None, f"{cmd[0]} not found"
 
     monkeypatch.setattr(condor_pool, "_run_json", fake_run)
+    monkeypatch.setattr(condor_pool, "OSPOOL_CM", "")  # isolate from OSPool
     condor_pool._cache["data"] = None
+    condor_pool._ospool_cache["data"] = None
 
     status = asyncio.run(condor_pool.get_status(force=True))
     assert status["available"] is False
@@ -195,12 +197,14 @@ def test_get_status_unavailable(monkeypatch):
 def test_get_status_caches(monkeypatch):
     calls = {"n": 0}
 
-    async def fake_run(cmd):
+    async def fake_run(cmd, timeout=20):
         calls["n"] += 1
         return [], None
 
     monkeypatch.setattr(condor_pool, "_run_json", fake_run)
+    monkeypatch.setattr(condor_pool, "OSPOOL_CM", "")  # isolate from OSPool
     condor_pool._cache["data"] = None
+    condor_pool._ospool_cache["data"] = None
 
     async def go():
         first = await condor_pool.get_status(force=True)
@@ -221,3 +225,64 @@ def test_provisioning_endpoint(client, monkeypatch):
     res = client.get("/api/provisioning/status")
     assert res.status_code == 200
     assert res.json()["available"] is False
+
+
+# --- OSPool ---
+
+
+def test_ospool_status_summarizes(monkeypatch):
+    async def fake_run(cmd, timeout=20):
+        # Only the OSPool query (has -pool) returns slots here.
+        if "-pool" in cmd:
+            return [_slot(Machine="osg1", Cpus=16, State="Unclaimed")], None
+        return [], None
+
+    monkeypatch.setattr(condor_pool, "_run_json", fake_run)
+    monkeypatch.setattr(condor_pool, "OSPOOL_CM", "cm-1.ospool.osg-htc.org")
+    condor_pool._ospool_cache["data"] = None
+
+    data = asyncio.run(condor_pool.get_ospool_status(force=True))
+    assert data["available"] is True
+    assert data["total_cpus"] == 16
+    assert data["cm"] == "cm-1.ospool.osg-htc.org"
+
+
+def test_ospool_disabled(monkeypatch):
+    monkeypatch.setattr(condor_pool, "OSPOOL_CM", "")
+    condor_pool._ospool_cache["data"] = None
+    data = asyncio.run(condor_pool.get_ospool_status(force=True))
+    assert data["available"] is False
+
+
+def test_ospool_uses_pool_flag_and_timeout(monkeypatch):
+    seen = {}
+
+    async def fake_run(cmd, timeout=20):
+        seen["cmd"] = cmd
+        seen["timeout"] = timeout
+        return [], None
+
+    monkeypatch.setattr(condor_pool, "_run_json", fake_run)
+    monkeypatch.setattr(condor_pool, "OSPOOL_CM", "cm-1.ospool.osg-htc.org")
+    monkeypatch.setattr(condor_pool, "_OSPOOL_CMD_TIMEOUT", 45)
+    condor_pool._ospool_cache["data"] = None
+
+    asyncio.run(condor_pool.get_ospool_status(force=True))
+    assert seen["cmd"] == [
+        "condor_status", "-pool", "cm-1.ospool.osg-htc.org", "-json"
+    ]
+    assert seen["timeout"] == 45
+
+
+def test_get_status_includes_ospool(monkeypatch):
+    async def fake_run(cmd, timeout=20):
+        return [], None
+
+    monkeypatch.setattr(condor_pool, "_run_json", fake_run)
+    monkeypatch.setattr(condor_pool, "OSPOOL_CM", "cm-1.ospool.osg-htc.org")
+    condor_pool._cache["data"] = None
+    condor_pool._ospool_cache["data"] = None
+
+    status = asyncio.run(condor_pool.get_status(force=True))
+    assert "ospool" in status
+    assert status["ospool"]["available"] is True
