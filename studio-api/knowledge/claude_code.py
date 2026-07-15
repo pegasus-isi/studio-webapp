@@ -14,7 +14,14 @@ from typing import Any
 import structlog
 
 from knowledge.adapters import KnowledgeAdapter
-from knowledge.common import build_knowledge_appendix
+from knowledge.common import (
+    build_knowledge_appendix,
+    home_path,
+    merge_json_mapping,
+    remove_managed_block,
+    unmerge_json_mapping,
+    upsert_managed_block,
+)
 from llm.providers import PROVIDERS, provider_type
 
 log = structlog.get_logger()
@@ -37,27 +44,40 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
     """Translates canonical knowledge into Claude Code's native format."""
 
     def install(self, workspace: str, llm_config: dict[str, Any]) -> None:
-        # Copy CLAUDE.md from references and append skills/agents appendix
+        # Copy CLAUDE.md from references and append skills/agents appendix.
         src = os.path.join(KNOWLEDGE_ROOT, "references", "PEGASUS_AI.md")
-        dst = os.path.join(workspace, "CLAUDE.md")
         if os.path.isfile(src):
             with open(src) as f:
                 content = f.read()
             appendix = build_knowledge_appendix()
+            body = content + ("\n" + appendix if appendix else "")
+            # Workspace CLAUDE.md (project memory; Studio owns ~/work).
+            dst = os.path.join(workspace, "CLAUDE.md")
             with open(dst, "w") as f:
-                f.write(content)
-                if appendix:
-                    f.write("\n" + appendix)
+                f.write(body)
+            # Global ~/.claude/CLAUDE.md is loaded from ANY cwd. Use a managed
+            # block so we never clobber a user's own global memory.
+            upsert_managed_block(home_path(".claude", "CLAUDE.md"), body)
             log.info("claude_code_claude_md_written", path=dst)
 
-        # Write .mcp.json from knowledge/mcp/
+        # Write .mcp.json from knowledge/mcp/ (project scope) and merge the same
+        # servers into ~/.claude.json (user scope) so they resolve from any cwd.
         mcp_src = os.path.join(KNOWLEDGE_ROOT, "mcp", "servers.json")
         mcp_dst = os.path.join(workspace, ".mcp.json")
         if os.path.isfile(mcp_src):
             shutil.copy2(mcp_src, mcp_dst)
+            try:
+                with open(mcp_src) as f:
+                    servers = (json.load(f) or {}).get("mcpServers", {})
+                if servers:
+                    merge_json_mapping(
+                        home_path(".claude.json"), "mcpServers", servers
+                    )
+            except (json.JSONDecodeError, OSError) as e:
+                log.warning("claude_code_global_mcp_failed", error=str(e))
             log.info("claude_code_mcp_json_written", path=mcp_dst)
 
-        # Propagate LLM config + register plugins (both write settings.json)
+        # Propagate LLM config + register plugins (writes settings.json)
         self.update_llm_config(workspace, llm_config)
 
     def _read_settings(self, settings_path: str) -> dict[str, Any]:
@@ -100,42 +120,49 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
             if ptype == "anthropic":
                 os.environ["ANTHROPIC_API_KEY"] = api_key
 
-        # Build settings.json with both LLM config and plugin registration
-        settings_path = os.path.join(workspace, ".claude", "settings.json")
-        settings = self._read_settings(settings_path)
+        # Write settings.json to BOTH the workspace (project scope) and
+        # ~/.claude (user scope). The user-scope copy makes `claude` pick up the
+        # provider + plugins from any cwd, not only when launched inside ~/work.
+        # Each target is read-merged so we preserve the user's existing settings.
+        targets = [
+            os.path.join(workspace, ".claude", "settings.json"),
+            home_path(".claude", "settings.json"),
+        ]
+        for settings_path in targets:
+            settings = self._read_settings(settings_path)
 
-        # LLM provider config
-        settings["provider"] = provider
-        settings["model"] = model
-        if base_url:
-            settings["base_url"] = base_url
-        elif preset.get("base_url"):
-            settings["base_url"] = preset["base_url"]
-        if preset.get("api_key_env"):
-            settings["api_key_env"] = preset["api_key_env"]
+            # LLM provider config
+            settings["provider"] = provider
+            settings["model"] = model
+            if base_url:
+                settings["base_url"] = base_url
+            elif preset.get("base_url"):
+                settings["base_url"] = preset["base_url"]
+            if preset.get("api_key_env"):
+                settings["api_key_env"] = preset["api_key_env"]
 
-        # Register the plugin marketplace from GitHub
-        settings.setdefault("extraKnownMarketplaces", {})
-        settings["extraKnownMarketplaces"]["scitech"] = {
-            "source": {
-                "source": "github",
-                "repo": MARKETPLACE_REPO,
+            # Register the plugin marketplace from GitHub
+            settings.setdefault("extraKnownMarketplaces", {})
+            settings["extraKnownMarketplaces"]["scitech"] = {
+                "source": {
+                    "source": "github",
+                    "repo": MARKETPLACE_REPO,
+                }
             }
-        }
 
-        # Enable plugins by default
-        settings.setdefault("enabledPlugins", {})
-        for plugin_name in DEFAULT_PLUGINS:
-            settings["enabledPlugins"][plugin_name] = True
+            # Enable plugins by default
+            settings.setdefault("enabledPlugins", {})
+            for plugin_name in DEFAULT_PLUGINS:
+                settings["enabledPlugins"][plugin_name] = True
 
-        self._write_settings(settings_path, settings)
-        log.info(
-            "claude_code_settings_written",
-            path=settings_path,
-            provider=provider,
-            model=model,
-            plugins=DEFAULT_PLUGINS,
-        )
+            self._write_settings(settings_path, settings)
+            log.info(
+                "claude_code_settings_written",
+                path=settings_path,
+                provider=provider,
+                model=model,
+                plugins=DEFAULT_PLUGINS,
+            )
 
     def uninstall(self, workspace: str) -> None:
         for target in ("CLAUDE.md", ".mcp.json", ".claude"):
@@ -146,3 +173,19 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
             elif os.path.isdir(path):
                 shutil.rmtree(path)
                 log.info("claude_code_dir_removed", path=path)
+
+        # Global cleanup — remove only what we added, leaving any user-owned
+        # global config intact.
+        remove_managed_block(home_path(".claude", "CLAUDE.md"))
+        server_names = ["pegasus-docs", "kiso-docs"]
+        mcp_src = os.path.join(KNOWLEDGE_ROOT, "mcp", "servers.json")
+        if os.path.isfile(mcp_src):
+            try:
+                with open(mcp_src) as f:
+                    server_names = list((json.load(f) or {}).get("mcpServers", {}))
+            except (json.JSONDecodeError, OSError):
+                pass
+        unmerge_json_mapping(home_path(".claude.json"), "mcpServers", server_names)
+        global_settings = home_path(".claude", "settings.json")
+        unmerge_json_mapping(global_settings, "extraKnownMarketplaces", ["scitech"])
+        unmerge_json_mapping(global_settings, "enabledPlugins", DEFAULT_PLUGINS)
