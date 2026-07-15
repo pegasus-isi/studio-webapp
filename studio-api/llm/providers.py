@@ -18,7 +18,7 @@ log = structlog.get_logger()
 # OpenAI-compatible gateway so users get a working chat out of the box with
 # zero configuration. Both values are overridable via env for other
 # deployments.
-GATEWAY_BASE_URL = os.environ.get("STUDIO_LLM_GATEWAY_URL", "http://gateway.llm:4000/v1")
+GATEWAY_BASE_URL = os.environ.get("STUDIO_LLM_GATEWAY_URL", "http://gateway.llm:8080/v1")
 GATEWAY_DEFAULT_MODEL = os.environ.get("STUDIO_LLM_DEFAULT_MODEL", "Default")
 
 # Provider presets — mirrors config_builder.PROVIDERS
