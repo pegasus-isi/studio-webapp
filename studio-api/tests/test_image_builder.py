@@ -30,31 +30,45 @@ def test_image_ref():
     assert ib.image_ref("kthare10", "x", "") == "docker.io/kthare10/x:latest"
 
 
-def test_build_command_isolation():
-    # podman/buildah get --isolation (fix for building without subuid ranges);
-    # docker does not support the flag.
-    iso = ib._BUILD_ISOLATION
+def test_build_command_default(monkeypatch):
+    # No forced isolation by default; no apt mount when the conf is absent.
+    monkeypatch.setattr(ib, "_BUILD_ISOLATION", "")
+    monkeypatch.setattr(ib, "_APT_CONF_PATH", "/nonexistent/apt.conf")
     assert ib.build_command("podman", "img:latest", "Dockerfile", ".") == [
-        "podman", "build", f"--isolation={iso}",
-        "-t", "img:latest", "-f", "Dockerfile", ".",
+        "podman", "build", "-t", "img:latest", "-f", "Dockerfile", ".",
     ]
-    assert ib.build_command("buildah", "img:latest", "Dockerfile", ".")[2] == (
-        f"--isolation={iso}"
+
+
+def test_build_command_isolation_configurable(monkeypatch):
+    monkeypatch.setattr(ib, "_BUILD_ISOLATION", "chroot")
+    monkeypatch.setattr(ib, "_APT_CONF_PATH", "/nonexistent/apt.conf")
+    assert "--isolation=chroot" in ib.build_command(
+        "podman", "img:latest", "Dockerfile", "."
     )
+    # docker never gets --isolation.
     assert "--isolation" not in " ".join(
         ib.build_command("docker", "img:latest", "Dockerfile", ".")
     )
 
 
-def test_build_command_isolation_configurable(monkeypatch):
-    monkeypatch.setattr(ib, "_BUILD_ISOLATION", "oci")
-    assert "--isolation=oci" in ib.build_command(
-        "podman", "img:latest", "Dockerfile", "."
-    )
+def test_build_command_apt_mount(monkeypatch, tmp_path):
+    # When the apt no-sandbox conf exists it is mounted for podman/buildah
+    # (fixes apt's _apt privilege drop under single-UID mapping), not docker.
+    conf = tmp_path / "apt-no-sandbox.conf"
+    conf.write_text('APT::Sandbox::User "root";\n')
     monkeypatch.setattr(ib, "_BUILD_ISOLATION", "")
-    assert "--isolation" not in " ".join(
-        ib.build_command("podman", "img:latest", "Dockerfile", ".")
-    )
+    monkeypatch.setattr(ib, "_APT_FIX", True)
+    monkeypatch.setattr(ib, "_APT_CONF_PATH", str(conf))
+
+    cmd = ib.build_command("podman", "img:latest", "Dockerfile", ".")
+    assert "-v" in cmd
+    assert f"{conf}:/etc/apt/apt.conf.d/00-studio-no-sandbox.conf:ro" in cmd
+    # Disabling the fix drops the mount.
+    monkeypatch.setattr(ib, "_APT_FIX", False)
+    assert "-v" not in ib.build_command("podman", "img:latest", "Dockerfile", ".")
+    # docker never gets the mount.
+    monkeypatch.setattr(ib, "_APT_FIX", True)
+    assert "-v" not in ib.build_command("docker", "img:latest", "Dockerfile", ".")
 
 
 def test_find_dockerfile_prefers_docker_dir(tmp_path):

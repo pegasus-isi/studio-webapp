@@ -30,14 +30,26 @@ _BUILDERS = ("podman", "buildah", "docker")
 _BUILD_TIMEOUT_S = int(os.environ.get("STUDIO_BUILD_TIMEOUT", "1800"))
 _PING_INTERVAL_S = 10.0
 
-# RUN-step isolation for podman/buildah. "chroot" runs each RUN in a chroot
-# instead of a nested user namespace — the fix for building without
-# /etc/subuid ranges (spawner UIDs have none): the default "oci" isolation
-# maps into a single-UID child namespace where apt's drop to _apt/nobody
-# (uid 65534) fails with "setgroups: Operation not permitted", while chroot
-# keeps the container's full uid range so those steps work. Override with
-# STUDIO_BUILD_ISOLATION (e.g. "oci" where subuid ranges DO exist).
-_BUILD_ISOLATION = os.environ.get("STUDIO_BUILD_ISOLATION", "chroot")
+# Optional RUN-step isolation for podman/buildah (empty = builder default).
+# NOTE: chroot isolation does NOT fix the apt/subuid problem below — under a
+# single-UID mapping there is still no uid 42/65534 to setuid() to — so it is
+# off by default. Left as a knob for environments that need it.
+_BUILD_ISOLATION = os.environ.get("STUDIO_BUILD_ISOLATION", "")
+
+# apt (Debian/Ubuntu base images) drops privileges to the _apt user during
+# downloads. Under podman's single-UID mapping (spawner UIDs have no
+# /etc/subuid ranges) that setuid()/setgroups() to uid 42 / gid 65534 fails:
+#   E: setgroups 65534 failed - setgroups (1: Operation not permitted)
+# Mounting an apt.conf that pins Sandbox::User to root keeps apt running as
+# the (mapped) root and skips the privilege drop entirely — the reliable fix
+# that needs no subuid ranges. Debian/Ubuntu bases only; disable for images
+# without /etc/apt/apt.conf.d (e.g. Alpine) via STUDIO_BUILD_APT_FIX=0.
+_APT_FIX = os.environ.get("STUDIO_BUILD_APT_FIX", "1").lower() not in (
+    "0", "false", "no",
+)
+_APT_CONF_PATH = os.environ.get(
+    "STUDIO_BUILD_APT_CONF", "/etc/studio/apt-no-sandbox.conf"
+)
 
 
 def detect_builder() -> str | None:
@@ -51,10 +63,18 @@ def detect_builder() -> str | None:
 def build_command(
     builder: str, ref: str, dockerfile: str, context: str
 ) -> list[str]:
-    """Build argv, adding --isolation for podman/buildah (docker has none)."""
+    """Build argv. For podman/buildah, add optional --isolation and mount the
+    apt no-sandbox conf (docker manages its own daemon/uids — neither applies).
+    """
     cmd = [builder, "build"]
-    if builder in ("podman", "buildah") and _BUILD_ISOLATION:
-        cmd += [f"--isolation={_BUILD_ISOLATION}"]
+    if builder in ("podman", "buildah"):
+        if _BUILD_ISOLATION:
+            cmd += [f"--isolation={_BUILD_ISOLATION}"]
+        if _APT_FIX and os.path.isfile(_APT_CONF_PATH):
+            cmd += [
+                "-v",
+                f"{_APT_CONF_PATH}:/etc/apt/apt.conf.d/00-studio-no-sandbox.conf:ro",
+            ]
     cmd += ["-t", ref, "-f", dockerfile, context]
     return cmd
 
