@@ -30,6 +30,15 @@ _BUILDERS = ("podman", "buildah", "docker")
 _BUILD_TIMEOUT_S = int(os.environ.get("STUDIO_BUILD_TIMEOUT", "1800"))
 _PING_INTERVAL_S = 10.0
 
+# RUN-step isolation for podman/buildah. "chroot" runs each RUN in a chroot
+# instead of a nested user namespace — the fix for building without
+# /etc/subuid ranges (spawner UIDs have none): the default "oci" isolation
+# maps into a single-UID child namespace where apt's drop to _apt/nobody
+# (uid 65534) fails with "setgroups: Operation not permitted", while chroot
+# keeps the container's full uid range so those steps work. Override with
+# STUDIO_BUILD_ISOLATION (e.g. "oci" where subuid ranges DO exist).
+_BUILD_ISOLATION = os.environ.get("STUDIO_BUILD_ISOLATION", "chroot")
+
 
 def detect_builder() -> str | None:
     """First available daemonless-capable image builder on PATH."""
@@ -37,6 +46,17 @@ def detect_builder() -> str | None:
         if shutil.which(binary):
             return binary
     return None
+
+
+def build_command(
+    builder: str, ref: str, dockerfile: str, context: str
+) -> list[str]:
+    """Build argv, adding --isolation for podman/buildah (docker has none)."""
+    cmd = [builder, "build"]
+    if builder in ("podman", "buildah") and _BUILD_ISOLATION:
+        cmd += [f"--isolation={_BUILD_ISOLATION}"]
+    cmd += ["-t", ref, "-f", dockerfile, context]
+    return cmd
 
 
 def find_dockerfile(project_dir: str) -> tuple[str, str] | None:
@@ -173,13 +193,13 @@ async def stream_build(
     prefix = normalize_registry(registry)
     deadline = time.monotonic() + _BUILD_TIMEOUT_S
 
+    cmd = build_command(builder, ref, dockerfile, context)
     yield _sse({"phase": "build", "image": ref, "builder": builder})
-    yield _sse({"line": f"$ {builder} build -t {ref} -f {dockerfile} {context}"})
+    yield _sse({"line": f"$ {' '.join(cmd)}"})
 
     rc = 1
     async for kind, value in _run_streaming(
-        [builder, "build", "-t", ref, "-f", dockerfile, context],
-        cwd=project_dir, deadline=deadline,
+        cmd, cwd=project_dir, deadline=deadline,
     ):
         if kind == "line":
             yield _sse({"line": value})

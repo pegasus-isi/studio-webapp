@@ -30,6 +30,33 @@ def test_image_ref():
     assert ib.image_ref("kthare10", "x", "") == "docker.io/kthare10/x:latest"
 
 
+def test_build_command_isolation():
+    # podman/buildah get --isolation (fix for building without subuid ranges);
+    # docker does not support the flag.
+    iso = ib._BUILD_ISOLATION
+    assert ib.build_command("podman", "img:latest", "Dockerfile", ".") == [
+        "podman", "build", f"--isolation={iso}",
+        "-t", "img:latest", "-f", "Dockerfile", ".",
+    ]
+    assert ib.build_command("buildah", "img:latest", "Dockerfile", ".")[2] == (
+        f"--isolation={iso}"
+    )
+    assert "--isolation" not in " ".join(
+        ib.build_command("docker", "img:latest", "Dockerfile", ".")
+    )
+
+
+def test_build_command_isolation_configurable(monkeypatch):
+    monkeypatch.setattr(ib, "_BUILD_ISOLATION", "oci")
+    assert "--isolation=oci" in ib.build_command(
+        "podman", "img:latest", "Dockerfile", "."
+    )
+    monkeypatch.setattr(ib, "_BUILD_ISOLATION", "")
+    assert "--isolation" not in " ".join(
+        ib.build_command("podman", "img:latest", "Dockerfile", ".")
+    )
+
+
 def test_find_dockerfile_prefers_docker_dir(tmp_path):
     proj = tmp_path / "proj"
     (proj / "Docker").mkdir(parents=True)

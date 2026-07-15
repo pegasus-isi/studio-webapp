@@ -69,6 +69,10 @@ export function WorkflowProjectDetail({ projectId }: Props) {
 
   const [output, setOutput] = useState<string | null>(null);
   const [outputCollapsed, setOutputCollapsed] = useState(false);
+  // outputHint() is tuned for pegasus-plan/run logs; a Docker build log trips
+  // its "exit"/"fail" patterns with the wrong "Run Analyzer" advice, so track
+  // whether the current output is a build and suppress the hint for it.
+  const [outputIsBuild, setOutputIsBuild] = useState(false);
   const [building, setBuilding] = useState(false);
   const [builtImage, setBuiltImage] = useState<string | null>(null);
   // Run dir produced by the last Plan, so Run can submit it via pegasus-run
@@ -127,6 +131,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
   const showOutput = (text: string) => {
     setOutput(text);
     setOutputCollapsed(false);
+    setOutputIsBuild(false);
   };
 
   const handleGenerate = async () => {
@@ -162,6 +167,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     setBuilding(true);
     setBuiltImage(null);
     setOutputCollapsed(false);
+    setOutputIsBuild(true);
     const lines: string[] = [];
     const append = (line: string) => {
       lines.push(line);
@@ -411,7 +417,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                 </button>
               </div>
             </div>
-            {!outputCollapsed && outputHint(output) && (
+            {!outputCollapsed && !outputIsBuild && outputHint(output) && (
               <div className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
                 {outputHint(output)}
               </div>
