@@ -107,9 +107,12 @@ export function ChatInput() {
         conversation_id: convId,
       };
 
-      // Include provider/model overrides if set
-      if (chatProvider) body.provider = chatProvider;
-      if (chatModel) body.model = chatModel;
+      // Include provider/model overrides if set. With the Default provider,
+      // send neither so the server uses the configured default model.
+      if (chatProvider) {
+        body.provider = chatProvider;
+        if (chatModel) body.model = chatModel;
+      }
 
       const response = await fetch(apiUrl("/chat/stream"), {
         method: "POST",
@@ -228,9 +231,10 @@ export function ChatInput() {
             onChange={(e) => {
               const pid = e.target.value || null;
               setChatProvider(pid);
-              // Auto-fill default model for this provider
+              // Default provider → use the configured default model (no typing
+              // needed). A specific provider → auto-fill its default model.
               const p = providers.find((p) => p.id === pid);
-              if (p) setChatModel(p.default_model);
+              setChatModel(pid && p ? p.default_model : null);
             }}
             className="rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
           >
@@ -243,12 +247,20 @@ export function ChatInput() {
           </select>
 
           <label className="ml-2 text-fgmuted">Model:</label>
+          {/* With the Default provider the model is chosen for you — show
+              "default" in a disabled field so it's clear there's nothing to
+              type. Pick a specific provider to edit the model. */}
           <input
             type="text"
-            value={chatModel || ""}
+            value={chatProvider ? chatModel || "" : "default"}
             onChange={(e) => setChatModel(e.target.value || null)}
-            placeholder="default"
-            className="w-48 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
+            disabled={!chatProvider}
+            title={
+              chatProvider
+                ? "Model id for the selected provider"
+                : "Uses your configured default — pick a provider to change it"
+            }
+            className="w-48 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:cursor-not-allowed disabled:bg-muted disabled:text-fgsubtle"
           />
         </div>
 

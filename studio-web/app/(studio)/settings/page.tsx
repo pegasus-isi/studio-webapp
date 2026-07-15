@@ -443,7 +443,7 @@ function ProviderCard({
               type="text"
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://..."
+              placeholder="e.g. https://api.example.com/v1"
               className="mt-1 block w-full rounded-md border border-line px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
             />
           </div>
@@ -719,31 +719,38 @@ function RegistrySection() {
         registry.host/org.
       </p>
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <input
-          type="text"
-          value={registry}
-          onChange={(e) => setRegistry(e.target.value)}
-          placeholder="docker:///kthare10/"
-          className="rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
-        />
-        <input
-          type="text"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          placeholder="Registry username"
-          autoComplete="off"
-          className="rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
-        />
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder={
-            hasPassword ? "Token stored — type to replace" : "Access token"
-          }
-          autoComplete="new-password"
-          className="rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
-        />
+        <label className="block text-xs font-medium text-fgmuted">
+          Registry
+          <input
+            type="text"
+            value={registry}
+            onChange={(e) => setRegistry(e.target.value)}
+            placeholder="e.g. docker:///kthare10/"
+            className="mt-1 block w-full rounded-md border border-line px-3 py-2 text-sm text-fg shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+          />
+        </label>
+        <label className="block text-xs font-medium text-fgmuted">
+          Username
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="e.g. kthare10"
+            autoComplete="off"
+            className="mt-1 block w-full rounded-md border border-line px-3 py-2 text-sm text-fg shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+          />
+        </label>
+        <label className="block text-xs font-medium text-fgmuted">
+          Access token
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder={hasPassword ? "Stored — type to replace" : "Paste token"}
+            autoComplete="new-password"
+            className="mt-1 block w-full rounded-md border border-line px-3 py-2 text-sm text-fg shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+          />
+        </label>
       </div>
       <div className="mt-3 flex items-center gap-3">
         <button
