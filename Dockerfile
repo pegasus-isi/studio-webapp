@@ -176,10 +176,14 @@ RUN curl -fsSL "https://github.com/apptainer/apptainer/releases/download/v${APPT
 # podman (rootless, no daemon — there is no dockerd in this container) and
 # pushes to the registry configured in Settings. fuse-overlayfs backs the
 # rootless storage driver; podman falls back to vfs where userns/fuse are
-# unavailable (slower but correct).
+# unavailable (slower but correct). storage.conf tunes rootless builds for
+# the deployment reality: NFS-backed $HOME (force_mask, kept deliberately —
+# cache survives pod restarts) and spawner UIDs without /etc/subuid ranges
+# (ignore_chown_errors).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       podman fuse-overlayfs slirp4netns && \
     rm -rf /var/lib/apt/lists/*
+COPY docker/containers/storage.conf /etc/containers/storage.conf
 
 # ---- workflow event log ----
 # The studio drives workflow status/job/stats views from the JSONL event log
