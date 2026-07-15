@@ -182,10 +182,12 @@ export const toolbarPlugin: JupyterFrontEndPlugin<void> = {
           stopLoading(cell, loadingState);
           const out = (cell.model as ICodeCellModel).outputs;
 
-          let displayMessage = `**PegasusAI Bot is currently offline and cannot process requests.**`;
-          if (err.status === 403) {
-            displayMessage = err.message;
-          }
+          // Studio modification: if the server responded (err.status set),
+          // show its actual message instead of a blanket "offline". Reserve
+          // the offline message for genuine connection failures (no status).
+          const displayMessage = err?.status
+            ? err.message || `**PegasusAI Bot returned HTTP ${err.status}.**`
+            : `**PegasusAI Bot is currently offline and cannot process requests.**`;
 
           out.add({
             output_type: 'display_data',

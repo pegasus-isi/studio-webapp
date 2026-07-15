@@ -50,12 +50,23 @@ export async function sendSearchRequest(
     body: JSON.stringify(payload)
   });
   if (!response.ok) {
-    let serverErrorMessage = 'Unknown server error';
+    // Studio modification: surface the server's actual message. `detail` may
+    // be a string or an object (e.g. { cell_id, response }); pull the human
+    // text out of either so the caller can show it to the user.
+    let serverErrorMessage = `Server returned HTTP ${response.status}`;
     try {
       const errorData = await response.json();
-      serverErrorMessage = errorData.detail || JSON.stringify(errorData);
+      const detail = errorData?.detail;
+      if (typeof detail === 'string') {
+        serverErrorMessage = detail;
+      } else if (detail && typeof detail === 'object') {
+        serverErrorMessage =
+          (detail as { response?: string }).response ?? JSON.stringify(detail);
+      } else if (errorData) {
+        serverErrorMessage = JSON.stringify(errorData);
+      }
     } catch (_e) {
-      // Fallback to the default error message
+      // Non-JSON body — keep the HTTP status message.
     }
     throw { status: response.status, message: serverErrorMessage };
   }

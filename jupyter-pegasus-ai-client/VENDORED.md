@@ -13,11 +13,15 @@ path, so both coexist.
 - **What's included:** only the build-relevant files (source, schema, style,
   build config, LICENSE). CI (`.github/`), figures, `ui-tests/`, and unit
   tests (`src/__tests__/`) are omitted.
-- **Local modification:** `src/configPlugin.tsx` auto-configures instead of
-  the upstream manual-only settings form — it derives the same-origin
-  studio-api proxy URL from the page base URL and resolves the user from
-  `/api/whoami` (server-injected `PageConfig` honored as an override). This
-  is the ONLY change from upstream.
+- **Local modifications** (only these differ from upstream):
+  - `src/configPlugin.tsx` — auto-configures instead of the manual-only
+    settings form: derives the same-origin studio-api proxy URL from the
+    page base URL and resolves the user from `/api/whoami` (server-injected
+    `PageConfig` honored as an override).
+  - `src/api.ts` + `src/toolbarPlugin.ts` — surface the server's actual error
+    message to the user (object-shaped `detail` handled) instead of a blanket
+    "PegasusAI Bot is currently offline" for every non-2xx; the offline
+    message is reserved for genuine connection failures.
 
 ## Updating
 
