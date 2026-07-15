@@ -1,7 +1,7 @@
-// Studio overlay of @gclab/pegasus-ai-client src/configPlugin.tsx
-// (upstream pinned at PEGASUS_BOT_CLIENT_REF in the Dockerfile).
+// Studio modification of the vendored @gclab/pegasus-ai-client
+// configPlugin (see ../VENDORED.md for source + ref).
 //
-// Only addition vs upstream: on activation, seed the shared config from
+// Only change vs upstream: on activation, seed the shared config from
 // server-injected PageConfig so the deployment sets the bot server URL and
 // the user is taken from the container environment — users don't fill the
 // form manually. Falls back to the manual SettingsForm when the options are
@@ -9,8 +9,6 @@
 //
 // The server injects these via docker/jupyter/jupyter_server_config.py
 // (c.LabApp.page_config_data): pegasusBotServerUrl + pegasusBotUserId.
-//
-// Keep this file in sync when bumping PEGASUS_BOT_CLIENT_REF.
 import React from 'react';
 import {
   JupyterFrontEnd,

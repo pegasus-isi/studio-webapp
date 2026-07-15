@@ -1,0 +1,10 @@
+# Build artifacts (produced by jlpm / jupyter-builder at image build time)
+node_modules/
+lib/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+# hatch-jupyter-builder outputs
+pegasus_ai_client/labextension/
+pegasus_ai_client/_version.py

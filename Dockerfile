@@ -231,27 +231,22 @@ RUN cd /opt/jupyter-pegasusai-chat \
     && chmod -R a+rX "$EXTDIR"
 
 # ---- PegasusAI Bot cell-toolbar client (optional, separate extension) ----
-# TauferLab's cell-toolbar assistant (github.com/TauferLab/Src_PegasusAI_Client,
-# npm @gclab/pegasus-ai-client / py pegasus_ai_client). This is DISTINCT from
-# the studio's own jupyter-pegasusai-chat iframe extension above — different
-# package + labextension path, so the two coexist. Toggle the whole feature
-# with ENABLE_PEGASUS_BOT_CLIENT (build with =0 to leave it out entirely).
+# TauferLab's cell-toolbar assistant (@gclab/pegasus-ai-client / py
+# pegasus_ai_client). DISTINCT from the studio's own jupyter-pegasusai-chat
+# iframe extension above — different package + labextension path, so the two
+# coexist. Toggle the whole feature with ENABLE_PEGASUS_BOT_CLIENT
+# (build with =0 to leave it out entirely).
 #
-# The upstream extension reads its server URL + user from an in-memory form;
-# we overlay one file (configPlugin.tsx) so it instead seeds from PageConfig,
-# which the Jupyter server injects (server URL fixed by the deployment, user
-# from the environment — see docker/jupyter/jupyter_server_config.py). Pin the
-# ref so the overlay always matches a known upstream version.
+# VENDORED (see jupyter-pegasus-ai-client/VENDORED.md): the upstream repo is
+# private, so we ship a copy instead of cloning at build time. Our
+# src/configPlugin.tsx seeds the server URL + user from PageConfig, injected
+# by the Jupyter server (docker/jupyter/jupyter_server_config.py), so no
+# manual setup is needed. `pip install` runs the hatch/jlpm labextension build.
 ARG ENABLE_PEGASUS_BOT_CLIENT=1
-ARG PEGASUS_BOT_CLIENT_REF=be7288c1ba5a7debd9937d3906f572707805fceb
-COPY docker/pegasus-bot-client/ /opt/pegasus-bot-client-overlay/
+COPY jupyter-pegasus-ai-client/ /opt/jupyter-pegasus-ai-client/
 RUN if [ "$ENABLE_PEGASUS_BOT_CLIENT" = "1" ]; then \
       set -eux; \
-      git clone https://github.com/TauferLab/Src_PegasusAI_Client.git \
-        /opt/pegasus-ai-client; \
-      cd /opt/pegasus-ai-client; \
-      git checkout "$PEGASUS_BOT_CLIENT_REF"; \
-      cp /opt/pegasus-bot-client-overlay/configPlugin.tsx src/configPlugin.tsx; \
+      cd /opt/jupyter-pegasus-ai-client; \
       pip install --no-cache-dir .; \
     else \
       echo "[build] PegasusAI Bot client disabled (ENABLE_PEGASUS_BOT_CLIENT=0)"; \
