@@ -23,21 +23,38 @@ KNOWLEDGE_ROOT = os.environ.get(
 )
 
 
+def _global_config_dir() -> str:
+    """OpenCode's global config dir (XDG). Config here applies from ANY cwd —
+    the workspace-only config was picked up only when opencode started in
+    ~/work, so terminals launched elsewhere (PVC mounts at ~) fell back to the
+    default 'Zen' provider."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.environ.get("HOME", "/tmp"), ".config"
+    )
+    return os.path.join(base, "opencode")
+
+
 class OpenCodeAdapter(KnowledgeAdapter):
     """Translates canonical knowledge into OpenCode's native format."""
 
     def install(self, workspace: str, llm_config: dict[str, Any]) -> None:
-        # Copy PEGASUS_AI.md as AGENTS.md
+        # Copy PEGASUS_AI.md as AGENTS.md — into the workspace and the global
+        # config dir, so the config's `instructions: ["AGENTS.md"]` resolves
+        # whether opencode starts in ~/work or anywhere else.
         src = os.path.join(KNOWLEDGE_ROOT, "references", "PEGASUS_AI.md")
-        dst = os.path.join(workspace, "AGENTS.md")
         if os.path.isfile(src):
-            shutil.copy2(src, dst)
+            for dst_dir in (workspace, _global_config_dir()):
+                try:
+                    os.makedirs(dst_dir, exist_ok=True)
+                    shutil.copy2(src, os.path.join(dst_dir, "AGENTS.md"))
+                except OSError as e:
+                    log.warning("opencode_agents_copy_failed", dir=dst_dir, error=str(e))
 
         # Seed .opencode/agents/ and .opencode/skills/
         copy_agents_to_dir(os.path.join(workspace, ".opencode", "agents"))
         copy_skills_to_dir(os.path.join(workspace, ".opencode", "skills"))
 
-        # Write opencode.json
+        # Write opencode.json (global + workspace)
         self.update_llm_config(workspace, llm_config)
         log.info("opencode_installed", workspace=workspace)
 
@@ -52,6 +69,10 @@ class OpenCodeAdapter(KnowledgeAdapter):
         preset = PROVIDERS.get(ptype, PROVIDERS["anthropic"])
         if not model:
             model = preset.get("default_model", "claude-sonnet-4-5-20250929")
+        # The opencode `model` field is "<providerID>/<modelID>". Strip any
+        # provider prefix that may already be on the stored model so we build a
+        # clean id (e.g. "default"), not "custom-x/default" doubled up.
+        model_id = str(model).rsplit("/", 1)[-1]
 
         # Build provider config
         options: dict[str, str] = {}
@@ -77,10 +98,10 @@ class OpenCodeAdapter(KnowledgeAdapter):
                     "npm": preset.get("npm", "@ai-sdk/openai-compatible"),
                     "name": preset.get("name", provider),
                     "options": options,
-                    "models": {model: {"name": model}},
+                    "models": {model_id: {"name": model_id}},
                 },
             },
-            "model": f"{provider}/{model}",
+            "model": f"{provider}/{model_id}",
             "instructions": ["AGENTS.md"],
             "mcp": {
                 "pegasus-docs": {
@@ -96,16 +117,39 @@ class OpenCodeAdapter(KnowledgeAdapter):
             },
         }
 
-        config_path = os.path.join(workspace, "opencode.json")
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
-        log.info("opencode_config_written", path=config_path)
+        # Write both the global config (picked up from any cwd — the fix for
+        # terminals started outside ~/work) and the workspace copy (project
+        # override / back-compat). The PVC mounts at ~, so the global path is
+        # persistent too.
+        blob = json.dumps(config, indent=2)
+        global_dir = _global_config_dir()
+        targets = [
+            os.path.join(global_dir, "opencode.json"),
+            os.path.join(workspace, "opencode.json"),
+        ]
+        for path in targets:
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    f.write(blob)
+                log.info("opencode_config_written", path=path)
+            except OSError as e:
+                log.warning("opencode_config_write_failed", path=path, error=str(e))
 
     def uninstall(self, workspace: str) -> None:
-        for target in ("AGENTS.md", "opencode.json", ".opencode"):
-            path = os.path.join(workspace, target)
-            if os.path.isfile(path):
-                os.remove(path)
-            elif os.path.isdir(path):
-                shutil.rmtree(path)
+        paths = [
+            os.path.join(workspace, t)
+            for t in ("AGENTS.md", "opencode.json", ".opencode")
+        ]
+        # Also remove the global config we wrote.
+        gdir = _global_config_dir()
+        paths += [os.path.join(gdir, "opencode.json"), os.path.join(gdir, "AGENTS.md")]
+        for path in paths:
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+                elif os.path.isdir(path):
+                    shutil.rmtree(path)
+            except OSError:
+                pass
         log.info("opencode_uninstalled", workspace=workspace)
