@@ -1,14 +1,59 @@
 "use client";
 
 import type { ReactNode } from "react";
+import type { SkillMeta } from "@/lib/api/client";
 import { useDashboard } from "@/lib/hooks/use-dashboard";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { appRelativePath, jupyterUrl } from "@/lib/urls";
 import { cn, statusColor } from "@/lib/utils";
 
-// Slash commands not shown in the compact skills row (meta / infra-heavy —
-// still available in Chat). New skills appear automatically otherwise.
+// Slash commands not shown as capability cards (meta / infra-heavy — still
+// available in Chat). New skills appear automatically otherwise.
 const HIDDEN_SKILLS = new Set(["/kiso", "/provd", "/help"]);
+
+// Novice-facing framing per skill: an icon and a short task label so each
+// capability reads as a concrete thing you can do. Unknown skills fall back
+// to their knowledge-layer name.
+const SKILL_META: Record<string, { icon: string; task: string }> = {
+  "/scaffold": { icon: "🧱", task: "Create a new workflow" },
+  "/wrapper": { icon: "📜", task: "Wrap a script as a step" },
+  "/dockerfile": { icon: "🐳", task: "Containerize tools" },
+  "/convert": { icon: "🔁", task: "Convert a pipeline" },
+  "/review": { icon: "🔍", task: "Review a workflow" },
+  "/debug": { icon: "🩺", task: "Debug a failed run" },
+};
+
+// Compact AI-capability card: icon + task, one-line description, opens Chat.
+function CapabilityCard({
+  skill,
+  onOpenChat,
+}: {
+  skill: SkillMeta;
+  onOpenChat: () => void;
+}) {
+  const meta = skill.slash_command ? SKILL_META[skill.slash_command] : undefined;
+  return (
+    <button
+      onClick={onOpenChat}
+      title={
+        skill.slash_command
+          ? `Opens Chat — type ${skill.slash_command} or just describe it`
+          : "Opens Chat"
+      }
+      className="flex items-start gap-3 rounded-lg border border-line bg-surface p-3 text-left transition-colors hover:border-pegasus-400 hover:bg-base"
+    >
+      <span className="text-xl leading-none">{meta?.icon ?? "✨"}</span>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold text-fg">
+          {meta?.task ?? skill.name}
+        </span>
+        <span className="mt-0.5 block truncate text-xs text-fgmuted">
+          {skill.description}
+        </span>
+      </span>
+    </button>
+  );
+}
 
 // One big "what do you want to do?" card. Each maps to a distinct area so
 // every click lands somewhere useful; the description carries the capability.
@@ -105,17 +150,36 @@ export default function DashboardPage() {
           workspace.
         </p>
 
-        {/* Primary actions */}
+        {/* Build with AI — one card per capability so each is discoverable */}
+        {skills.length > 0 && (
+          <>
+            <div className="mt-8 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-medium uppercase tracking-wider text-fgsubtle">
+                Build a workflow with AI
+              </h2>
+              <button
+                onClick={openChat}
+                className="rounded-md bg-pegasus-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-pegasus-700"
+              >
+                💬 Open Chat
+              </button>
+            </div>
+            <p className="mt-1 text-sm text-fgmuted">
+              Pick a task or just describe what you need — the AI does the rest.
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {skills.map((s) => (
+                <CapabilityCard key={s.name} skill={s} onOpenChat={openChat} />
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Work with your workflows */}
         <h2 className="mt-8 text-sm font-medium uppercase tracking-wider text-fgsubtle">
-          What do you want to do?
+          Work with your workflows
         </h2>
-        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <ActionCard
-            icon="💬"
-            title="Build with AI"
-            description="Describe a pipeline and the AI scaffolds, wraps, containerizes, converts, reviews, and debugs it."
-            onClick={openChat}
-          />
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <ActionCard
             icon="📊"
             title="Run & monitor"
@@ -136,27 +200,6 @@ export default function DashboardPage() {
             external
           />
         </div>
-
-        {/* Compact AI skills row — discoverable without the old card grid */}
-        {skills.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-fgmuted">
-            <span className="text-fgsubtle">AI can help with:</span>
-            {skills.map((s, i) => (
-              <span key={s.name} className="flex items-center gap-2">
-                {i > 0 && <span className="text-fgsubtle">·</span>}
-                <button
-                  onClick={openChat}
-                  title={s.description}
-                  className="font-medium text-pegasus-700 hover:underline dark:text-pegasus-300"
-                >
-                  {s.slash_command
-                    ? s.slash_command.replace(/^\//, "")
-                    : s.name}
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
 
         {/* At a glance — one muted line */}
         <div className="mt-8 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-fgmuted">
