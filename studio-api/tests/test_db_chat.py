@@ -77,3 +77,33 @@ def test_prune_workflow_runs_caps_rows(tmp_db):
     deleted, remaining = _run(go())
     assert deleted == 7
     assert remaining == 3
+
+
+def test_set_chat_feedback(tmp_db):
+    async def go():
+        db = Database(db_path=tmp_db)
+        await db.connect()
+        try:
+            mid = await db.add_chat_message(
+                "assistant", "hello", conversation_id="A"
+            )
+            # Rate useful, then read it back via history.
+            assert await db.set_chat_feedback(mid, 1) is True
+            rows = await db.get_chat_history(conversation_id="A")
+            useful = rows[0]["feedback"]
+            # Flip to not-useful, then clear.
+            await db.set_chat_feedback(mid, -1)
+            rows2 = await db.get_chat_history(conversation_id="A")
+            await db.set_chat_feedback(mid, None)
+            rows3 = await db.get_chat_history(conversation_id="A")
+            # Unknown id returns False.
+            missing = await db.set_chat_feedback(999999, 1)
+            return useful, rows2[0]["feedback"], rows3[0]["feedback"], missing
+        finally:
+            await db.close()
+
+    useful, notuseful, cleared, missing = _run(go())
+    assert useful == 1
+    assert notuseful == -1
+    assert cleared is None
+    assert missing is False

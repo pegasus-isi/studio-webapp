@@ -17,6 +17,7 @@ export function ChatInput() {
   const addToolCall = useChatStore((s) => s.addToolCall);
   const addToolResult = useChatStore((s) => s.addToolResult);
   const setLastMeta = useChatStore((s) => s.setLastMeta);
+  const setLastServerId = useChatStore((s) => s.setLastServerId);
   const setLastError = useChatStore((s) => s.setLastError);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const messages = useChatStore((s) => s.messages);
@@ -159,6 +160,8 @@ export function ChatInput() {
                 },
                 convId
               );
+            } else if (typeof event.message_id === "number") {
+              setLastServerId(event.message_id, convId);
             } else if (event.error) {
               setLastError(event.error, convId);
             }
@@ -188,6 +191,7 @@ export function ChatInput() {
     addToolCall,
     addToolResult,
     setLastMeta,
+    setLastServerId,
     setLastError,
     setStreaming,
   ]);

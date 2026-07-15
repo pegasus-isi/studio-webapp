@@ -88,7 +88,10 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     content         TEXT NOT NULL,
     agent_id        TEXT,
     tool_calls      TEXT,
-    created_at      TEXT NOT NULL
+    created_at      TEXT NOT NULL,
+    -- User rating of an assistant reply: 1 = useful, -1 = not useful,
+    -- NULL = no rating. Added via _migrate() on pre-existing DBs.
+    feedback        INTEGER
 );
 
 -- NOTE: the idx_chat_messages_conv index is created in `_migrate()`, NOT here.
@@ -187,6 +190,15 @@ class Database:
             except Exception as e:  # noqa: BLE001
                 # A concurrent connector (propagate_llm.py now runs alongside
                 # studio-api) may have added the column first; tolerate that.
+                if "duplicate column" not in str(e).lower():
+                    raise
+        if "feedback" not in cols:
+            try:
+                await self.db.execute(
+                    "ALTER TABLE chat_messages ADD COLUMN feedback INTEGER"
+                )
+                log.info("db_migrated", change="chat_messages.feedback")
+            except Exception as e:  # noqa: BLE001
                 if "duplicate column" not in str(e).lower():
                     raise
         # Create the index only now that `conversation_id` is guaranteed to
@@ -538,9 +550,21 @@ class Database:
                     "agent_id": row["agent_id"],
                     "tool_calls": json.loads(row["tool_calls"]) if row["tool_calls"] else None,
                     "created_at": row["created_at"],
+                    "feedback": row["feedback"],
                 })
         results.reverse()
         return results
+
+    async def set_chat_feedback(self, message_id: int, value: int | None) -> bool:
+        """Rate an assistant reply: 1 = useful, -1 = not useful, None = clear.
+        Returns True if the message existed."""
+        async with self.db.execute(
+            "UPDATE chat_messages SET feedback = ? WHERE id = ?",
+            (value, message_id),
+        ) as cursor:
+            changed = (cursor.rowcount or 0) > 0
+        await self.db.commit()
+        return changed
 
     async def prune_chat_messages(self, max_rows: int = 5000) -> int:
         """Cap total stored chat messages, deleting the oldest beyond `max_rows`.

@@ -20,6 +20,10 @@ export interface ChatMsg {
   error?: string;
   agentId?: string;
   createdAt?: string;
+  // DB row id (assistant turns), sent at end-of-stream — needed to attach
+  // 👍/👎 feedback. serverId absent = feedback can't be recorded yet.
+  serverId?: number;
+  feedback?: 1 | -1 | 0;
   meta?: {
     tokens?: number;
     inputTokens?: number;
@@ -60,6 +64,12 @@ interface ChatStore {
     convId?: string
   ) => void;
   setLastMeta: (meta: NonNullable<ChatMsg["meta"]>, convId?: string) => void;
+  setLastServerId: (serverId: number, convId?: string) => void;
+  setMessageFeedback: (
+    messageId: string,
+    feedback: 1 | -1 | 0,
+    convId?: string
+  ) => void;
   setLastError: (error: string, convId?: string) => void;
   setStreaming: (streaming: boolean, requestId?: string | null) => void;
   setAgent: (agentId: string) => void;
@@ -181,6 +191,32 @@ export const useChatStore = create<ChatStore>()(
           if (last && last.role === "assistant") {
             arr[arr.length - 1] = { ...last, meta };
           }
+          return {
+            messagesById: { ...s.messagesById, [cid]: arr },
+            ...(cid === s.activeId ? { messages: arr } : {}),
+          };
+        }),
+
+      setLastServerId: (serverId, convId) =>
+        set((s) => {
+          const cid = convId ?? s.activeId;
+          const arr = [...(s.messagesById[cid] || [])];
+          const last = arr[arr.length - 1];
+          if (last && last.role === "assistant") {
+            arr[arr.length - 1] = { ...last, serverId };
+          }
+          return {
+            messagesById: { ...s.messagesById, [cid]: arr },
+            ...(cid === s.activeId ? { messages: arr } : {}),
+          };
+        }),
+
+      setMessageFeedback: (messageId, feedback, convId) =>
+        set((s) => {
+          const cid = convId ?? s.activeId;
+          const arr = (s.messagesById[cid] || []).map((m) =>
+            m.id === messageId ? { ...m, feedback } : m
+          );
           return {
             messagesById: { ...s.messagesById, [cid]: arr },
             ...(cid === s.activeId ? { messages: arr } : {}),
