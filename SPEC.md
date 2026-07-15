@@ -95,9 +95,8 @@ Primary routes:
 | `/` | Dashboard: workflow summary, recent runs, resources, quick actions |
 | `/workflows` | Workflow projects, runs, actions, and details |
 | `/provisioning` | Pool inventory, workflow demand, pressure findings (read-only) |
-| `/workbench` | AI tool terminal/workbench surface |
 | `/notebooks` | Opens JupyterLab at `/jupyter/lab` |
-| `/settings` | LLM provider and application settings |
+| `/settings` | LLM providers, chat engine, Tools (install + launch AI tools / bash terminal), Pegasus options |
 
 The frontend consumes REST APIs, SSE chat streams, and WebSocket PTY sessions.
 

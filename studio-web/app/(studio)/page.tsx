@@ -23,33 +23,39 @@ const SKILL_META: Record<string, { icon: string; task: string }> = {
   "/debug": { icon: "🩺", task: "Debug a failed run" },
 };
 
-// Compact AI-capability card: icon + task, one-line description, opens Chat.
+// Compact AI-capability card: icon + task + full description. Clicking opens
+// Chat and pre-fills the skill's slash command so the user just adds details.
 function CapabilityCard({
   skill,
-  onOpenChat,
+  onStart,
 }: {
   skill: SkillMeta;
-  onOpenChat: () => void;
+  onStart: (skill: SkillMeta) => void;
 }) {
   const meta = skill.slash_command ? SKILL_META[skill.slash_command] : undefined;
   return (
     <button
-      onClick={onOpenChat}
+      onClick={() => onStart(skill)}
       title={
         skill.slash_command
-          ? `Opens Chat — type ${skill.slash_command} or just describe it`
+          ? `Opens Chat pre-filled with ${skill.slash_command} — add your details and send`
           : "Opens Chat"
       }
       className="flex items-start gap-3 rounded-lg border border-line bg-surface p-3 text-left transition-colors hover:border-pegasus-400 hover:bg-base"
     >
       <span className="text-xl leading-none">{meta?.icon ?? "✨"}</span>
-      <span className="min-w-0">
+      <span className="min-w-0 flex-1">
         <span className="block text-sm font-semibold text-fg">
           {meta?.task ?? skill.name}
         </span>
-        <span className="mt-0.5 block truncate text-xs text-fgmuted">
+        <span className="mt-0.5 block text-xs leading-relaxed text-fgmuted">
           {skill.description}
         </span>
+        {skill.slash_command && (
+          <span className="mt-1.5 inline-block rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-fgsubtle">
+            {skill.slash_command}
+          </span>
+        )}
       </span>
     </button>
   );
@@ -107,7 +113,13 @@ function ActionCard({
 export default function DashboardPage() {
   const { data, isLoading } = useDashboard();
   const setChatOpen = usePanelStore((s) => s.setChatOpen);
+  const openChatWith = usePanelStore((s) => s.openChatWith);
   const openChat = () => setChatOpen(true);
+
+  // Card click → open chat with the skill's slash command pre-filled (trailing
+  // space so the user types their details right after). No command → plain open.
+  const startSkill = (skill: SkillMeta) =>
+    openChatWith(skill.slash_command ? `${skill.slash_command} ` : "");
 
   const skills = (data?.ai?.skills ?? []).filter(
     (s) => !s.slash_command || !HIDDEN_SKILLS.has(s.slash_command)
@@ -169,7 +181,7 @@ export default function DashboardPage() {
             </p>
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {skills.map((s) => (
-                <CapabilityCard key={s.name} skill={s} onOpenChat={openChat} />
+                <CapabilityCard key={s.name} skill={s} onStart={startSkill} />
               ))}
             </div>
           </>
