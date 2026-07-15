@@ -122,6 +122,161 @@ def build_knowledge_appendix() -> str:
     return build_skills_appendix() + build_agents_appendix()
 
 
+def home_path(*parts: str) -> str:
+    """Resolve a path under the user's HOME.
+
+    In Studio the PVC mounts at ``~``, so HOME is the persistent, always-present
+    root. Tool config placed here is picked up regardless of the cwd a terminal
+    starts in (the workspace ``~/work`` is only visible when the tool is launched
+    from there). Falls back to ``/tmp`` if HOME is unset.
+    """
+    return os.path.join(os.environ.get("HOME", "/tmp"), *parts)
+
+
+_BLOCK_BEGIN = "<!-- BEGIN PEGASUS-AI KNOWLEDGE (managed by Studio) -->"
+_BLOCK_END = "<!-- END PEGASUS-AI KNOWLEDGE (managed by Studio) -->"
+_BLOCK_RE = re.compile(
+    re.escape(_BLOCK_BEGIN) + r".*?" + re.escape(_BLOCK_END) + r"\n?",
+    re.DOTALL,
+)
+
+
+def upsert_managed_block(path: str, content: str) -> None:
+    """Insert or replace a Studio-managed block in a markdown file.
+
+    The rest of the file is preserved untouched — the target may be the user's
+    own global memory (e.g. ``~/.claude/CLAUDE.md``). Idempotent: re-running
+    replaces the previous managed block rather than stacking copies.
+    """
+    existing = ""
+    if os.path.isfile(path):
+        try:
+            with open(path) as f:
+                existing = f.read()
+        except OSError:
+            existing = ""
+    stripped = _BLOCK_RE.sub("", existing).rstrip()
+    block = f"{_BLOCK_BEGIN}\n{content.rstrip()}\n{_BLOCK_END}\n"
+    new = (stripped + "\n\n" + block) if stripped else block
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        f.write(new)
+
+
+def remove_managed_block(path: str) -> None:
+    """Remove the Studio-managed block; delete the file if nothing else remains."""
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path) as f:
+            existing = f.read()
+    except OSError:
+        return
+    stripped = _BLOCK_RE.sub("", existing).strip()
+    try:
+        if stripped:
+            with open(path, "w") as f:
+                f.write(stripped + "\n")
+        else:
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def merge_json_mapping(path: str, top_key: str, entries: dict[str, Any]) -> None:
+    """Read-merge ``entries`` into ``file[top_key]``, preserving all other content.
+
+    Used for user-scope config that co-exists with the user's own state, such as
+    MCP servers in ``~/.claude.json``. Creates the file if absent.
+    """
+    data: dict[str, Any] = {}
+    if os.path.isfile(path):
+        try:
+            with open(path) as f:
+                data = json.load(f) or {}
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    section = data.get(top_key)
+    if not isinstance(section, dict):
+        section = {}
+    section.update(entries)
+    data[top_key] = section
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def unmerge_json_mapping(path: str, top_key: str, keys: list[str]) -> None:
+    """Remove specific ``keys`` from ``file[top_key]``, preserving everything else.
+
+    Drops the ``top_key`` entirely if it becomes empty. No-op if the file or key
+    is absent — safe to call on uninstall regardless of prior state.
+    """
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path) as f:
+            data = json.load(f) or {}
+    except (json.JSONDecodeError, OSError):
+        return
+    section = data.get(top_key)
+    if isinstance(section, dict):
+        for k in keys:
+            section.pop(k, None)
+        if section:
+            data[top_key] = section
+        else:
+            data.pop(top_key, None)
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except OSError:
+        pass
+
+
+def update_json(path: str, updates: dict[str, Any]) -> None:
+    """Read-merge top-level ``updates`` into a JSON file, preserving other keys.
+
+    Creates the file if absent. Used for flat config files that co-exist with a
+    tool's own settings (e.g. a global ``settings.json``).
+    """
+    data: dict[str, Any] = {}
+    if os.path.isfile(path):
+        try:
+            with open(path) as f:
+                data = json.load(f) or {}
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    data.update(updates)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def unmerge_json_top(path: str, keys: list[str]) -> None:
+    """Remove top-level ``keys`` from a JSON file; delete it if nothing remains.
+
+    No-op if the file is absent. Safe to call on uninstall regardless of state.
+    """
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path) as f:
+            data = json.load(f) or {}
+    except (json.JSONDecodeError, OSError):
+        return
+    for k in keys:
+        data.pop(k, None)
+    try:
+        if data:
+            with open(path, "w") as f:
+                json.dump(data, f, indent=2)
+        else:
+            os.remove(path)
+    except OSError:
+        pass
+
+
 def copy_agents_to_dir(dst_dir: str) -> int:
     """Copy all agent .md files to dst_dir. Returns count copied."""
     agents_src = os.path.join(KNOWLEDGE_ROOT, "agents")

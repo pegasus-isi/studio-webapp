@@ -13,7 +13,14 @@ from typing import Any
 import structlog
 
 from knowledge.adapters import KnowledgeAdapter
-from knowledge.common import build_knowledge_appendix
+from knowledge.common import (
+    build_knowledge_appendix,
+    home_path,
+    remove_managed_block,
+    unmerge_json_top,
+    update_json,
+    upsert_managed_block,
+)
 from llm.providers import PROVIDERS, provider_type
 
 log = structlog.get_logger()
@@ -37,10 +44,12 @@ class AntigravityAdapter(KnowledgeAdapter):
             with open(src) as f:
                 content = f.read()
             appendix = build_knowledge_appendix()
+            body = content + ("\n" + appendix if appendix else "")
             with open(dst, "w") as f:
-                f.write(content)
-                if appendix:
-                    f.write("\n" + appendix)
+                f.write(body)
+            # Global copy (~/.antigravity) so it's picked up regardless of the
+            # cwd a terminal starts in. Managed block preserves any user content.
+            upsert_managed_block(home_path(".antigravity", "context.md"), body)
             log.info("antigravity_context_written", path=dst)
 
         self.update_llm_config(workspace, llm_config)
@@ -67,10 +76,6 @@ class AntigravityAdapter(KnowledgeAdapter):
             if ptype in ("google", "gemini"):
                 os.environ["GOOGLE_API_KEY"] = api_key
 
-        # Write settings.json with provider config
-        dst_dir = os.path.join(workspace, ".antigravity")
-        os.makedirs(dst_dir, exist_ok=True)
-
         settings = {
             "provider": provider,
             "model": model,
@@ -83,9 +88,16 @@ class AntigravityAdapter(KnowledgeAdapter):
         if preset.get("api_key_env"):
             settings["api_key_env"] = preset["api_key_env"]
 
+        # Workspace copy (project scope — Studio owns ~/work).
+        dst_dir = os.path.join(workspace, ".antigravity")
+        os.makedirs(dst_dir, exist_ok=True)
         settings_path = os.path.join(dst_dir, "settings.json")
         with open(settings_path, "w") as f:
             json.dump(settings, f, indent=2)
+
+        # Global copy (~/.antigravity) — read-merge so it applies from any cwd
+        # without discarding any user-owned settings.
+        update_json(home_path(".antigravity", "settings.json"), settings)
         log.info(
             "antigravity_settings_written",
             path=settings_path,
@@ -97,4 +109,11 @@ class AntigravityAdapter(KnowledgeAdapter):
         path = os.path.join(workspace, ".antigravity")
         if os.path.isdir(path):
             shutil.rmtree(path)
-            log.info("antigravity_uninstalled", workspace=workspace)
+
+        # Global cleanup — remove only what we added.
+        remove_managed_block(home_path(".antigravity", "context.md"))
+        unmerge_json_top(
+            home_path(".antigravity", "settings.json"),
+            ["provider", "model", "base_url", "api_key_env"],
+        )
+        log.info("antigravity_uninstalled", workspace=workspace)
