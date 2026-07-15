@@ -1,267 +1,202 @@
 "use client";
 
-import type { SkillMeta } from "@/lib/api/client";
+import type { ReactNode } from "react";
 import { useDashboard } from "@/lib/hooks/use-dashboard";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { appRelativePath, jupyterUrl } from "@/lib/urls";
 import { cn, statusColor } from "@/lib/utils";
 
-// Novice-friendly framing for the built-in AI skills: what task the skill
-// does for you, keyed by slash command. Unknown skills fall back to their
-// knowledge-layer name/description, so new skills appear automatically.
-const SKILL_CARDS: Record<string, { icon: string; task: string }> = {
-  "/scaffold": { icon: "🧱", task: "Create a new workflow" },
-  "/wrapper": { icon: "📜", task: "Wrap a script as a workflow step" },
-  "/dockerfile": { icon: "🐳", task: "Containerize your tools" },
-  "/convert": { icon: "🔁", task: "Convert an existing pipeline" },
-  "/review": { icon: "🔍", task: "Review a workflow for pitfalls" },
-  "/debug": { icon: "🩺", task: "Debug a failed run" },
-};
-
-// Skills kept out of the dashboard showcase (still available in Chat):
-// meta or infrastructure-heavy, not first-workflow tasks.
+// Slash commands not shown in the compact skills row (meta / infra-heavy —
+// still available in Chat). New skills appear automatically otherwise.
 const HIDDEN_SKILLS = new Set(["/kiso", "/provd", "/help"]);
 
-function SkillCard({
-  skill,
-  onOpenChat,
+// One big "what do you want to do?" card. Each maps to a distinct area so
+// every click lands somewhere useful; the description carries the capability.
+function ActionCard({
+  icon,
+  title,
+  description,
+  onClick,
+  href,
+  external,
 }: {
-  skill: SkillMeta;
-  onOpenChat: () => void;
+  icon: string;
+  title: string;
+  description: string;
+  onClick?: () => void;
+  href?: string;
+  external?: boolean;
 }) {
-  const friendly = skill.slash_command
-    ? SKILL_CARDS[skill.slash_command]
-    : undefined;
+  const inner = (
+    <>
+      <span className="text-2xl">{icon}</span>
+      <span className="mt-2 block text-base font-semibold text-fg">
+        {title}
+      </span>
+      <span className="mt-1 block text-sm leading-relaxed text-fgmuted">
+        {description}
+      </span>
+    </>
+  );
+  const className =
+    "flex h-full flex-col rounded-xl border border-line bg-surface p-5 text-left transition-colors hover:border-pegasus-400 hover:bg-base";
+
+  if (href) {
+    return (
+      <a
+        href={href}
+        {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+        className={className}
+      >
+        {inner}
+      </a>
+    );
+  }
   return (
-    <button
-      onClick={onOpenChat}
-      title={
-        skill.slash_command
-          ? `Opens PegasusAI Chat — type ${skill.slash_command} to start`
-          : "Opens PegasusAI Chat"
-      }
-      className="group flex flex-col rounded-lg border border-line bg-surface p-4 text-left transition-colors hover:border-pegasus-300 hover:bg-base"
-    >
-      <div className="flex items-center gap-2">
-        <span className="text-xl">{friendly?.icon ?? "✨"}</span>
-        <span className="text-sm font-semibold text-fg">
-          {friendly?.task ?? skill.name}
-        </span>
-      </div>
-      <p className="mt-1.5 flex-1 text-xs leading-relaxed text-fgmuted">
-        {skill.description}
-      </p>
-      {skill.slash_command && (
-        <span className="mt-2 self-start rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-fgmuted group-hover:text-pegasus-700 dark:group-hover:text-pegasus-300">
-          {skill.slash_command}
-        </span>
-      )}
+    <button onClick={onClick} className={className}>
+      {inner}
     </button>
   );
 }
 
-function StatCard({
-  label,
-  value,
-  detail,
-  href,
-}: {
-  label: string;
-  value: string | number;
-  detail?: string;
-  href?: string;
-}) {
-  const body = (
-    <div className="rounded-lg border border-line bg-surface p-4 transition-colors hover:border-pegasus-300">
-      <p className="text-xs font-medium uppercase tracking-wider text-fgsubtle">
-        {label}
-      </p>
-      <p className="mt-1 text-2xl font-semibold text-fg">{value}</p>
-      {detail && <p className="mt-1 text-xs text-fgmuted">{detail}</p>}
-    </div>
-  );
-  return href ? <a href={href}>{body}</a> : body;
-}
-
 export default function DashboardPage() {
-  const { data, isLoading, error } = useDashboard();
+  const { data, isLoading } = useDashboard();
   const setChatOpen = usePanelStore((s) => s.setChatOpen);
   const openChat = () => setChatOpen(true);
 
   const skills = (data?.ai?.skills ?? []).filter(
     (s) => !s.slash_command || !HIDDEN_SKILLS.has(s.slash_command)
   );
-  const personas = (data?.ai?.agents ?? []).filter((a) => a.id !== "general");
-  const resources = data?.resources;
-  const pool = resources?.pool;
+  const pool = data?.resources?.pool;
   const poolUp = !!pool?.available;
-  const runsByStatus = data?.runs.by_status ?? {};
-  const runningCount = runsByStatus["running"] ?? 0;
-  const failedCount = runsByStatus["failed"] ?? 0;
+  const pressure = data?.resources?.pressure ?? [];
+  const running = data?.runs.by_status?.["running"] ?? 0;
+  const unread = data?.notifications.unread ?? 0;
+
+  // Compact one-line status: only include facts we actually have.
+  const glance: ReactNode[] = [];
+  if (data) {
+    glance.push(<span key="p">{data.projects.total} projects</span>);
+    glance.push(<span key="r">{data.runs.total} runs</span>);
+    if (running > 0)
+      glance.push(
+        <span key="run" className="text-blue-600 dark:text-blue-300">
+          {running} running
+        </span>
+      );
+    if (poolUp)
+      glance.push(
+        <span key="c">
+          {pool?.idle_cpus ?? 0}/{pool?.total_cpus ?? 0} CPUs idle
+        </span>
+      );
+    if (unread > 0) glance.push(<span key="u">{unread} unread</span>);
+  }
 
   return (
     <div className="h-full overflow-auto">
-      <div className="border-b border-line bg-surface px-6 py-4">
-        <h1 className="text-lg font-semibold text-fg">Dashboard</h1>
-        <p className="text-sm text-fgmuted">
-          Workflows, resources, and activity at a glance
+      <div className="mx-auto max-w-5xl px-6 py-8">
+        {/* Welcome */}
+        <h1 className="text-2xl font-semibold text-fg">
+          Welcome to PegasusAI Studio
+        </h1>
+        <p className="mt-1 text-sm text-fgmuted">
+          Build, run, and monitor Pegasus workflows — with AI, in one
+          workspace.
         </p>
-      </div>
 
-      {error && (
-        <div className="m-6 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-rose-500/10 dark:text-rose-400">
-          Failed to load dashboard: {(error as Error).message}
-        </div>
-      )}
-
-      <div className="space-y-6 p-6">
-        {/* Stat cards */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <StatCard
-            label="Workflow projects"
-            value={isLoading ? "…" : data?.projects.total ?? 0}
-            detail={
-              data
-                ? Object.entries(data.projects.by_status)
-                    .map(([s, n]) => `${n} ${s}`)
-                    .join(" · ") || "none yet"
-                : undefined
-            }
+        {/* Primary actions */}
+        <h2 className="mt-8 text-sm font-medium uppercase tracking-wider text-fgsubtle">
+          What do you want to do?
+        </h2>
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <ActionCard
+            icon="💬"
+            title="Build with AI"
+            description="Describe a pipeline and the AI scaffolds, wraps, containerizes, converts, reviews, and debugs it."
+            onClick={openChat}
+          />
+          <ActionCard
+            icon="📊"
+            title="Run & monitor"
+            description="Generate, plan, build the image, submit, and watch jobs, logs, and status."
             href={appRelativePath("/workflows")}
           />
-          <StatCard
-            label="Runs"
-            value={isLoading ? "…" : data?.runs.total ?? 0}
-            detail={
-              data
-                ? [
-                    runningCount ? `${runningCount} running` : null,
-                    failedCount ? `${failedCount} failed` : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ") || "no active runs"
-                : undefined
-            }
-            href={appRelativePath("/workflows")}
-          />
-          <StatCard
-            label="Idle CPUs"
-            value={
-              isLoading ? "…" : poolUp ? `${pool?.idle_cpus ?? 0}/${pool?.total_cpus ?? 0}` : "—"
-            }
-            detail={
-              poolUp
-                ? `${pool?.machines ?? 0} machine(s)` +
-                  ((pool?.total_gpus ?? 0) > 0
-                    ? ` · ${pool?.idle_gpus ?? 0}/${pool?.total_gpus} GPUs idle`
-                    : "")
-                : "HTCondor pool not reachable"
-            }
+          <ActionCard
+            icon="🖥️"
+            title="Resources"
+            description="See pool capacity, workflow demand, and alerts when more resources are needed."
             href={appRelativePath("/provisioning")}
           />
-          <StatCard
-            label="Unread alerts"
-            value={isLoading ? "…" : data?.notifications.unread ?? 0}
-            detail={
-              (resources?.pressure?.length ?? 0) > 0
-                ? `${resources?.pressure.length} resource pressure finding(s)`
-                : undefined
-            }
+          <ActionCard
+            icon="📓"
+            title="Notebooks"
+            description="Open JupyterLab in the same workspace to analyze results and iterate."
+            href={jupyterUrl("/lab")}
+            external
           />
         </div>
 
-        {/* Resource pressure banner */}
-        {(resources?.pressure?.length ?? 0) > 0 && (
-          <div className="rounded-md border border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10">
-            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-              Resources required
-            </p>
-            <ul className="mt-1 space-y-1 text-sm text-amber-700 dark:text-amber-200">
-              {resources?.pressure.map((f) => (
-                <li key={f.kind}>
-                  <span className="font-medium">{f.title}</span> — {f.detail}
-                </li>
-              ))}
-            </ul>
-            <a
-              href={appRelativePath("/provisioning")}
-              className="mt-2 inline-block text-sm font-medium text-amber-800 underline dark:text-amber-300"
-            >
-              View provisioning →
-            </a>
+        {/* Compact AI skills row — discoverable without the old card grid */}
+        {skills.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-fgmuted">
+            <span className="text-fgsubtle">AI can help with:</span>
+            {skills.map((s, i) => (
+              <span key={s.name} className="flex items-center gap-2">
+                {i > 0 && <span className="text-fgsubtle">·</span>}
+                <button
+                  onClick={openChat}
+                  title={s.description}
+                  className="font-medium text-pegasus-700 hover:underline dark:text-pegasus-300"
+                >
+                  {s.slash_command
+                    ? s.slash_command.replace(/^\//, "")
+                    : s.name}
+                </button>
+              </span>
+            ))}
           </div>
         )}
 
-        {/* Built-in AI toolkit — capability cards for first-time users */}
-        <section className="rounded-lg border border-line bg-surface">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
-            <div>
-              <h2 className="text-sm font-semibold text-fg">
-                What can Studio&apos;s AI help you do?
-              </h2>
-              <p className="text-xs text-fgmuted">
-                Built-in Pegasus skills — click a card to open Chat, then type
-                the command or just describe what you want.
-              </p>
-            </div>
-            <button
-              onClick={openChat}
-              className="rounded-md bg-pegasus-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-pegasus-700"
-            >
-              💬 Open PegasusAI Chat
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
-            {skills.map((skill) => (
-              <SkillCard key={skill.name} skill={skill} onOpenChat={openChat} />
-            ))}
-            {/* Workbench is a capability of its own: bring your own AI tool */}
-            <a
-              href={appRelativePath("/workbench")}
-              className="group flex flex-col rounded-lg border border-dashed border-line bg-surface p-4 transition-colors hover:border-pegasus-300 hover:bg-base"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-xl">🛠️</span>
-                <span className="text-sm font-semibold text-fg">
-                  Bring your own AI tool
-                </span>
-              </div>
-              <p className="mt-1.5 flex-1 text-xs leading-relaxed text-fgmuted">
-                Install and launch Claude Code, Codex CLI, OpenCode, or
-                Antigravity in the Workbench — preloaded with the same Pegasus
-                knowledge.
-              </p>
-              <span className="mt-2 text-xs font-medium text-pegasus-600 dark:text-pegasus-300">
-                Open Workbench →
+        {/* At a glance — one muted line */}
+        <div className="mt-8 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-fgmuted">
+          <span className="font-medium text-fgsubtle">At a glance:</span>
+          {isLoading ? (
+            <span>loading…</span>
+          ) : glance.length ? (
+            glance.map((g, i) => (
+              <span key={i} className="flex items-center gap-2">
+                {i > 0 && <span className="text-fgsubtle">·</span>}
+                {g}
               </span>
-            </a>
-          </div>
-
-          {personas.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-2.5 text-xs text-fgmuted">
-              <span>Chat personas:</span>
-              {personas.map((a) => (
-                <span
-                  key={a.id}
-                  title={a.description}
-                  className="rounded-full bg-muted px-2 py-0.5 font-medium text-fg"
-                >
-                  {a.name}
-                </span>
-              ))}
-              <span className="ml-auto">
-                Not sure where to start? Open Chat and describe what you want.
-              </span>
-            </div>
+            ))
+          ) : (
+            <span>no activity yet</span>
           )}
-        </section>
+        </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Recent runs */}
-          <div className="rounded-lg border border-line bg-surface">
-            <div className="flex items-center justify-between border-b border-line px-4 py-3">
-              <h2 className="text-sm font-semibold text-fg">Recent runs</h2>
+        {/* Resource pressure — only when something needs attention */}
+        {pressure.length > 0 && (
+          <a
+            href={appRelativePath("/provisioning")}
+            className="mt-3 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+          >
+            <span>⚠</span>
+            <span>
+              {pressure[0].title}
+              {pressure.length > 1 && ` +${pressure.length - 1} more`} — view
+              provisioning
+            </span>
+          </a>
+        )}
+
+        {/* Recent runs — a short, light list */}
+        {(data?.runs.recent.length ?? 0) > 0 && (
+          <div className="mt-8">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-sm font-medium uppercase tracking-wider text-fgsubtle">
+                Recent runs
+              </h2>
               <a
                 href={appRelativePath("/workflows")}
                 className="text-xs font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
@@ -269,124 +204,40 @@ export default function DashboardPage() {
                 All workflows →
               </a>
             </div>
-            {isLoading ? (
-              <p className="p-4 text-sm text-fgmuted">Scanning…</p>
-            ) : (data?.runs.recent.length ?? 0) === 0 ? (
-              <p className="p-4 text-sm text-fgmuted">
-                No runs yet. Open Workflows to generate and submit one.
-              </p>
-            ) : (
-              <ul className="divide-y divide-line">
-                {data?.runs.recent.map((r) => (
-                  <li key={r.run_id}>
-                    <a
-                      href={appRelativePath(
-                        `/workflows?run=${encodeURIComponent(r.run_id)}`
+            <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
+              {data?.runs.recent.map((r) => (
+                <li key={r.run_id}>
+                  <a
+                    href={appRelativePath(
+                      `/workflows?run=${encodeURIComponent(r.run_id)}`
+                    )}
+                    className="flex items-center gap-3 px-4 py-2.5 hover:bg-base"
+                  >
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-xs font-medium",
+                        statusColor(r.status)
                       )}
-                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-base"
                     >
-                      <span
-                        className={cn(
-                          "rounded-full px-2 py-0.5 text-xs font-medium",
-                          statusColor(r.status)
-                        )}
-                      >
-                        {r.status}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-sm text-fg">
-                        {r.name}
-                        {r.run_name && (
-                          <span className="text-fgsubtle"> / {r.run_name}</span>
-                        )}
-                      </span>
-                      {r.total_jobs > 0 && (
-                        <span className="text-xs text-fgmuted">
-                          {r.completed_jobs}/{r.total_jobs} jobs
-                          {r.failed_jobs > 0 && (
-                            <span className="text-red-600 dark:text-rose-400">
-                              {" "}
-                              · {r.failed_jobs} failed
-                            </span>
-                          )}
-                        </span>
+                      {r.status}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm text-fg">
+                      {r.name}
+                      {r.run_name && (
+                        <span className="text-fgsubtle"> / {r.run_name}</span>
                       )}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {/* Getting started / quick actions — the guided-tour entry point
-              grows out of this card (TODO-PLAN item 20). */}
-          <div className="rounded-lg border border-line bg-surface">
-            <div className="border-b border-line px-4 py-3">
-              <h2 className="text-sm font-semibold text-fg">Getting started</h2>
-            </div>
-            <ol className="space-y-3 p-4 text-sm text-fgmuted">
-              <li className="flex gap-3">
-                <span className="font-semibold text-pegasus-600 dark:text-pegasus-300">
-                  1
-                </span>
-                <span>
-                  Configure an LLM provider under{" "}
-                  <a
-                    href={appRelativePath("/settings")}
-                    className="font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
-                  >
-                    Settings
-                  </a>{" "}
-                  to enable PegasusAI Chat and the AI Workbench.
-                </span>
-              </li>
-              <li className="flex gap-3">
-                <span className="font-semibold text-pegasus-600 dark:text-pegasus-300">
-                  2
-                </span>
-                <span>
-                  Open{" "}
-                  <a
-                    href={appRelativePath("/workflows")}
-                    className="font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
-                  >
-                    Workflows
-                  </a>{" "}
-                  to generate, plan, and submit a Pegasus workflow.
-                </span>
-              </li>
-              <li className="flex gap-3">
-                <span className="font-semibold text-pegasus-600 dark:text-pegasus-300">
-                  3
-                </span>
-                <span>
-                  Watch pool capacity and demand under{" "}
-                  <a
-                    href={appRelativePath("/provisioning")}
-                    className="font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
-                  >
-                    Provisioning
+                    </span>
+                    {r.total_jobs > 0 && (
+                      <span className="text-xs text-fgmuted">
+                        {r.completed_jobs}/{r.total_jobs} jobs
+                      </span>
+                    )}
                   </a>
-                  , or analyze data in{" "}
-                  <a
-                    href={jupyterUrl("/lab")}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
-                  >
-                    JupyterLab ↗
-                  </a>
-                  .
-                </span>
-              </li>
-            </ol>
+                </li>
+              ))}
+            </ul>
           </div>
-        </div>
-
-        {/* Versions */}
-        <div className="flex gap-4 text-xs text-fgsubtle">
-          {data?.versions.pegasus && <span>{data.versions.pegasus}</span>}
-          {data?.versions.condor && <span>{data.versions.condor}</span>}
-        </div>
+        )}
       </div>
     </div>
   );
