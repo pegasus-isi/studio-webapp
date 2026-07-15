@@ -58,3 +58,47 @@ except Exception:
 # jupyter-ai reads API keys from environment variables set by the
 # Studio API before launching JupyterLab. No static config needed.
 # Supported env vars: ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.
+
+# --- PegasusAI Bot cell-toolbar client (@gclab/pegasus-ai-client) ---
+# Auto-configure the optional TauferLab bot client without a manual form:
+# expose the fixed server URL and the environment-derived user to the
+# frontend via PageConfig (our configPlugin overlay reads these). Distinct
+# from the studio's own jupyter-pegasusai-chat extension. Set
+# STUDIO_ENABLE_PEGASUS_BOT=0 to skip injection (the extension then stays
+# inert / falls back to its manual settings form).
+import os as _os
+import getpass as _getpass
+
+if _os.environ.get("STUDIO_ENABLE_PEGASUS_BOT", "1").lower() not in (
+    "0", "false", "no",
+):
+    _bot_user = (
+        _os.environ.get("JUPYTERHUB_USER")
+        or _os.environ.get("STUDIO_USER")
+        or _os.environ.get("USER")
+        or ""
+    )
+    if not _bot_user:
+        try:
+            _bot_user = _getpass.getuser()
+        except Exception:
+            _bot_user = ""
+    # The extension fetches its server from the BROWSER, but the bot server
+    # (PEGASUS_BOT_SERVER_URL, e.g. http://server.ai-bot:8000) is a
+    # cluster-internal HTTP service — unreachable from the browser (mixed
+    # content on the HTTPS origin + internal DNS). So point the extension at a
+    # same-origin proxy (studio-api /api/pegasus-bot forwards to the real
+    # server from inside the pod). Prefix-aware so it routes to this user's
+    # pod under JupyterHub. Set PEGASUS_BOT_CLIENT_URL to override (e.g. a
+    # browser-reachable server, skipping the proxy).
+    _prefix = _os.environ.get("JUPYTERHUB_SERVICE_PREFIX", "").rstrip("/")
+    _bot_client_url = _os.environ.get(
+        "PEGASUS_BOT_CLIENT_URL", f"{_prefix}/api/pegasus-bot"
+    )
+    # LabApp.page_config_data surfaces as PageConfig.getOption(...) in the
+    # JupyterLab frontend. Evaluated at server start, so it sees the per-user
+    # environment (JUPYTERHUB_USER etc.).
+    c.LabApp.page_config_data = {
+        "pegasusBotServerUrl": _bot_client_url,
+        "pegasusBotUserId": _bot_user,
+    }

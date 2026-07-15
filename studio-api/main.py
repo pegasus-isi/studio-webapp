@@ -22,6 +22,7 @@ from routers import (
     knowledge,
     llm,
     notifications,
+    pegasus_bot,
     provisioning,
     settings,
     terminal,
@@ -282,6 +283,7 @@ app.include_router(chat.router)
 app.include_router(notifications.router)
 app.include_router(dashboard.router)
 app.include_router(provisioning.router)
+app.include_router(pegasus_bot.router)
 
 
 @app.get("/api/whoami")

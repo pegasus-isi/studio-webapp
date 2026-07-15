@@ -90,6 +90,29 @@ Tools share the canonical knowledge base in
 [knowledge/](knowledge/) through per-tool adapters. npm globals install under
 `/opt/npm-global`, which is writable by arbitrary runtime UIDs.
 
+### JupyterLab extensions
+
+Two independent JupyterLab extensions are bundled (distinct packages, no
+conflict):
+
+| Extension | Package | Purpose |
+|-----------|---------|---------|
+| PegasusAI Chat | `jupyter-pegasusai-chat` | Docks the Studio chat panel inside JupyterLab (iframe) |
+| PegasusAI Bot client | `@gclab/pegasus-ai-client` (`pegasus_ai_client`) | Cell-toolbar button that sends a cell to the [PegasusAI Bot server](https://github.com/TauferLab/Src_PegasusAI_Client) for AI debugging help |
+
+The Bot client is optional: build with `--build-arg ENABLE_PEGASUS_BOT_CLIENT=0`
+to leave it out. It is auto-configured (no manual setup) — the server URL and
+the environment user are injected into the JupyterLab page at server start via
+a one-file overlay of the extension's config plugin. Its ref is pinned
+(`PEGASUS_BOT_CLIENT_REF`); keep `docker/pegasus-bot-client/configPlugin.tsx`
+in sync when bumping it.
+
+Because the bot server is a cluster-internal HTTP service (not reachable from
+the browser over the HTTPS studio origin), the extension is pointed at a
+same-origin proxy — `studio-api` `/api/pegasus-bot` forwards `search`/`feedback`
+to `PEGASUS_BOT_SERVER_URL` from inside the pod. Set `PEGASUS_BOT_CLIENT_URL`
+to bypass the proxy if the server is directly browser-reachable.
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -111,6 +134,9 @@ Tools share the canonical knowledge base in
 | `STUDIO_DEFAULT_TOOLS` | `opencode` | Image-bundled tools registered as installed at startup (csv; empty disables) |
 | `STUDIO_CHAT_ENGINE_DEFAULT` | `opencode` | Chat engine when the user hasn't picked one (`opencode` or `builtin`); builtin remains the automatic fallback if OpenCode is unavailable |
 | `STUDIO_BUILD_TIMEOUT` | `1800` | Seconds before a Build Image action (podman build/push) is aborted |
+| `PEGASUS_BOT_SERVER_URL` | `http://server.ai-bot:8000` | Upstream PegasusAI Bot server the in-pod proxy (`/api/pegasus-bot`) forwards to |
+| `PEGASUS_BOT_CLIENT_URL` | `<prefix>/api/pegasus-bot` | Server URL injected into the extension; defaults to the same-origin proxy path. Override to point the browser at a directly-reachable server |
+| `STUDIO_ENABLE_PEGASUS_BOT` | `1` | Inject the PegasusAI Bot config (server + env user) into JupyterLab (`0` leaves the bundled extension inert / manual) |
 
 The Settings page can update LLM configuration at runtime; values are stored in
 the workspace SQLite database.
