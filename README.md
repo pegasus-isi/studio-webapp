@@ -136,6 +136,8 @@ to bypass the proxy if the server is directly browser-reachable.
 | `STUDIO_DEFAULT_TOOLS` | `opencode` | Image-bundled tools registered as installed at startup (csv; empty disables) |
 | `STUDIO_CHAT_ENGINE_DEFAULT` | `opencode` | Chat engine when the user hasn't picked one (`opencode` or `builtin`); builtin remains the automatic fallback if OpenCode is unavailable |
 | `STUDIO_BUILD_TIMEOUT` | `1800` | Seconds before a Build Image action (podman build/push) is aborted |
+| `STUDIO_BUILD_APT_FIX` | `1` | Mount an apt.conf that keeps apt as root during builds (fixes the `_apt` privilege-drop under podman single-UID mapping); set `0` for non-Debian bases |
+| `STUDIO_BUILD_ISOLATION` | _(unset)_ | Optional podman/buildah `--isolation` value for Build Image (empty = builder default) |
 | `PEGASUS_BOT_SERVER_URL` | `http://server.ai-bot:8000` | Upstream PegasusAI Bot server the in-pod proxy (`/api/pegasus-bot`) forwards to |
 | `PEGASUS_BOT_CLIENT_URL` | `<prefix>/api/pegasus-bot` | Server URL injected into the extension; defaults to the same-origin proxy path. Override to point the browser at a directly-reachable server |
 | `STUDIO_ENABLE_PEGASUS_BOT` | `1` | Inject the PegasusAI Bot config (server + env user) into JupyterLab (`0` leaves the bundled extension inert / manual) |

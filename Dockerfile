@@ -184,6 +184,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       podman fuse-overlayfs slirp4netns && \
     rm -rf /var/lib/apt/lists/*
 COPY docker/containers/storage.conf /etc/containers/storage.conf
+# Mounted into Build Image runs so apt keeps running as root (avoids the
+# _apt privilege-drop failing under podman's single-UID mapping). See
+# studio-api/services/image_builder.py.
+COPY docker/containers/apt-no-sandbox.conf /etc/studio/apt-no-sandbox.conf
 
 # ---- workflow event log ----
 # The studio drives workflow status/job/stats views from the JSONL event log
