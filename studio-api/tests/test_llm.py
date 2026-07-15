@@ -10,7 +10,7 @@ def test_get_llm_config_default(client):
     # Ships pointed at the internal gateway with zero configuration.
     assert data["provider"] == "gateway"
     assert data["model"] == "Default"
-    assert data["base_url"] == "http://gateway.llm:4000/v1"
+    assert data["base_url"] == "http://gateway.llm:8080/v1"
 
 
 def test_put_llm_config(client):
