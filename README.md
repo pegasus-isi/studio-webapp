@@ -101,11 +101,13 @@ conflict):
 | PegasusAI Bot client | `@gclab/pegasus-ai-client` (`pegasus_ai_client`) | Cell-toolbar button that sends a cell to the [PegasusAI Bot server](https://github.com/TauferLab/Src_PegasusAI_Client) for AI debugging help |
 
 The Bot client is optional: build with `--build-arg ENABLE_PEGASUS_BOT_CLIENT=0`
-to leave it out. It is auto-configured (no manual setup) — the server URL and
-the environment user are injected into the JupyterLab page at server start via
-a one-file overlay of the extension's config plugin. Its ref is pinned
-(`PEGASUS_BOT_CLIENT_REF`); keep `docker/pegasus-bot-client/configPlugin.tsx`
-in sync when bumping it.
+to leave it out. Its upstream repo is private, so the source is **vendored**
+under [`jupyter-pegasus-ai-client/`](jupyter-pegasus-ai-client/VENDORED.md)
+(built at image time) rather than cloned. It is auto-configured (no manual
+setup) — the server URL and the environment user are injected into the
+JupyterLab page at server start; the only local change to the vendored source
+is `src/configPlugin.tsx`, which reads that injected config. See `VENDORED.md`
+to update the copy.
 
 Because the bot server is a cluster-internal HTTP service (not reachable from
 the browser over the HTTPS studio origin), the extension is pointed at a

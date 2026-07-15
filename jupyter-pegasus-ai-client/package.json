@@ -1,0 +1,177 @@
+{
+    "name": "@gclab/pegasus-ai-client",
+    "version": "0.1.0",
+    "description": "A cell-toolbar extension for Jupyter Lab to request help from the PegasusAI Bot.",
+    "keywords": [
+        "jupyter",
+        "jupyterlab",
+        "jupyterlab-extension"
+    ],
+    "homepage": "https://github.com/TauferLab/Src_PegasusAI_Client",
+    "bugs": {
+        "url": "https://github.com/TauferLab/Src_PegasusAI_Client/issues"
+    },
+    "license": "Apache-2.0",
+    "author": {
+        "name": "Global Computing Lab",
+        "email": "taufer@acm.org"
+    },
+    "files": [
+        "lib/**/*.{d.ts,eot,gif,html,jpg,js,js.map,json,png,svg,woff2,ttf}",
+        "style/**/*.{css,js,eot,gif,html,jpg,json,png,svg,woff2,ttf}",
+        "src/**/*.{ts,tsx}",
+        "schema/*.json"
+    ],
+    "main": "lib/index.js",
+    "types": "lib/index.d.ts",
+    "style": "style/index.css",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/TauferLab/Src_PegasusAI_Client.git"
+    },
+    "scripts": {
+        "build": "jlpm build:lib && jlpm build:labextension:dev",
+        "build:prod": "jlpm clean && jlpm build:lib:prod && jlpm build:labextension",
+        "build:labextension": "jupyter-builder build .",
+        "build:labextension:dev": "jupyter-builder build --development True .",
+        "build:lib": "tsc --sourceMap",
+        "build:lib:prod": "tsc",
+        "clean": "jlpm clean:lib",
+        "clean:lib": "rimraf lib tsconfig.tsbuildinfo",
+        "clean:lintcache": "rimraf .eslintcache .stylelintcache",
+        "clean:labextension": "rimraf pegasus_ai_client/labextension pegasus_ai_client/_version.py",
+        "clean:all": "jlpm clean:lib && jlpm clean:labextension && jlpm clean:lintcache",
+        "eslint": "jlpm eslint:check --fix",
+        "eslint:check": "eslint . --cache",
+        "install:extension": "jlpm build",
+        "lint": "jlpm stylelint && jlpm prettier && jlpm eslint",
+        "lint:check": "jlpm stylelint:check && jlpm prettier:check && jlpm eslint:check",
+        "prettier": "jlpm prettier:base --write --list-different",
+        "prettier:base": "prettier \"**/*{.ts,.tsx,.js,.jsx,.css,.json,.md}\"",
+        "prettier:check": "jlpm prettier:base --check",
+        "stylelint": "jlpm stylelint:check --fix",
+        "stylelint:check": "stylelint --cache \"style/**/*.css\"",
+        "test": "jest --coverage",
+        "watch": "run-p watch:src watch:labextension",
+        "watch:src": "tsc -w --sourceMap",
+        "watch:labextension": "jupyter-builder watch ."
+    },
+    "dependencies": {
+        "@jupyterlab/application": "^4.0.0",
+        "@jupyterlab/apputils": "^4.0.0",
+        "@jupyterlab/cells": "^4.0.0",
+        "@jupyterlab/notebook": "^4.0.0",
+        "@jupyterlab/rendermime": "^4.0.0",
+        "@jupyterlab/rendermime-interfaces": "^3.8.0",
+        "@jupyterlab/settingregistry": "^4.0.0",
+        "@jupyterlab/ui-components": "^4.0.0",
+        "@lumino/coreutils": "^2.0.0",
+        "@lumino/signaling": "^2.0.0",
+        "@lumino/widgets": "^2.0.0",
+        "react": "^18.2.0"
+    },
+    "devDependencies": {
+        "@eslint/js": "^9.0.0",
+        "@jupyter/builder": "^1.0.0",
+        "@jupyter/eslint-plugin": "^0.0.5",
+        "@jupyterlab/testutils": "^4.0.0",
+        "@testing-library/react": "^14.0.0",
+        "@testing-library/user-event": "^14.4.3",
+        "@types/jest": "^29.2.0",
+        "@types/json-schema": "^7.0.11",
+        "@types/node": "^22.0.0",
+        "@types/react": "^18.0.26",
+        "@types/react-addons-linked-state-mixin": "^0.14.22",
+        "eslint": "^9.0.0",
+        "eslint-config-prettier": "^9.0.0",
+        "eslint-plugin-prettier": "^5.0.0",
+        "globals": "^15.0.0",
+        "jest": "^29.2.0",
+        "jest-environment-jsdom": "^29.0.0",
+        "npm-run-all2": "^7.0.1",
+        "prettier": "^3.0.0",
+        "rimraf": "^5.0.1",
+        "stylelint": "^15.10.1",
+        "stylelint-config-recommended": "^13.0.0",
+        "stylelint-config-standard": "^34.0.0",
+        "stylelint-csstree-validator": "^3.0.0",
+        "stylelint-prettier": "^4.0.0",
+        "typescript": "~5.5.4",
+        "typescript-eslint": "^8.0.0",
+        "yjs": "^13.5.0"
+    },
+    "resolutions": {
+        "lib0": "0.2.111",
+        "webpack": "5.106.0"
+    },
+    "sideEffects": [
+        "style/*.css",
+        "style/index.js"
+    ],
+    "styleModule": "style/index.js",
+    "publishConfig": {
+        "access": "public"
+    },
+    "jupyterlab": {
+        "extension": true,
+        "outputDir": "pegasus_ai_client/labextension",
+        "schemaDir": "schema",
+        "sharedPackages": {
+            "@jupyterlab/apputils": {
+                "requiredVersion": false
+            },
+            "@jupyterlab/application": {
+                "requiredVersion": false
+            },
+            "@jupyterlab/notebook": {
+                "requiredVersion": false
+            },
+            "@jupyterlab/rendermime": {
+                "requiredVersion": false
+            },
+            "@jupyterlab/ui-components": {
+                "requiredVersion": false
+            },
+            "@jupyterlab/rendermime-interfaces": {
+                "requiredVersion": false
+            },
+            "@jupyterlab/settingregistry": {
+                "requiredVersion": false
+            },
+            "@jupyterlab/cells": {
+                "requiredVersion": false
+            }
+        }
+    },
+    "prettier": {
+        "singleQuote": true,
+        "trailingComma": "none",
+        "arrowParens": "avoid",
+        "endOfLine": "auto",
+        "overrides": [
+            {
+                "files": "package.json",
+                "options": {
+                    "tabWidth": 4
+                }
+            }
+        ]
+    },
+    "stylelint": {
+        "extends": [
+            "stylelint-config-recommended",
+            "stylelint-config-standard",
+            "stylelint-prettier/recommended"
+        ],
+        "plugins": [
+            "stylelint-csstree-validator"
+        ],
+        "rules": {
+            "csstree/validator": true,
+            "property-no-vendor-prefix": null,
+            "selector-class-pattern": "^([a-z][A-z\\d]*)(-[A-z\\d]+)*$",
+            "selector-no-vendor-prefix": null,
+            "value-no-vendor-prefix": null
+        }
+    }
+}
