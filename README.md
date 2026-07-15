@@ -132,6 +132,8 @@ to bypass the proxy if the server is directly browser-reachable.
 | `NPM_CONFIG_PREFIX` | `/opt/npm-global` | npm global install prefix |
 | `STUDIO_POOL_CACHE_TTL` | `15` | Seconds between HTCondor pool/queue snapshots (provisioning + dashboard) |
 | `STUDIO_RESOURCE_WAIT_SECONDS` | `300` | Idle-job queue wait past which a resource alert is raised |
+| `STUDIO_OSPOOL_CM` | `cm-1.ospool.osg-htc.org` | OSPool central manager for the Provisioning OSPool panel (empty disables it) |
+| `STUDIO_OSPOOL_CACHE_TTL` | `120` | Seconds to cache the (slow, remote) OSPool query |
 | `STUDIO_OPENCODE_PORT` | `4747` | Localhost port for the shared `opencode serve` chat engine |
 | `STUDIO_OPENCODE_BIN` | `opencode` | OpenCode binary used by the chat engine |
 | `STUDIO_DEFAULT_TOOLS` | `opencode` | Image-bundled tools registered as installed at startup (csv; empty disables) |
