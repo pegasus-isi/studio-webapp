@@ -63,10 +63,11 @@ should provide equivalent user-namespace support through the cluster policy.
 
 | View | Purpose |
 |------|---------|
-| Workflows | Discover projects and runs; generate, plan, submit, monitor, and analyze workflows |
-| Workbench | Launch AI tools in terminal tabs |
+| Dashboard | Landing page: capabilities, recent runs, resources at a glance |
+| Workflows | Discover projects and runs; generate, plan, build, submit, monitor, and analyze workflows |
+| Provisioning | HTCondor pool inventory, workflow demand, and pressure findings |
 | Notebooks | Open the always-on JupyterLab instance |
-| Settings | Configure LLM providers, keys, and models |
+| Settings | LLM providers, chat engine, **Tools** (install + launch AI tools / bash terminal), Pegasus options |
 | PegasusAI Chat | Built-in SSE chat with file, shell, and Pegasus tool use |
 | Terminal | Browser PTY connected to the workspace |
 
@@ -76,7 +77,7 @@ its own parameter form.
 
 ## AI Tools
 
-The Workbench can install and launch:
+Settings → Tools can install and launch:
 
 | Tool | Type |
 |------|------|

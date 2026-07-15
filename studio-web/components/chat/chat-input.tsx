@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useChatStore, genId } from "@/lib/stores/chat-store";
+import { usePanelStore } from "@/lib/stores/panel-store";
 import { useNotebookContextStore } from "@/lib/stores/notebook-context-store";
 import { useLLMConfig, useProviderConfigs, useProviders } from "@/lib/hooks/use-llm";
 import * as api from "@/lib/api/client";
@@ -194,6 +195,24 @@ export function ChatInput() {
 
   // Abort any in-flight stream if the component unmounts mid-response.
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Consume a one-shot draft (e.g. a "/scaffold " prefix from a dashboard
+  // capability card): drop it into the input, focus, and clear the draft.
+  const chatDraft = usePanelStore((s) => s.chatDraft);
+  const setChatDraft = usePanelStore((s) => s.setChatDraft);
+  useEffect(() => {
+    if (chatDraft == null) return;
+    setInput(chatDraft);
+    setChatDraft(null);
+    const el = textareaRef.current;
+    if (el) {
+      el.focus();
+      // Cursor at end so the user can keep typing after the command.
+      requestAnimationFrame(() => {
+        el.selectionStart = el.selectionEnd = el.value.length;
+      });
+    }
+  }, [chatDraft, setChatDraft]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Don't send while an IME composition is active (CJK input commits with

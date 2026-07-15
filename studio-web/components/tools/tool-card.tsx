@@ -8,6 +8,7 @@ import {
   useStopTool,
 } from "@/lib/hooks/use-tools";
 import { useToolStore } from "@/lib/stores/tool-store";
+import { usePanelStore } from "@/lib/stores/panel-store";
 import { cn, statusColor } from "@/lib/utils";
 
 interface Props {
@@ -23,6 +24,14 @@ export function ToolCard({ tool }: Props) {
   const addTab = useToolStore((s) => s.addTab);
   const installing = useToolStore((s) => s.installingTools.has(info.id));
   const setInstalling = useToolStore((s) => s.setInstalling);
+  const setTerminalOpen = usePanelStore((s) => s.setTerminalOpen);
+
+  // Launch a terminal tool into a tab AND reveal the terminal panel, so it
+  // works the same from Settings → Tools as it did from the old Workbench.
+  const openTab = () => {
+    addTab(info.id, info.name);
+    setTerminalOpen(true);
+  };
 
   const isRunning = status === "running";
   const isTerminal = info.type === "terminal";
@@ -45,7 +54,7 @@ export function ToolCard({ tool }: Props) {
   const handleStart = async () => {
     await start.mutateAsync(info.id);
     if (isTerminal) {
-      addTab(info.id, info.name);
+      openTab();
     }
   };
 
@@ -95,7 +104,7 @@ export function ToolCard({ tool }: Props) {
           <>
             {isTerminal && (
               <button
-                onClick={() => addTab(info.id, info.name)}
+                onClick={openTab}
                 className="flex-1 rounded-md border border-pegasus-300 px-2 py-1 text-xs text-pegasus-700 dark:text-pegasus-300 hover:bg-pegasus-50 dark:bg-pegasus-400/10"
               >
                 Open

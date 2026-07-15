@@ -10,12 +10,18 @@ interface PanelStore {
   chatOpen: boolean;
   terminalOpen: boolean;
   sidebarCollapsed: boolean;
+  // One-shot text to drop into the chat input (e.g. a "/scaffold " prefix from
+  // a dashboard capability card). ChatInput consumes it then clears it.
+  chatDraft: string | null;
 
   toggleChat: () => void;
   toggleTerminal: () => void;
   toggleSidebar: () => void;
   setChatOpen: (open: boolean) => void;
   setTerminalOpen: (open: boolean) => void;
+  setChatDraft: (draft: string | null) => void;
+  // Open the chat panel and seed the input with `draft`.
+  openChatWith: (draft: string) => void;
 }
 
 export const usePanelStore = create<PanelStore>()(
@@ -24,6 +30,7 @@ export const usePanelStore = create<PanelStore>()(
       chatOpen: false,
       terminalOpen: false,
       sidebarCollapsed: false,
+      chatDraft: null,
 
       toggleChat: () => set((s) => ({ chatOpen: !s.chatOpen })),
       toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
@@ -31,6 +38,8 @@ export const usePanelStore = create<PanelStore>()(
         set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
       setChatOpen: (open) => set({ chatOpen: open }),
       setTerminalOpen: (open) => set({ terminalOpen: open }),
+      setChatDraft: (draft) => set({ chatDraft: draft }),
+      openChatWith: (draft) => set({ chatOpen: true, chatDraft: draft }),
     }),
     {
       name: "studio-panels",

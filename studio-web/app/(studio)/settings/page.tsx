@@ -11,6 +11,8 @@ import {
 } from "@/lib/hooks/use-llm";
 import { useTools } from "@/lib/hooks/use-tools";
 import { ToolCard } from "@/components/tools/tool-card";
+import { useToolStore } from "@/lib/stores/tool-store";
+import { usePanelStore } from "@/lib/stores/panel-store";
 import { cn } from "@/lib/utils";
 import type { ProviderConfig } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
@@ -499,31 +501,53 @@ function ProviderCard({
 
 function ToolsTab() {
   const { data, isLoading } = useTools();
+  const addTab = useToolStore((s) => s.addTab);
+  const setTerminalOpen = usePanelStore((s) => s.setTerminalOpen);
 
-  if (isLoading) {
-    return <p className="text-sm text-fgsubtle">Loading tools...</p>;
-  }
+  const openBash = () => {
+    addTab(null, "Terminal");
+    setTerminalOpen(true);
+  };
 
   const tools = data?.tools ?? [];
 
-  if (tools.length === 0) {
-    return (
-      <p className="text-sm text-fgmuted">
-        No tools available. Check your tool registry configuration.
-      </p>
-    );
-  }
-
   return (
-    <div>
-      <p className="mb-4 text-sm text-fgmuted">
-        Install or remove AI coding tools. Launch them from the Workbench.
+    <div className="space-y-5">
+      <p className="text-sm text-fgmuted">
+        Install, launch, and manage AI coding tools. Starting a terminal tool
+        opens it in the terminal panel below.
       </p>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {tools.map((tool) => (
-          <ToolCard key={tool.info.id} tool={tool} />
-        ))}
-      </div>
+
+      {/* Bash terminal launcher (moved here from the old Workbench). */}
+      <button
+        onClick={openBash}
+        className="flex w-full items-center gap-3 rounded-lg border border-line bg-surface p-3 text-left transition-colors hover:border-gray-400 sm:w-auto"
+      >
+        <span className="flex h-9 w-9 items-center justify-center rounded-md bg-gray-800 text-white">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="4 17 10 11 4 5" />
+            <line x1="12" y1="19" x2="20" y2="19" />
+          </svg>
+        </span>
+        <span>
+          <span className="block text-sm font-medium text-fg">Bash Terminal</span>
+          <span className="block text-xs text-fgmuted">Open a new shell session</span>
+        </span>
+      </button>
+
+      {isLoading ? (
+        <p className="text-sm text-fgsubtle">Loading tools...</p>
+      ) : tools.length === 0 ? (
+        <p className="text-sm text-fgmuted">
+          No tools available. Check your tool registry configuration.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {tools.map((tool) => (
+            <ToolCard key={tool.info.id} tool={tool} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
