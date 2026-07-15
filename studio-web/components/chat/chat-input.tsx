@@ -4,7 +4,12 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useChatStore, genId } from "@/lib/stores/chat-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { useNotebookContextStore } from "@/lib/stores/notebook-context-store";
-import { useLLMConfig, useProviderConfigs, useProviders } from "@/lib/hooks/use-llm";
+import {
+  useLLMConfig,
+  useProviderConfigs,
+  useProviders,
+  useProviderModels,
+} from "@/lib/hooks/use-llm";
 import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
 
@@ -46,6 +51,30 @@ export function ChatInput() {
         api_key_env: null as string | null,
       }))
     : presetProviders;
+
+  // Discover the selected provider's models so the model field offers a real
+  // choice — using that provider's saved key/base URL. Empty on the Default
+  // provider or when discovery fails (the field then just accepts free text).
+  const selectedConfig = savedConfigs.find(
+    (c) => c.provider_id === chatProvider
+  );
+  const { data: modelsData } = useProviderModels(
+    chatProvider,
+    selectedConfig?.api_key ?? "",
+    selectedConfig?.base_url ?? null
+  );
+  const providerDefaultModel = providers.find(
+    (p) => p.id === chatProvider
+  )?.default_model;
+  const modelOptions = Array.from(
+    new Set(
+      [
+        chatModel ?? "",
+        providerDefaultModel ?? "",
+        ...(modelsData?.models ?? []),
+      ].filter(Boolean)
+    )
+  );
 
   // Initialize from saved config on first load
   const [initialized, setInitialized] = useState(false);
@@ -270,21 +299,31 @@ export function ChatInput() {
           </select>
 
           <label className="ml-2 text-fgmuted">Model:</label>
-          {/* With the Default provider the model is chosen for you — show
-              "default" in a disabled field so it's clear there's nothing to
-              type. Pick a specific provider to edit the model. */}
+          {/* Default provider → the model is chosen for you (disabled
+              "default"). A specific provider → an editable chooser: the
+              datalist offers the provider's discovered models to pick, and you
+              can still type any model id. */}
           <input
             type="text"
+            list={chatProvider ? "chat-model-options" : undefined}
             value={chatProvider ? chatModel || "" : "default"}
             onChange={(e) => setChatModel(e.target.value || null)}
             disabled={!chatProvider}
+            placeholder={chatProvider ? "choose or type a model" : undefined}
             title={
               chatProvider
-                ? "Model id for the selected provider"
+                ? "Pick from the provider's models or type a model id"
                 : "Uses your configured default — pick a provider to change it"
             }
             className="w-48 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:cursor-not-allowed disabled:bg-muted disabled:text-fgsubtle"
           />
+          {chatProvider && modelOptions.length > 0 && (
+            <datalist id="chat-model-options">
+              {modelOptions.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+          )}
         </div>
 
         {/* Input area */}

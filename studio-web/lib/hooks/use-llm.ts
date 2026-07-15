@@ -35,6 +35,28 @@ export function useValidateProvider() {
   });
 }
 
+// Discover the model ids a provider offers (for the chat model chooser).
+// Cached per provider; failures/keyless providers just yield an empty list,
+// so the caller falls back to free-text entry.
+export function useProviderModels(
+  provider: string | null,
+  apiKey: string,
+  baseUrl?: string | null
+) {
+  return useQuery({
+    queryKey: ["provider-models", provider, apiKey, baseUrl],
+    queryFn: () =>
+      api.validateProvider({
+        provider: provider as string,
+        api_key: apiKey,
+        base_url: baseUrl ?? null,
+      }),
+    enabled: !!provider,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
 // --- Multi-provider config hooks ---
 
 export function useProviderConfigs() {
