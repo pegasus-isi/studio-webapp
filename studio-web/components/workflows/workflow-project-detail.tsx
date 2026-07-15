@@ -553,7 +553,14 @@ function ParamField({
         <input
           type="text"
           value={String(value ?? "")}
-          placeholder={param.default == null ? "" : String(param.default)}
+          // Prefix so a grayed default reads as guidance, not a filled value.
+          placeholder={
+            param.default == null
+              ? param.required
+                ? "required"
+                : "optional"
+              : `default: ${param.default}`
+          }
           onChange={(e) => onChange(e.target.value)}
           className="rounded-md border border-line px-2 py-1 text-sm font-mono"
         />
