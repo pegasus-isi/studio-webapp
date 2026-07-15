@@ -475,6 +475,28 @@ export async function getProvisioningStatus() {
   return request<ProvisioningStatus>("/provisioning/status");
 }
 
+// --- Examples marketplace ---
+
+export interface ExampleWorkflow {
+  id: string;
+  name: string;
+  description: string;
+  filename: string;
+}
+
+export async function getExamples() {
+  return request<{ examples: ExampleWorkflow[] }>("/examples");
+}
+
+export async function addExample(id: string) {
+  return request<{
+    status: string;
+    project_id: string;
+    project_dir: string;
+    overwrote: boolean;
+  }>(`/examples/${encodeURIComponent(id)}/add`, { method: "POST" });
+}
+
 // --- Knowledge ---
 
 export interface SkillMeta {

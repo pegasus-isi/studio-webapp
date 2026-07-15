@@ -94,6 +94,7 @@ Primary routes:
 |-------|---------|
 | `/` | Dashboard: workflow summary, recent runs, resources, quick actions |
 | `/workflows` | Workflow projects, runs, actions, and details |
+| `/examples` | Example-workflow marketplace: browse and add to the workspace |
 | `/provisioning` | Pool inventory, workflow demand, pressure findings (read-only) |
 | `/notebooks` | Opens JupyterLab at `/jupyter/lab` |
 | `/settings` | LLM providers, chat engine, Tools (install + launch AI tools / bash terminal), Pegasus options |
@@ -268,6 +269,8 @@ Common endpoints:
 | `GET` | `/api/workflows/{run_id}/estimate` | Remaining-time estimate (historical mean) |
 | `GET` | `/api/dashboard` | Aggregate landing-page snapshot |
 | `GET` | `/api/provisioning/status` | Pool inventory, demand, pressure findings |
+| `GET` | `/api/examples` | List bundled example workflows |
+| `POST` | `/api/examples/{id}/add` | Copy an example into the workspace |
 | `POST` | `/api/chat/stream` | Built-in SSE chat (engine-dispatched) |
 | `GET/PUT` | `/api/chat/engine` | Chat engine selection (builtin / opencode) + attach info |
 | `GET` | `/api/jupyter/status` | JupyterLab status |

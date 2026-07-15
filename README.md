@@ -65,6 +65,7 @@ should provide equivalent user-namespace support through the cluster policy.
 |------|---------|
 | Dashboard | Landing page: capabilities, recent runs, resources at a glance |
 | Workflows | Discover projects and runs; generate, plan, build, submit, monitor, and analyze workflows |
+| Examples | Browse ready-made example workflows and add one to the workspace |
 | Provisioning | HTCondor pool inventory, workflow demand, and pressure findings |
 | Notebooks | Open the always-on JupyterLab instance |
 | Settings | LLM providers, chat engine, **Tools** (install + launch AI tools / bash terminal), Pegasus options |
