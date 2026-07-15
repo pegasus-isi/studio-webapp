@@ -247,3 +247,51 @@ def test_chat_stream_no_retry_after_tokens(client, monkeypatch):
     assert calls["n"] == 1  # no retry after a token was emitted
     assert '"content": "partial"' in resp.text
     assert "partway through" in resp.text.lower()
+
+
+# --- feedback endpoint ---
+
+
+def test_chat_feedback_roundtrip(client, tmp_db):
+    import asyncio
+
+    from db import Database
+
+    async def seed():
+        # Same DB file the client's main.db uses; commit so the app sees it.
+        db = Database(db_path=tmp_db)
+        await db.connect()
+        mid = await db.add_chat_message("assistant", "hi", conversation_id="C")
+        await db.close()
+        return mid
+
+    mid = asyncio.run(seed())
+
+    # Rate useful.
+    res = client.post("/api/chat/feedback", json={"message_id": mid, "value": 1})
+    assert res.status_code == 200
+    assert res.json()["value"] == 1
+
+    # History reflects it.
+    rows = client.get("/api/chat/history?conversation_id=C").json()["messages"]
+    assert rows[-1]["feedback"] == 1
+
+    # Clear it.
+    client.post("/api/chat/feedback", json={"message_id": mid, "value": 0})
+    rows = client.get("/api/chat/history?conversation_id=C").json()["messages"]
+    assert rows[-1]["feedback"] is None
+
+
+def test_chat_feedback_validation(client):
+    # Bad value.
+    assert client.post(
+        "/api/chat/feedback", json={"message_id": 1, "value": 5}
+    ).status_code == 400
+    # Missing message_id.
+    assert client.post(
+        "/api/chat/feedback", json={"value": 1}
+    ).status_code == 400
+    # Unknown message id.
+    assert client.post(
+        "/api/chat/feedback", json={"message_id": 999999, "value": 1}
+    ).status_code == 404

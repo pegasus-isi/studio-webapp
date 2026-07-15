@@ -937,11 +937,13 @@ async def _opencode_stream(
             turn = getattr(oc_engine, "last_turn", None) or {}
             if turn.get("text"):
                 try:
-                    await db.add_chat_message(
+                    msg_id = await db.add_chat_message(
                         "assistant", turn["text"], agent_id=agent_id,
                         tool_calls=turn.get("tools") or None,
                         conversation_id=conversation_id,
                     )
+                    # Expose the saved row id so the client can attach 👍/👎.
+                    yield f"data: {json.dumps({'message_id': msg_id})}\n\n"
                 except Exception:
                     pass
         finally:
@@ -1189,11 +1191,13 @@ async def chat_stream(request: Request) -> StreamingResponse:
                     # (with the tools used this turn) scoped to the conversation.
                     yield _meta_event()
                     try:
-                        await db.add_chat_message(
+                        msg_id = await db.add_chat_message(
                             "assistant", final_text, agent_id=agent_id,
                             tool_calls=tools_used or None,
                             conversation_id=conversation_id,
                         )
+                        # Expose the saved row id so the client can attach 👍/👎.
+                        yield f"data: {json.dumps({'message_id': msg_id})}\n\n"
                     except Exception:
                         pass
                     return
@@ -1266,11 +1270,12 @@ async def chat_stream(request: Request) -> StreamingResponse:
             yield f"data: {json.dumps({'content': notice})}\n\n"
             yield _meta_event()
             try:
-                await db.add_chat_message(
+                msg_id = await db.add_chat_message(
                     "assistant", notice.strip(), agent_id=agent_id,
                     tool_calls=tools_used or None,
                     conversation_id=conversation_id,
                 )
+                yield f"data: {json.dumps({'message_id': msg_id})}\n\n"
             except Exception:
                 pass
 
@@ -1319,6 +1324,35 @@ async def stop_chat(request: Request) -> dict:
     return {"status": "noop", "request_id": request_id}
 
 
+@router.post("/feedback")
+async def chat_feedback(request: Request) -> dict:
+    """Rate an assistant reply useful / not useful.
+
+    Body: ``{"message_id": <int>, "value": 1 | -1 | 0}`` where 1 = useful,
+    -1 = not useful, 0 = clear the rating.
+    """
+    from main import db
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    message_id = body.get("message_id")
+    value = body.get("value")
+    if not isinstance(message_id, int) or value not in (1, -1, 0):
+        raise HTTPException(
+            status_code=400,
+            detail="message_id (int) and value (1, -1, or 0) are required",
+        )
+
+    stored = None if value == 0 else value
+    ok = await db.set_chat_feedback(message_id, stored)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Unknown message_id")
+    return {"status": "ok", "message_id": message_id, "value": value}
+
+
 @router.get("/agents")
 async def list_agents() -> dict:
     """List available agent personas."""
@@ -1337,11 +1371,13 @@ async def get_history(
     rows = await db.get_chat_history(limit=limit, conversation_id=conversation_id)
     messages = [
         ChatMessage(
+            id=r.get("id"),
             role=r["role"],
             content=r["content"],
             agent_id=r.get("agent_id"),
             tool_calls=r.get("tool_calls"),
             created_at=r.get("created_at"),
+            feedback=r.get("feedback"),
         )
         for r in rows
     ]

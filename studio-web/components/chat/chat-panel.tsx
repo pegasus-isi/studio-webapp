@@ -44,6 +44,8 @@ export function ChatPanel() {
               content: r.content,
               agentId: r.agent_id ?? undefined,
               createdAt: r.created_at ?? undefined,
+              serverId: r.id ?? undefined,
+              feedback: (r.feedback ?? undefined) as ChatMsg["feedback"],
             }))
           );
         }
@@ -206,6 +208,57 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
           </div>
         ) : null}
       </div>
+
+      {/* Usefulness feedback — assistant replies with real content only. */}
+      {!isUser && msg.content && !msg.error && <FeedbackButtons msg={msg} />}
+    </div>
+  );
+}
+
+function FeedbackButtons({ msg }: { msg: ChatMsg }) {
+  const setMessageFeedback = useChatStore((s) => s.setMessageFeedback);
+  // Feedback needs the persisted DB id; a still-streaming reply doesn't have
+  // one yet, so hold the controls until it arrives.
+  if (msg.serverId == null) return null;
+
+  const rate = (value: 1 | -1) => {
+    const next = msg.feedback === value ? 0 : value;
+    setMessageFeedback(msg.id, next); // optimistic
+    api.setChatFeedback(msg.serverId as number, next).catch(() => {
+      setMessageFeedback(msg.id, msg.feedback ?? 0); // revert on failure
+    });
+  };
+
+  const btn = (active: boolean) =>
+    cn(
+      "rounded p-1 text-fgsubtle transition-colors hover:bg-muted hover:text-fg",
+      active && "bg-muted text-pegasus-600 dark:text-pegasus-300"
+    );
+
+  return (
+    <div className="mt-1 flex items-center gap-1 px-1">
+      <button
+        onClick={() => rate(1)}
+        title="Useful"
+        aria-label="Mark reply useful"
+        aria-pressed={msg.feedback === 1}
+        className={btn(msg.feedback === 1)}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+        </svg>
+      </button>
+      <button
+        onClick={() => rate(-1)}
+        title="Not useful"
+        aria-label="Mark reply not useful"
+        aria-pressed={msg.feedback === -1}
+        className={btn(msg.feedback === -1)}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" />
+        </svg>
+      </button>
     </div>
   );
 }

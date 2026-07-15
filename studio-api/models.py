@@ -281,6 +281,7 @@ class SettingsResponse(BaseModel):
 
 
 class ChatMessage(BaseModel):
+    id: int | None = None
     role: str
     content: str
     agent_id: str | None = None
@@ -288,6 +289,8 @@ class ChatMessage(BaseModel):
     # permissive so history restores don't fail validation.
     tool_calls: Any | None = None
     created_at: str | None = None
+    # User rating of an assistant reply: 1 = useful, -1 = not useful.
+    feedback: int | None = None
 
 
 class ChatHistoryResponse(BaseModel):

@@ -527,11 +527,20 @@ export async function writeFile(path: string, content: string) {
 // --- Chat ---
 
 export interface ChatMessage {
+  id?: number | null;
   role: string;
   content: string;
   agent_id?: string | null;
   tool_calls?: unknown;
   created_at?: string | null;
+  feedback?: number | null; // 1 = useful, -1 = not useful
+}
+
+export async function setChatFeedback(messageId: number, value: 1 | -1 | 0) {
+  return request<{ status: string; message_id: number; value: number }>(
+    "/chat/feedback",
+    { method: "POST", body: JSON.stringify({ message_id: messageId, value }) }
+  );
 }
 
 export async function getChatHistory(limit = 100, conversationId?: string) {
