@@ -217,6 +217,38 @@ def test_get_status_caches(monkeypatch):
     assert calls["n"] == 2  # one condor_status + one condor_q, no refetch
 
 
+def test_ospool_status_uses_attribute_projection(monkeypatch):
+    # OSPool has ~38k slots; the full -json query times out. get_ospool_status
+    # must project to only the attributes summarize_slots reads.
+    captured: dict = {}
+
+    async def fake_run(cmd, timeout=20):
+        captured["cmd"] = cmd
+        return [
+            {"SlotType": "Partitionable", "State": "Unclaimed",
+             "Cpus": 2, "TotalSlotCpus": 2, "Memory": 8000},
+        ], None
+
+    monkeypatch.setattr(condor_pool, "_run_json", fake_run)
+    monkeypatch.setattr(condor_pool, "OSPOOL_CM", "cm.example")
+    condor_pool._ospool_cache["data"] = None
+
+    status = asyncio.run(condor_pool.get_ospool_status(force=True))
+    assert status["available"] is True
+    assert status["cm"] == "cm.example"
+    cmd = captured["cmd"]
+    assert "-attributes" in cmd
+    attrs = cmd[cmd.index("-attributes") + 1]
+    for a in ("SlotType", "State", "Cpus", "GPUs", "TotalSlotCpus", "GLIDEIN_Site"):
+        assert a in attrs
+
+
+def test_ospool_status_disabled(monkeypatch):
+    monkeypatch.setattr(condor_pool, "OSPOOL_CM", "")
+    status = asyncio.run(condor_pool.get_ospool_status(force=True))
+    assert status["available"] is False
+
+
 def test_provisioning_endpoint(client, monkeypatch):
     async def fake_status(force=False):
         return {"available": False, "pool": {}, "demand": {}, "pressure": []}
@@ -268,9 +300,11 @@ def test_ospool_uses_pool_flag_and_timeout(monkeypatch):
     condor_pool._ospool_cache["data"] = None
 
     asyncio.run(condor_pool.get_ospool_status(force=True))
-    assert seen["cmd"] == [
+    assert seen["cmd"][:4] == [
         "condor_status", "-pool", "cm-1.ospool.osg-htc.org", "-json"
     ]
+    # Projected to the needed attributes — the full query times out on ~38k slots.
+    assert "-attributes" in seen["cmd"]
     assert seen["timeout"] == 45
 
 

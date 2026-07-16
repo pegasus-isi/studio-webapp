@@ -46,6 +46,16 @@ OSPOOL_CM = os.environ.get("STUDIO_OSPOOL_CM", "cm-1.ospool.osg-htc.org")
 _OSPOOL_CMD_TIMEOUT = int(os.environ.get("STUDIO_OSPOOL_CMD_TIMEOUT", "45"))
 _OSPOOL_CACHE_TTL = float(os.environ.get("STUDIO_OSPOOL_CACHE_TTL", "120"))
 
+# Only the attributes summarize_slots() reads. OSPool is ~38k slots: fetching
+# full ClassAds never completes (times out with an empty result), but this
+# projection returns in ~2s. `name` backs the machine count; a `glidein_*`
+# attribute is needed so _slot_group() can tag glidein slots.
+_SLOT_ATTRS = [
+    "SlotType", "State", "Cpus", "GPUs", "Memory",
+    "TotalSlotCpus", "TotalSlotGPUs", "TotalSlotMemory",
+    "Machine", "Name", "AnnexName", "GLIDEIN_Site",
+]
+
 _POOL_LABELS = {
     "base": "Base Condor pool",
     "annex": "Provisioned (Annex)",
@@ -434,7 +444,10 @@ async def get_ospool_status(force: bool = False) -> dict[str, Any]:
             return _ospool_cache["data"]
 
         ads, err = await _run_json(
-            ["condor_status", "-pool", OSPOOL_CM, "-json"],
+            [
+                "condor_status", "-pool", OSPOOL_CM, "-json",
+                "-attributes", ",".join(_SLOT_ATTRS),
+            ],
             timeout=_OSPOOL_CMD_TIMEOUT,
         )
         if ads is None:

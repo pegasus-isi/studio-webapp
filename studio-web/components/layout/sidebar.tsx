@@ -15,7 +15,7 @@ const NAV_ITEMS: {
   { href: "/", label: "Dashboard", icon: "🏠" },
   { href: "/workflows", label: "Workflows", icon: "📊" },
   { href: "/examples", label: "Examples", icon: "🧩" },
-  { href: "/provisioning", label: "Provisioning", icon: "🖥️" },
+  { href: "/provisioning", label: "Resources", icon: "🖥️" },
   // Notebooks opens the prefix-aware JupyterLab in a new tab.
   { href: "/jupyter/lab", label: "Notebooks", icon: "📓", external: true },
 ];

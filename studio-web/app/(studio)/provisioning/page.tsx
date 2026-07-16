@@ -48,7 +48,7 @@ export default function ProvisioningPage() {
   return (
     <div className="h-full overflow-auto">
       <div className="border-b border-line bg-surface px-6 py-4">
-        <h1 className="text-lg font-semibold text-fg">Provisioning</h1>
+        <h1 className="text-lg font-semibold text-fg">Resources</h1>
         <p className="text-sm text-fgmuted">
           Pool inventory and workflow demand (read-only). Provisioning actions
           — HTCondor Annex first — arrive in a later phase.
