@@ -504,26 +504,33 @@ export async function getProvisioningStatus() {
   return request<ProvisioningStatus>("/provisioning/status");
 }
 
-// --- Examples marketplace ---
+// --- Marketplace (PegasusHub + Pegasus-ISI workflows from GitHub) ---
 
-export interface ExampleWorkflow {
+export interface MarketplaceWorkflow {
   id: string;
   name: string;
   description: string;
-  filename: string;
+  topic: string;
+  repo_url: string;
+  image: string;
+  license: string;
+  pegasus_version: string;
+  source: string; // "PegasusHub" | "Pegasus-ISI"
 }
 
-export async function getExamples() {
-  return request<{ examples: ExampleWorkflow[] }>("/examples");
+export async function getMarketplace() {
+  return request<{ workflows: MarketplaceWorkflow[]; count: number }>(
+    "/marketplace"
+  );
 }
 
-export async function addExample(id: string) {
+export async function addMarketplaceWorkflow(id: string) {
   return request<{
     status: string;
     project_id: string;
     project_dir: string;
-    overwrote: boolean;
-  }>(`/examples/${encodeURIComponent(id)}/add`, { method: "POST" });
+    repo_url: string;
+  }>(`/marketplace/${encodeURIComponent(id)}/add`, { method: "POST" });
 }
 
 // --- Knowledge ---
