@@ -259,8 +259,8 @@ function OSPoolPanel({
             label="My GPUs (running)"
             value={(mine?.gpus ?? 0) > 0 ? (mine?.gpus ?? 0) : "—"}
           />
-          <Metric label="My slots" value={mine?.slots ?? 0} />
           <Metric label="Available CPUs" value={ospool.avail_cpus ?? 0} />
+          <Metric label="Available GPUs" value={ospool.avail_gpus ?? 0} />
         </div>
       )}
     </div>
