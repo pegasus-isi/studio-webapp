@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { ToolDetail } from "@/lib/api/client";
 import {
   useInstallTool,
@@ -25,6 +26,7 @@ export function ToolCard({ tool }: Props) {
   const installing = useToolStore((s) => s.installingTools.has(info.id));
   const setInstalling = useToolStore((s) => s.setInstalling);
   const setTerminalOpen = usePanelStore((s) => s.setTerminalOpen);
+  const [error, setError] = useState<string | null>(null);
 
   // Launch a terminal tool into a tab AND reveal the terminal panel, so it
   // works the same from Settings → Tools as it did from the old Workbench.
@@ -44,17 +46,25 @@ export function ToolCard({ tool }: Props) {
 
   const handleInstall = async () => {
     setInstalling(info.id, true);
+    setError(null);
     try {
       await install.mutateAsync(info.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Install failed");
     } finally {
       setInstalling(info.id, false);
     }
   };
 
   const handleStart = async () => {
-    await start.mutateAsync(info.id);
-    if (isTerminal) {
-      openTab();
+    setError(null);
+    try {
+      await start.mutateAsync(info.id);
+      if (isTerminal) {
+        openTab();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to start");
     }
   };
 
@@ -137,6 +147,12 @@ export function ToolCard({ tool }: Props) {
           </>
         )}
       </div>
+
+      {error && (
+        <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-red-50 p-2 text-[11px] leading-snug text-red-700 dark:bg-rose-500/10 dark:text-rose-300">
+          {error}
+        </pre>
+      )}
     </div>
   );
 }

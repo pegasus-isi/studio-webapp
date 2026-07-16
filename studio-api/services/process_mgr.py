@@ -69,19 +69,12 @@ class ProcessManager:
 
         master_fd, slave_fd = pty.openpty()
 
-        tool_env = os.environ.copy()
+        from services.tool_env import with_tool_paths
+
+        tool_env = with_tool_paths(os.environ.copy())
         if env:
             tool_env.update(env)
         tool_env["TERM"] = "xterm-256color"
-        # Ensure npm-global/bin is in PATH (already set by Dockerfile, but guard for dev)
-        npm_bin = os.path.join(os.environ.get("NPM_CONFIG_PREFIX", "/opt/npm-global"), "bin")
-        if npm_bin not in tool_env.get("PATH", ""):
-            tool_env["PATH"] = f"{npm_bin}:{tool_env.get('PATH', '')}"
-        home = os.environ.get("HOME", "")
-        if home:
-            local_bin = os.path.join(home, ".local", "bin")
-            if local_bin not in tool_env.get("PATH", ""):
-                tool_env["PATH"] = f"{local_bin}:{tool_env.get('PATH', '')}"
 
         proc = subprocess.Popen(
             [binary],
