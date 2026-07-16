@@ -16,12 +16,12 @@ from routers import (
     ai_terminal,
     chat,
     dashboard,
-    examples,
     files,
     health,
     jupyter,
     knowledge,
     llm,
+    marketplace,
     notifications,
     pegasus_bot,
     provisioning,
@@ -285,7 +285,7 @@ app.include_router(notifications.router)
 app.include_router(dashboard.router)
 app.include_router(provisioning.router)
 app.include_router(pegasus_bot.router)
-app.include_router(examples.router)
+app.include_router(marketplace.router)
 
 
 @app.get("/api/whoami")
