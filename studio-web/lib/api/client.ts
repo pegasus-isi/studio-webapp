@@ -478,11 +478,24 @@ export interface ProvisioningStatus {
   pool: Partial<PoolSummary> & { available: boolean; error?: string };
   demand: Partial<QueueDemand> & { available: boolean; error?: string };
   pressure: PressureFinding[];
-  // OSPool (OSG) inventory via condor_status -pool; own longer cache.
-  ospool?: Partial<PoolSummary> & {
+  // OSPool (OSG) — user-scoped: capacity available to burst into + this user's
+  // own claimed slots. Other users' tasks are excluded. Own longer cache.
+  ospool?: {
     available: boolean;
     error?: string;
     cm?: string | null;
+    owner?: string;
+    avail_cpus?: number;
+    avail_gpus?: number;
+    avail_memory_mb?: number;
+    avail_slots?: number;
+    mine?: {
+      cpus: number;
+      gpus: number;
+      memory_mb: number;
+      slots: number;
+      machines: number;
+    };
   };
   checked_at?: number;
 }
