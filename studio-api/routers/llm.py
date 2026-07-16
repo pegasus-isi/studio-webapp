@@ -38,7 +38,7 @@ async def _propagate_and_restart(db) -> None:
     try:
         from services.opencode_engine import engine as opencode_engine
 
-        await opencode_engine.stop()
+        await opencode_engine.restart()
         log.info("opencode_restarted_on_llm_change")
     except Exception as e:
         log.warning("opencode_restart_failed", error=str(e))
