@@ -170,7 +170,12 @@ def create(
     except OSError:
         pass
 
-    full_env = {**os.environ, "TERM": "xterm-256color"}
+    # Prepend the tool bin dirs (HOME npm prefix, ~/.local/bin, image prefix) so
+    # a PTY launching an AI CLI — or a user typing `agy`/`codex`/`claude` in the
+    # shell — finds binaries installed into HOME, not just the image-baked ones.
+    from services.tool_env import with_tool_paths
+
+    full_env = with_tool_paths({**os.environ, "TERM": "xterm-256color"})
     if env:
         full_env.update(env)
     run_cwd = cwd if (cwd and os.path.isdir(cwd)) else None

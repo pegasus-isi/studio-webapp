@@ -216,7 +216,27 @@ ENV PATH="/opt/npm-global/bin:${PATH}"
 # event translation is validated against this release's API (/doc OpenAPI).
 # The startup seeding step (main._seed_default_tools) registers it as
 # installed and runs its knowledge adapter on first boot.
-RUN npm install -g opencode-ai@1.17.20 && opencode --version
+RUN npm install -g opencode-ai@1.17.20 && opencode --version \
+    # opencode's install (as root) creates /opt/npm-global/lib/node_modules
+    # owned root:root 0755 — the earlier `chmod 777` only covered the top dir,
+    # so an unprivileged notebook can't `npm install -g` Codex/Claude into it
+    # (EACCES). Re-open the whole tree so any injected UID can install here.
+    && chmod -R a+rwX /opt/npm-global
+
+# ---- interactive shell env for on-demand AI tools ----
+# JupyterLab terminals (spawned by jupyter-server, NOT studio-api) get their
+# PATH from the image. Point npm at a HOME-writable prefix so `npm install -g`
+# works without root AND persists on the PVC (~), and put the HOME bin dirs on
+# PATH so tools installed there resolve — e.g. antigravity's CLI lands in
+# ~/.local/bin as `agy`. /opt/npm-global/bin stays on PATH for baked opencode.
+# Written to profile.d (login shells) and bash.bashrc (interactive non-login,
+# which is what Jupyter terminals use).
+RUN printf '%s\n' \
+      'export NPM_CONFIG_PREFIX="$HOME/.npm-global"' \
+      'export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:/opt/npm-global/bin:$PATH"' \
+      > /etc/profile.d/10-studio-tools.sh \
+    && chmod 0644 /etc/profile.d/10-studio-tools.sh \
+    && cat /etc/profile.d/10-studio-tools.sh >> /etc/bash.bashrc
 
 # ---- PegasusAI Chat JupyterLab extension ----
 # Docks the studio /chat panel inside JupyterLab (iframe; URL derived from the

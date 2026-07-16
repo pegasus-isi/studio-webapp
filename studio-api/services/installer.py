@@ -11,6 +11,7 @@ from typing import Any
 import structlog
 
 from knowledge.adapters import get_adapter
+from services.tool_env import npm_prefix, with_tool_paths
 
 log = structlog.get_logger()
 
@@ -25,6 +26,26 @@ _TOOL_REGISTRY: list[dict[str, Any]] | None = None
 _REGISTRY_PATH = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "tool_registry.json"
 )
+
+
+def _install_error(tool_id: str, prefix: str, stderr: bytes) -> str:
+    """Build a user-facing install error, keeping the useful tail of stderr.
+
+    npm/curl print the actionable summary last, so we keep the tail rather than
+    the head, and add a hint for the most common failure (no write permission).
+    """
+    text = stderr.decode("utf-8", errors="replace").strip()
+    tail = text[-800:] if len(text) > 800 else text
+    msg = f"Install of '{tool_id}' failed: {tail}" if tail else (
+        f"Install of '{tool_id}' failed (no output)."
+    )
+    if "EACCES" in text or "permission denied" in text.lower():
+        msg += (
+            f"\n\nHint: could not write to the npm prefix ({prefix}). The image's "
+            "/opt/npm-global is root-owned; the notebook needs a HOME-writable "
+            "prefix (~/.npm-global) on PATH."
+        )
+    return msg
 
 
 def _load_registry() -> list[dict[str, Any]]:
@@ -78,19 +99,22 @@ class ToolInstaller:
         if binary and not shutil.which(binary):
             if install_command:
                 log.info("tool_installing", tool_id=tool_id, command=install_command)
-                # Build install environment
-                install_env = os.environ.copy()
-                npm_prefix = os.environ.get("NPM_CONFIG_PREFIX", "/opt/npm-global")
-                install_env["NPM_CONFIG_PREFIX"] = npm_prefix
-                extra_bins = [os.path.join(npm_prefix, "bin")]
-                home = os.environ.get("HOME", "")
-                if home:
-                    extra_bins.append(os.path.join(home, ".local", "bin"))
-                for bp in extra_bins:
-                    if bp not in install_env.get("PATH", ""):
-                        install_env["PATH"] = f"{bp}:{install_env.get('PATH', '')}"
+                # Build the install environment. The image's /opt/npm-global is
+                # root-owned, so an unprivileged notebook can't `npm install -g`
+                # into it (EACCES). Install into a HOME-writable prefix instead,
+                # which also persists on the PVC. `set -o pipefail` so a failed
+                # `curl … | bash` install (antigravity) surfaces instead of being
+                # masked by bash's exit 0.
+                prefix = npm_prefix()
+                install_env = with_tool_paths(os.environ.copy())
+                install_env["NPM_CONFIG_PREFIX"] = prefix
+                os.makedirs(os.path.join(prefix, "bin"), exist_ok=True)
 
-                proc = await asyncio.create_subprocess_shell(
+                proc = await asyncio.create_subprocess_exec(
+                    "bash",
+                    "-o",
+                    "pipefail",
+                    "-c",
                     install_command,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
@@ -100,12 +124,11 @@ class ToolInstaller:
                     proc.communicate(), timeout=300,
                 )
                 if proc.returncode != 0:
-                    err = stderr.decode("utf-8", errors="replace")[:500]
-                    raise RuntimeError(f"Install failed: {err}")
-                # Update process PATH so subsequent shutil.which() calls find the binary
-                for bp in extra_bins:
-                    if bp not in os.environ.get("PATH", ""):
-                        os.environ["PATH"] = f"{bp}:{os.environ.get('PATH', '')}"
+                    raise RuntimeError(_install_error(tool_id, prefix, stderr))
+                # Update process PATH + prefix so subsequent shutil.which() calls
+                # and terminals spawned by this process find the new binary.
+                os.environ["PATH"] = with_tool_paths(dict(os.environ))["PATH"]
+                os.environ.setdefault("NPM_CONFIG_PREFIX", prefix)
 
         # Call knowledge adapter
         llm_config = await db.get_llm_config() or {}
@@ -160,10 +183,11 @@ _INLINE_REGISTRY: list[dict[str, Any]] = [
         "name": "Antigravity CLI",
         "vendor": "Google",
         "description": "Google's agentic coding CLI powered by Gemini — subagents, tool use, and code execution",
-        "version_command": "antigravity --version",
+        # The installer drops the CLI as `agy` (not `antigravity`) into ~/.local/bin.
+        "version_command": "agy --version",
         "install_method": "shell",
         "install_command": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
-        "binary": "antigravity",
+        "binary": "agy",
         "type": "terminal",
         "supports_mcp": False,
         "supports_web": False,

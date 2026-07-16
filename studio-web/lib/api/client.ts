@@ -17,7 +17,17 @@ async function request<T>(
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`${res.status}: ${body}`);
+    // FastAPI errors are {"detail": "..."} — surface the detail so callers can
+    // show the real message (e.g. an npm EACCES install failure) rather than a
+    // raw "500: {...}" blob.
+    let message = body;
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed.detail === "string") message = parsed.detail;
+    } catch {
+      /* body wasn't JSON — keep the raw text */
+    }
+    throw new Error(message || `Request failed (${res.status})`);
   }
   return res.json();
 }
