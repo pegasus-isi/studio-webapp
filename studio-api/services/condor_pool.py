@@ -22,6 +22,7 @@ Pool grouping heuristic (read-only v1, per the provisioning plan):
 from __future__ import annotations
 
 import asyncio
+import getpass
 import json
 import os
 import time
@@ -45,6 +46,16 @@ WAIT_THRESHOLD = int(os.environ.get("STUDIO_RESOURCE_WAIT_SECONDS", "300"))
 OSPOOL_CM = os.environ.get("STUDIO_OSPOOL_CM", "cm-1.ospool.osg-htc.org")
 _OSPOOL_CMD_TIMEOUT = int(os.environ.get("STUDIO_OSPOOL_CMD_TIMEOUT", "45"))
 _OSPOOL_CACHE_TTL = float(os.environ.get("STUDIO_OSPOOL_CACHE_TTL", "120"))
+
+# Only the attributes summarize_slots() reads. OSPool is ~38k slots: fetching
+# full ClassAds never completes (times out with an empty result), but this
+# projection returns in ~2s. `name` backs the machine count; a `glidein_*`
+# attribute is needed so _slot_group() can tag glidein slots.
+_SLOT_ATTRS = [
+    "SlotType", "State", "Cpus", "GPUs", "Memory",
+    "TotalSlotCpus", "TotalSlotGPUs", "TotalSlotMemory",
+    "Machine", "Name", "AnnexName", "GLIDEIN_Site",
+]
 
 _POOL_LABELS = {
     "base": "Base Condor pool",
@@ -420,11 +431,51 @@ _ospool_cache: dict[str, Any] = {"ts": 0.0, "data": None}
 _ospool_lock = asyncio.Lock()
 
 
-async def get_ospool_status(force: bool = False) -> dict[str, Any]:
-    """OSPool slot inventory via ``condor_status -pool OSPOOL_CM``.
+def _ospool_owner() -> str:
+    """The RemoteOwner to match for 'my' OSPool slots.
 
-    Cached longer than the local pool (it's a large remote query). Returns
-    ``{"available": False, ...}`` when disabled or unreachable.
+    OSPool is global; on a per-user Resources page we only want the slots running
+    *this* user's jobs, plus available capacity — never other users' tasks.
+    Defaults to the login user; override with STUDIO_OSPOOL_OWNER if the pool
+    maps jobs to a different accounting identity.
+    """
+    return (
+        os.environ.get("STUDIO_OSPOOL_OWNER")
+        or os.environ.get("USER")
+        or getpass.getuser()
+    )
+
+
+def _sum_claimed(ads: list[dict[str, Any]]) -> dict[str, Any]:
+    """Sum the resources of claimed slots (my usage). Partitionable parents are
+    skipped — a claim lives on the dynamic/static child slot."""
+    cpus = gpus = memory = slots = 0
+    machines: set[str] = set()
+    for raw in ads:
+        ad = _lower_keys(raw)
+        if str(ad.get("slottype", "")).lower() == "partitionable":
+            continue
+        cpus += _as_int(ad.get("cpus"))
+        gpus += _as_int(ad.get("gpus"))
+        memory += _as_int(ad.get("memory"))
+        slots += 1
+        machine = ad.get("machine") or ad.get("name")
+        if machine:
+            machines.add(str(machine))
+    return {
+        "cpus": cpus, "gpus": gpus, "memory_mb": memory,
+        "slots": slots, "machines": len(machines),
+    }
+
+
+async def get_ospool_status(force: bool = False) -> dict[str, Any]:
+    """User-scoped OSPool view via ``condor_status -pool OSPOOL_CM``.
+
+    OSPool is global (~38k slots, mostly other users' jobs), so we return only
+    what's relevant to this user: capacity currently available (idle/unclaimed)
+    and the slots running this user's own jobs. Two constrained, projected
+    queries — never the full pool, which times out. Cached longer than the local
+    pool. Returns ``{"available": False, ...}`` when disabled or unreachable.
     """
     if not OSPOOL_CM:
         return {"available": False, "error": "OSPool disabled", "cm": None}
@@ -433,14 +484,39 @@ async def get_ospool_status(force: bool = False) -> dict[str, Any]:
         if not force and _ospool_cache["data"] is not None and age < _OSPOOL_CACHE_TTL:
             return _ospool_cache["data"]
 
-        ads, err = await _run_json(
-            ["condor_status", "-pool", OSPOOL_CM, "-json"],
+        attrs = ",".join(_SLOT_ATTRS)
+        # Available capacity — idle/unclaimed slots only (excludes others' work).
+        avail_ads, err = await _run_json(
+            [
+                "condor_status", "-pool", OSPOOL_CM, "-json",
+                "-attributes", attrs, "-constraint", 'State=="Unclaimed"',
+            ],
             timeout=_OSPOOL_CMD_TIMEOUT,
         )
-        if ads is None:
+        if avail_ads is None:
             data: dict[str, Any] = {"available": False, "error": err, "cm": OSPOOL_CM}
         else:
-            data = {**summarize_slots(ads), "cm": OSPOOL_CM}
+            avail = summarize_slots(avail_ads)
+            owner = _ospool_owner()
+            # Slots claimed by this user's jobs.
+            mine_ads, _mine_err = await _run_json(
+                [
+                    "condor_status", "-pool", OSPOOL_CM, "-json",
+                    "-attributes", attrs + ",RemoteOwner",
+                    "-constraint", f'regexp("{owner}", RemoteOwner)',
+                ],
+                timeout=_OSPOOL_CMD_TIMEOUT,
+            )
+            data = {
+                "available": True,
+                "cm": OSPOOL_CM,
+                "owner": owner,
+                "avail_cpus": avail["idle_cpus"],
+                "avail_gpus": avail["idle_gpus"],
+                "avail_memory_mb": avail["idle_memory_mb"],
+                "avail_slots": avail["slots"],
+                "mine": _sum_claimed(mine_ads or []),
+            }
         _ospool_cache["ts"] = time.monotonic()
         _ospool_cache["data"] = data
         return data

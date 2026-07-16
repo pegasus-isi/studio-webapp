@@ -217,6 +217,53 @@ def test_get_status_caches(monkeypatch):
     assert calls["n"] == 2  # one condor_status + one condor_q, no refetch
 
 
+def test_ospool_status_is_user_scoped(monkeypatch):
+    # OSPool has ~38k slots (mostly others' jobs); the panel must show only
+    # available (idle) capacity + this user's own claimed slots. Two constrained,
+    # projected queries — never the full pool (which times out).
+    cmds: list = []
+
+    async def fake_run(cmd, timeout=20):
+        cmds.append(cmd)
+        constraint = cmd[cmd.index("-constraint") + 1]
+        if "Unclaimed" in constraint:  # available-capacity query
+            return [
+                {"SlotType": "Partitionable", "State": "Unclaimed",
+                 "Cpus": 100, "TotalSlotCpus": 100, "Memory": 400000},
+            ], None
+        # my-claimed-slots query
+        return [
+            {"SlotType": "Dynamic", "State": "Claimed", "Cpus": 8,
+             "GPUs": 1, "Memory": 16000, "Machine": "glidein1",
+             "RemoteOwner": "kthare10@osg"},
+        ], None
+
+    monkeypatch.setattr(condor_pool, "_run_json", fake_run)
+    monkeypatch.setattr(condor_pool, "OSPOOL_CM", "cm.example")
+    monkeypatch.setenv("STUDIO_OSPOOL_OWNER", "kthare10")
+    condor_pool._ospool_cache["data"] = None
+
+    status = asyncio.run(condor_pool.get_ospool_status(force=True))
+    assert status["available"] is True
+    assert status["cm"] == "cm.example"
+    # Available capacity from the Unclaimed slots.
+    assert status["avail_cpus"] == 100
+    # My usage from the RemoteOwner-matched slots.
+    assert status["mine"]["cpus"] == 8
+    assert status["mine"]["gpus"] == 1
+    assert status["mine"]["slots"] == 1
+    # Both queries projected + constrained; the owner filter carries the owner.
+    assert all("-attributes" in c and "-constraint" in c for c in cmds)
+    owner_cmd = next(c for c in cmds if "RemoteOwner" in c[c.index("-constraint") + 1])
+    assert "kthare10" in owner_cmd[owner_cmd.index("-constraint") + 1]
+
+
+def test_ospool_status_disabled(monkeypatch):
+    monkeypatch.setattr(condor_pool, "OSPOOL_CM", "")
+    status = asyncio.run(condor_pool.get_ospool_status(force=True))
+    assert status["available"] is False
+
+
 def test_provisioning_endpoint(client, monkeypatch):
     async def fake_status(force=False):
         return {"available": False, "pool": {}, "demand": {}, "pressure": []}
@@ -243,7 +290,7 @@ def test_ospool_status_summarizes(monkeypatch):
 
     data = asyncio.run(condor_pool.get_ospool_status(force=True))
     assert data["available"] is True
-    assert data["total_cpus"] == 16
+    assert data["avail_cpus"] == 16  # idle/unclaimed capacity, user-scoped shape
     assert data["cm"] == "cm-1.ospool.osg-htc.org"
 
 
@@ -255,11 +302,11 @@ def test_ospool_disabled(monkeypatch):
 
 
 def test_ospool_uses_pool_flag_and_timeout(monkeypatch):
-    seen = {}
+    seen = {"cmds": [], "timeouts": []}
 
     async def fake_run(cmd, timeout=20):
-        seen["cmd"] = cmd
-        seen["timeout"] = timeout
+        seen["cmds"].append(cmd)
+        seen["timeouts"].append(timeout)
         return [], None
 
     monkeypatch.setattr(condor_pool, "_run_json", fake_run)
@@ -268,10 +315,13 @@ def test_ospool_uses_pool_flag_and_timeout(monkeypatch):
     condor_pool._ospool_cache["data"] = None
 
     asyncio.run(condor_pool.get_ospool_status(force=True))
-    assert seen["cmd"] == [
+    first = seen["cmds"][0]
+    assert first[:4] == [
         "condor_status", "-pool", "cm-1.ospool.osg-htc.org", "-json"
     ]
-    assert seen["timeout"] == 45
+    # Projected to the needed attributes — the full query times out on ~38k slots.
+    assert "-attributes" in first
+    assert seen["timeouts"][0] == 45
 
 
 def test_get_status_includes_ospool(monkeypatch):

@@ -48,7 +48,7 @@ export default function ProvisioningPage() {
   return (
     <div className="h-full overflow-auto">
       <div className="border-b border-line bg-surface px-6 py-4">
-        <h1 className="text-lg font-semibold text-fg">Provisioning</h1>
+        <h1 className="text-lg font-semibold text-fg">Resources</h1>
         <p className="text-sm text-fgmuted">
           Pool inventory and workflow demand (read-only). Provisioning actions
           — HTCondor Annex first — arrive in a later phase.
@@ -237,12 +237,15 @@ function OSPoolPanel({
 }: {
   ospool: NonNullable<import("@/lib/api/client").ProvisioningStatus["ospool"]>;
 }) {
+  const mine = ospool.mine;
   return (
     <div className="rounded-lg border border-line bg-surface">
       <div className="border-b border-line px-4 py-3">
         <h2 className="text-sm font-semibold text-fg">OSPool (OSG)</h2>
         <p className="text-xs text-fgmuted">
-          Open Science Pool capacity via {ospool.cm ?? "the OSG collector"}
+          Your usage and available capacity via{" "}
+          {ospool.cm ?? "the OSG collector"}. Other users&rsquo; tasks are not
+          shown.
         </p>
       </div>
       {!ospool.available ? (
@@ -251,20 +254,13 @@ function OSPoolPanel({
         </p>
       ) : (
         <div className="grid grid-cols-2 gap-4 p-4 lg:grid-cols-4">
+          <Metric label="My CPUs (running)" value={mine?.cpus ?? 0} />
           <Metric
-            label="Idle / total CPUs"
-            value={`${ospool.idle_cpus ?? 0}/${ospool.total_cpus ?? 0}`}
+            label="My GPUs (running)"
+            value={(mine?.gpus ?? 0) > 0 ? (mine?.gpus ?? 0) : "—"}
           />
-          <Metric
-            label="Idle / total GPUs"
-            value={
-              (ospool.total_gpus ?? 0) > 0
-                ? `${ospool.idle_gpus ?? 0}/${ospool.total_gpus}`
-                : "—"
-            }
-          />
-          <Metric label="Machines" value={ospool.machines ?? 0} />
-          <Metric label="Slots" value={ospool.slots ?? 0} />
+          <Metric label="My slots" value={mine?.slots ?? 0} />
+          <Metric label="Available CPUs" value={ospool.avail_cpus ?? 0} />
         </div>
       )}
     </div>
