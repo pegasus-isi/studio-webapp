@@ -178,6 +178,41 @@ class OpenCodeEngine:
                 self._proc.kill()
         self._proc = None
 
+    async def restart(self) -> None:
+        """Force the next turn to re-spawn serve with fresh config.
+
+        ``opencode serve`` reads provider config only at startup and never
+        reloads it, so a provider/model change requires a real restart. We stop
+        the tracked process AND defensively kill any orphan serve bound to our
+        port (e.g. one spawned by a previous studio-api process or outside it) —
+        otherwise ``ensure_running`` would find the stale-config instance
+        "healthy" and skip the respawn, so the change silently wouldn't apply.
+        """
+        await self.stop()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "pkill", "-f", f"opencode serve --port {OPENCODE_PORT}",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+        except (OSError, asyncio.CancelledError):
+            pass  # pkill absent or interrupted — stop() already handled ours
+
+    async def forget_sessions(self, db: Database) -> None:
+        """Drop conversation→session mappings so the next turn creates fresh
+        opencode sessions.
+
+        An opencode session is bound to the provider/model it was created with;
+        after a provider switch, reusing it fails with
+        ``Model not found: <old-provider>/<old-model>``. Clearing the map resets
+        only the opencode-side linkage — studio conversation history is untouched.
+        """
+        try:
+            await db.set_setting(_SESSION_MAP_KEY, {})
+        except Exception as e:  # best-effort; never block a config change
+            log.warning("opencode_forget_sessions_failed", error=str(e))
+
     async def status(self) -> dict[str, Any]:
         """Engine status for the settings UI."""
         import shutil

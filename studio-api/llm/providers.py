@@ -19,7 +19,10 @@ log = structlog.get_logger()
 # zero configuration. Both values are overridable via env for other
 # deployments.
 GATEWAY_BASE_URL = os.environ.get("STUDIO_LLM_GATEWAY_URL", "http://gateway.llm:8080/v1")
-GATEWAY_DEFAULT_MODEL = os.environ.get("STUDIO_LLM_DEFAULT_MODEL", "Default")
+# The gateway (bifrost/litellm router) is case-sensitive on the model name:
+# "default" routes (→ llama-4-scout), "Default" returns "could not auto resolve a
+# provider". Must be lowercase.
+GATEWAY_DEFAULT_MODEL = os.environ.get("STUDIO_LLM_DEFAULT_MODEL", "default")
 
 # Provider presets — mirrors config_builder.PROVIDERS
 PROVIDERS: dict[str, dict[str, Any]] = {

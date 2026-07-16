@@ -7,9 +7,11 @@ def test_get_llm_config_default(client):
     resp = client.get("/api/llm/config")
     assert resp.status_code == 200
     data = resp.json()
-    # Ships pointed at the internal gateway with zero configuration.
+    # Ships pointed at the internal gateway with zero configuration. The model
+    # must be lowercase "default" — the gateway is case-sensitive and rejects
+    # "Default" with "could not auto resolve a provider".
     assert data["provider"] == "gateway"
-    assert data["model"] == "Default"
+    assert data["model"] == "default"
     assert data["base_url"] == "http://gateway.llm:8080/v1"
 
 

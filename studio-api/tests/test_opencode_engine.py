@@ -176,6 +176,33 @@ def test_other_sessions_events_ignored(monkeypatch):
     assert not any("LEAK" in p.get("content", "") for p in payloads)
 
 
+def test_forget_sessions_clears_map(monkeypatch, tmp_path):
+    """A provider switch must drop conversation→session mappings, else opencode
+    reuses a session bound to the old provider ('Model not found')."""
+    from db import Database
+
+    async def go():
+        db = Database(str(tmp_path / "f.db"))
+        await db.connect()
+        await db.set_setting("opencode_sessions", {"conv-1": "ses_old"})
+        await oce.engine.forget_sessions(db)
+        stored = await db.get_setting("opencode_sessions", "missing")
+        await db.close()
+        return stored
+
+    assert asyncio.run(go()) == {}
+
+
+def test_forget_sessions_never_raises():
+    """Best-effort: a DB failure must not block the config change."""
+
+    class BadDB:
+        async def set_setting(self, key, value):
+            raise RuntimeError("db down")
+
+    asyncio.run(oce.engine.forget_sessions(BadDB()))  # no exception
+
+
 def test_session_mapping_reused(monkeypatch, tmp_path):
     from db import Database
 
