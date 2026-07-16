@@ -22,6 +22,28 @@ log = structlog.get_logger()
 router = APIRouter(prefix="/api/llm", tags=["llm"])
 
 
+async def _propagate_and_restart(db) -> None:
+    """Propagate the active LLM config to installed tools, then restart the
+    OpenCode chat server so it actually uses the new provider.
+
+    ``opencode serve`` reads provider config once at startup; a running instance
+    keeps the old provider — so switching providers (or dropping one whose
+    streaming is broken) silently has no effect on chat until serve restarts.
+    Stopping it here makes the next chat turn re-spawn with the new config.
+    """
+    try:
+        await LLMPropagator().propagate(db)
+    except Exception as e:
+        log.warning("llm_propagation_failed", error=str(e))
+    try:
+        from services.opencode_engine import engine as opencode_engine
+
+        await opencode_engine.stop()
+        log.info("opencode_restarted_on_llm_change")
+    except Exception as e:
+        log.warning("opencode_restart_failed", error=str(e))
+
+
 @router.get("/config", response_model=LLMConfigResponse)
 async def get_llm_config() -> LLMConfigResponse:
     from main import db
@@ -50,12 +72,7 @@ async def update_llm_config(req: LLMConfigRequest) -> LLMConfigResponse:
     )
     log.info("llm_config_updated", provider=req.provider.value, model=req.model)
 
-    # Propagate to installed tools
-    try:
-        propagator = LLMPropagator()
-        await propagator.propagate(db)
-    except Exception as e:
-        log.warning("llm_propagation_failed", error=str(e))
+    await _propagate_and_restart(db)
 
     data = await db.get_llm_config()
     return LLMConfigResponse(**(data or {}))
@@ -161,11 +178,7 @@ async def upsert_provider_config(req: ProviderConfigRequest) -> ProviderConfigRe
         await db.set_active_provider(req.provider_id)
 
     # Always propagate so tool configs (e.g. codex config.toml) stay in sync
-    try:
-        propagator = LLMPropagator()
-        await propagator.propagate(db)
-    except Exception as e:
-        log.warning("llm_propagation_failed", error=str(e))
+    await _propagate_and_restart(db)
 
     row = await db.get_provider_config(req.provider_id)
     return ProviderConfigResponse(**(row or {}))
@@ -183,11 +196,7 @@ async def activate_provider(provider_id: str) -> ProviderConfigResponse:
 
     await db.set_active_provider(provider_id)
 
-    try:
-        propagator = LLMPropagator()
-        await propagator.propagate(db)
-    except Exception as e:
-        log.warning("llm_propagation_failed", error=str(e))
+    await _propagate_and_restart(db)
 
     row = await db.get_provider_config(provider_id)
     return ProviderConfigResponse(**(row or {}))
@@ -195,8 +204,32 @@ async def activate_provider(provider_id: str) -> ProviderConfigResponse:
 
 @router.delete("/provider-configs/{provider_id}")
 async def delete_provider_config(provider_id: str) -> dict[str, str]:
-    """Delete a saved provider configuration."""
+    """Delete a saved provider configuration.
+
+    If it was the *active* provider, re-point the active LLM config at another
+    saved provider (or the built-in gateway default) — otherwise llm_config
+    dangles on the deleted endpoint and chat keeps using it.
+    """
     from main import db
 
+    active = await db.get_llm_config()
+    was_active = bool(active and active.get("provider") == provider_id)
+
     await db.delete_provider_config(provider_id)
+
+    if was_active:
+        remaining = await db.list_provider_configs()
+        if remaining:
+            await db.set_active_provider(remaining[0]["provider_id"])
+        else:
+            g = PROVIDER_DEFAULTS["gateway"]
+            await db.set_llm_config(
+                provider="gateway",
+                model=g["model"],
+                api_key=None,
+                base_url=g["base_url"],
+            )
+        log.info("llm_active_provider_deleted_fallback", deleted=provider_id)
+
+    await _propagate_and_restart(db)
     return {"status": "deleted", "provider_id": provider_id}

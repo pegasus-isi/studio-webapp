@@ -75,13 +75,10 @@ async def update_settings(req: LLMConfigRequest) -> SettingsResponse:
         extra_config=req.extra_config,
     )
 
-    # Propagate to installed tools
-    try:
-        from llm.propagator import LLMPropagator
+    # Propagate to installed tools + restart the OpenCode chat server so the new
+    # provider actually takes effect (serve loads provider config at startup).
+    from routers.llm import _propagate_and_restart
 
-        propagator = LLMPropagator()
-        await propagator.propagate(db)
-    except Exception as e:
-        log.warning("llm_propagation_failed", error=str(e))
+    await _propagate_and_restart(db)
 
     return await get_settings()
