@@ -54,6 +54,121 @@ def test_list_workflows_with_braindump(client):
         scanner.SCAN_ROOT = old_root
 
 
+def test_find_generator_resolves_name_variants(tmp_path):
+    """The generator resolver accepts the underscore and hyphen filenames and
+    honors a name declared in .pegasushub.yml — mirroring the inconsistent
+    naming across pegasus-isi repos."""
+    from services.workflow_scanner import find_generator
+
+    # No generator at all.
+    assert find_generator(str(tmp_path)) is None
+
+    # Underscore form (most repos).
+    under = tmp_path / "under"
+    under.mkdir()
+    (under / "workflow_generator.py").write_text("# gen\n")
+    assert find_generator(str(under)).endswith("workflow_generator.py")
+
+    # Hyphen form (quickstart-workflow).
+    hyphen = tmp_path / "hyphen"
+    hyphen.mkdir()
+    (hyphen / "workflow-generator.py").write_text("# gen\n")
+    assert find_generator(str(hyphen)).endswith("workflow-generator.py")
+
+    # Custom name declared in the PegasusHub marker (variant-calling).
+    custom = tmp_path / "custom"
+    custom.mkdir()
+    (custom / ".pegasushub.yml").write_text(
+        "scripts:\n  generator: variant-calling.py\n"
+    )
+    (custom / "variant-calling.py").write_text("# gen\n")
+    assert find_generator(str(custom)).endswith("variant-calling.py")
+
+    # A marker pointing at a missing file falls through to None.
+    dangling = tmp_path / "dangling"
+    dangling.mkdir()
+    (dangling / ".pegasushub.yml").write_text("scripts:\n  generator: nope.py\n")
+    assert find_generator(str(dangling)) is None
+
+
+def test_discover_projects_lists_marketplace_clones(tmp_path):
+    """A freshly-cloned quickstart (hyphenated generator, no YAML) and a
+    registry-only repo (.pegasushub.yml) both appear on the Workflows page.
+
+    Regression: previously discover_projects only recognized
+    ``workflow_generator.py`` (underscore) + a top-level YAML, so quickstart
+    was cloned but never listed."""
+    from services.workflow_scanner import discover_projects
+
+    quickstart = tmp_path / "quickstart"
+    quickstart.mkdir()
+    (quickstart / "workflow-generator.py").write_text("# gen\n")
+    (quickstart / "README.md").write_text("# quickstart\n")
+
+    variant = tmp_path / "variant-calling"
+    variant.mkdir()
+    (variant / ".pegasushub.yml").write_text(
+        "scripts:\n  generator: variant-calling.py\n"
+    )
+    (variant / "variant-calling.py").write_text("# gen\n")
+
+    # A plain directory that isn't a workflow project stays hidden.
+    (tmp_path / "notes").mkdir()
+    (tmp_path / "notes" / "todo.txt").write_text("x\n")
+
+    projects = discover_projects(workspace=str(tmp_path))
+    by_id = {p["project_id"]: p for p in projects}
+
+    assert "quickstart" in by_id, "hyphenated-generator clone must be listed"
+    assert by_id["quickstart"]["has_generator"] is True
+    assert by_id["quickstart"]["generator_file"] == "workflow-generator.py"
+
+    assert "variant-calling" in by_id, "pegasushub-only repo must be listed"
+    assert by_id["variant-calling"]["generator_file"] == "variant-calling.py"
+
+    assert "notes" not in by_id
+
+
+def test_generate_uses_resolved_generator_filename(client, monkeypatch, tmp_path):
+    """The Generate action invokes the project's actual generator filename,
+    not a hardcoded workflow_generator.py."""
+    import routers.workflows as wf
+
+    proj_dir = tmp_path / "quickstart"
+    proj_dir.mkdir()
+    (proj_dir / "workflow-generator.py").write_text("# gen\n")
+
+    monkeypatch.setattr(
+        wf,
+        "discover_projects",
+        lambda: [{
+            "project_id": "quickstart",
+            "project_dir": str(proj_dir),
+            "has_generator": True,
+            "generator_file": "workflow-generator.py",
+        }],
+    )
+
+    captured: dict = {}
+
+    async def fake_exec(*cmd, **kw):
+        captured["cmd"] = cmd
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return (b"ok", b"")
+
+        return P()
+
+    monkeypatch.setattr(wf.asyncio, "create_subprocess_exec", fake_exec)
+
+    resp = client.post("/api/workflows/projects/quickstart/generate", json={"args": []})
+    assert resp.status_code == 200
+    assert captured["cmd"][:2] == ("python3", "workflow-generator.py")
+
+
 def test_get_workflow_not_found(client):
     resp = client.get("/api/workflows/nonexistent-id")
     assert resp.status_code == 404

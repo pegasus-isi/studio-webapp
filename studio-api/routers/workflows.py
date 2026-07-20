@@ -174,14 +174,15 @@ async def generate_workflow(
     proj = next((p for p in projects if p["project_id"] == project_id), None)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
-    if not proj["has_generator"]:
+    generator_file = proj.get("generator_file")
+    if not proj["has_generator"] or not generator_file:
         raise HTTPException(
             status_code=400,
-            detail="Project has no workflow_generator.py",
+            detail="Project has no workflow generator script",
         )
 
     project_dir = proj["project_dir"]
-    cmd = ["python3", "workflow_generator.py", *req.args]
+    cmd = ["python3", generator_file, *req.args]
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -208,7 +209,7 @@ async def generate_workflow(
     except FileNotFoundError:
         return {"status": "error", "output": "python3 not found"}
     except asyncio.TimeoutError:
-        return {"status": "error", "output": "workflow_generator.py timed out"}
+        return {"status": "error", "output": f"{generator_file} timed out"}
     except Exception as e:
         return {"status": "error", "output": f"Error: {e}"}
 

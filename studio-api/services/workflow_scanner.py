@@ -23,6 +23,57 @@ WORKSPACE_ROOT = os.environ.get(
 
 WORKFLOWS_DIR = os.path.join(WORKSPACE_ROOT, "workflows")
 
+# Known workflow-generator filenames. pegasus-isi repos are inconsistent: most
+# use the underscore form, but quickstart-workflow ships the hyphenated name,
+# and some declare a custom name in `.pegasushub.yml` (scripts.generator).
+_GENERATOR_NAMES = ("workflow_generator.py", "workflow-generator.py")
+
+# PegasusHub registry marker file present at the root of a workflow repo.
+PEGASUSHUB_MARKER = ".pegasushub.yml"
+
+
+def _pegasushub_generator(project_dir: str) -> str | None:
+    """Generator filename declared in a repo's ``.pegasushub.yml``
+    (``scripts.generator``), or None. Only a bare filename that exists inside
+    the project is honored — no path traversal outside project_dir."""
+    marker = os.path.join(project_dir, PEGASUSHUB_MARKER)
+    if not os.path.isfile(marker):
+        return None
+    try:
+        import yaml
+
+        with open(marker, encoding="utf-8", errors="replace") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as e:  # best-effort marker; never break the scan
+        log.warning("pegasushub_marker_parse_failed", path=marker, error=str(e))
+        return None
+    if not isinstance(data, dict):
+        return None
+    gen = (data.get("scripts") or {}).get("generator")
+    if not isinstance(gen, str) or not gen.strip():
+        return None
+    name = os.path.basename(gen.strip())
+    if name and os.path.isfile(os.path.join(project_dir, name)):
+        return name
+    return None
+
+
+def find_generator(project_dir: str) -> str | None:
+    """Absolute path to a project's workflow generator, or None if absent.
+
+    Resolution order: the name declared in ``.pegasushub.yml`` (if present and
+    the file exists), then the known filename variants (underscore, hyphen).
+    """
+    declared = _pegasushub_generator(project_dir)
+    if declared:
+        return os.path.join(project_dir, declared)
+    for name in _GENERATOR_NAMES:
+        path = os.path.join(project_dir, name)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 # Root under which discover_runs() looks for Pegasus run directories. Defaults
 # to the whole home dir so runs submitted outside $HOME/work are still found.
 # Override with STUDIO_SCAN_DIR.
@@ -121,16 +172,10 @@ def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
         if not os.path.isdir(project_dir):
             continue
 
-        has_generator = os.path.isfile(
-            os.path.join(project_dir, "workflow_generator.py")
-        )
-        has_workflow_yml = any(
-            glob.glob(os.path.join(project_dir, pat))
-            for pat in ("*.yml", "*.yaml")
-            if not glob.glob(os.path.join(project_dir, "braindump.yml"))
-            or pat not in ("*.yml",)
-        )
-        # More precise check: look for non-braindump YAML files
+        generator_path = find_generator(project_dir)
+        has_generator = generator_path is not None
+
+        # Non-braindump YAML at the top level (a generated workflow file, etc).
         yml_files = glob.glob(os.path.join(project_dir, "*.yml")) + glob.glob(
             os.path.join(project_dir, "*.yaml")
         )
@@ -139,12 +184,18 @@ def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
             for f in yml_files
         )
 
+        # The PegasusHub marker (a dotfile the globs above skip) also identifies
+        # a workflow project — even a registry repo cloned before Generate runs.
+        has_pegasushub = os.path.isfile(
+            os.path.join(project_dir, PEGASUSHUB_MARKER)
+        )
+
         has_dockerfile = os.path.isfile(
             os.path.join(project_dir, "Docker", "Dockerfile")
         ) or os.path.isfile(os.path.join(project_dir, "Dockerfile"))
 
         # Skip directories that don't look like workflow projects
-        if not has_generator and not has_workflow_yml:
+        if not has_generator and not has_workflow_yml and not has_pegasushub:
             continue
 
         # Find submitted runs inside this project (braindump.yml files)
@@ -194,6 +245,9 @@ def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
             "project_dir": project_dir,
             "status": status,
             "has_generator": has_generator,
+            "generator_file": (
+                os.path.basename(generator_path) if generator_path else None
+            ),
             "has_workflow_yml": has_workflow_yml,
             "has_dockerfile": has_dockerfile,
             "submitted_runs": submitted_runs,
