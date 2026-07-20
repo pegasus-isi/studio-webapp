@@ -117,6 +117,15 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_notifications_created
     ON notifications (created_at DESC);
 
+-- Durable ledger of every dedup_key ever delivered. Unlike the notifications
+-- table it is NOT emptied by clear/delete, so the watch loop's "fire once"
+-- guards can't resurrect a notification the user already cleared when the
+-- server restarts (e.g. on logout/login re-spawn).
+CREATE TABLE IF NOT EXISTS notification_log (
+    dedup_key       TEXT PRIMARY KEY,
+    created_at      TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS app_settings (
     key             TEXT PRIMARY KEY,
     value           TEXT NOT NULL,          -- JSON-encoded
@@ -206,6 +215,13 @@ class Database:
         await self.db.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_messages_conv "
             "ON chat_messages (conversation_id, id)"
+        )
+        # Seed the durable dedup ledger from any notifications already in the
+        # feed so upgrading an existing DB doesn't re-fire their alerts.
+        await self.db.execute(
+            """INSERT OR IGNORE INTO notification_log (dedup_key, created_at)
+               SELECT dedup_key, created_at FROM notifications
+               WHERE dedup_key IS NOT NULL"""
         )
 
     async def close(self) -> None:
@@ -608,8 +624,14 @@ class Database:
         """Insert a notification and return the stored row.
 
         If ``dedup_key`` matches an existing notification, that row is refreshed
-        (bumped to now, read-state reset to the new value) instead of inserting
-        a duplicate — this keeps repeated state polls from flooding the feed.
+        (bumped to now) instead of inserting a duplicate — this keeps repeated
+        state polls from flooding the feed. A refresh never flips an
+        already-read notification back to unread, so marking one read sticks
+        even as the watch loop keeps touching it.
+
+        Every ``dedup_key`` is also recorded in the durable ``notification_log``
+        ledger, which survives clear/delete so fire-once guards don't resurrect
+        a cleared notification after a restart.
 
         ``read=True`` records the notification as already-read: it lands in
         history but does not count toward the unread badge (used for muted
@@ -618,21 +640,30 @@ class Database:
         now = _now()
         read_int = 1 if read else 0
         if dedup_key:
+            # Durable delivery record (survives clear/delete).
+            await self.db.execute(
+                "INSERT OR IGNORE INTO notification_log (dedup_key, created_at) "
+                "VALUES (?, ?)",
+                (dedup_key, now),
+            )
             async with self.db.execute(
-                """SELECT id FROM notifications
+                """SELECT id, read FROM notifications
                    WHERE dedup_key = ?
                    ORDER BY created_at DESC LIMIT 1""",
                 (dedup_key,),
             ) as cursor:
                 existing = await cursor.fetchone()
             if existing:
+                # Once read, stays read — a content refresh must not re-surface
+                # a notification the user already dismissed.
+                new_read = 1 if (existing["read"] or read_int) else 0
                 await self.db.execute(
                     """UPDATE notifications
                        SET title = ?, body = ?, severity = ?, run_id = ?,
                            link = ?, meta = ?, read = ?, created_at = ?
                        WHERE id = ?""",
                     (title, body, severity, run_id, link,
-                     json.dumps(meta or {}), read_int, now, existing["id"]),
+                     json.dumps(meta or {}), new_read, now, existing["id"]),
                 )
                 await self.db.commit()
                 return await self.get_notification(existing["id"])  # type: ignore[return-value]
@@ -665,13 +696,14 @@ class Database:
         }
 
     async def notification_exists(self, dedup_key: str) -> bool:
-        """Whether a notification with this dedup_key has ever been stored.
+        """Whether a notification with this dedup_key has ever been delivered.
 
-        Used to make seed-time / first-sighting alerts idempotent across engine
-        restarts (add_notification refreshes on dedup_key, so callers that must
-        fire only once check this first)."""
+        Backed by the durable ``notification_log`` ledger, so this stays True
+        even after the user clears or deletes the visible notification. That is
+        what makes seed-time / first-sighting alerts fire only once across
+        restarts without re-appearing after a clear."""
         async with self.db.execute(
-            "SELECT 1 FROM notifications WHERE dedup_key = ? LIMIT 1",
+            "SELECT 1 FROM notification_log WHERE dedup_key = ? LIMIT 1",
             (dedup_key,),
         ) as cursor:
             return await cursor.fetchone() is not None
