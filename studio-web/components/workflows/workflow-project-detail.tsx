@@ -9,9 +9,11 @@ import {
   useSubmitWorkflowProject,
   useWorkflowJobs,
   useAnalyzeWorkflow,
+  useDeleteWorkflow,
 } from "@/lib/hooks/use-workflows";
 import type { WorkflowParam } from "@/lib/api/client";
 import { DagViewer } from "@/components/workflows/dag-viewer";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUrl } from "@/lib/urls";
 import { cn, statusColor } from "@/lib/utils";
 
@@ -66,6 +68,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
   const generate = useGenerateWorkflow();
   const plan = usePlanWorkflow();
   const submit = useSubmitWorkflowProject();
+  const deleteRun = useDeleteWorkflow();
 
   const [output, setOutput] = useState<string | null>(null);
   const [outputCollapsed, setOutputCollapsed] = useState(false);
@@ -79,6 +82,11 @@ export function WorkflowProjectDetail({ projectId }: Props) {
   // instead of re-planning.
   const [plannedRunDir, setPlannedRunDir] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // The run pending a delete confirmation, or null when no dialog is open.
+  const [runToDelete, setRunToDelete] = useState<{
+    run_id: string;
+    label: string;
+  } | null>(null);
   const [values, setValues] = useState<ParamValues>({});
   const [dag, setDag] = useState<{
     url: string;
@@ -222,6 +230,17 @@ export function WorkflowProjectDetail({ projectId }: Props) {
       append(`Build stream failed: ${String(e)}`);
     } finally {
       setBuilding(false);
+    }
+  };
+
+  const handleDeleteRun = async () => {
+    if (!runToDelete) return;
+    const { run_id } = runToDelete;
+    try {
+      await deleteRun.mutateAsync(run_id);
+      if (selectedRunId === run_id) setSelectedRunId(null);
+    } finally {
+      setRunToDelete(null);
     }
   };
 
@@ -482,6 +501,22 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                         >
                           {run.status}
                         </span>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRunToDelete({
+                              run_id: run.run_id,
+                              label: run.run_name || run.run_id.slice(0, 12),
+                            });
+                          }}
+                          title="Delete this run"
+                          aria-label="Delete this run"
+                          className="cursor-pointer rounded border border-line px-2 py-0.5 text-xs text-fgmuted hover:border-red-400 hover:text-red-600 dark:hover:text-red-400"
+                        >
+                          Delete
+                        </span>
                       </span>
                     </div>
                   </button>
@@ -501,6 +536,18 @@ export function WorkflowProjectDetail({ projectId }: Props) {
           title={dag.title}
           live={dag.live}
           onClose={() => setDag(null)}
+        />
+      )}
+
+      {runToDelete && (
+        <ConfirmDialog
+          title="Delete this run?"
+          message={`This permanently deletes run "${runToDelete.label}" and its files from your workspace. If it is still running it will be cancelled first. This cannot be undone.`}
+          confirmLabel="Delete run"
+          destructive
+          busy={deleteRun.isPending}
+          onConfirm={handleDeleteRun}
+          onCancel={() => setRunToDelete(null)}
         />
       )}
     </div>

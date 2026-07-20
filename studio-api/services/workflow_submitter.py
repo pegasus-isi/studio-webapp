@@ -6,6 +6,7 @@ import asyncio
 import glob as _glob
 import os
 import re
+import shutil
 import time
 
 import structlog
@@ -192,6 +193,37 @@ async def cancel_workflow(run_dir: str) -> dict[str, str]:
         return {"status": "error", "output": "pegasus-remove timed out"}
     except Exception as e:
         return {"status": "error", "output": f"Error: {e}"}
+
+
+async def delete_run(run_dir: str) -> dict[str, str]:
+    """Delete a run: cancel it if still active, then remove its submit dir.
+
+    Best-effort ``pegasus-remove`` first (so a live DAG leaves the Condor queue),
+    then ``rmtree`` the directory. The caller MUST validate that ``run_dir`` is
+    inside the workspace before calling — this deletes files on disk.
+    """
+    if _is_submitted(run_dir):
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "pegasus-remove", run_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=60)
+        except (FileNotFoundError, asyncio.TimeoutError, OSError) as e:
+            # A cancel failure shouldn't block deletion — log and proceed.
+            log.warning("delete_run_cancel_failed", run_dir=run_dir, error=str(e))
+
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: shutil.rmtree(run_dir))
+    except FileNotFoundError:
+        return {"status": "deleted"}  # already gone
+    except OSError as e:
+        return {"status": "error", "output": f"Could not delete run: {e}"}
+
+    log.info("run_deleted", run_dir=run_dir)
+    return {"status": "deleted"}
 
 
 # YAML files that are catalogs / aux config — never the abstract workflow.

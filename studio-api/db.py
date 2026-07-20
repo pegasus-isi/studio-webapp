@@ -493,6 +493,14 @@ class Database:
         )
         await self.db.commit()
 
+    async def delete_workflow_run(self, run_id: str) -> None:
+        """Drop a single run from the persisted list (used when a run's submit
+        directory is deleted)."""
+        await self.db.execute(
+            "DELETE FROM workflow_runs WHERE run_id = ?", (run_id,)
+        )
+        await self.db.commit()
+
     async def list_workflow_runs(self) -> list[dict[str, Any]]:
         results = []
         async with self.db.execute(

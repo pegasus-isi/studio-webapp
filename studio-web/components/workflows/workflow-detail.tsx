@@ -5,8 +5,10 @@ import {
   useAnalyzeWorkflow,
   useWorkflows,
   useWorkflowEstimate,
+  useDeleteWorkflow,
 } from "@/lib/hooks/use-workflows";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUrl } from "@/lib/urls";
 import { cn, formatDuration, statusColor } from "@/lib/utils";
 import { useEffect, useState, useRef } from "react";
@@ -30,7 +32,10 @@ export function WorkflowDetail({ runId }: Props) {
   const { data: runsData } = useWorkflows();
   const { data, isLoading } = useWorkflowJobs(runId);
   const analyze = useAnalyzeWorkflow();
+  const deleteRun = useDeleteWorkflow();
+  const selectWorkflow = useWorkflowStore((s) => s.selectWorkflow);
   const [analysis, setAnalysis] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const setEventSource = useWorkflowStore((s) => s.setEventSource);
   const [liveStats, setLiveStats] = useState<SSEEvent | null>(null);
@@ -85,6 +90,15 @@ export function WorkflowDetail({ runId }: Props) {
     setAnalysis(result.analysis);
   };
 
+  const handleDelete = async () => {
+    try {
+      await deleteRun.mutateAsync(runId);
+      selectWorkflow(null); // run is gone — clear the now-dangling selection
+    } finally {
+      setConfirmDelete(false);
+    }
+  };
+
   // Failed jobs with captured stderr feed the Diagnostics panel below.
   const failedJobDetails = (data?.jobs ?? []).filter(
     (job: Record<string, unknown>) => job.status === "failed" && job.stderr
@@ -118,13 +132,22 @@ export function WorkflowDetail({ runId }: Props) {
               </span>
             )}
           </div>
-          <button
-            onClick={handleAnalyze}
-            disabled={analyze.isPending}
-            className="rounded-md bg-pegasus-600 px-3 py-1.5 text-sm text-white hover:bg-pegasus-700 disabled:opacity-50"
-          >
-            {analyze.isPending ? "Analyzing..." : "Run Analyzer"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleAnalyze}
+              disabled={analyze.isPending}
+              className="rounded-md bg-pegasus-600 px-3 py-1.5 text-sm text-white hover:bg-pegasus-700 disabled:opacity-50"
+            >
+              {analyze.isPending ? "Analyzing..." : "Run Analyzer"}
+            </button>
+            <button
+              onClick={() => setConfirmDelete(true)}
+              title="Delete this run and its files"
+              className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-fgmuted hover:border-red-400 hover:text-red-600 dark:hover:text-red-400"
+            >
+              Delete
+            </button>
+          </div>
         </div>
 
         {/* Progress bar for running/completed workflows */}
@@ -262,6 +285,18 @@ export function WorkflowDetail({ runId }: Props) {
           </div>
         )}
       </div>
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete this run?"
+          message={`This permanently deletes run "${run?.name ?? runId}" and its files from your workspace. If it is still running it will be cancelled first. This cannot be undone.`}
+          confirmLabel="Delete run"
+          destructive
+          busy={deleteRun.isPending}
+          onConfirm={handleDelete}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
     </div>
   );
 }
