@@ -20,6 +20,13 @@ WORKSPACE_ROOT = os.environ.get(
 
 _CMD_TIMEOUT = 300  # 5 minutes
 
+# Deleting a run on NFS: a file a just-cancelled process still holds open
+# lingers as a `.nfsXXXX` silly-rename that can't be unlinked until the handle
+# closes ("Device or resource busy"). Retry a few times to let monitord/DAGMan
+# exit after pegasus-remove before falling back to a best-effort delete.
+_DELETE_RETRIES = 4
+_DELETE_RETRY_DELAY = 1.5
+
 
 async def submit_workflow(
     workflow_dir: str,
@@ -195,12 +202,32 @@ async def cancel_workflow(run_dir: str) -> dict[str, str]:
         return {"status": "error", "output": f"Error: {e}"}
 
 
+def _best_effort_rmtree(run_dir: str) -> list[str]:
+    """Remove everything under ``run_dir`` that isn't held open; return the
+    paths that could not be removed (NFS ``.nfsXXXX`` silly-renames of files a
+    live process still has open)."""
+    held: list[str] = []
+
+    def _onerror(func, path, exc_info):  # noqa: ANN001 - shutil callback shape
+        held.append(path)
+
+    shutil.rmtree(run_dir, onerror=_onerror)
+    return held
+
+
 async def delete_run(run_dir: str) -> dict[str, str]:
     """Delete a run: cancel it if still active, then remove its submit dir.
 
     Best-effort ``pegasus-remove`` first (so a live DAG leaves the Condor queue),
     then ``rmtree`` the directory. The caller MUST validate that ``run_dir`` is
     inside the workspace before calling — this deletes files on disk.
+
+    On NFS, a file a just-cancelled process still holds open lingers as a
+    ``.nfsXXXX`` file that can't be unlinked yet, so ``rmtree`` is retried a few
+    times to let those processes exit. If some files are still held after that,
+    we remove everything else (crucially ``braindump.yml``, so the run drops off
+    the list) and report success — the leftover stubs clear when the holder
+    exits.
     """
     if _is_submitted(run_dir):
         try:
@@ -214,16 +241,37 @@ async def delete_run(run_dir: str) -> dict[str, str]:
             # A cancel failure shouldn't block deletion — log and proceed.
             log.warning("delete_run_cancel_failed", run_dir=run_dir, error=str(e))
 
-    try:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: shutil.rmtree(run_dir))
-    except FileNotFoundError:
-        return {"status": "deleted"}  # already gone
-    except OSError as e:
-        return {"status": "error", "output": f"Could not delete run: {e}"}
+    loop = asyncio.get_event_loop()
+    last_err: OSError | None = None
+    for attempt in range(_DELETE_RETRIES):
+        try:
+            await loop.run_in_executor(None, lambda: shutil.rmtree(run_dir))
+            log.info("run_deleted", run_dir=run_dir)
+            return {"status": "deleted"}
+        except FileNotFoundError:
+            return {"status": "deleted"}  # already gone
+        except OSError as e:
+            last_err = e
+            if attempt < _DELETE_RETRIES - 1:
+                await asyncio.sleep(_DELETE_RETRY_DELAY)
 
-    log.info("run_deleted", run_dir=run_dir)
-    return {"status": "deleted"}
+    # Still blocked. Remove everything we can and check whether the run is now
+    # undiscoverable (its braindump.yml is gone) — if so, it's effectively
+    # deleted; only NFS-held stubs remain and will clear on their own.
+    held = await loop.run_in_executor(None, _best_effort_rmtree, run_dir)
+    if not os.path.exists(os.path.join(run_dir, "braindump.yml")):
+        log.warning("run_deleted_partial", run_dir=run_dir, held=len(held))
+        return {"status": "deleted"}
+
+    log.warning("run_delete_blocked", run_dir=run_dir, error=str(last_err))
+    return {
+        "status": "error",
+        "output": (
+            "Could not delete the run — files are still held open by a running "
+            "process (NFS 'device or resource busy'). Stop/cancel the run and "
+            f"try again once it has finished. ({last_err})"
+        ),
+    }
 
 
 # YAML files that are catalogs / aux config — never the abstract workflow.
