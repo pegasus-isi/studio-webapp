@@ -130,6 +130,51 @@ export default function DashboardPage() {
   const running = data?.runs.by_status?.["running"] ?? 0;
   const unread = data?.notifications.unread ?? 0;
 
+  // Brand-new users (nothing in the workspace yet) lead with example
+  // workflows, so a first runnable workflow is one click away.
+  const hasWorkflows =
+    (data?.projects.total ?? 0) > 0 || (data?.runs.total ?? 0) > 0;
+  const examplesCard = (
+    <ActionCard
+      key="examples"
+      icon="🛒"
+      title="Browse examples"
+      description="Add a ready-made example workflow from the Marketplace to your workspace in one click."
+      href={appRelativePath("/marketplace")}
+    />
+  );
+  const runCard = (
+    <ActionCard
+      key="run"
+      icon="📊"
+      title="Run & monitor"
+      description="Generate, plan, build the image, submit, and watch jobs, logs, and status."
+      href={appRelativePath("/workflows")}
+    />
+  );
+  const resourcesCard = (
+    <ActionCard
+      key="resources"
+      icon="🖥️"
+      title="Resources"
+      description="See pool capacity, workflow demand, and alerts when more resources are needed."
+      href={appRelativePath("/provisioning")}
+    />
+  );
+  const notebooksCard = (
+    <ActionCard
+      key="notebooks"
+      icon="📓"
+      title="Notebooks"
+      description="Open JupyterLab in the same workspace to analyze results and iterate."
+      href={jupyterUrl("/lab")}
+      external
+    />
+  );
+  const workCards = hasWorkflows
+    ? [runCard, examplesCard, resourcesCard, notebooksCard]
+    : [examplesCard, runCard, resourcesCard, notebooksCard];
+
   // Compact one-line status: only include facts we actually have.
   const glance: ReactNode[] = [];
   if (data) {
@@ -191,26 +236,8 @@ export default function DashboardPage() {
         <h2 className="mt-8 text-sm font-medium uppercase tracking-wider text-fgsubtle">
           Work with your workflows
         </h2>
-        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <ActionCard
-            icon="📊"
-            title="Run & monitor"
-            description="Generate, plan, build the image, submit, and watch jobs, logs, and status."
-            href={appRelativePath("/workflows")}
-          />
-          <ActionCard
-            icon="🖥️"
-            title="Resources"
-            description="See pool capacity, workflow demand, and alerts when more resources are needed."
-            href={appRelativePath("/provisioning")}
-          />
-          <ActionCard
-            icon="📓"
-            title="Notebooks"
-            description="Open JupyterLab in the same workspace to analyze results and iterate."
-            href={jupyterUrl("/lab")}
-            external
-          />
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {workCards}
         </div>
 
         {/* At a glance — one muted line */}
