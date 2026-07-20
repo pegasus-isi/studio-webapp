@@ -1,6 +1,13 @@
 /**
  * Zustand store for global panel visibility (chat sidebar, terminal bottom
- * pane, sidebar collapse). Only the sidebar collapse preference is persisted.
+ * pane, sidebar collapse).
+ *
+ * Panel visibility (chat/terminal open, sidebar collapsed) is persisted so it
+ * survives navigation. Left-nav links are plain <a> full-page loads (the app
+ * runs under a dynamic per-user prefix and avoids Next's build-time basePath),
+ * which would otherwise reset the in-memory store and snap an open chat shut on
+ * every tab switch. The transient `chatDraft` is intentionally not persisted —
+ * it is a one-shot the ChatInput consumes on open.
  */
 
 import { create } from "zustand";
@@ -43,7 +50,11 @@ export const usePanelStore = create<PanelStore>()(
     }),
     {
       name: "studio-panels",
-      partialize: (s) => ({ sidebarCollapsed: s.sidebarCollapsed }),
+      partialize: (s) => ({
+        sidebarCollapsed: s.sidebarCollapsed,
+        chatOpen: s.chatOpen,
+        terminalOpen: s.terminalOpen,
+      }),
     }
   )
 );
