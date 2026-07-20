@@ -118,6 +118,61 @@ def test_notification_exists_helper(tmp_path):
     asyncio.run(go())
 
 
+def test_dedup_refresh_preserves_read(tmp_path):
+    """A dedup refresh (the watch loop re-touching a still-live alert) must not
+    flip an already-read notification back to unread — otherwise marking it
+    read never sticks."""
+    import asyncio
+
+    from db import Database
+
+    async def go():
+        db = Database(str(tmp_path / "n.db"))
+        await db.connect()
+        n = await db.add_notification(
+            kind="resource", title="pressure", dedup_key="resource:run1:cpu"
+        )
+        assert n["read"] is False
+        await db.mark_notification_read(n["id"])
+
+        # Same dedup_key arrives again "unread" from the poll loop.
+        refreshed = await db.add_notification(
+            kind="resource",
+            title="pressure (updated)",
+            dedup_key="resource:run1:cpu",
+        )
+        assert refreshed["id"] == n["id"]  # same row, refreshed in place
+        assert refreshed["title"] == "pressure (updated)"  # content still updates
+        assert refreshed["read"] is True  # ...but stays read
+        assert await db.unread_notification_count() == 0
+        await db.close()
+
+    asyncio.run(go())
+
+
+def test_notification_exists_survives_clear(tmp_path):
+    """The durable ledger keeps a delivered dedup_key known even after the user
+    clears the visible feed, so fire-once guards stay satisfied."""
+    import asyncio
+
+    from db import Database
+
+    async def go():
+        db = Database(str(tmp_path / "n.db"))
+        await db.connect()
+        await db.add_notification(
+            kind="workflow_state", title="done", dedup_key="state:run1:succeeded"
+        )
+        assert await db.notification_exists("state:run1:succeeded") is True
+
+        await db.clear_notifications()
+        assert await db.list_notifications() == []
+        assert await db.notification_exists("state:run1:succeeded") is True
+        await db.close()
+
+    asyncio.run(go())
+
+
 def test_seed_emits_terminal_notification_once(tmp_path, monkeypatch):
     """A run already terminal at first sighting gets one notification, and a
     second seed (engine restart) does not duplicate it."""
@@ -160,6 +215,52 @@ def test_seed_emits_terminal_notification_once(tmp_path, monkeypatch):
         eng2._workspace_root = str(tmp_path)
         await eng2._scan(seed_only=True)
         assert len(await db.list_notifications()) == 1
+
+        await db.close()
+
+    asyncio.run(go())
+
+
+def test_seed_does_not_resurrect_cleared_terminal(tmp_path, monkeypatch):
+    """After the user clears a terminal-state alert, an engine restart (re-seed)
+    must not bring it back — the regression behind "cleared notifications
+    reappear after logout/login"."""
+    import asyncio
+
+    from db import Database
+    import services.notification_engine as ne
+
+    async def go():
+        db = Database(str(tmp_path / "n.db"))
+        await db.connect()
+
+        runs = [{
+            "run_dir": str(tmp_path / "run0001"),
+            "run_id": "uuid-1",
+            "run_name": "run0001",
+            "name": "csv_summary",
+        }]
+        monkeypatch.setattr(ne, "discover_runs", lambda ws=None: runs)
+
+        async def fake_detail(run_dir):
+            return {"status": "failed", "failed_jobs": 1, "total_jobs": 8}
+
+        monkeypatch.setattr(ne, "get_workflow_detail", fake_detail)
+        monkeypatch.setattr(ne, "get_run_status", lambda rd: "failed")
+
+        eng = ne.NotificationEngine()
+        eng._db = db
+        eng._workspace_root = str(tmp_path)
+        await eng._scan(seed_only=True)
+        assert len(await db.list_notifications()) == 1
+
+        # User clears the feed, then the server restarts and re-seeds.
+        await db.clear_notifications()
+        eng2 = ne.NotificationEngine()
+        eng2._db = db
+        eng2._workspace_root = str(tmp_path)
+        await eng2._scan(seed_only=True)
+        assert await db.list_notifications() == []
 
         await db.close()
 
