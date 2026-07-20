@@ -52,8 +52,10 @@ def _introspect_script() -> str:
 
 async def introspect_generator(project_dir: str) -> dict[str, Any]:
     """Return the generator's parameter schema for a project directory."""
-    generator = os.path.join(project_dir, "workflow_generator.py")
-    if not os.path.isfile(generator):
+    from services.workflow_scanner import find_generator
+
+    generator = find_generator(project_dir)
+    if not generator:
         return {"params": [], "mutex_required": []}
 
     try:
