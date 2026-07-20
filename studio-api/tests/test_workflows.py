@@ -238,6 +238,65 @@ def test_delete_run_rejects_path_outside_scan_root(client, monkeypatch, tmp_path
     assert outside.exists()  # untouched
 
 
+def test_delete_run_retries_then_succeeds(tmp_path, monkeypatch):
+    """A transient 'device or resource busy' (NFS handle not yet released) is
+    retried, and the delete succeeds once rmtree stops failing."""
+    import asyncio
+
+    import services.workflow_submitter as ws
+
+    run_dir = tmp_path / "run0001"
+    run_dir.mkdir()
+    (run_dir / "braindump.yml").write_text("x: 1\n")
+
+    calls = {"n": 0}
+    real_rmtree = ws.shutil.rmtree
+
+    def flaky_rmtree(path, *a, **k):
+        calls["n"] += 1
+        if calls["n"] < 3:  # busy on the first two attempts
+            raise OSError(16, "Device or resource busy")
+        real_rmtree(path, *a, **k)
+
+    monkeypatch.setattr(ws.shutil, "rmtree", flaky_rmtree)
+    monkeypatch.setattr(ws, "_DELETE_RETRY_DELAY", 0)  # no real waiting
+
+    result = asyncio.run(ws.delete_run(str(run_dir)))
+    assert result["status"] == "deleted"
+    assert calls["n"] == 3
+    assert not run_dir.exists()
+
+
+def test_delete_run_partial_when_files_held(tmp_path, monkeypatch):
+    """If files stay busy, delete_run removes what it can — dropping
+    braindump.yml so the run leaves the list — and still reports success."""
+    import asyncio
+
+    import services.workflow_submitter as ws
+
+    run_dir = tmp_path / "run0002"
+    run_dir.mkdir()
+    (run_dir / "braindump.yml").write_text("x: 1\n")
+    (run_dir / ".nfs00deadbeef").write_text("held\n")
+
+    # Every full rmtree "fails busy"; the best-effort pass removes braindump.yml
+    # but leaves the .nfs stub (as NFS would).
+    def always_busy(path, *a, **k):
+        raise OSError(16, "Device or resource busy")
+
+    def fake_best_effort(rd):
+        os.remove(os.path.join(rd, "braindump.yml"))
+        return [os.path.join(rd, ".nfs00deadbeef")]
+
+    monkeypatch.setattr(ws.shutil, "rmtree", always_busy)
+    monkeypatch.setattr(ws, "_best_effort_rmtree", fake_best_effort)
+    monkeypatch.setattr(ws, "_DELETE_RETRY_DELAY", 0)
+
+    result = asyncio.run(ws.delete_run(str(run_dir)))
+    assert result["status"] == "deleted"  # run no longer discoverable
+    assert not (run_dir / "braindump.yml").exists()
+
+
 def test_is_submitted_detects_markers(tmp_path):
     """A run dir counts as submitted once monitord/DAGMan have started."""
     from services.workflow_submitter import _is_submitted
