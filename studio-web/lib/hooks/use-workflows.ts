@@ -53,9 +53,16 @@ export function useDeleteWorkflow() {
 
 export function useProjectParams(projectId: string) {
   return useQuery({
-    queryKey: ["workflow-projects", projectId, "params"],
+    // Deliberately NOT under the "workflow-projects" key: a generator's params
+    // don't change on generate/plan/run, and every such mutation invalidates
+    // "workflow-projects". Sharing the prefix would re-introspect the generator
+    // on each mutation — wasteful, and previously a submit-loop for generators
+    // that plan+submit at import time. Params are static per generator.
+    queryKey: ["project-params", projectId],
     queryFn: () => api.getProjectParams(projectId),
     enabled: !!projectId,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   });
 }
 

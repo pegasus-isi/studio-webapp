@@ -8,6 +8,15 @@ The studio uses this to build the Generate form dynamically: different
 workflows expose different arguments, so we discover them at runtime rather
 than hardcoding.
 
+**Safety:** the "halt at parse_args" trick only stops a generator that actually
+uses argparse. A tutorial-style generator with no argparse (e.g.
+quickstart-workflow) runs its module top-level straight through — which may
+``wf.plan(submit=True)`` and submit a real workflow. Since introspection is
+triggered on every param fetch, that turns into a submit-loop. So we first
+check (statically, without executing) whether the generator uses argparse at
+all; if it doesn't, there is nothing to introspect and we return empty params
+WITHOUT running the file.
+
 Usage:
     python3 introspect_argparse.py <path-to-workflow_generator.py>
 
@@ -19,9 +28,36 @@ Output (stdout, last JSON line):
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import runpy
 import sys
+
+
+def _uses_argparse(target: str) -> bool:
+    """True if the generator references argparse (import or ``argparse.`` use).
+
+    Parsed statically so we never execute a generator that has no parser to
+    introspect — executing such a script can have real side effects (writing
+    files, planning and *submitting* a workflow at module top level)."""
+    try:
+        with open(target, encoding="utf-8", errors="replace") as f:
+            tree = ast.parse(f.read(), filename=target)
+    except (OSError, SyntaxError):
+        # Unreadable / unparseable — be conservative and don't execute it.
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(a.name == "argparse" for a in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "argparse":
+                return True
+        elif isinstance(node, ast.Attribute):
+            # argparse.ArgumentParser(...) reached via ``import argparse``
+            if isinstance(node.value, ast.Name) and node.value.id == "argparse":
+                return True
+    return False
 
 
 def _schema_from_parser(parser: argparse.ArgumentParser) -> dict:
@@ -64,6 +100,12 @@ def main() -> int:
         _emit({"params": [], "mutex_required": [], "error": "no target"})
         return 0
     target = sys.argv[1]
+
+    # No argparse -> nothing to introspect, and running it could submit a
+    # workflow. Return empty params without executing the file.
+    if not _uses_argparse(target):
+        _emit({"params": [], "mutex_required": []})
+        return 0
 
     def patched(self, *args, **kwargs):  # noqa: ANN001
         _emit(_schema_from_parser(self))
