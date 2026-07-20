@@ -86,8 +86,24 @@ _CURATED: list[dict[str, str]] = [
     },
 ]
 
+# Ids pinned to the front of the catalog, in this order, so newcomers meet the
+# gentlest examples first: a Hello-World tutorial, then a simple single-API
+# science workflow, then a real multi-step bioinformatics pipeline. Everything
+# else follows in the default order (Pegasus-ISI first, then alphabetical).
+_FEATURED_ORDER = ("quickstart", "soilmoisture", "variant-calling-pegasus")
+
 _cache: dict[str, Any] = {"ts": 0.0, "data": None}
 _lock = asyncio.Lock()
+
+
+def _sort_key(entry: dict[str, Any]) -> tuple[int, bool, str]:
+    """Catalog ordering: featured ids first (in _FEATURED_ORDER), then
+    Pegasus-ISI curated entries, then everything else alphabetically."""
+    try:
+        featured = _FEATURED_ORDER.index(entry["id"])
+    except ValueError:
+        featured = len(_FEATURED_ORDER)
+    return (featured, entry["source"] != "Pegasus-ISI", entry["name"].lower())
 
 
 def _norm_repo(url: str) -> str:
@@ -162,7 +178,7 @@ async def _catalog(force: bool = False) -> list[dict[str, Any]]:
                 merged[entry["id"]] = entry
                 merged[key] = entry  # dedup marker
         catalog = [v for k, v in merged.items() if k == v["id"]]
-        catalog.sort(key=lambda e: (e["source"] != "Pegasus-ISI", e["name"].lower()))
+        catalog.sort(key=_sort_key)
 
         _cache["ts"] = time.monotonic()
         _cache["data"] = catalog
