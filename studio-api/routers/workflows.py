@@ -29,7 +29,6 @@ from services.workflow_monitor import (
 )
 from services.workflow_scanner import discover_projects, discover_runs, get_run_status
 from services.workflow_submitter import (
-    cancel_workflow,
     run_planned_workflow,
     submit_workflow,
 )
@@ -759,18 +758,43 @@ async def analyze_workflow(run_id: str) -> dict:
 
 @router.delete("/{run_id}")
 async def delete_workflow(run_id: str) -> dict:
-    """Cancel a running workflow or remove a completed one."""
-    from main import db
+    """Delete a specific run: cancel it if still active, then remove its submit
+    directory from disk and drop it from the run list.
 
-    db_runs = await db.list_workflow_runs()
+    Destructive — the UI confirms with the user first. Only ever deletes inside
+    the scan root (the user's home tree), never an arbitrary path.
+    """
+    from main import db
+    from services.workflow_scanner import SCAN_ROOT
+    from services.workflow_submitter import delete_run
+
+    # Resolve the run dir from the DB, falling back to a fresh scan.
     run_dir = None
-    for r in db_runs:
+    for r in await db.list_workflow_runs():
         if r["run_id"] == run_id:
             run_dir = r["run_dir"]
             break
+    if not run_dir:
+        for r in discover_runs():
+            if r["run_id"] == run_id:
+                run_dir = r["run_dir"]
+                break
 
     if not run_dir:
         raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
 
-    result = await cancel_workflow(run_dir)
+    if os.path.isdir(run_dir):
+        # Safety: confine deletion to the scan root.
+        resolved = os.path.realpath(run_dir)
+        root = os.path.realpath(SCAN_ROOT)
+        if resolved != root and not resolved.startswith(root + os.sep):
+            raise HTTPException(
+                status_code=403, detail="Run directory is outside the workspace"
+            )
+        result = await delete_run(resolved)
+    else:
+        # Directory already gone — just clear any stale bookkeeping.
+        result = {"status": "deleted"}
+
+    await db.delete_workflow_run(run_id)
     return {"run_id": run_id, **result}

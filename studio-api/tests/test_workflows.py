@@ -185,6 +185,59 @@ def test_workflow_jobs_not_found(client):
     assert resp.status_code == 404
 
 
+def test_delete_run_not_found(client):
+    assert client.delete("/api/workflows/nope-run-id").status_code == 404
+
+
+def test_delete_run_removes_dir_and_db_row(client, monkeypatch):
+    """Deleting a run removes its submit directory from disk and drops it from
+    the persisted run list."""
+    import asyncio
+
+    import services.workflow_scanner as scanner
+    from main import db
+
+    home = os.environ.get("HOME", "/tmp")
+    run_dir = os.path.join(home, "work", "workflows", "quickstart", "run0001")
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "braindump.yml"), "w") as f:
+        f.write("pegasus_wf_name: quickstart\nwf_uuid: del-uuid-1\n")
+
+    # Confine the scan root to our temp home so realpath validation passes.
+    monkeypatch.setattr(scanner, "SCAN_ROOT", os.path.join(home, "work"))
+    asyncio.run(db.upsert_workflow_run(
+        run_id="del-uuid-1", name="quickstart", run_dir=run_dir, status="succeeded"
+    ))
+
+    resp = client.delete("/api/workflows/del-uuid-1")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "deleted"
+    assert not os.path.exists(run_dir)
+    assert all(r["run_id"] != "del-uuid-1" for r in asyncio.run(db.list_workflow_runs()))
+
+
+def test_delete_run_rejects_path_outside_scan_root(client, monkeypatch, tmp_path):
+    """A run dir resolving outside the scan root is refused (never rm'd)."""
+    import asyncio
+
+    import services.workflow_scanner as scanner
+    from main import db
+
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("do not delete\n")
+
+    # Scan root is elsewhere, so `outside` is out of bounds.
+    monkeypatch.setattr(scanner, "SCAN_ROOT", str(tmp_path / "sandbox"))
+    asyncio.run(db.upsert_workflow_run(
+        run_id="evil-1", name="x", run_dir=str(outside), status="succeeded"
+    ))
+
+    resp = client.delete("/api/workflows/evil-1")
+    assert resp.status_code == 403
+    assert outside.exists()  # untouched
+
+
 def test_is_submitted_detects_markers(tmp_path):
     """A run dir counts as submitted once monitord/DAGMan have started."""
     from services.workflow_submitter import _is_submitted

@@ -47,7 +47,11 @@ export function useDeleteWorkflow() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (runId: string) => api.deleteWorkflow(runId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["workflows"] }),
+    onSuccess: () => {
+      // Runs surface both standalone and inside a project — refresh both.
+      qc.invalidateQueries({ queryKey: ["workflows"] });
+      qc.invalidateQueries({ queryKey: ["workflow-projects"] });
+    },
   });
 }
 
