@@ -6,7 +6,13 @@ import structlog
 from fastapi import APIRouter, HTTPException
 
 from llm.propagator import LLMPropagator
-from llm.providers import PROVIDER_DEFAULTS, PROVIDERS, fetch_models, provider_type
+from llm.providers import (
+    PROVIDER_DEFAULTS,
+    PROVIDERS,
+    check_api_key_requirement,
+    fetch_models,
+    provider_type,
+)
 from models import (
     LLMConfigRequest,
     LLMConfigResponse,
@@ -67,11 +73,27 @@ async def get_llm_config() -> LLMConfigResponse:
 async def update_llm_config(req: LLMConfigRequest) -> LLMConfigResponse:
     from main import db
 
+    # A request that omits the key (e.g. only changing the model) must not
+    # wipe the stored one.
+    api_key = req.api_key
+    base_url = req.base_url
+    if not api_key:
+        existing = await db.get_llm_config()
+        if existing and existing.get("provider") == req.provider.value:
+            api_key = existing.get("api_key") or None
+            base_url = base_url or existing.get("base_url") or None
+
+    error = await check_api_key_requirement(
+        req.provider.value, api_key or "", base_url or ""
+    )
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+
     await db.set_llm_config(
         provider=req.provider.value,
         model=req.model,
-        api_key=req.api_key,
-        base_url=req.base_url,
+        api_key=api_key,
+        base_url=base_url,
         extra_config=req.extra_config,
     )
     log.info("llm_config_updated", provider=req.provider.value, model=req.model)
@@ -168,10 +190,21 @@ async def upsert_provider_config(req: ProviderConfigRequest) -> ProviderConfigRe
     """Create or update a saved provider configuration."""
     from main import db
 
+    # Same no-wipe rule as PUT /config: an omitted key keeps the saved one.
+    api_key = req.api_key
+    if not api_key:
+        existing = await db.get_provider_config(req.provider_id)
+        if existing:
+            api_key = existing.get("api_key") or ""
+
+    error = await check_api_key_requirement(req.provider_id, api_key, req.base_url)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+
     await db.upsert_provider_config(
         provider_id=req.provider_id,
         name=req.name,
-        api_key=req.api_key,
+        api_key=api_key,
         base_url=req.base_url,
         default_model=req.default_model,
         is_active=req.is_active,
@@ -195,8 +228,14 @@ async def activate_provider(provider_id: str) -> ProviderConfigResponse:
 
     config = await db.get_provider_config(provider_id)
     if not config:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Provider not found: {provider_id}")
+
+    # Guard legacy rows saved before key validation existed.
+    error = await check_api_key_requirement(
+        provider_id, config.get("api_key") or "", config.get("base_url") or ""
+    )
+    if error:
+        raise HTTPException(status_code=400, detail=error)
 
     await db.set_active_provider(provider_id)
 

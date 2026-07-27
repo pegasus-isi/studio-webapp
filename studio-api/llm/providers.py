@@ -130,6 +130,39 @@ def provider_type(provider_id: str) -> str:
     return "custom"
 
 
+async def check_api_key_requirement(
+    provider_id: str, api_key: str, base_url: str
+) -> str | None:
+    """Return an error message if saving this provider config would break chat.
+
+    A provider saved without a required API key fails much later — at chat
+    time, deep inside opencode, as "Authentication Error, No api key passed
+    in" — so catch it at save time instead. Known presets that declare an
+    ``api_key_env`` (anthropic, openai, google, fabric, nrp) hard-require a
+    key. Custom endpoints may legitimately be keyless (self-hosted vLLM, an
+    internal gateway), so probe ``/models`` without a key and reject only if
+    the endpoint demands auth.
+    """
+    ptype = provider_type(provider_id)
+    preset = PROVIDERS[ptype]
+    if api_key or not preset.get("api_key_env"):
+        return None  # key supplied, or provider needs none (gateway, ollama)
+    if ptype != "custom":
+        return (
+            f"{preset['name']} requires an API key. Add one, or switch to the "
+            "built-in LLM Gateway which needs no key."
+        )
+    if not base_url:
+        return "Custom provider requires a base URL."
+    _, err = await fetch_models(base_url, "")
+    if err and ("401" in err or "403" in err):
+        return (
+            "This endpoint rejects keyless requests "
+            f"({err}) — an API key is required."
+        )
+    return None
+
+
 def _resolve_base_url(pid: str, env_vars: dict[str, str] | None = None) -> str:
     """Resolve the actual base URL for a provider."""
     env_vars = env_vars or {}

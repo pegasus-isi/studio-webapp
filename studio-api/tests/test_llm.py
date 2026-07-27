@@ -86,3 +86,79 @@ def test_delete_inactive_provider_keeps_active(client):
     _add_provider(client, "drop", active=False)
     client.delete("/api/llm/provider-configs/drop")
     assert client.get("/api/llm/config").json()["provider"] == "keep"
+
+
+# --- API-key requirement at save time ---
+# A keyless fabric config used to save fine and only fail at chat time, deep
+# inside opencode, as "Authentication Error, No api key passed in".
+
+
+def test_put_llm_config_keyed_preset_without_key_rejected(client):
+    resp = client.put("/api/llm/config", json={"provider": "fabric"})
+    assert resp.status_code == 400
+    assert "API key" in resp.json()["detail"]
+    # Nothing was saved — still on the gateway default.
+    assert client.get("/api/llm/config").json()["provider"] == "gateway"
+
+
+def test_put_llm_config_gateway_needs_no_key(client):
+    resp = client.put("/api/llm/config", json={"provider": "gateway"})
+    assert resp.status_code == 200
+
+
+def test_put_llm_config_omitted_key_keeps_stored_key(client):
+    client.put(
+        "/api/llm/config",
+        json={"provider": "anthropic", "api_key": "sk-keep-me"},
+    )
+    # Model-only update without resending the key must not wipe (or reject) it.
+    resp = client.put(
+        "/api/llm/config",
+        json={"provider": "anthropic", "model": "claude-opus-4-6"},
+    )
+    assert resp.status_code == 200
+    data = client.get("/api/llm/config").json()
+    assert data["api_key"] == "sk-keep-me"
+    assert data["model"] == "claude-opus-4-6"
+
+
+def test_upsert_provider_config_keyed_preset_without_key_rejected(client):
+    resp = client.put(
+        "/api/llm/provider-configs",
+        json={"provider_id": "fabric", "name": "FABRIC AI", "api_key": ""},
+    )
+    assert resp.status_code == 400
+    assert "API key" in resp.json()["detail"]
+
+
+def test_custom_provider_keyless_allowed_unless_endpoint_demands_auth(
+    client, monkeypatch
+):
+    import llm.providers as providers
+
+    # Endpoint unreachable/no auth demanded -> keyless custom is allowed
+    # (self-hosted endpoints may legitimately have no key).
+    async def _no_auth(base_url, api_key):
+        return [], "Failed to fetch models: unreachable"
+
+    monkeypatch.setattr(providers, "fetch_models", _no_auth)
+    resp = client.put(
+        "/api/llm/provider-configs",
+        json={"provider_id": "custom-x", "name": "x", "base_url": "https://x/v1"},
+    )
+    assert resp.status_code == 200
+
+    # Endpoint rejects keyless requests -> save and activate are both rejected.
+    async def _auth_required(base_url, api_key):
+        return [], "HTTP 401: Unauthorized"
+
+    monkeypatch.setattr(providers, "fetch_models", _auth_required)
+    resp = client.put(
+        "/api/llm/provider-configs",
+        json={"provider_id": "custom-y", "name": "y", "base_url": "https://y/v1"},
+    )
+    assert resp.status_code == 400
+    assert "API key" in resp.json()["detail"]
+
+    resp = client.post("/api/llm/provider-configs/custom-x/activate")
+    assert resp.status_code == 400
