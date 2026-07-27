@@ -35,6 +35,19 @@ if [ ! -f "${MARKER}" ]; then
     echo "[studio] Initialization complete."
 fi
 
+# Pegasus agent endpoint — without it pegasus-analyzer probes the default
+# agent URL and stalls badly. HOME is the user PVC, so this must be written
+# at runtime (an image-baked copy under /home would be shadowed by the
+# mount). Runs on every start, not just first launch, so existing pods pick
+# it up; appends only when the key is absent, preserving user edits.
+PEGASUS_CONF="${HOME:-/tmp}/.pegasus/pegasus.conf"
+PEGASUS_AGENT_URL="${STUDIO_PEGASUS_AGENT_URL:-https://api.pegasus-ai.org}"
+if ! grep -qs '^pegasus\.agent\.url' "${PEGASUS_CONF}"; then
+    mkdir -p "$(dirname "${PEGASUS_CONF}")"
+    echo "pegasus.agent.url = ${PEGASUS_AGENT_URL}" >> "${PEGASUS_CONF}"
+    echo "[studio] Wrote pegasus.agent.url to ${PEGASUS_CONF}"
+fi
+
 # Propagate saved LLM config to installed tool adapters. Run in the background
 # with a hard timeout so it can NEVER gate supervisord startup: this touches the
 # NFS-backed SQLite DB, and a blocked write here would otherwise stall the
