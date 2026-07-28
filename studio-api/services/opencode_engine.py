@@ -282,6 +282,38 @@ class OpenCodeEngine:
             await self._db.set_setting(_SESSION_MAP_KEY, mapping)
         return sid
 
+    async def _active_model(self) -> dict[str, str] | None:
+        """The active provider/model as an explicit prompt-time model ref.
+
+        An opencode session remembers the model of its last message and reuses
+        it when a prompt names none — so a session created under an old
+        provider keeps calling that provider forever ("Model not found:
+        <old-provider>/<old-model>") if a provider switch ever bypasses
+        ``forget_sessions`` (manual DB repair, restored PVC state). Naming the
+        model on every prompt makes each turn follow the active config,
+        whatever the session remembers.
+        """
+        if self._db is None:
+            return None
+        try:
+            cfg = await self._db.get_llm_config()
+        except Exception as e:
+            log.warning("opencode_active_model_lookup_failed", error=str(e))
+            return None
+        if not cfg or not cfg.get("provider"):
+            return None
+        from llm.providers import PROVIDERS, provider_type
+
+        provider = str(cfg["provider"])
+        model = str(cfg.get("model") or "")
+        if not model:
+            preset = PROVIDERS.get(provider_type(provider), {})
+            model = str(preset.get("default_model") or "")
+        if not model:
+            return None
+        # A stored model may carry a provider prefix; opencode wants a bare id.
+        return {"providerID": provider, "modelID": model.rsplit("/", 1)[-1]}
+
     async def _abort(self, sid: str) -> None:
         try:
             async with self._client(await self._auth(), timeout=5.0) as c:
@@ -375,6 +407,9 @@ class OpenCodeEngine:
 
             agents = await self._known_agents(auth)
             payload: dict[str, Any] = {"parts": [{"type": "text", "text": text}]}
+            model = await self._active_model()
+            if model:
+                payload["model"] = model
             if agent_id and agent_id != "general" and agent_id in agents:
                 payload["agent"] = agent_id
 
