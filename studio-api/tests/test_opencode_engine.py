@@ -11,10 +11,13 @@ import pytest
 import services.opencode_engine as oce
 
 
-def _fake_server(events: list[dict], final_text: str = "") -> "httpx.MockTransport":
+def _fake_server(
+    events: list[dict], final_text: str = "", prompts: list[dict] | None = None
+) -> "httpx.MockTransport":
     """A fake `opencode serve` as an httpx MockTransport.
 
     *events* is the scripted /event SSE payload list (studio session events).
+    *prompts* (when given) collects each /prompt_async request body.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -28,6 +31,8 @@ def _fake_server(events: list[dict], final_text: str = "") -> "httpx.MockTranspo
         if path == "/agent":
             return httpx.Response(200, json=[{"name": "workflow-architect"}])
         if path.endswith("/prompt_async"):
+            if prompts is not None:
+                prompts.append(json.loads(request.content))
             return httpx.Response(204)
         if path.endswith("/abort"):
             return httpx.Response(200, json={})
@@ -48,8 +53,8 @@ def _fake_server(events: list[dict], final_text: str = "") -> "httpx.MockTranspo
     return httpx.MockTransport(handler)
 
 
-def _patched_engine(monkeypatch, events, final_text=""):
-    transport = _fake_server(events, final_text)
+def _patched_engine(monkeypatch, events, final_text="", prompts=None):
+    transport = _fake_server(events, final_text, prompts)
     eng = oce.OpenCodeEngine()
     eng._password = "pw"
 
@@ -223,6 +228,66 @@ def test_session_mapping_reused(monkeypatch, tmp_path):
     first, second, stored = asyncio.run(go())
     assert first == second == "ses_test1"
     assert stored == {"conv-1": "ses_test1"}
+
+
+def test_prompt_names_the_active_model(monkeypatch, tmp_path):
+    """Every prompt must carry the active provider/model explicitly, else a
+    session created under an old provider replays its remembered model and
+    fails with 'Model not found: <old>/<model>' even after opencode.json and
+    llm_config are corrected (jupyter-mzink, 2026-07-24)."""
+    from db import Database
+
+    events = [_ev("session.idle", sessionID="ses_test1")]
+    prompts: list[dict] = []
+    eng = _patched_engine(monkeypatch, events, prompts=prompts)
+
+    async def go():
+        db = Database(str(tmp_path / "m.db"))
+        await db.connect()
+        # Stored model may carry a provider prefix — must be stripped.
+        await db.set_llm_config(provider="gateway", model="gateway/default")
+        eng.set_db(db)
+        async for _ in eng.stream_turn(
+            text="hi", conversation_id="c1", agent_id="general",
+            request_id="req1", active_clients={},
+        ):
+            pass
+        await db.close()
+
+    asyncio.run(go())
+    assert prompts[0]["model"] == {"providerID": "gateway", "modelID": "default"}
+
+
+def test_prompt_defaults_to_gateway_without_config(monkeypatch, tmp_path):
+    """No llm_config row -> the baked-in gateway default, matching the UI."""
+    from db import Database
+
+    events = [_ev("session.idle", sessionID="ses_test1")]
+    prompts: list[dict] = []
+    eng = _patched_engine(monkeypatch, events, prompts=prompts)
+
+    async def go():
+        db = Database(str(tmp_path / "n.db"))
+        await db.connect()
+        eng.set_db(db)
+        async for _ in eng.stream_turn(
+            text="hi", conversation_id="c1", agent_id="general",
+            request_id="req1", active_clients={},
+        ):
+            pass
+        await db.close()
+
+    asyncio.run(go())
+    assert prompts[0]["model"] == {"providerID": "gateway", "modelID": "default"}
+
+
+def test_prompt_omits_model_without_db(monkeypatch):
+    """No DB wired (defensive) -> omit the field, opencode picks its default."""
+    events = [_ev("session.idle", sessionID="ses_test1")]
+    prompts: list[dict] = []
+    eng = _patched_engine(monkeypatch, events, prompts=prompts)
+    _collect(eng)
+    assert "model" not in prompts[0]
 
 
 # --- engine selection endpoints ---
