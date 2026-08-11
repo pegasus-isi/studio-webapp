@@ -28,6 +28,26 @@ log = structlog.get_logger()
 router = APIRouter(prefix="/api/llm", tags=["llm"])
 
 
+def _config_response(data: dict) -> LLMConfigResponse:
+    """Serialize a stored LLM config with the key as presence-only.
+
+    Keys are write-only (SEC-3): any script running in the studio origin can
+    read GET responses, so the raw key must never leave the server.
+    """
+    return LLMConfigResponse(
+        **{k: v for k, v in data.items() if k != "api_key"},
+        has_api_key=bool(data.get("api_key")),
+    )
+
+
+def _provider_response(row: dict) -> ProviderConfigResponse:
+    """ProviderConfigResponse with the same write-only key treatment."""
+    return ProviderConfigResponse(
+        **{k: v for k, v in row.items() if k != "api_key"},
+        has_api_key=bool(row.get("api_key")),
+    )
+
+
 async def _propagate_and_restart(db) -> None:
     """Propagate the active LLM config to installed tools, then restart the
     OpenCode chat server so it actually uses the new provider.
@@ -66,7 +86,7 @@ async def get_llm_config() -> LLMConfigResponse:
             model=PROVIDER_DEFAULTS["gateway"]["model"],
             base_url=PROVIDER_DEFAULTS["gateway"]["base_url"],
         )
-    return LLMConfigResponse(**data)
+    return _config_response(data)
 
 
 @router.put("/config", response_model=LLMConfigResponse)
@@ -101,7 +121,7 @@ async def update_llm_config(req: LLMConfigRequest) -> LLMConfigResponse:
     await _propagate_and_restart(db)
 
     data = await db.get_llm_config()
-    return LLMConfigResponse(**(data or {}))
+    return _config_response(data or {})
 
 
 @router.get("/providers")
@@ -119,20 +139,22 @@ async def list_providers() -> dict[str, list[ProviderInfo]]:
     return {"providers": providers}
 
 
-@router.post("/validate", response_model=ValidateResponse)
-async def validate_provider(req: ValidateRequest) -> ValidateResponse:
-    """Test API key connectivity by fetching models from the provider."""
+async def _list_models(
+    provider: str, api_key: str, base_url: str | None
+) -> ValidateResponse:
+    """Fetch the models a provider offers (shared by /validate and the
+    saved-provider models endpoint)."""
     # Normalize custom-<id> (multiple custom endpoints) to the "custom" preset.
-    ptype = provider_type(req.provider)
+    ptype = provider_type(provider)
     preset = PROVIDERS.get(ptype)
     if not preset:
-        raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider}")
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
 
     # Resolve base URL
     defaults = PROVIDER_DEFAULTS.get(ptype, {})
-    base_url = req.base_url or defaults.get("base_url", "")
+    resolved_url = base_url or defaults.get("base_url", "")
 
-    if not base_url:
+    if not resolved_url:
         return ValidateResponse(
             valid=False, error="No base URL configured for this provider."
         )
@@ -147,7 +169,7 @@ async def validate_provider(req: ValidateRequest) -> ValidateResponse:
                 resp = await client.get(
                     "https://api.anthropic.com/v1/models",
                     headers={
-                        "x-api-key": req.api_key,
+                        "x-api-key": api_key,
                         "anthropic-version": "2023-06-01",
                     },
                 )
@@ -165,10 +187,16 @@ async def validate_provider(req: ValidateRequest) -> ValidateResponse:
             return ValidateResponse(valid=False, error=str(e))
 
     # OpenAI-compatible: fetch /models
-    models, error = await fetch_models(base_url, req.api_key)
+    models, error = await fetch_models(resolved_url, api_key)
     if error:
         return ValidateResponse(valid=False, error=error)
     return ValidateResponse(valid=True, models=models)
+
+
+@router.post("/validate", response_model=ValidateResponse)
+async def validate_provider(req: ValidateRequest) -> ValidateResponse:
+    """Test API key connectivity by fetching models from the provider."""
+    return await _list_models(req.provider, req.api_key, req.base_url)
 
 
 # --- Saved provider configs ---
@@ -181,8 +209,29 @@ async def list_provider_configs() -> dict[str, list[ProviderConfigResponse]]:
 
     rows = await db.list_provider_configs()
     return {
-        "configs": [ProviderConfigResponse(**r) for r in rows],
+        "configs": [_provider_response(r) for r in rows],
     }
+
+
+@router.get(
+    "/provider-configs/{provider_id}/models", response_model=ValidateResponse
+)
+async def provider_config_models(provider_id: str) -> ValidateResponse:
+    """List the models a saved provider offers, using its STORED key.
+
+    Companion to keys being write-only (SEC-3): the browser can no longer
+    read a saved key to call /validate itself, so the lookup runs server-side.
+    An id with no saved row falls back to preset defaults with no key —
+    matching what the old client-side call could do for keyless providers
+    (gateway, ollama)."""
+    from main import db
+
+    row = await db.get_provider_config(provider_id) or {}
+    return await _list_models(
+        provider_id,
+        row.get("api_key") or "",
+        row.get("base_url") or None,
+    )
 
 
 @router.put("/provider-configs")
@@ -218,7 +267,7 @@ async def upsert_provider_config(req: ProviderConfigRequest) -> ProviderConfigRe
     await _propagate_and_restart(db)
 
     row = await db.get_provider_config(req.provider_id)
-    return ProviderConfigResponse(**(row or {}))
+    return _provider_response(row or {})
 
 
 @router.post("/provider-configs/{provider_id}/activate")
@@ -242,7 +291,7 @@ async def activate_provider(provider_id: str) -> ProviderConfigResponse:
     await _propagate_and_restart(db)
 
     row = await db.get_provider_config(provider_id)
-    return ProviderConfigResponse(**(row or {}))
+    return _provider_response(row or {})
 
 
 @router.delete("/provider-configs/{provider_id}")

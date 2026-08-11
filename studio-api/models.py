@@ -112,7 +112,9 @@ class LLMConfigRequest(BaseModel):
 class LLMConfigResponse(BaseModel):
     provider: str
     model: str | None = None
-    api_key: str | None = None
+    # Keys are write-only: GETs report presence, never the value (SEC-3) —
+    # same treatment the registry password gets in /api/settings/registry.
+    has_api_key: bool = False
     base_url: str | None = None
     extra_config: dict[str, Any] = Field(default_factory=dict)
     updated_at: str | None = None
@@ -151,7 +153,8 @@ class ProviderConfigRequest(BaseModel):
 class ProviderConfigResponse(BaseModel):
     provider_id: str
     name: str
-    api_key: str = ""
+    # Write-only key, as in LLMConfigResponse.
+    has_api_key: bool = False
     base_url: str = ""
     default_model: str = ""
     is_active: bool = False

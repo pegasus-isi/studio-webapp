@@ -53,16 +53,10 @@ export function ChatInput() {
     : presetProviders;
 
   // Discover the selected provider's models so the model field offers a real
-  // choice — using that provider's saved key/base URL. Empty on the Default
-  // provider or when discovery fails (the field then just accepts free text).
-  const selectedConfig = savedConfigs.find(
-    (c) => c.provider_id === chatProvider
-  );
-  const { data: modelsData } = useProviderModels(
-    chatProvider,
-    selectedConfig?.api_key ?? "",
-    selectedConfig?.base_url ?? null
-  );
+  // choice — resolved server-side against the provider's saved key/base URL
+  // (keys never reach the browser). Empty on the Default provider or when
+  // discovery fails (the field then just accepts free text).
+  const { data: modelsData } = useProviderModels(chatProvider);
   const providerDefaultModel = providers.find(
     (p) => p.id === chatProvider
   )?.default_model;

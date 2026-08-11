@@ -28,14 +28,17 @@ def test_put_llm_config(client):
     data = resp.json()
     assert data["provider"] == "anthropic"
     assert data["model"] == "claude-sonnet-4-5-20250929"
-    assert data["api_key"] == "sk-test-key"
+    # Keys are write-only (SEC-3): responses report presence, never the value.
+    assert data["has_api_key"] is True
+    assert "sk-test-key" not in resp.text
 
     # Verify it persists
     resp2 = client.get("/api/llm/config")
     assert resp2.status_code == 200
     data2 = resp2.json()
     assert data2["provider"] == "anthropic"
-    assert data2["api_key"] == "sk-test-key"
+    assert data2["has_api_key"] is True
+    assert "sk-test-key" not in resp2.text
 
 
 def test_list_providers(client):
@@ -118,7 +121,7 @@ def test_put_llm_config_omitted_key_keeps_stored_key(client):
     )
     assert resp.status_code == 200
     data = client.get("/api/llm/config").json()
-    assert data["api_key"] == "sk-keep-me"
+    assert data["has_api_key"] is True
     assert data["model"] == "claude-opus-4-6"
 
 
@@ -162,3 +165,62 @@ def test_custom_provider_keyless_allowed_unless_endpoint_demands_auth(
 
     resp = client.post("/api/llm/provider-configs/custom-x/activate")
     assert resp.status_code == 400
+
+
+# --- SEC-3: keys are write-only ---
+
+
+def test_provider_configs_never_echo_keys(client):
+    _add_provider(client, "custom-z", active=False)
+    resp = client.get("/api/llm/provider-configs")
+    assert resp.status_code == 200
+    cfg = next(
+        c for c in resp.json()["configs"] if c["provider_id"] == "custom-z"
+    )
+    assert cfg["has_api_key"] is True
+    assert "api_key" not in cfg
+
+    # GET /api/settings serializes the same model — no key there either.
+    _add_provider(client, "custom-z", active=True)
+    llm = client.get("/api/settings").json()["llm"]
+    assert llm["has_api_key"] is True
+    assert "api_key" not in llm
+
+
+def test_saved_provider_models_uses_stored_key(client, monkeypatch):
+    """The chat model chooser lists a saved provider's models WITHOUT the
+    browser ever holding the key — resolved server-side from the DB."""
+    _add_provider(client, "custom-m", base="https://m.example/v1")
+
+    seen = {}
+
+    async def fake_fetch(base_url, api_key):
+        seen["base_url"] = base_url
+        seen["api_key"] = api_key
+        return ["m1", "m2"], None
+
+    monkeypatch.setattr("routers.llm.fetch_models", fake_fetch)
+    resp = client.get("/api/llm/provider-configs/custom-m/models")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["valid"] is True
+    assert body["models"] == ["m1", "m2"]
+    assert seen == {"base_url": "https://m.example/v1", "api_key": "k"}
+
+
+def test_saved_provider_models_without_saved_row_uses_preset(client, monkeypatch):
+    """No saved row falls back to preset defaults with no key (keyless
+    providers like the gateway still get model discovery in chat)."""
+    seen = {}
+
+    async def fake_fetch(base_url, api_key):
+        seen["base_url"] = base_url
+        seen["api_key"] = api_key
+        return ["default"], None
+
+    monkeypatch.setattr("routers.llm.fetch_models", fake_fetch)
+    resp = client.get("/api/llm/provider-configs/gateway/models")
+    assert resp.status_code == 200
+    assert resp.json()["valid"] is True
+    assert seen["api_key"] == ""
+    assert seen["base_url"]  # preset default resolved server-side
