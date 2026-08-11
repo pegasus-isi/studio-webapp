@@ -152,6 +152,30 @@ export function ChatInput() {
         signal: controller.signal,
       });
 
+      if (!response.ok) {
+        // A 500 ({"detail":…}) or a 502/504 HTML page from nginx/Envoy still
+        // has a body, so without this check the SSE reader consumes it,
+        // appends nothing, and the spinner clears — chat looks silently
+        // broken with the actual cause discarded.
+        let detail = "";
+        try {
+          const raw = await response.text();
+          try {
+            detail = String(JSON.parse(raw)?.detail ?? raw);
+          } catch {
+            detail = raw; // not JSON — likely a gateway HTML error page
+          }
+        } catch {
+          // body unreadable — fall through to the bare status line
+        }
+        detail = detail.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        setLastError(
+          `HTTP ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`,
+          convId
+        );
+        return;
+      }
+
       if (!response.body) {
         setLastError("No response body", convId);
         return;
