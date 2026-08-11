@@ -73,7 +73,14 @@ COPY docker/nsswitch.conf /etc/nsswitch.conf
 # Then bootstrap a clean pip from get-pip.py.
 RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && \
     rm -rf /usr/lib/python3/dist-packages/* && \
-    curl -fsSL https://bootstrap.pypa.io/get-pip.py | python3 && \
+    # sha256-pinned instead of curl|python3 into the root interpreter: a new
+    # upstream get-pip.py fails the checksum loudly (bump the hash on a pip
+    # release) rather than executing unreviewed code at build time.
+    curl -fsSL -o /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py && \
+    echo "fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6  /tmp/get-pip.py" \
+        | sha256sum -c - && \
+    python3 /tmp/get-pip.py && \
+    rm -f /tmp/get-pip.py && \
     pip install --no-cache-dir setuptools wheel
 
 # ---- JupyterLab + extensions ----
@@ -129,20 +136,30 @@ RUN ARCH=$(dpkg --print-architecture) && \
         -o /etc/apt/keyrings/htcondor.asc && \
     curl -fsSL https://htcss-downloads.chtc.wisc.edu/repo/ubuntu/htcondor-25.x-noble.list \
         -o /etc/apt/sources.list.d/htcondor.list && \
-    curl -fsSL https://download.pegasus.isi.edu/pegasus/gpg.txt \
-        | gpg --dearmor -o /usr/share/keyrings/pegasus.gpg && \
-    echo "deb [trusted=yes] https://download.pegasus.isi.edu/pegasus/development/6.0/ubuntu noble main" \
-        > /etc/apt/sources.list.d/pegasus.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends condor pegasus && \
+    apt-get install -y --no-install-recommends condor && \
     rm -rf /var/lib/apt/lists/*
 COPY docker/htcondor/90-studio.conf /etc/condor/config.d/90-studio.conf
 COPY docker/pegasus/pegasus.properties /etc/pegasus/pegasus.properties
 
-# for now, use a special Pegasus with the monitord plugin patch
-RUN wget https://download.pegasus.isi.edu/pegasus-ai/pegasus_6.0.0~-dev.0202606301145-1+ubuntu24_amd64.deb && \
-    dpkg -i --force-downgrade ./pegasus_6.0.0~-dev.0202606301145-1+ubuntu24_amd64.deb && \
-    rm -f pegasus_6.0.0~-dev.0202606301145-1+ubuntu24_amd64.deb
+# ---- Pegasus (pinned dev .deb with the monitord plugin patch) ----
+# The Pegasus development apt repo publishes UNSIGNED metadata (no
+# InRelease/Release.gpg as of 2026-08, so [signed-by=…] cannot work and it
+# previously shipped with [trusted=yes]) — and the repo's `pegasus` package
+# was immediately force-downgraded by this pinned .deb anyway. Installing the
+# checksummed .deb directly drops the unsigned repo entirely: sha256 is the
+# integrity anchor, and apt resolves its dependencies from the signed
+# Ubuntu/HTCondor repos. Update BOTH the filename and the hash on a bump.
+RUN PEG_DEB="pegasus_6.0.0~-dev.0202606301145-1+ubuntu24_amd64.deb" && \
+    PEG_SHA256="1fe10d48403bd8c5ce8b0b42712755f518019681b949c47eb0e0ac4d645352bf" && \
+    curl -fsSL -o "/tmp/${PEG_DEB}" \
+        "https://download.pegasus.isi.edu/pegasus-ai/${PEG_DEB}" && \
+    echo "${PEG_SHA256}  /tmp/${PEG_DEB}" | sha256sum -c - && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends "/tmp/${PEG_DEB}" && \
+    rm -f "/tmp/${PEG_DEB}" && \
+    rm -rf /var/lib/apt/lists/* && \
+    pegasus-version
 
 # Pin Pegasus's CLI tools (pegasus-preflight-check, etc.) explicitly to the
 # system Python 3.12 — the interpreter that carries Pegasus's DEB deps.
@@ -198,9 +215,17 @@ COPY docker/containers/apt-no-sandbox.conf /etc/studio/apt-no-sandbox.conf
 # is present (see services/stampede_reader.py).
 
 # ---- Node.js runtime (for Next.js standalone server) ----
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+# Keyring'd apt repo instead of `curl | bash` of NodeSource's setup script as
+# root — same pattern as HTCondor above, so package signatures are verified.
+RUN install -d /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+        > /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
     apt-get install -y --no-install-recommends nodejs && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    node --version
 
 # ---- npm global prefix ----
 # AI tools (Claude Code, OpenCode, Codex CLI, …) are installed on-demand via
