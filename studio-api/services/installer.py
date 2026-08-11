@@ -11,6 +11,7 @@ from typing import Any
 import structlog
 
 from knowledge.adapters import get_adapter
+from services.procutil import communicate_or_kill
 from services.tool_env import npm_prefix, with_tool_paths
 
 log = structlog.get_logger()
@@ -120,9 +121,7 @@ class ToolInstaller:
                     stderr=asyncio.subprocess.PIPE,
                     env=install_env,
                 )
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=300,
-                )
+                stdout, stderr = await communicate_or_kill(proc, 300)
                 if proc.returncode != 0:
                     raise RuntimeError(_install_error(tool_id, prefix, stderr))
                 # Update process PATH + prefix so subsequent shutil.which() calls

@@ -21,6 +21,7 @@ from models import (
     WorkflowRunResponse,
 )
 from services.generator_introspect import PLAN_PARAMS, introspect_generator
+from services.procutil import communicate_or_kill
 from services.workflow_monitor import (
     get_workflow_detail,
     get_workflow_jobs,
@@ -190,9 +191,7 @@ async def generate_workflow(
             stderr=asyncio.subprocess.PIPE,
             cwd=project_dir,
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=_CMD_TIMEOUT
-        )
+        stdout, stderr = await communicate_or_kill(proc, _CMD_TIMEOUT)
         out = stdout.decode("utf-8", errors="replace")
         err = stderr.decode("utf-8", errors="replace")
         output = out
@@ -299,9 +298,7 @@ async def plan_workflow(
             stderr=asyncio.subprocess.PIPE,
             cwd=project_dir,
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=_CMD_TIMEOUT
-        )
+        stdout, stderr = await communicate_or_kill(proc, _CMD_TIMEOUT)
         out = stdout.decode("utf-8", errors="replace")
         err = stderr.decode("utf-8", errors="replace")
         output = out
