@@ -35,7 +35,10 @@ async function request<T>(
 // --- Health ---
 
 export async function getHealth() {
-  return request<{ status: string; version: string }>("/health");
+  // channel is a pre-release qualifier ("alpha"); older backends omit it.
+  return request<{ status: string; version: string; channel?: string }>(
+    "/health"
+  );
 }
 
 export async function getDetailedHealth() {
@@ -410,14 +413,7 @@ export interface DashboardData {
     }[];
   };
   resources: ProvisioningStatus;
-  versions: {
-    // studio/channel come from studio-api; older backends omit them, so both
-    // are optional and the UI hides the badge when absent.
-    studio?: string;
-    channel?: string;
-    pegasus: string | null;
-    condor: string | null;
-  };
+  versions: { pegasus: string | null; condor: string | null };
   notifications: { unread: number };
 }
 

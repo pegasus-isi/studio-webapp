@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { appRelativePath, jupyterUrl, stripAppBasePath } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 import { usePanelStore } from "@/lib/stores/panel-store";
+import { useStudioVersion } from "@/lib/hooks/use-version";
 
 // Settings is intentionally not here — it lives in the top-right user menu.
 const NAV_ITEMS: {
@@ -29,6 +30,29 @@ export function Sidebar() {
   const toggleChat = usePanelStore((s) => s.toggleChat);
   const toggleTerminal = usePanelStore((s) => s.toggleTerminal);
   const toggleSidebar = usePanelStore((s) => s.toggleSidebar);
+  const studioVersion = useStudioVersion();
+
+  const collapseToggle = (
+    <button
+      onClick={toggleSidebar}
+      title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      className="rounded p-1.5 text-fgsubtle transition-colors hover:bg-muted hover:text-fg"
+    >
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={cn("transition-transform", collapsed && "rotate-180")}
+      >
+        <polyline points="15 18 9 12 15 6" />
+      </svg>
+    </button>
+  );
 
   return (
     <aside
@@ -37,48 +61,39 @@ export function Sidebar() {
         collapsed ? "w-14" : "w-56"
       )}
     >
-      {/* Logo + collapse toggle */}
-      <div
-        className={cn(
-          "flex h-14 items-center border-b border-line",
-          collapsed ? "justify-center px-0" : "justify-between px-3"
-        )}
-      >
-        {!collapsed && (
-          <span className="flex items-center gap-1.5">
-            <img
-              src="pegasus-ai-logo-light.png"
-              alt="PegasusAI"
-              className="block h-9 w-auto dark:hidden"
-            />
-            <img
-              src="pegasus-ai-logo-dark.png"
-              alt="PegasusAI"
-              className="hidden h-9 w-auto dark:block"
-            />
-            <span className="text-sm font-medium text-fgsubtle">Studio</span>
-          </span>
-        )}
-        <button
-          onClick={toggleSidebar}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className="rounded p-1.5 text-fgsubtle transition-colors hover:bg-muted hover:text-fg"
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={cn("transition-transform", collapsed && "rotate-180")}
+      {/* Logo + release version + collapse toggle */}
+      {collapsed ? (
+        <div className="flex h-14 items-center justify-center border-b border-line">
+          {collapseToggle}
+        </div>
+      ) : (
+        <div className="border-b border-line px-3 py-2">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <img
+                src="pegasus-ai-logo-light.png"
+                alt="PegasusAI"
+                className="block h-9 w-auto dark:hidden"
+              />
+              <img
+                src="pegasus-ai-logo-dark.png"
+                alt="PegasusAI"
+                className="hidden h-9 w-auto dark:block"
+              />
+              <span className="text-sm font-medium text-fgsubtle">Studio</span>
+            </span>
+            {collapseToggle}
+          </div>
+          {/* Non-breaking space while the version loads keeps the header from
+              shifting the nav down on first paint. */}
+          <span
+            title="PegasusAI Studio release"
+            className="mt-0.5 block font-mono text-[10px] leading-none text-fgsubtle"
           >
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-        </button>
-      </div>
+            {studioVersion ?? "\u00a0"}
+          </span>
+        </div>
+      )}
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 p-2">
@@ -193,13 +208,6 @@ export function Sidebar() {
           </button>
         </div>
       </nav>
-
-      {/* Footer */}
-      {!collapsed && (
-        <div className="border-t border-line p-3 text-xs text-fgsubtle">
-          v0.1.0
-        </div>
-      )}
     </aside>
   );
 }

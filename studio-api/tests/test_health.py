@@ -9,6 +9,8 @@ def test_health_ok(client):
     data = resp.json()
     assert data["status"] == "ok"
     assert "version" in data
+    # The sidebar builds its release label from version + channel.
+    assert "channel" in data
 
 
 def test_health_detailed(client):
