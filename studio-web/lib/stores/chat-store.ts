@@ -15,6 +15,9 @@ export interface ChatMsg {
   content: string;
   toolCalls?: { id: string; name: string; arguments: unknown }[];
   toolResults?: { id: string; name: string; result: string }[];
+  // Shell commands awaiting the user's Approve/Deny (SEC-4). Removed once the
+  // user decides; the tool_call/tool_result that follow render normally.
+  pendingApprovals?: { id: string; name: string; summary: string }[];
   // Transient error for this turn (connection/stream failure). Kept separate
   // from `content` so it's shown to the user but never re-sent to the model.
   error?: string;
@@ -63,6 +66,11 @@ interface ChatStore {
     result: { id: string; name: string; result: string },
     convId?: string
   ) => void;
+  addPermissionRequest: (
+    req: { id: string; name: string; summary: string },
+    convId?: string
+  ) => void;
+  clearPermissionRequest: (callId: string, convId?: string) => void;
   setLastMeta: (meta: NonNullable<ChatMsg["meta"]>, convId?: string) => void;
   setLastServerId: (serverId: number, convId?: string) => void;
   setMessageFeedback: (
@@ -177,6 +185,51 @@ export const useChatStore = create<ChatStore>()(
               toolResults: [...(last.toolResults || []), result],
             };
           }
+          return {
+            messagesById: { ...s.messagesById, [cid]: arr },
+            ...(cid === s.activeId ? { messages: arr } : {}),
+          };
+        }),
+
+      addPermissionRequest: (req, convId) =>
+        set((s) => {
+          const cid = convId ?? s.activeId;
+          const arr = [...(s.messagesById[cid] || [])];
+          const last = arr[arr.length - 1];
+          if (last && last.role === "assistant") {
+            arr[arr.length - 1] = {
+              ...last,
+              pendingApprovals: [...(last.pendingApprovals || []), req],
+            };
+          } else {
+            // Permission asked before any assistant text — make a bubble to
+            // carry the card (empty content, so nothing is sent to the model).
+            arr.push({
+              id: genId(),
+              role: "assistant",
+              content: "",
+              pendingApprovals: [req],
+            });
+          }
+          return {
+            messagesById: { ...s.messagesById, [cid]: arr },
+            ...(cid === s.activeId ? { messages: arr } : {}),
+          };
+        }),
+
+      clearPermissionRequest: (callId, convId) =>
+        set((s) => {
+          const cid = convId ?? s.activeId;
+          const arr = (s.messagesById[cid] || []).map((m) =>
+            m.pendingApprovals?.some((p) => p.id === callId)
+              ? {
+                  ...m,
+                  pendingApprovals: m.pendingApprovals.filter(
+                    (p) => p.id !== callId
+                  ),
+                }
+              : m
+          );
           return {
             messagesById: { ...s.messagesById, [cid]: arr },
             ...(cid === s.activeId ? { messages: arr } : {}),
@@ -322,6 +375,14 @@ export const useChatStore = create<ChatStore>()(
       // messages mirrors messagesById[activeId] — recompute after rehydrate.
       onRehydrateStorage: () => (state) => {
         if (state) {
+          // A reload kills the SSE stream, so any persisted approval prompt is
+          // dead (its decision endpoint would no-op). Drop the cards so the
+          // user isn't shown buttons that can't resolve anything.
+          for (const cid of Object.keys(state.messagesById)) {
+            state.messagesById[cid] = state.messagesById[cid].map((m) =>
+              m.pendingApprovals ? { ...m, pendingApprovals: undefined } : m
+            );
+          }
           state.messages = state.messagesById[state.activeId] || [];
         }
       },

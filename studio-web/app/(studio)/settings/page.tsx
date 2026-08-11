@@ -595,13 +595,35 @@ function ChatTab() {
   const [error, setError] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [requireApproval, setRequireApproval] = useState<boolean | null>(null);
+  const [approvalSaving, setApprovalSaving] = useState(false);
 
   useEffect(() => {
     api
       .getChatEngine()
       .then(setStatus)
       .catch((e) => setError(String(e)));
+    api
+      .getCommandApproval()
+      .then((r) => setRequireApproval(r.require_approval))
+      .catch(() => setRequireApproval(true));
   }, []);
+
+  const toggleApproval = async (next: boolean) => {
+    if (approvalSaving) return;
+    setApprovalSaving(true);
+    const prev = requireApproval;
+    setRequireApproval(next); // optimistic
+    try {
+      const r = await api.updateCommandApproval(next);
+      setRequireApproval(r.require_approval);
+    } catch (e) {
+      setRequireApproval(prev ?? true); // revert
+      setError(String(e));
+    } finally {
+      setApprovalSaving(false);
+    }
+  };
 
   const select = async (engine: "builtin" | "opencode") => {
     if (!status || status.engine === engine || switching) return;
@@ -723,6 +745,40 @@ function ChatTab() {
           </div>
         </div>
       )}
+
+      {/* Shell-command approval (SEC-4) */}
+      <div className="rounded-lg border border-line bg-surface p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-fg">
+              Confirm shell commands
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+              When on, chat pauses for your Approve/Deny before running any
+              shell command it wants to execute. Turn off to let commands run
+              automatically (the old behavior). File reads and writes inside
+              your workspace are never gated.
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={requireApproval === true}
+            disabled={requireApproval === null || approvalSaving}
+            onClick={() => toggleApproval(!requireApproval)}
+            className={cn(
+              "relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50",
+              requireApproval ? "bg-pegasus-600" : "bg-muted"
+            )}
+          >
+            <span
+              className={cn(
+                "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                requireApproval ? "translate-x-4" : "translate-x-0.5"
+              )}
+            />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
