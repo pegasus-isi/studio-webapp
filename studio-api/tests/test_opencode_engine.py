@@ -380,3 +380,86 @@ def test_chat_stream_dispatches_to_opencode(client, monkeypatch):
     roles = [(m["role"], m["content"]) for m in history]
     assert ("user", "hello") in roles
     assert ("assistant", "Hi from opencode") in roles
+
+
+# --- BE-6: no silent bare-[DONE] turns ---------------------------------------
+
+
+def test_malformed_event_yields_error_frame(monkeypatch):
+    """An event with an unexpected shape (here: non-numeric token counts) must
+    surface as an error frame and keep the partial text for persistence — not
+    escape the generator and end the stream as a bare [DONE]."""
+    events = [
+        _ev("message.part.updated", sessionID="ses_test1", part=TEXT_PART, time=1),
+        _ev("message.part.delta", sessionID="ses_test1", messageID="msg_1",
+            partID="prt_text", field="text", delta="partial"),
+        _ev("message.updated", sessionID="ses_test1",
+            info={"id": "msg_1", "role": "assistant",
+                  "tokens": {"input": "not-a-number", "output": 0}}),
+        _ev("session.idle", sessionID="ses_test1"),
+    ]
+    eng = _patched_engine(monkeypatch, events)
+    payloads = _payloads(_collect(eng))
+    assert any("OpenCode turn failed" in p.get("error", "") for p in payloads)
+    assert eng.last_turn["text"] == "partial"
+
+
+def test_event_stream_disconnect_keeps_partial_text(monkeypatch):
+    """/event ending without session.idle (opencode serve died mid-turn) must
+    emit the disconnect error and preserve already-streamed text so the caller
+    persists the partial turn instead of dropping it from history."""
+    events = [
+        _ev("message.part.updated", sessionID="ses_test1", part=TEXT_PART, time=1),
+        _ev("message.part.delta", sessionID="ses_test1", messageID="msg_1",
+            partID="prt_text", field="text", delta="halfway"),
+        # no session.idle — the scripted /event body just ends
+    ]
+    eng = _patched_engine(monkeypatch, events)
+    payloads = _payloads(_collect(eng))
+    assert any("disconnected" in p.get("error", "") for p in payloads)
+    assert eng.last_turn["text"] == "halfway"
+
+
+def test_session_create_failure_is_an_error_frame(monkeypatch):
+    """A non-JSON POST /session response (e.g. a proxy HTML error page) raises
+    ValueError, not httpx.HTTPError — it must still become an error frame."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/session" and request.method == "POST":
+            return httpx.Response(200, content=b"<html>bad gateway</html>")
+        return httpx.Response(404, json={})
+
+    transport = httpx.MockTransport(handler)
+    eng = oce.OpenCodeEngine()
+    eng._password = "pw"
+    monkeypatch.setattr(
+        eng, "_client",
+        lambda auth, timeout=30.0: httpx.AsyncClient(
+            base_url="http://oc.test", transport=transport, auth=auth),
+    )
+    payloads = _payloads(_collect(eng))
+    assert any("session error" in p.get("error", "").lower() for p in payloads)
+
+
+def test_router_backstops_engine_crash(client, monkeypatch):
+    """If the engine path blows up before/outside its own error handling, the
+    router must emit an error frame before [DONE] — never a silent turn."""
+
+    async def ok():
+        return None
+
+    async def exploding_turn(**kw):
+        yield 'data: {"content": "part"}\n\n'
+        raise RuntimeError("engine fell over")
+
+    monkeypatch.setattr(oce.engine, "ensure_running", ok)
+    monkeypatch.setattr(oce.engine, "stream_turn", exploding_turn)
+
+    client.put("/api/chat/engine", json={"engine": "opencode"})
+    res = client.post("/api/chat/stream", json={
+        "messages": [{"role": "user", "content": "hello"}],
+        "conversation_id": "conv-crash",
+    })
+    assert res.status_code == 200
+    assert "engine fell over" in res.text
+    assert "[DONE]" in res.text

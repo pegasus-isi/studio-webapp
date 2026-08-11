@@ -362,7 +362,12 @@ class OpenCodeEngine:
 
         try:
             sid = await self._session_for(auth, conversation_id)
-        except httpx.HTTPError as e:
+        except Exception as e:
+            # Not just httpx errors: a non-JSON /session response raises
+            # ValueError/KeyError and a DB failure raises whatever aiosqlite
+            # does — all of them must reach the user as an error frame, not
+            # escape and end the turn as a bare [DONE].
+            log.warning("opencode_session_failed", error=str(e))
             yield _sse({"error": f"OpenCode session error: {e}"})
             return
 
@@ -445,6 +450,9 @@ class OpenCodeEngine:
                 except asyncio.TimeoutError:
                     continue
                 if ev is None:  # event stream ended underneath us
+                    # Keep whatever already streamed so the caller persists
+                    # the partial turn instead of dropping it from history.
+                    self.last_turn["text"] = "".join(emitted_text)
                     yield _sse({"error": "OpenCode event stream disconnected."})
                     return
 
@@ -541,6 +549,7 @@ class OpenCodeEngine:
                 elif etype == "session.idle":
                     break
             else:
+                self.last_turn["text"] = "".join(emitted_text)
                 yield _sse({"error": "OpenCode turn timed out."})
                 aborted = True
                 return
@@ -568,6 +577,15 @@ class OpenCodeEngine:
         except GeneratorExit:
             aborted = True
             raise
+        except Exception as e:
+            # opencode serve died mid-turn, the prompt POST failed, or an
+            # event had an unexpected shape (json/KeyError). Without this the
+            # exception escaped to the router, which ended the SSE stream
+            # with a bare [DONE] — no error text, nothing persisted, cause
+            # only in logs. Surface it and keep the partial turn.
+            log.warning("opencode_turn_failed", error=str(e), exc_info=True)
+            self.last_turn["text"] = "".join(emitted_text)
+            yield _sse({"error": f"OpenCode turn failed: {e}"})
         finally:
             if aborted:
                 # Fire-and-forget: the generator may be closing (GeneratorExit

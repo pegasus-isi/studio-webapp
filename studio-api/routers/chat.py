@@ -946,6 +946,14 @@ async def _opencode_stream(
                     yield f"data: {json.dumps({'message_id': msg_id})}\n\n"
                 except Exception:
                     pass
+        except Exception as e:
+            # Backstop for anything the engine didn't turn into an error
+            # frame itself (e.g. a failure before its own try block). Both
+            # the July and August reviews trace "chat is silently broken"
+            # reports to turns ending as a bare [DONE] with the cause only
+            # in logs — never let that happen again.
+            log.error("opencode_stream_failed", error=str(e))
+            yield f"data: {json.dumps({'error': f'Chat engine error: {e}'})}\n\n"
         finally:
             yield "data: [DONE]\n\n"
 
