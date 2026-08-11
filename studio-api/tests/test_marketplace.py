@@ -142,3 +142,82 @@ def test_add_conflict_when_exists(client, monkeypatch, tmp_path):
     _reset()
 
     assert client.post("/api/marketplace/quickstart/add").status_code == 409
+
+
+# --- SEC-1: repo URLs from the community-editable registry are untrusted ---
+
+
+def test_normalize_rejects_non_http_repo_urls():
+    """ext:: executes a shell, file:: reads local paths, and a leading "-"
+    is parsed as a git flag — none may ever enter the catalog."""
+    for url in (
+        "ext::sh -c 'touch /tmp/pwned'",
+        "file:///etc",
+        "--upload-pack=touch /tmp/pwned",
+        "git@github.com:x/y.git",
+        "",
+    ):
+        assert mkt._normalize({"repo_url": url, "id": "x"}, "PegasusHub") is None
+
+    ok = mkt._normalize(
+        {"repo_url": "https://github.com/x/y", "id": "x"}, "PegasusHub"
+    )
+    assert ok is not None
+
+
+def test_add_refuses_non_http_repo_url(client, monkeypatch, tmp_path):
+    """Defense in depth behind the _normalize filter: even if a bad URL
+    reached the catalog, add must refuse before ever exec'ing git."""
+
+    async def fake_catalog(force=False):
+        return [{
+            "id": "evil", "name": "evil",
+            "repo_url": "ext::sh -c 'touch /tmp/pwned'",
+        }]
+
+    called = []
+
+    async def fake_exec(*args, **kwargs):
+        called.append(args)
+        raise AssertionError("git must not run for a non-http(s) URL")
+
+    monkeypatch.setattr(mkt, "_catalog", fake_catalog)
+    monkeypatch.setattr(mkt, "WORKFLOWS_DIR", str(tmp_path / "workflows"))
+    monkeypatch.setattr(mkt.asyncio, "create_subprocess_exec", fake_exec)
+
+    res = client.post("/api/marketplace/evil/add")
+    assert res.status_code == 400
+    assert called == []
+
+
+def test_add_uses_separator_and_protocol_pin(client, monkeypatch, tmp_path):
+    """The clone must pass the URL after "--" (so it can't read as a flag)
+    and pin git's allowed transports to http(s)."""
+
+    async def fake_registry():
+        return []
+
+    captured = {}
+
+    class FakeProc:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    async def fake_exec(*args, **kwargs):
+        captured["args"] = args
+        captured["env"] = kwargs.get("env") or {}
+        return FakeProc()
+
+    monkeypatch.setattr(mkt, "_fetch_registry", fake_registry)
+    monkeypatch.setattr(mkt, "WORKFLOWS_DIR", str(tmp_path / "workflows"))
+    monkeypatch.setattr(mkt.asyncio, "create_subprocess_exec", fake_exec)
+    _reset()
+
+    assert client.post("/api/marketplace/soilmoisture/add").status_code == 200
+    args = captured["args"]
+    sep = args.index("--")
+    # Everything after "--" is positional: <url> <dir>.
+    assert args[sep + 1].startswith("https://")
+    assert captured["env"].get("GIT_ALLOW_PROTOCOL") == "http:https"

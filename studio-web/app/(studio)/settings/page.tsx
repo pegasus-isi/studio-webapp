@@ -287,19 +287,27 @@ function ProviderCard({
 }) {
   const validate = useValidateProvider();
 
-  const [apiKey, setApiKey] = useState(config.api_key || "");
+  // Saved keys are write-only server-side (the GET only reports
+  // has_api_key), so the field starts empty; leaving it blank on Save keeps
+  // the stored key.
+  const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState(config.default_model || "");
   const [baseUrl, setBaseUrl] = useState(config.base_url || "");
   const [name, setName] = useState(config.name || "");
   const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    valid: boolean;
+    models: string[];
+    error: string | null;
+  } | null>(null);
 
   // Sync if config changes externally
   useEffect(() => {
-    setApiKey(config.api_key || "");
     setModel(config.default_model || "");
     setBaseUrl(config.base_url || "");
     setName(config.name || "");
-  }, [config.api_key, config.default_model, config.base_url, config.name]);
+  }, [config.default_model, config.base_url, config.name]);
 
   const preset = presets.find((p) => p.id === config.provider_id);
   const isCustom = config.provider_id.startsWith("custom");
@@ -319,11 +327,28 @@ function ProviderCard({
   };
 
   const handleTest = async () => {
-    await validate.mutateAsync({
-      provider: config.provider_id,
-      api_key: apiKey,
-      base_url: baseUrl || preset?.base_url || undefined,
-    });
+    setTesting(true);
+    try {
+      // A typed key tests via /validate; an empty field with a saved key
+      // tests server-side against the stored key (which the browser can't
+      // read).
+      const result = apiKey
+        ? await validate.mutateAsync({
+            provider: config.provider_id,
+            api_key: apiKey,
+            base_url: baseUrl || preset?.base_url || undefined,
+          })
+        : await api.getSavedProviderModels(config.provider_id);
+      setTestResult(result);
+    } catch (e) {
+      setTestResult({
+        valid: false,
+        models: [],
+        error: (e as Error).message || "Request failed",
+      });
+    } finally {
+      setTesting(false);
+    }
   };
 
   return (
@@ -392,7 +417,11 @@ function ProviderCard({
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder="Enter API key..."
+            placeholder={
+              config.has_api_key
+                ? "•••••••• saved — leave blank to keep"
+                : "Enter API key..."
+            }
             className="mt-1 block w-full rounded-md border border-line px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
           />
         </div>
@@ -410,9 +439,9 @@ function ProviderCard({
             className="mt-1 block w-full rounded-md border border-line px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
           />
           {/* Discovered models as clickable chips (after Test Connectivity). */}
-          {validate.data?.valid && validate.data.models.length > 0 && (
+          {testResult?.valid && testResult.models.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1">
-              {validate.data.models.map((m) => (
+              {testResult.models.map((m) => (
                 <button
                   key={m}
                   onClick={() => setModel(m)}
@@ -428,7 +457,7 @@ function ProviderCard({
               ))}
             </div>
           )}
-          {validate.data?.valid && validate.data.models.length === 0 && (
+          {testResult?.valid && testResult.models.length === 0 && (
             <p className="mt-1 text-xs text-fgsubtle">
               Connected, but the endpoint listed no models — enter one manually.
             </p>
@@ -463,26 +492,31 @@ function ProviderCard({
 
           <button
             onClick={handleTest}
-            disabled={validate.isPending || (!apiKey && config.provider_id !== "ollama")}
+            disabled={
+              testing ||
+              (!apiKey &&
+                !config.has_api_key &&
+                config.provider_id !== "ollama")
+            }
             className={cn(
               "flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium",
-              validate.data?.valid
+              testResult?.valid
                 ? "border-green-300 bg-green-50 dark:bg-emerald-500/10 text-green-700 dark:text-emerald-400"
-                : validate.data && !validate.data.valid
+                : testResult && !testResult.valid
                   ? "border-red-300 bg-red-50 dark:bg-rose-500/10 text-red-700 dark:text-rose-400"
                   : "border-line text-fgmuted hover:bg-base",
               "disabled:opacity-50"
             )}
           >
-            {validate.isPending ? (
+            {testing ? (
               <>
                 <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
                 Testing...
               </>
-            ) : validate.data?.valid ? (
+            ) : testResult?.valid ? (
               <>&#10003; Connected</>
-            ) : validate.data ? (
-              <>&#10007; {validate.data.error}</>
+            ) : testResult ? (
+              <>&#10007; {testResult.error}</>
             ) : (
               "Test Connectivity"
             )}

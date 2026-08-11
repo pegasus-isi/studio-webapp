@@ -6,7 +6,7 @@ import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from models import LLMConfigRequest, LLMConfigResponse, SettingsResponse
+from models import LLMConfigRequest, SettingsResponse
 
 log = structlog.get_logger()
 
@@ -55,7 +55,10 @@ async def get_settings() -> SettingsResponse:
     llm_data = await db.get_llm_config()
     llm_resp = None
     if llm_data:
-        llm_resp = LLMConfigResponse(**llm_data)
+        # Write-only key treatment (SEC-3), same as GET /api/llm/config.
+        from routers.llm import _config_response
+
+        llm_resp = _config_response(llm_data)
 
     installed = await db.list_tools()
     tool_ids = [t["tool_id"] for t in installed]

@@ -36,21 +36,14 @@ export function useValidateProvider() {
 }
 
 // Discover the model ids a provider offers (for the chat model chooser).
-// Cached per provider; failures/keyless providers just yield an empty list,
-// so the caller falls back to free-text entry.
-export function useProviderModels(
-  provider: string | null,
-  apiKey: string,
-  baseUrl?: string | null
-) {
+// Resolved server-side against the provider's STORED key — saved keys are
+// write-only and never reach the browser. Cached per provider; failures and
+// keyless providers just yield an empty list, so the caller falls back to
+// free-text entry.
+export function useProviderModels(provider: string | null) {
   return useQuery({
-    queryKey: ["provider-models", provider, apiKey, baseUrl],
-    queryFn: () =>
-      api.validateProvider({
-        provider: provider as string,
-        api_key: apiKey,
-        base_url: baseUrl ?? null,
-      }),
+    queryKey: ["provider-models", provider],
+    queryFn: () => api.getSavedProviderModels(provider as string),
     enabled: !!provider,
     staleTime: 5 * 60_000,
     retry: false,

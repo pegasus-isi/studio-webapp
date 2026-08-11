@@ -88,7 +88,8 @@ export async function updateRegistrySettings(data: {
 export interface LLMConfig {
   provider: string;
   model: string | null;
-  api_key: string | null;
+  // Keys are write-only server-side: GETs only report whether one is saved.
+  has_api_key: boolean;
   base_url: string | null;
   extra_config: Record<string, unknown>;
   updated_at: string | null;
@@ -140,7 +141,8 @@ export async function validateProvider(data: {
 export interface ProviderConfig {
   provider_id: string;
   name: string;
-  api_key: string;
+  // Write-only key, as in LLMConfig.
+  has_api_key: boolean;
   base_url: string;
   default_model: string;
   is_active: boolean;
@@ -158,6 +160,14 @@ export interface ProviderConfigRequest {
 
 export async function getProviderConfigs() {
   return request<{ configs: ProviderConfig[] }>("/llm/provider-configs");
+}
+
+// Models a saved provider offers, resolved server-side with its STORED key
+// (the browser never sees saved keys).
+export async function getSavedProviderModels(providerId: string) {
+  return request<{ valid: boolean; models: string[]; error: string | null }>(
+    `/llm/provider-configs/${providerId}/models`
+  );
 }
 
 export async function upsertProviderConfig(config: ProviderConfigRequest) {
