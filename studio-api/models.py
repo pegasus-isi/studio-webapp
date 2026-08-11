@@ -259,6 +259,9 @@ class AgentInfo(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str
+    # Pre-release qualifier ("alpha"), empty once the release is stable. The UI
+    # appends it to the version in the sidebar.
+    channel: str = ""
 
 
 class DetailedHealthResponse(BaseModel):

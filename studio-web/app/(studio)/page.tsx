@@ -130,13 +130,6 @@ export default function DashboardPage() {
   const running = data?.runs.by_status?.["running"] ?? 0;
   const unread = data?.notifications.unread ?? 0;
 
-  // "v0.1.0 alpha" — the channel is dropped once the release is stable.
-  const studioVersion = data?.versions?.studio
-    ? `v${data.versions.studio}${
-        data.versions.channel ? ` ${data.versions.channel}` : ""
-      }`
-    : null;
-
   // Brand-new users (nothing in the workspace yet) lead with example
   // workflows, so a first runnable workflow is one click away.
   const hasWorkflows =
@@ -206,19 +199,9 @@ export default function DashboardPage() {
     <div className="h-full overflow-auto">
       <div className="mx-auto max-w-5xl px-6 py-8">
         {/* Welcome */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h1 className="text-2xl font-semibold text-fg">
-            Welcome to PegasusAI Studio
-          </h1>
-          {studioVersion && (
-            <span
-              title="PegasusAI Studio release"
-              className="rounded-full border border-line bg-muted px-2 py-0.5 font-mono text-[11px] text-fgsubtle"
-            >
-              {studioVersion}
-            </span>
-          )}
-        </div>
+        <h1 className="text-2xl font-semibold text-fg">
+          Welcome to PegasusAI Studio
+        </h1>
         <p className="mt-1 text-sm text-fgmuted">
           Build, run, and monitor Pegasus workflows — with AI, in one
           workspace.

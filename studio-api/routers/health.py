@@ -16,9 +16,11 @@ router = APIRouter(prefix="/api/health", tags=["health"])
 
 @router.get("", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
-    from main import __version__
+    from main import __release_channel__, __version__
 
-    return HealthResponse(status="ok", version=__version__)
+    return HealthResponse(
+        status="ok", version=__version__, channel=__release_channel__
+    )
 
 
 @router.get("/detailed", response_model=DetailedHealthResponse)
