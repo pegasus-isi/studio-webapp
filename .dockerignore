@@ -1,0 +1,29 @@
+# Keep the build context clean and deterministic. Without this, a local build
+# ships .git and — worse — `COPY studio-web/ ./` runs AFTER `npm ci` in the
+# frontend stage, so a host (darwin-arm64) node_modules/.next gets merged over
+# the Linux install. CI's clean checkout hides the problem; local builds must
+# not depend on that.
+.git
+.github
+.idea
+.DS_Store
+**/.DS_Store
+
+# Host build/dependency artifacts — the image installs its own.
+**/node_modules
+**/.next
+**/.venv
+**/venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Local runtime state that must never be baked into an image.
+*.db
+**/*.db
+cc-usage-log.md
+
+# Docs not consumed by any COPY (knowledge/ and the extension trees keep
+# their .md files — packaging reads them).
+docs/
