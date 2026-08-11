@@ -47,9 +47,10 @@ def _build_config_toml(
     """
     lines = []
 
-    # Active model/provider
-    lines.append(f'model = "{active_model}"')
-    lines.append(f'model_provider = "{active_provider}"')
+    # Active model/provider. model_provider must name the (sanitized) table
+    # key written below, so both go through _toml_key.
+    lines.append(f'model = "{_toml_escape(active_model)}"')
+    lines.append(f'model_provider = "{_toml_key(active_provider)}"')
     lines.append('model_reasoning_effort = "medium"')
     lines.append("")
 
@@ -65,16 +66,18 @@ def _build_config_toml(
             preset = PROVIDERS.get(pid, {})
             base_url = preset.get("base_url", "") or ""
 
-        lines.append(f"[model_providers.{pid}]")
-        lines.append(f'name = "{name}"')
+        lines.append(f"[model_providers.{_toml_key(pid)}]")
+        lines.append(f'name = "{_toml_escape(name)}"')
         if base_url:
-            lines.append(f'base_url = "{base_url}"')
+            lines.append(f'base_url = "{_toml_escape(base_url)}"')
         # Codex >= 0.136 no longer supports wire_api = "chat" — it requires the
         # Responses API. The provider endpoint must implement /responses.
         # See https://github.com/openai/codex/discussions/7782
         lines.append('wire_api = "responses"')
         if api_key:
-            lines.append(f'experimental_bearer_token = "{api_key}"')
+            lines.append(
+                f'experimental_bearer_token = "{_toml_escape(api_key)}"'
+            )
         lines.append("")
 
     # MCP server sections
@@ -154,7 +157,7 @@ def _seed_codex_agents(workspace: str) -> int:
         # terminate the TOML multi-line basic string prematurely.
         safe_instructions = instructions.replace('"""', '""\\\"')
         toml_lines = [
-            f'name = "{agent_id}"',
+            f'name = "{_toml_escape(agent_id)}"',
             f'description = "{_toml_escape(description)}"',
             f'developer_instructions = """\n{safe_instructions}"""',
             "",
@@ -174,8 +177,25 @@ def _seed_codex_agents(workspace: str) -> int:
 
 
 def _toml_escape(s: str) -> str:
-    """Escape a string for TOML basic string value."""
-    return s.replace("\\", "\\\\").replace('"', '\\"')
+    """Escape a string for a single-line TOML basic string value.
+
+    Newlines matter as much as quotes: an unescaped "\n" ends the value and
+    lets the remainder of the string inject arbitrary TOML keys.
+    """
+    return (
+        s.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+
+
+def _toml_key(s: str) -> str:
+    """Reduce a provider id to a safe TOML bare key ([model_providers.<id>]
+    is a table header — escaping can't help there, only a character allowlist
+    can)."""
+    return re.sub(r"[^A-Za-z0-9_-]", "-", s) or "provider"
 
 
 class CodexCLIAdapter(KnowledgeAdapter):
