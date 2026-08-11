@@ -28,7 +28,7 @@ _RECENT_RUNS = 6
 @router.get("")
 async def dashboard() -> dict:
     """Workflows summary, recent runs, resource snapshot, and versions."""
-    from main import db
+    from main import __release_channel__, __version__, db
 
     loop = asyncio.get_event_loop()
     projects = await loop.run_in_executor(None, discover_projects)
@@ -87,6 +87,11 @@ async def dashboard() -> dict:
             "recent": run_rows[:_RECENT_RUNS],
         },
         "resources": resources,
-        "versions": {"pegasus": pegasus_version, "condor": condor_version},
+        "versions": {
+            "studio": __version__,
+            "channel": __release_channel__,
+            "pegasus": pegasus_version,
+            "condor": condor_version,
+        },
         "notifications": {"unread": unread},
     }

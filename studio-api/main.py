@@ -32,6 +32,9 @@ from routers import (
 )
 
 __version__ = "0.1.0"
+# Pre-release channel shown next to the version in the UI. Set to "" once the
+# release is stable so the UI drops the qualifier.
+__release_channel__ = "alpha"
 
 log = structlog.get_logger()
 
