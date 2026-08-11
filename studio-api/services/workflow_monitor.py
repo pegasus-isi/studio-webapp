@@ -15,6 +15,7 @@ import structlog
 from services.event_reader import jobs as event_jobs
 from services.event_reader import read_events
 from services.event_reader import workflow_detail as event_detail
+from services.procutil import communicate_or_kill
 from services.workflow_scanner import get_run_status
 
 log = structlog.get_logger()
@@ -149,7 +150,7 @@ async def run_pegasus_analyzer(run_dir: str) -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        stdout, stderr = await communicate_or_kill(proc, 60)
         output = stdout.decode("utf-8", errors="replace")
         if stderr:
             output += "\n" + stderr.decode("utf-8", errors="replace")

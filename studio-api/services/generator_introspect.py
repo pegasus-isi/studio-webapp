@@ -14,6 +14,8 @@ from typing import Any
 
 import structlog
 
+from services.procutil import communicate_or_kill
+
 log = structlog.get_logger()
 
 _SENTINEL = "__ARGPARSE_SCHEMA__"
@@ -65,9 +67,7 @@ async def introspect_generator(project_dir: str) -> dict[str, Any]:
             stderr=asyncio.subprocess.PIPE,
             cwd=project_dir,
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=_TIMEOUT
-        )
+        stdout, stderr = await communicate_or_kill(proc, _TIMEOUT)
     except asyncio.TimeoutError:
         return {"params": [], "mutex_required": [], "error": "introspection timed out"}
     except Exception as e:

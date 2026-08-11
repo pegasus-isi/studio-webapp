@@ -11,6 +11,8 @@ import time
 
 import structlog
 
+from services.procutil import communicate_or_kill
+
 log = structlog.get_logger()
 
 WORKSPACE_ROOT = os.environ.get(
@@ -66,9 +68,7 @@ async def submit_workflow(
             stderr=asyncio.subprocess.PIPE,
             cwd=workflow_dir,
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=_CMD_TIMEOUT
-        )
+        stdout, stderr = await communicate_or_kill(proc, _CMD_TIMEOUT)
 
         out = stdout.decode("utf-8", errors="replace")
         err = stderr.decode("utf-8", errors="replace")
@@ -152,9 +152,7 @@ async def run_planned_workflow(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=_CMD_TIMEOUT
-        )
+        stdout, stderr = await communicate_or_kill(proc, _CMD_TIMEOUT)
         out = stdout.decode("utf-8", errors="replace")
         err = stderr.decode("utf-8", errors="replace")
         output = out + (f"\nstderr:\n{err}" if err else "")
@@ -184,7 +182,7 @@ async def cancel_workflow(run_dir: str) -> dict[str, str]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        stdout, stderr = await communicate_or_kill(proc, 60)
         output = stdout.decode("utf-8", errors="replace")
         if stderr:
             output += "\n" + stderr.decode("utf-8", errors="replace")
@@ -236,7 +234,7 @@ async def delete_run(run_dir: str) -> dict[str, str]:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await asyncio.wait_for(proc.communicate(), timeout=60)
+            await communicate_or_kill(proc, 60)
         except (FileNotFoundError, asyncio.TimeoutError, OSError) as e:
             # A cancel failure shouldn't block deletion — log and proceed.
             log.warning("delete_run_cancel_failed", run_dir=run_dir, error=str(e))
