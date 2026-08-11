@@ -123,8 +123,12 @@ def _id_from_repo(url: str) -> str:
 
 
 def _normalize(entry: dict[str, Any], source: str) -> dict[str, Any] | None:
-    repo = entry.get("repo_url") or entry.get("github_repo") or ""
-    if not repo:
+    repo = str(entry.get("repo_url") or entry.get("github_repo") or "").strip()
+    # The registry is community-editable, so repo_url is untrusted input to
+    # `git clone`: the ext::/file:: transports execute commands, and a
+    # leading "-" is parsed as a git flag. Only plain http(s) entries ever
+    # enter the catalog.
+    if not repo.startswith(("https://", "http://")):
         return None
     return {
         "id": entry.get("id") or _id_from_repo(repo),
@@ -214,11 +218,22 @@ async def add_workflow(workflow_id: str) -> dict[str, Any]:
             detail=f"'{workflow_id}' already exists in your workspace.",
         )
 
+    repo_url = str(entry["repo_url"])
+    # Defense in depth behind the _normalize filter: never exec git on
+    # anything but a plain http(s) URL, pass it after "--" so it can't be
+    # read as a flag, and pin git's allowed transports so a redirect or
+    # submodule can't downgrade to an exec-capable one (ext::, file::).
+    if not repo_url.startswith(("https://", "http://")):
+        raise HTTPException(
+            status_code=400, detail="Unsupported repository URL scheme"
+        )
+
     os.makedirs(WORKFLOWS_DIR, exist_ok=True)
     proc = await asyncio.create_subprocess_exec(
-        "git", "clone", "--depth", "1", entry["repo_url"], project_dir,
+        "git", "clone", "--depth", "1", "--", repo_url, project_dir,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "GIT_ALLOW_PROTOCOL": "http:https"},
     )
     try:
         _out, err = await asyncio.wait_for(proc.communicate(), timeout=_CLONE_TIMEOUT)
