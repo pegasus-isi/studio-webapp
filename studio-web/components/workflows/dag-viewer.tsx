@@ -47,7 +47,12 @@ const STATUS_STYLE: Record<string, { bg: string; border: string; fg: string }> =
 
 const NODE_W = 190;
 const NODE_H = 48;
-const TERMINAL = new Set(["succeeded", "failed", "unsubmitted"]);
+// Statuses that mean the run is still making progress. "unsubmitted" is
+// deliberately not in this set NOR treated as terminal on its own: right
+// after Submit every node is unsubmitted, so classing it terminal froze the
+// DAG at its first fetch — a run counts as active while any node is
+// in-flight OR nothing has started yet (all unsubmitted).
+const ACTIVE = new Set(["pending", "queued", "running", "held"]);
 
 function layout(data: GraphData): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
@@ -62,7 +67,9 @@ function layout(data: GraphData): { nodes: Node[]; edges: Edge[] } {
   dagre.layout(g);
 
   const nodes: Node[] = data.nodes.map((n) => {
-    const pos = g.node(n.id);
+    // dagre returns undefined for an id it never laid out (malformed graph
+    // data) — fall back to origin rather than crashing the whole modal.
+    const pos = g.node(n.id) ?? { x: NODE_W / 2, y: NODE_H / 2 };
     const s = STATUS_STYLE[n.status] ?? STATUS_STYLE.unsubmitted;
     const aux = !!n.pegasus;
     return {
@@ -149,12 +156,22 @@ export function DagViewer({ graphUrl, title, live = false, onClose }: Props) {
       fetchGraph()
         .then((d) => {
           if (cancelled || !live) return;
-          const active = d.nodes.some((n) => !TERMINAL.has(n.status));
-          if (active || d.workflow_status === "running") {
+          const anyActive = d.nodes.some((n) => ACTIVE.has(n.status));
+          const allUnsubmitted =
+            d.nodes.length > 0 &&
+            d.nodes.every((n) => n.status === "unsubmitted");
+          if (anyActive || allUnsubmitted || d.workflow_status === "running") {
             timer = window.setTimeout(tick, 4000);
           }
         })
-        .catch((e) => !cancelled && setError(String(e.message || e)));
+        .catch((e) => {
+          if (cancelled) return;
+          setError(String(e.message || e));
+          // One failed 4s poll must not kill a working live view: keep the
+          // last good graph rendered (see render order below) and keep
+          // polling — the next success clears the error.
+          if (live) timer = window.setTimeout(tick, 4000);
+        });
     };
     tick();
 
@@ -170,7 +187,18 @@ export function DagViewer({ graphUrl, title, live = false, onClose }: Props) {
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const flow = useMemo(() => (data ? layout(data) : null), [data]);
+  const flow = useMemo<
+    { nodes: Node[]; edges: Edge[] } | { layoutError: string } | null
+  >(() => {
+    if (!data) return null;
+    try {
+      return layout(data);
+    } catch (e) {
+      // A graph dagre can't lay out must degrade to an error message, not a
+      // render-time crash that white-screens the modal.
+      return { layoutError: String(e instanceof Error ? e.message : e) };
+    }
+  }, [data]);
 
   return (
     <div
@@ -216,7 +244,14 @@ export function DagViewer({ graphUrl, title, live = false, onClose }: Props) {
         </div>
 
         <div className="relative flex-1">
-          {error ? (
+          {/* Render order matters: a fetched graph wins over a transient
+              poll error, so a single failed refresh shows the last good DAG
+              (with a retry note in the footer) instead of replacing it. */}
+          {flow && "layoutError" in flow ? (
+            <p className="p-6 text-sm text-red-600 dark:text-rose-400">
+              Could not render DAG: {flow.layoutError}
+            </p>
+          ) : error && !flow ? (
             <p className="p-6 text-sm text-red-600 dark:text-rose-400">
               Could not render DAG: {error}
             </p>
@@ -259,7 +294,17 @@ export function DagViewer({ graphUrl, title, live = false, onClose }: Props) {
               ⚙ Pegasus job
             </span>
           )}
-          {live && <span className="ml-auto text-fgsubtle">live · 4s</span>}
+          {live && (
+            <span className="ml-auto text-fgsubtle">
+              {error && flow ? (
+                <span className="text-amber-600 dark:text-amber-400">
+                  refresh failed · retrying
+                </span>
+              ) : (
+                "live · 4s"
+              )}
+            </span>
+          )}
         </div>
       </div>
     </div>
