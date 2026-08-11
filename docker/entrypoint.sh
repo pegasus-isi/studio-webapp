@@ -25,7 +25,17 @@ if [ ! -f "${MARKER}" ]; then
     echo "[studio] First launch — initializing..."
 
     cd /opt/studio-api
-    ${PYTHON} init_db.py
+    # Hard timeout: this touches the NFS-backed SQLite DB, and a stale lock
+    # from a crashed prior pod (or an NFS stall) would otherwise block here
+    # forever — supervisord never starts, JupyterHub kills the spawn at 30s,
+    # and every retry hits the same lock. Same rationale as the timeout on
+    # propagate_llm.py below, but init is a hard prerequisite, so fail loud
+    # instead of backgrounding. (timeout exits 124 on timeout.)
+    if ! timeout 60 "${PYTHON}" init_db.py; then
+        echo "[studio] FATAL: init_db.py failed or timed out (>60s) —" \
+             "check for a stale SQLite lock on ${STUDIO_DIR}/studio.db" >&2
+        exit 1
+    fi
 
     if [ -f "/opt/pegasus-ai/knowledge/references/PEGASUS_AI.md" ]; then
         cp /opt/pegasus-ai/knowledge/references/PEGASUS_AI.md "${WORK}/AGENTS.md"

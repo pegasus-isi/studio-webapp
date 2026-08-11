@@ -1,9 +1,14 @@
 name: Build and Push Docker Image
 
+# The :main tag auto-deploys: production pulls it with imagePullPolicy: Always,
+# so a push to main reaches live user pods on their next spawn. The test job
+# below is the only automated gate in front of that — do not remove it.
 on:
   push:
     branches: ['main']
     tags: ['v*']
+  pull_request:
+    branches: ['main']
   workflow_dispatch:
 
 permissions:
@@ -11,12 +16,45 @@ permissions:
   packages: write
 
 jobs:
+  # Backend tests + frontend type check. Mirrors the local pre-PR gates in
+  # CLAUDE.md: pytest needs no Pegasus/Condor/keys; the frontend gate is tsc,
+  # not `npm run lint`/`npm test` (eslint isn't installed, no test files exist).
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: studio-api/requirements.txt
+      - name: Backend tests
+        working-directory: studio-api
+        run: |
+          pip install -r requirements.txt pytest httpx
+          pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: studio-web/package-lock.json
+      - name: Frontend type check
+        working-directory: studio-web
+        run: |
+          npm ci
+          node_modules/.bin/tsc --noEmit
+
+  # On pull_request this builds without pushing (validates the Dockerfile);
+  # only pushes on main/tag pushes. Login is skipped on PRs so forked PRs
+  # (read-only GITHUB_TOKEN) don't fail at the login step.
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -31,6 +69,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
