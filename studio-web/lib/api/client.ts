@@ -651,6 +651,35 @@ export async function updateChatEngine(engine: "builtin" | "opencode") {
   });
 }
 
+// --- Command approval (SEC-4 per-turn confirmation) ---
+
+// Resolve a pending shell-command approval prompt mid-stream.
+export async function sendChatPermission(
+  requestId: string,
+  callId: string,
+  decision: "approve" | "deny"
+) {
+  return request<{ status: string; call_id: string }>("/chat/permission", {
+    method: "POST",
+    body: JSON.stringify({
+      request_id: requestId,
+      call_id: callId,
+      decision,
+    }),
+  });
+}
+
+export async function getCommandApproval() {
+  return request<{ require_approval: boolean }>("/chat/command-approval");
+}
+
+export async function updateCommandApproval(requireApproval: boolean) {
+  return request<{ require_approval: boolean }>("/chat/command-approval", {
+    method: "PUT",
+    body: JSON.stringify({ require_approval: requireApproval }),
+  });
+}
+
 // --- Jupyter ---
 
 export async function startJupyter() {

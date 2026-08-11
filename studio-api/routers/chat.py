@@ -300,6 +300,81 @@ async def _execute_tool(name: str, arguments: dict[str, Any]) -> str:
         return f"Error executing {name}: {e}"
 
 
+# Tools that run arbitrary shell and so require per-turn approval (SEC-4).
+# File tools (read/write/list/create) are confined to the workspace by
+# _safe_path, so they stay auto-approved to keep the prompt from firing on
+# every step.
+_APPROVAL_REQUIRED_TOOLS = {"run_command"}
+
+
+def _permission_summary(name: str, arguments: dict[str, Any]) -> str:
+    """Human-readable one-liner for the approval card."""
+    if name == "run_command":
+        return str(arguments.get("command", "")).strip()
+    return json.dumps(arguments)[:300]
+
+
+async def _run_tool_gated(
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    request_id: str,
+    require_approval: bool,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Yield SSE payload dicts for one tool call, pausing for approval first
+    when the tool runs arbitrary shell.
+
+    Yields a ``permission_request`` (when gated), always a ``tool_call``, then
+    a ``tool_result`` — the last item is tagged ``{"_final_result": <text>}``
+    so the caller can thread the result into the model conversation.
+    """
+    from services import chat_permissions
+
+    gated = require_approval and name in _APPROVAL_REQUIRED_TOOLS
+    if gated:
+        yield {"permission_request": {
+            "id": arguments.get("_call_id", ""),
+            "name": name,
+            "summary": _permission_summary(name, arguments),
+        }}
+        decision = await chat_permissions.await_decision(
+            request_id, arguments["_call_id"]
+        )
+        if decision != "approve":
+            reason = (
+                "timed out waiting for approval"
+                if decision == "timeout"
+                else "denied by the user"
+            )
+            result = f"Command not run — {reason}."
+            yield {"tool_call": {
+                "id": arguments["_call_id"], "name": name,
+                "arguments": _public_args(arguments),
+            }}
+            yield {"tool_result": {
+                "id": arguments["_call_id"], "name": name,
+                "result": result,
+            }}
+            yield {"_final_result": result}
+            return
+
+    yield {"tool_call": {
+        "id": arguments["_call_id"], "name": name,
+        "arguments": _public_args(arguments),
+    }}
+    result = await _execute_tool(name, _public_args(arguments))
+    yield {"tool_result": {
+        "id": arguments["_call_id"], "name": name,
+        "result": _clip_ui_result(result),
+    }}
+    yield {"_final_result": result}
+
+
+def _public_args(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Arguments minus the internal ``_call_id`` marker."""
+    return {k: v for k, v in arguments.items() if k != "_call_id"}
+
+
 # --- System prompt ---
 
 def _load_system_prompt(agent_id: str | None = None) -> str:
@@ -1066,6 +1141,12 @@ async def chat_stream(request: Request) -> StreamingResponse:
         client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=30.0))
         _active_clients[request_id] = client
 
+        # Read the approval posture once per turn (SEC-4): whether run_command
+        # pauses for user confirmation.
+        from services import chat_permissions
+
+        require_approval = await chat_permissions.require_approval(db)
+
         # Aggregate usage/timing across all tool-calling rounds for the footer.
         t0 = time.monotonic()
         tot_in = 0
@@ -1229,9 +1310,17 @@ async def chat_stream(request: Request) -> StreamingResponse:
 
                     tool_results = []
                     for tc in tool_calls:
-                        yield f"data: {json.dumps({'tool_call': {'id': tc['id'], 'name': tc['name'], 'arguments': tc['arguments']}})}\n\n"
-                        tool_result = await _execute_tool(tc["name"], tc["arguments"])
-                        yield f"data: {json.dumps({'tool_result': {'id': tc['id'], 'name': tc['name'], 'result': _clip_ui_result(tool_result)}})}\n\n"
+                        gated_args = {**tc["arguments"], "_call_id": tc["id"]}
+                        tool_result = ""
+                        async for ev in _run_tool_gated(
+                            tc["name"], gated_args,
+                            request_id=request_id,
+                            require_approval=require_approval,
+                        ):
+                            if "_final_result" in ev:
+                                tool_result = ev["_final_result"]
+                            else:
+                                yield f"data: {json.dumps(ev)}\n\n"
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tc["id"],
@@ -1259,9 +1348,17 @@ async def chat_stream(request: Request) -> StreamingResponse:
                     conv_messages.append(assistant_msg)
 
                     for tc in tool_calls:
-                        yield f"data: {json.dumps({'tool_call': {'id': tc['id'], 'name': tc['name'], 'arguments': tc['arguments']}})}\n\n"
-                        tool_result = await _execute_tool(tc["name"], tc["arguments"])
-                        yield f"data: {json.dumps({'tool_result': {'id': tc['id'], 'name': tc['name'], 'result': _clip_ui_result(tool_result)}})}\n\n"
+                        gated_args = {**tc["arguments"], "_call_id": tc["id"]}
+                        tool_result = ""
+                        async for ev in _run_tool_gated(
+                            tc["name"], gated_args,
+                            request_id=request_id,
+                            require_approval=require_approval,
+                        ):
+                            if "_final_result" in ev:
+                                tool_result = ev["_final_result"]
+                            else:
+                                yield f"data: {json.dumps(ev)}\n\n"
                         conv_messages.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
@@ -1313,6 +1410,11 @@ async def stop_chat(request: Request) -> dict:
 
     request_id = body.get("request_id", "")
     if request_id and request_id in _active_clients:
+        # Release any command-approval prompt this turn is blocked on, so
+        # Stop doesn't leave the stream awaiting a decision that never comes.
+        from services import chat_permissions
+
+        chat_permissions.deny_all_for(request_id)
         client = _active_clients.pop(request_id)
         await client.aclose()
         return {"status": "stopped", "request_id": request_id}
@@ -1330,6 +1432,58 @@ async def stop_chat(request: Request) -> dict:
         return {"status": "stopped", "cleared": True}
 
     return {"status": "noop", "request_id": request_id}
+
+
+@router.post("/permission")
+async def chat_permission(request: Request) -> dict:
+    """Resolve a pending command-approval prompt (SEC-4).
+
+    Body: ``{"request_id": str, "call_id": str, "decision": "approve"|"deny"}``.
+    The matching streaming turn is blocked in ``await_decision``; this releases
+    it. ``noop`` means nothing was waiting (already resolved, timed out, or the
+    turn was stopped).
+    """
+    from services import chat_permissions
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    request_id = str(body.get("request_id", ""))
+    call_id = str(body.get("call_id", ""))
+    decision = str(body.get("decision", "")).lower()
+    if decision not in ("approve", "deny"):
+        raise HTTPException(status_code=400, detail="decision must be approve|deny")
+    if not request_id or not call_id:
+        raise HTTPException(status_code=400, detail="request_id and call_id required")
+
+    resolved = chat_permissions.resolve(request_id, call_id, decision)  # type: ignore[arg-type]
+    return {"status": "resolved" if resolved else "noop", "call_id": call_id}
+
+
+@router.get("/command-approval")
+async def get_command_approval() -> dict:
+    """Whether chat pauses for confirmation before running shell commands."""
+    from main import db
+    from services import chat_permissions
+
+    return {"require_approval": await chat_permissions.require_approval(db)}
+
+
+@router.put("/command-approval")
+async def set_command_approval(request: Request) -> dict:
+    """Body: ``{"require_approval": bool}``."""
+    from main import db
+    from services import chat_permissions
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    value = bool(body.get("require_approval", True))
+    await chat_permissions.set_require_approval(db, value)
+    return {"require_approval": value}
 
 
 @router.post("/feedback")

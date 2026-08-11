@@ -40,10 +40,23 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator
 import httpx
 import structlog
 
+from services.chat_permissions import await_decision, require_approval
+
 if TYPE_CHECKING:
     from db import Database
 
 log = structlog.get_logger()
+
+
+def _permission_summary(props: dict[str, Any]) -> str:
+    """Best-effort one-liner describing what opencode wants to run, for the
+    approval card. opencode's permission.asked shape varies by tool, so pull
+    the command from metadata when present and fall back to the title."""
+    meta = props.get("metadata") or {}
+    cmd = ""
+    if isinstance(meta, dict):
+        cmd = str(meta.get("command") or meta.get("cmd") or "")
+    return (cmd or props.get("title") or props.get("pattern") or "").strip()[:300]
 
 OPENCODE_BIN = os.environ.get("STUDIO_OPENCODE_BIN", "opencode")
 OPENCODE_PORT = int(os.environ.get("STUDIO_OPENCODE_PORT", "4747"))
@@ -520,19 +533,33 @@ class OpenCodeEngine:
                             }
 
                 elif etype == "permission.asked":
-                    # Match built-in chat behavior (tools execute without a
-                    # prompt). Revisit with the policy-gate work.
+                    # SEC-4: forward opencode's own permission prompt to the
+                    # user instead of auto-approving. opencode only asks for
+                    # genuinely sensitive actions (bash, external edits), so
+                    # this is the shell-command gate for the opencode engine.
                     perm_id = (props.get("id") or ev.get("id") or "")
                     perm_sid = props.get("sessionID") or sid
                     if perm_id and perm_sid == sid:
+                        decision = "approve"
+                        if self._db is not None and await require_approval(self._db):
+                            yield _sse({"permission_request": {
+                                "id": perm_id,
+                                "name": props.get("type") or "command",
+                                "summary": _permission_summary(props),
+                            }})
+                            last_emit = time.monotonic()
+                            decision = await await_decision(request_id, perm_id)
+                        # opencode grammar: always=approve, reject=deny.
+                        response = "always" if decision == "approve" else "reject"
                         try:
                             async with self._client(auth, timeout=5.0) as c:
                                 await c.post(
                                     f"/session/{perm_sid}/permissions/{perm_id}",
-                                    json={"response": "always"},
+                                    json={"response": response},
                                 )
                         except httpx.HTTPError:
                             pass
+                        last_emit = time.monotonic()
 
                 elif etype == "session.error":
                     err = props.get("error") or {}

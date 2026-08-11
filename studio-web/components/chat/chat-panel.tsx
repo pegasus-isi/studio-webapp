@@ -4,7 +4,7 @@ import { useChatStore, genId, type ChatMsg } from "@/lib/stores/chat-store";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 import { ChatMarkdown } from "@/components/chat/markdown";
 import * as api from "@/lib/api/client";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export function ChatPanel() {
@@ -166,6 +166,15 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
           </div>
         )}
 
+        {/* Pending shell-command approvals (SEC-4) */}
+        {msg.pendingApprovals && msg.pendingApprovals.length > 0 && (
+          <div className="mt-2 space-y-2 border-t border-line pt-2">
+            {msg.pendingApprovals.map((p) => (
+              <ApprovalCard key={p.id} req={p} />
+            ))}
+          </div>
+        )}
+
         {/* Tool calls */}
         {msg.toolCalls && msg.toolCalls.length > 0 && (
           <div className="mt-2 space-y-1 border-t border-line pt-2">
@@ -211,6 +220,69 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
 
       {/* Usefulness feedback — assistant replies with real content only. */}
       {!isUser && msg.content && !msg.error && <FeedbackButtons msg={msg} />}
+    </div>
+  );
+}
+
+function ApprovalCard({
+  req,
+}: {
+  req: { id: string; name: string; summary: string };
+}) {
+  const requestId = useChatStore((s) => s.requestId);
+  const clearPermissionRequest = useChatStore((s) => s.clearPermissionRequest);
+  const [busy, setBusy] = useState<null | "approve" | "deny">(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const decide = async (decision: "approve" | "deny") => {
+    if (busy || !requestId) return;
+    setBusy(decision);
+    setError(null);
+    try {
+      await api.sendChatPermission(requestId, req.id, decision);
+      // Clear on denial now; an approval is also cleared by the follow-up
+      // tool_call event, but clearing here keeps the UI snappy either way.
+      clearPermissionRequest(req.id);
+    } catch (e) {
+      setError((e as Error).message || "Failed to send decision");
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-2.5 text-xs">
+      <div className="flex items-center gap-1.5 font-medium text-amber-700 dark:text-amber-400">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        Approve shell command?
+      </div>
+      {req.summary && (
+        <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-base px-2 py-1 font-mono text-fgmuted [overflow-wrap:anywhere]">
+          {req.summary}
+        </pre>
+      )}
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          onClick={() => decide("approve")}
+          disabled={busy !== null || !requestId}
+          className="rounded-md bg-pegasus-600 px-3 py-1 font-medium text-white hover:bg-pegasus-700 disabled:opacity-50"
+        >
+          {busy === "approve" ? "Approving…" : "Approve"}
+        </button>
+        <button
+          onClick={() => decide("deny")}
+          disabled={busy !== null || !requestId}
+          className="rounded-md border border-line px-3 py-1 font-medium text-fgmuted hover:bg-muted disabled:opacity-50"
+        >
+          {busy === "deny" ? "Denying…" : "Deny"}
+        </button>
+        {error && (
+          <span className="text-rose-600 dark:text-rose-400">{error}</span>
+        )}
+      </div>
     </div>
   );
 }

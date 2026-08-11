@@ -22,6 +22,8 @@ export function ChatInput() {
   const appendToLast = useChatStore((s) => s.appendToLast);
   const addToolCall = useChatStore((s) => s.addToolCall);
   const addToolResult = useChatStore((s) => s.addToolResult);
+  const addPermissionRequest = useChatStore((s) => s.addPermissionRequest);
+  const clearPermissionRequest = useChatStore((s) => s.clearPermissionRequest);
   const setLastMeta = useChatStore((s) => s.setLastMeta);
   const setLastServerId = useChatStore((s) => s.setLastServerId);
   const setLastError = useChatStore((s) => s.setLastError);
@@ -196,7 +198,12 @@ export function ChatInput() {
             const event = JSON.parse(data);
             if (event.content) {
               appendToLast(event.content, convId);
+            } else if (event.permission_request) {
+              addPermissionRequest(event.permission_request, convId);
             } else if (event.tool_call) {
+              // The tool ran (approved or auto): the pending card, if any,
+              // is now resolved — drop it so only the call/result show.
+              clearPermissionRequest(event.tool_call.id, convId);
               addToolCall(event.tool_call, convId);
             } else if (event.tool_result) {
               addToolResult(event.tool_result, convId);
@@ -241,6 +248,8 @@ export function ChatInput() {
     appendToLast,
     addToolCall,
     addToolResult,
+    addPermissionRequest,
+    clearPermissionRequest,
     setLastMeta,
     setLastServerId,
     setLastError,
