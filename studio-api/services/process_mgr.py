@@ -172,9 +172,9 @@ class ProcessManager:
 
 
 def find_free_port() -> int:
-    """Find a free TCP port."""
+    """Find a free TCP port (probe on loopback — tools bind 127.0.0.1)."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
+        s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
 

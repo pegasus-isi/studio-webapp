@@ -168,7 +168,11 @@ _INLINE_REGISTRY: list[dict[str, Any]] = [
         "install_command": "npm install -g opencode-ai",
         "binary": "opencode",
         "type": "web",
-        "web_command": "opencode web --port {port} --hostname 0.0.0.0",
+        # Loopback only: nginx is the sole exposed port (8888) and nothing in
+        # the product links to this port directly. Binding 0.0.0.0 put the
+        # tool UI — the user's files and LLM keys — on the pod's cluster IP,
+        # reachable by any pod on a flat network with no NetworkPolicy.
+        "web_command": "opencode web --port {port} --hostname 127.0.0.1",
         "supports_mcp": True,
         "supports_web": True,
         "required_env": [],

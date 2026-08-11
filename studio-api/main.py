@@ -306,10 +306,12 @@ async def whoami(request: Request) -> dict:
     # trustworthy if the gateway strips any client-supplied copy and sets its
     # own; otherwise a client could spoof the *displayed* identity (it's not an
     # auth boundary — the gateway session is — but don't trust it blindly).
-    # Gate the header fallback behind an env flag so operators opt in when their
-    # gateway guarantees the header.
+    # The header fallback is opt-in (SEC-6): production identity comes from
+    # JUPYTERHUB_USER, so the default-off flag costs nothing there; operators
+    # fronting the app with a non-Hub gateway that guarantees the header set
+    # STUDIO_TRUST_AUTH_HEADER=1 explicitly.
     user = os.environ.get("JUPYTERHUB_USER")
-    trust_header = os.environ.get("STUDIO_TRUST_AUTH_HEADER", "1").lower() in (
+    trust_header = os.environ.get("STUDIO_TRUST_AUTH_HEADER", "0").lower() in (
         "1",
         "true",
         "yes",
