@@ -410,7 +410,14 @@ export interface DashboardData {
     }[];
   };
   resources: ProvisioningStatus;
-  versions: { pegasus: string | null; condor: string | null };
+  versions: {
+    // studio/channel come from studio-api; older backends omit them, so both
+    // are optional and the UI hides the badge when absent.
+    studio?: string;
+    channel?: string;
+    pegasus: string | null;
+    condor: string | null;
+  };
   notifications: { unread: number };
 }
 
