@@ -82,8 +82,11 @@ async def get_tool(tool_id: str) -> ToolDetailResponse:
     status = inst["status"] if inst else None
     pid = inst["process_pid"] if inst else None
 
-    # Auto-correct stale status
-    if status == "running" and not _is_pid_alive(pid):
+    # Auto-correct stale status — but only for tools with a real manager
+    # process (web tools). Terminal tools carry no pid, so `_is_pid_alive(None)`
+    # is False and would wrongly flip a genuinely-running terminal tool's badge
+    # to "installed" (BE-8). Mirror the `pid is not None` guard in list_tools.
+    if status == "running" and pid is not None and not _is_pid_alive(pid):
         await db.update_tool_status(tool_id, "installed")
         status = "installed"
         pid = None
