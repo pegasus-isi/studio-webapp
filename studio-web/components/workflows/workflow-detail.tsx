@@ -30,7 +30,12 @@ interface SSEEvent {
 
 export function WorkflowDetail({ runId }: Props) {
   const { data: runsData } = useWorkflows();
-  const { data, isLoading } = useWorkflowJobs(runId);
+  // Find the run metadata first — job polling is gated on its status.
+  const run = runsData?.workflows.find((w) => w.run_id === runId);
+  const isRunning = run?.status === "running";
+
+  // Gate job polling: once the run is terminal its jobs are final (FE-9).
+  const { data, isLoading } = useWorkflowJobs(runId, isRunning);
   const analyze = useAnalyzeWorkflow();
   const deleteRun = useDeleteWorkflow();
   const selectWorkflow = useWorkflowStore((s) => s.selectWorkflow);
@@ -40,10 +45,6 @@ export function WorkflowDetail({ runId }: Props) {
   const setEventSource = useWorkflowStore((s) => s.setEventSource);
   const [liveStats, setLiveStats] = useState<SSEEvent | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
-
-  // Find the run metadata
-  const run = runsData?.workflows.find((w) => w.run_id === runId);
-  const isRunning = run?.status === "running";
 
   // Remaining-time estimate (historical-mean heuristic) — running runs only.
   const { data: estimateData } = useWorkflowEstimate(runId, isRunning);
@@ -56,31 +57,54 @@ export function WorkflowDetail({ runId }: Props) {
       return;
     }
 
-    const es = new EventSource(
-      apiUrl(`/workflows/${encodeURIComponent(runId)}/events`)
-    );
-    eventSourceRef.current = es;
-    setEventSource(es);
+    // Reconnect with capped backoff instead of killing the stream on the first
+    // transient error (FE-5). The old `onerror = () => es.close()` also
+    // disabled the browser's native retry, so one blip froze the live view
+    // until the modal was reopened.
+    let cancelled = false;
+    let attempts = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
-    es.onmessage = (event) => {
-      if (event.data === "[DONE]") {
+    const connect = () => {
+      if (cancelled) return;
+      const es = new EventSource(
+        apiUrl(`/workflows/${encodeURIComponent(runId)}/events`)
+      );
+      eventSourceRef.current = es;
+      setEventSource(es);
+
+      es.onmessage = (event) => {
+        if (event.data === "[DONE]") {
+          es.close(); // run finished — no reconnect
+          return;
+        }
+        try {
+          const parsed = JSON.parse(event.data) as SSEEvent;
+          attempts = 0; // stream healthy again
+          setLiveStats(parsed);
+        } catch {
+          // Ignore parse errors
+        }
+      };
+
+      es.onerror = () => {
         es.close();
-        return;
-      }
-      try {
-        const parsed = JSON.parse(event.data) as SSEEvent;
-        setLiveStats(parsed);
-      } catch {
-        // Ignore parse errors
-      }
+        if (cancelled) return;
+        // Drop the frozen snapshot so the 5s poll's fresh numbers show through
+        // instead of stale liveStats masking them; then reconnect.
+        setLiveStats(null);
+        const delay = Math.min(1000 * 2 ** attempts, 15000);
+        attempts += 1;
+        reconnectTimer = setTimeout(connect, delay);
+      };
     };
 
-    es.onerror = () => {
-      es.close();
-    };
+    connect();
 
     return () => {
-      es.close();
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      eventSourceRef.current?.close();
       eventSourceRef.current = null;
     };
   }, [runId, isRunning, setEventSource]);
