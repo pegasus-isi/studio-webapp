@@ -32,18 +32,19 @@ cd studio-web && npm ci && npm run dev   # port 3000; /api + /ws proxied to $API
 npm run build
 ```
 
-### Gates — run BEFORE every PR (CI runs neither)
+### Gates — run BEFORE every PR
 
 ```sh
 # Backend (from repo root; assumes the studio-api venv is active with deps installed)
-(cd studio-api && pytest -q)                          # ~185 tests; no Pegasus/Condor/keys needed
+(cd studio-api && pytest -q)                          # ~235 tests; no Pegasus/Condor/keys needed
 
 # Frontend (needs `npm ci` first so node_modules/.bin/tsc exists)
 (cd studio-web && npm ci && node_modules/.bin/tsc --noEmit)   # strict mode
 ```
 
-- `.github/workflows/deploy.yml` only builds/pushes the image on merge to `main` — **it
-  runs no tests and no lint**. The local gates above are the only safety net.
+- `.github/workflows/deploy.yml` now runs both gates (pytest + tsc) as a `test`
+  job that gates build/push, and builds without pushing on `pull_request` (added
+  in PR #57). Run them locally anyway before pushing to avoid a red PR.
 - On the frontend use `tsc`, **not** `npm run lint` (eslint isn't installed) or `npm test`
   (zero test files exist). Single backend test: `pytest tests/test_workflows.py::test_x -q`
   (run from `studio-api/`).
@@ -83,7 +84,7 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   `src/api.ts`, `src/toolbarPlugin.ts`). Disable with `--build-arg
   ENABLE_PEGASUS_BOT_CLIENT=0`. Respect the vendoring boundary.
 - Chat is engine-dispatched (`routers/chat.py`): `opencode` (default) or `builtin`
-  fallback. Marketplace/Examples is sourced live from GitHub (PegasusHub registry +
+  fallback. The Marketplace is sourced live from GitHub (PegasusHub registry +
   curated Pegasus-ISI list), nothing baked in. "Add" git-clones into `~/work/workflows`.
 - Deliberate exclusions: JupyterLab ships **without** `jupyter-ai` and without
   RTC/collaboration extensions (they break behind the proxy) — don't re-add. The ep/
@@ -108,16 +109,19 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
 
 ## Status & review docs
 
-- `SPEC.md` — design spec + V2 direction (note: some routes/endpoints in it have
-  drifted, e.g. `/examples` is now `/marketplace`).
-- `docs/TODO-PLAN.md` — phased roadmap (stale in places; predates ~PR #55).
-- `docs/CODE_REVIEW_2026-07.md` and `docs/CODE_REVIEW_2026-08.md` — full-repo reviews;
-  the Aug 2026 one is the current open-items list (event-loop blocking, silent-UI-fail
-  in chat/DAG, subprocess-orphan-on-timeout, deploy/supply-chain safety, doc drift).
-  Open security items across both: unrestricted `run_command` shell, plaintext LLM keys
-  (also echoed by GET endpoints), Dockerfile `[trusted=yes]`.
-- `studio-web/README.md` is stale (documents removed routes like `/workbench`,
-  `/dashboard`); prefer this file and the code over it.
+- `SPEC.md` — design spec + V2 direction (refreshed to current code in PR #138).
+- `README.md`, `studio-web/README.md`, `studio-api/README.md` — current
+  (rewritten in PRs #134 / #138); prefer them and the code.
+- `docs/TODO-PLAN.md`, `docs/CODE_REVIEW_2026-07.md` — historical snapshots
+  (banners point to the Aug review).
+- `docs/CODE_REVIEW_2026-08.md` — the August full-repo review. **Fully
+  remediated**: every finding carries a `**Status:** ✅ PR #NN` line. The whole
+  set shipped across PRs #57/#60/#62/#64/#66/#68/#126/#128/#130/#132/#134/#136,
+  including the previously-open security items — `run_command` now has a
+  per-turn approval gate (SEC-4, #68), LLM keys are write-only over the API
+  (SEC-3, #64) and encrypted at rest when `STUDIO_SECRET_KEY` is set (S7, #136),
+  and the Dockerfile installs are checksummed / from signed repos (INF-4, #66).
+  Check the doc's Status lines before assuming anything there is still open.
 
 ## Session usage logging
 
