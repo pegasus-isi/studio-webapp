@@ -121,6 +121,7 @@ JupyterLab runs **always-on** under supervisord (served at `/jupyter/`), so
 | `STUDIO_ALLOWED_ORIGINS` | (empty) | extra CORS origins (same-origin always allowed) |
 | `STUDIO_TRUST_AUTH_HEADER` | `0` | trust `X-Auth-User` for display identity (opt-in) |
 | `STUDIO_LLM_GATEWAY_URL` | internal | base URL for the zero-config `gateway` provider |
+| `STUDIO_SECRET_KEY` / `STUDIO_SECRET_KEY_FILE` | (unset) | master secret used to encrypt stored API keys / registry password at rest (S7). Unset → stored plaintext with a warning. Must come from a sealed secret, **not** the PVC. |
 
 Provider API keys are stored in the DB via the app (not env). See `main.py` /
 `llm/providers.py` for the full set of `STUDIO_*` toggles.

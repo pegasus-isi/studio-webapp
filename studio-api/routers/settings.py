@@ -38,13 +38,16 @@ async def get_registry() -> dict:
 
 @router.put("/registry")
 async def update_registry(req: RegistryRequest) -> dict:
-    """Persist registry config (same SQLite-storage caveat as LLM keys — S7)."""
+    """Persist registry config. The password is encrypted at rest (S7)."""
+    import secretbox
     from main import db
 
     await db.set_setting("container_registry", req.registry.strip())
     await db.set_setting("container_registry_username", req.username.strip())
     if req.password is not None:
-        await db.set_setting("container_registry_password", req.password)
+        await db.set_setting(
+            "container_registry_password", secretbox.encrypt(req.password)
+        )
     return await get_registry()
 
 

@@ -235,9 +235,11 @@ async def build_project_image(
     if not proj["has_dockerfile"]:
         raise HTTPException(status_code=400, detail="Project has no Dockerfile")
 
+    import secretbox
+
     registry = await db.get_setting("container_registry", "") or ""
     username = await db.get_setting("container_registry_username", "") or ""
-    password = await db.get_setting("container_registry_password", "") or ""
+    password = secretbox.decrypt(await db.get_setting("container_registry_password", "")) or ""
 
     from services.image_builder import stream_build
 

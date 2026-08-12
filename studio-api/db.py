@@ -12,6 +12,8 @@ from typing import Any
 import aiosqlite
 import structlog
 
+import secretbox
+
 log = structlog.get_logger()
 
 # Connection tuning. On this deployment the SQLite file lives on an NFS home,
@@ -265,7 +267,7 @@ class Database:
             return {
                 "provider": row["provider"],
                 "model": row["model"],
-                "api_key": row["api_key"],
+                "api_key": secretbox.decrypt(row["api_key"]),
                 "base_url": row["base_url"],
                 "extra_config": json.loads(row["extra_config"] or "{}"),
                 "updated_at": row["updated_at"],
@@ -281,6 +283,7 @@ class Database:
     ) -> None:
         now = _now()
         extra_json = json.dumps(extra_config or {})
+        api_key = secretbox.encrypt(api_key)  # at-rest encryption (S7)
         await self.db.execute(
             """INSERT INTO llm_config (id, provider, model, api_key, base_url, extra_config, updated_at)
                VALUES (1, ?, ?, ?, ?, ?, ?)
@@ -306,7 +309,7 @@ class Database:
                 results.append({
                     "provider_id": row["provider_id"],
                     "name": row["name"],
-                    "api_key": row["api_key"],
+                    "api_key": secretbox.decrypt(row["api_key"]),
                     "base_url": row["base_url"],
                     "default_model": row["default_model"],
                     "is_active": bool(row["is_active"]),
@@ -324,7 +327,7 @@ class Database:
             return {
                 "provider_id": row["provider_id"],
                 "name": row["name"],
-                "api_key": row["api_key"],
+                "api_key": secretbox.decrypt(row["api_key"]),
                 "base_url": row["base_url"],
                 "default_model": row["default_model"],
                 "is_active": bool(row["is_active"]),
@@ -341,6 +344,7 @@ class Database:
         is_active: bool = False,
     ) -> None:
         now = _now()
+        api_key = secretbox.encrypt(api_key)  # at-rest encryption (S7)
         await self.db.execute(
             """INSERT INTO provider_configs
                (provider_id, name, api_key, base_url, default_model, is_active, updated_at)
