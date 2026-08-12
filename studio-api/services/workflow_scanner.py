@@ -5,6 +5,7 @@ Scans for braindump.yml files and extracts workflow metadata.
 
 from __future__ import annotations
 
+import asyncio
 import glob
 import os
 from typing import Any
@@ -385,3 +386,29 @@ def get_run_status(run_dir: str) -> str:
     ):
         return "planned"
     return "planning"
+
+
+# --- async wrappers (BE-1) -------------------------------------------------
+# The three functions above do blocking work: recursive globs over NFS, YAML
+# parsing, stampede-DB reads, and (get_run_status) a subprocess with a 15s
+# timeout. They must NOT run on the event loop — a single call would freeze
+# every other request/stream/WS in the container for up to 15s x N runs. Async
+# handlers and the notification loop call these wrappers, which run the sync
+# body in the default thread-pool executor (the pattern dashboard.py used).
+
+
+async def discover_runs_async(workspace: str | None = None) -> list[dict[str, Any]]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, discover_runs, workspace)
+
+
+async def discover_projects_async(
+    workspace: str | None = None,
+) -> list[dict[str, Any]]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, discover_projects, workspace)
+
+
+async def get_run_status_async(run_dir: str) -> str:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_run_status, run_dir)

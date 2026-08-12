@@ -16,7 +16,7 @@ from services.event_reader import jobs as event_jobs
 from services.event_reader import read_events
 from services.event_reader import workflow_detail as event_detail
 from services.procutil import communicate_or_kill
-from services.workflow_scanner import get_run_status
+from services.workflow_scanner import get_run_status_async
 
 log = structlog.get_logger()
 
@@ -30,8 +30,11 @@ async def get_workflow_detail(run_dir: str) -> dict[str, Any]:
     loop = asyncio.get_event_loop()
     events = await loop.run_in_executor(None, read_events, run_dir)
     if not events:
+        # Off-load the fallback too (BE-1): get_run_status shells out to
+        # pegasus-status (15s timeout) and would otherwise block the loop right
+        # after we correctly off-loaded read_events above.
         return {
-            "status": get_run_status(run_dir),
+            "status": await get_run_status_async(run_dir),
             "total_jobs": 0,
             "completed_jobs": 0,
             "failed_jobs": 0,

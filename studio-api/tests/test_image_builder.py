@@ -187,10 +187,14 @@ def test_build_endpoint_streams(client, monkeypatch, tmp_path):
     proj_dir = tmp_path / "csv"
     (proj_dir / "Docker").mkdir(parents=True)
     (proj_dir / "Docker" / "Dockerfile").write_text("FROM scratch\n")
-    monkeypatch.setattr(wf, "discover_projects", lambda: [{
-        "project_id": "csv", "project_dir": str(proj_dir),
-        "has_dockerfile": True,
-    }])
+
+    async def _projects(ws=None):
+        return [{
+            "project_id": "csv", "project_dir": str(proj_dir),
+            "has_dockerfile": True,
+        }]
+
+    monkeypatch.setattr(wf, "discover_projects_async", _projects)
     monkeypatch.setattr(ib, "detect_builder", lambda: "echo")
 
     res = client.post("/api/workflows/projects/csv/build", json={"push": False})
@@ -202,9 +206,12 @@ def test_build_endpoint_streams(client, monkeypatch, tmp_path):
 def test_build_endpoint_requires_dockerfile(client, monkeypatch):
     from routers import workflows as wf
 
-    monkeypatch.setattr(wf, "discover_projects", lambda: [{
-        "project_id": "csv", "project_dir": "/tmp/x", "has_dockerfile": False,
-    }])
+    async def _projects(ws=None):
+        return [{
+            "project_id": "csv", "project_dir": "/tmp/x", "has_dockerfile": False,
+        }]
+
+    monkeypatch.setattr(wf, "discover_projects_async", _projects)
     res = client.post("/api/workflows/projects/csv/build", json={})
     assert res.status_code == 400
 

@@ -3,6 +3,16 @@
 from __future__ import annotations
 
 
+def _aconst(value):
+    """Return an async function that ignores its args and returns `value` —
+    for monkeypatching the scanner's async wrappers (BE-1)."""
+
+    async def _f(*args, **kwargs):
+        return value
+
+    return _f
+
+
 def test_list_empty(client):
     res = client.get("/api/notifications")
     assert res.status_code == 200
@@ -191,13 +201,13 @@ def test_seed_emits_terminal_notification_once(tmp_path, monkeypatch):
             "run_name": "run0001",
             "name": "csv_summary",
         }]
-        monkeypatch.setattr(ne, "discover_runs", lambda ws=None: runs)
+        monkeypatch.setattr(ne, "discover_runs_async", _aconst(runs))
 
         async def fake_detail(run_dir):
             return {"status": "failed", "failed_jobs": 1, "total_jobs": 8}
 
         monkeypatch.setattr(ne, "get_workflow_detail", fake_detail)
-        monkeypatch.setattr(ne, "get_run_status", lambda rd: "failed")
+        monkeypatch.setattr(ne, "get_run_status_async", _aconst("failed"))
 
         eng = ne.NotificationEngine()
         eng._db = db
@@ -240,13 +250,13 @@ def test_seed_does_not_resurrect_cleared_terminal(tmp_path, monkeypatch):
             "run_name": "run0001",
             "name": "csv_summary",
         }]
-        monkeypatch.setattr(ne, "discover_runs", lambda ws=None: runs)
+        monkeypatch.setattr(ne, "discover_runs_async", _aconst(runs))
 
         async def fake_detail(run_dir):
             return {"status": "failed", "failed_jobs": 1, "total_jobs": 8}
 
         monkeypatch.setattr(ne, "get_workflow_detail", fake_detail)
-        monkeypatch.setattr(ne, "get_run_status", lambda rd: "failed")
+        monkeypatch.setattr(ne, "get_run_status_async", _aconst("failed"))
 
         eng = ne.NotificationEngine()
         eng._db = db
