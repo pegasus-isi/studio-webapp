@@ -687,16 +687,6 @@ export async function updateCommandApproval(requireApproval: boolean) {
 
 // --- Jupyter ---
 
-export async function startJupyter() {
-  return request<{ status: string; port: number | null }>("/jupyter/start", {
-    method: "POST",
-  });
-}
-
-export async function stopJupyter() {
-  return request<{ status: string }>("/jupyter/stop", { method: "POST" });
-}
-
 export async function getJupyterStatus() {
   return request<{ status: string; port: number | null }>("/jupyter/status");
 }

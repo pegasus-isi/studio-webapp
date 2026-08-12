@@ -1,9 +1,9 @@
-"""JupyterLab status endpoints.
+"""JupyterLab status endpoint.
 
-JupyterLab runs as an always-on s6 service (docker/s6-overlay/s6-rc.d/jupyter),
-started with the container — like the official jupyter image. The studio does
-NOT launch or manage the process; these endpoints only report status, and the
-frontend opens the running instance at /jupyter/lab in a new browser tab.
+JupyterLab runs as an always-on service under supervisord
+(docker/supervisor/scripts/jupyter.sh), started with the container. The studio
+does NOT launch or manage the process; this endpoint only reports status, and
+the frontend opens the running instance at /jupyter/lab in a new browser tab.
 """
 
 from __future__ import annotations
@@ -37,20 +37,3 @@ async def jupyter_status() -> JupyterStatusResponse:
         status="running" if running else "stopped",
         port=_JUPYTER_PORT if running else None,
     )
-
-
-# --- Back-compat no-ops -----------------------------------------------------
-# JupyterLab is an always-on s6 service, so the studio neither starts nor stops
-# it. These endpoints remain for older clients and simply report status.
-
-
-@router.post("/start", response_model=JupyterStatusResponse)
-async def start_jupyter() -> JupyterStatusResponse:
-    """No-op: JupyterLab is managed by s6. Returns current status."""
-    return await jupyter_status()
-
-
-@router.post("/stop", response_model=JupyterStatusResponse)
-async def stop_jupyter() -> JupyterStatusResponse:
-    """No-op: JupyterLab is managed by s6 and not stopped by the studio."""
-    return await jupyter_status()

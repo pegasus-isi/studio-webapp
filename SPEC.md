@@ -124,15 +124,15 @@ Router groups:
 | `ai_terminal` | AI tool PTYs |
 | `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate |
 | `chat` | PegasusAI SSE chat; pluggable engine — shared `opencode serve` proxy (default) or builtin loop (fallback); per-turn shell-command approval |
-| `jupyter` | Status; start/stop are no-ops (JupyterLab is always-on) |
+| `jupyter` | Status only (JupyterLab is always-on) |
 | `dashboard` | Aggregate landing-page data (projects, runs, resources, versions) |
 | `provisioning` | HTCondor pool inventory + queue demand + pressure + OSPool capacity (read-only) |
 | `notifications` | Notification feed + prefs; SSE stream for live toasts |
 | `marketplace` | GitHub-sourced workflow catalog; "Add" git-clones into the workspace |
 | `pegasus_bot` | Same-origin proxy to the cluster-internal PegasusAI Bot server (search/feedback) |
 
-JupyterLab runs always-on under supervisord; the API does not start or stop it.
-`/api/jupyter/start` and `/api/jupyter/stop` are no-ops that return current status.
+JupyterLab runs always-on under supervisord; the API does not start or stop it,
+only reports status (`GET /api/jupyter/status`).
 
 ## Workflow Model
 
