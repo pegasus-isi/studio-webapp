@@ -140,6 +140,10 @@ export function TerminalView({ tabId, toolId }: Props) {
     return () => {
       // Detach only — the server-held shell keeps running for reattach.
       disposed = true;
+      // Reset the init guard so a StrictMode mount/unmount/remount (dev) — or
+      // any legitimate remount — re-initializes instead of leaving a dead
+      // black div and a leaked, undisposed xterm (FE-8).
+      initialized.current = false;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       observer?.disconnect();
       ws?.close();
