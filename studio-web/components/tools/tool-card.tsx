@@ -68,6 +68,24 @@ export function ToolCard({ tool }: Props) {
     }
   };
 
+  const handleStop = async () => {
+    setError(null);
+    try {
+      await stop.mutateAsync(info.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to stop");
+    }
+  };
+
+  const handleUninstall = async () => {
+    setError(null);
+    try {
+      await uninstall.mutateAsync(info.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to remove");
+    }
+  };
+
   return (
     <div className="rounded-lg border border-line bg-surface p-3">
       <div className="flex items-start justify-between">
@@ -121,7 +139,7 @@ export function ToolCard({ tool }: Props) {
               </button>
             )}
             <button
-              onClick={() => stop.mutateAsync(info.id)}
+              onClick={handleStop}
               disabled={busy}
               className="rounded-md border border-red-300 px-2 py-1 text-xs text-red-700 dark:text-rose-400 hover:bg-red-50 dark:bg-rose-500/10 disabled:opacity-50"
             >
@@ -138,7 +156,7 @@ export function ToolCard({ tool }: Props) {
               Start
             </button>
             <button
-              onClick={() => uninstall.mutateAsync(info.id)}
+              onClick={handleUninstall}
               disabled={busy}
               className="rounded-md border border-line px-2 py-1 text-xs text-fgmuted hover:bg-base disabled:opacity-50"
             >

@@ -8,6 +8,7 @@ import {
   useDeleteWorkflow,
 } from "@/lib/hooks/use-workflows";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUrl } from "@/lib/urls";
 import { cn, formatDuration, statusColor } from "@/lib/utils";
@@ -38,6 +39,7 @@ export function WorkflowDetail({ runId }: Props) {
   const { data, isLoading } = useWorkflowJobs(runId, isRunning);
   const analyze = useAnalyzeWorkflow();
   const deleteRun = useDeleteWorkflow();
+  const runAction = useActionToast();
   const selectWorkflow = useWorkflowStore((s) => s.selectWorkflow);
   const [analysis, setAnalysis] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -110,17 +112,16 @@ export function WorkflowDetail({ runId }: Props) {
   }, [runId, isRunning, setEventSource]);
 
   const handleAnalyze = async () => {
-    const result = await analyze.mutateAsync(runId);
-    setAnalysis(result.analysis);
+    const result = await runAction("Analyze", () => analyze.mutateAsync(runId));
+    if (result) setAnalysis(result.analysis);
   };
 
   const handleDelete = async () => {
-    try {
-      await deleteRun.mutateAsync(runId);
-      selectWorkflow(null); // run is gone — clear the now-dangling selection
-    } finally {
-      setConfirmDelete(false);
-    }
+    const result = await runAction("Delete run", () =>
+      deleteRun.mutateAsync(runId)
+    );
+    if (result) selectWorkflow(null); // run is gone — clear the selection
+    setConfirmDelete(false);
   };
 
   // Failed jobs with captured stderr feed the Diagnostics panel below.

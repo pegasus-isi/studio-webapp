@@ -13,6 +13,7 @@ import {
 } from "@/lib/hooks/use-workflows";
 import type { WorkflowParam } from "@/lib/api/client";
 import { DagViewer } from "@/components/workflows/dag-viewer";
+import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUrl } from "@/lib/urls";
 import { cn, statusColor } from "@/lib/utils";
@@ -69,6 +70,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
   const plan = usePlanWorkflow();
   const submit = useSubmitWorkflowProject();
   const deleteRun = useDeleteWorkflow();
+  const runAction = useActionToast();
 
   const [output, setOutput] = useState<string | null>(null);
   const [outputCollapsed, setOutputCollapsed] = useState(false);
@@ -146,27 +148,35 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     setOutput(null);
     // Regenerating invalidates any prior plan.
     setPlannedRunDir(null);
-    const result = await generate.mutateAsync({
-      projectId,
-      args: buildArgs(genParams, values),
-    });
-    showOutput(result.output);
+    const result = await runAction("Generate", () =>
+      generate.mutateAsync({
+        projectId,
+        args: buildArgs(genParams, values),
+      })
+    );
+    if (result) showOutput(result.output);
   };
 
   const handlePlan = async () => {
     setOutput(null);
-    const result = await plan.mutateAsync({ projectId, opts: planOpts() });
-    setPlannedRunDir(result.run_dir || null);
-    showOutput(result.output);
+    const result = await runAction("Plan", () =>
+      plan.mutateAsync({ projectId, opts: planOpts() })
+    );
+    if (result) {
+      setPlannedRunDir(result.run_dir || null);
+      showOutput(result.output);
+    }
   };
 
   const handleRun = async () => {
     setOutput(null);
-    const result = await submit.mutateAsync({
-      projectId,
-      opts: { ...planOpts(), run_dir: plannedRunDir ?? undefined },
-    });
-    showOutput(result.output ?? "Submitted");
+    const result = await runAction("Run", () =>
+      submit.mutateAsync({
+        projectId,
+        opts: { ...planOpts(), run_dir: plannedRunDir ?? undefined },
+      })
+    );
+    if (result) showOutput(result.output ?? "Submitted");
   };
 
   // Build the project's container image, streaming the build/push log into
@@ -236,12 +246,11 @@ export function WorkflowProjectDetail({ projectId }: Props) {
   const handleDeleteRun = async () => {
     if (!runToDelete) return;
     const { run_id } = runToDelete;
-    try {
-      await deleteRun.mutateAsync(run_id);
-      if (selectedRunId === run_id) setSelectedRunId(null);
-    } finally {
-      setRunToDelete(null);
-    }
+    const result = await runAction("Delete run", () =>
+      deleteRun.mutateAsync(run_id)
+    );
+    if (result && selectedRunId === run_id) setSelectedRunId(null);
+    setRunToDelete(null);
   };
 
   const isBusy =
@@ -634,11 +643,12 @@ function FileCheck({ label, exists }: { label: string; exists: boolean }) {
 function RunJobsPanel({ runId }: { runId: string }) {
   const { data, isLoading } = useWorkflowJobs(runId);
   const analyze = useAnalyzeWorkflow();
+  const runAction = useActionToast();
   const [analysis, setAnalysis] = useState<string | null>(null);
 
   const handleAnalyze = async () => {
-    const result = await analyze.mutateAsync(runId);
-    setAnalysis(result.analysis);
+    const result = await runAction("Analyze", () => analyze.mutateAsync(runId));
+    if (result) setAnalysis(result.analysis);
   };
 
   return (

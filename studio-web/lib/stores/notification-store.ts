@@ -17,6 +17,13 @@ interface NotificationStore {
   setAll: (notifications: Notification[], unread: number) => void;
   /** Add (or refresh) one notification arriving live; also shows a toast. */
   receive: (n: Notification) => void;
+  /** Show a transient toast for a client-side action (FE-6). Ephemeral: it
+   *  does NOT enter the persisted feed or the unread count. */
+  pushToast: (t: {
+    title: string;
+    body?: string;
+    severity?: Notification["severity"];
+  }) => void;
   markRead: (id: string) => void;
   markAllRead: () => void;
   remove: (id: string) => void;
@@ -59,6 +66,29 @@ export const useNotificationStore = create<NotificationStore>((set) => ({
           ? s.toasts.filter((t) => t.id !== n.id)
           : [n, ...s.toasts.filter((t) => t.id !== n.id)].slice(0, 4),
       };
+    }),
+
+  pushToast: ({ title, body, severity = "error" }) =>
+    set((s) => {
+      const id = `toast-${
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      }`;
+      const toast: Notification = {
+        id,
+        kind: "manual",
+        severity,
+        title,
+        body: body ?? null,
+        run_id: null,
+        link: null,
+        meta: {},
+        read: false,
+        created_at: new Date().toISOString(),
+      };
+      // Prepend to toasts only — not `notifications`/`unread` (ephemeral).
+      return { toasts: [toast, ...s.toasts].slice(0, 4) };
     }),
 
   markRead: (id) =>
