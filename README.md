@@ -40,22 +40,20 @@ JupyterLab is always on and opens in a separate browser tab.
 - The workspace defaults to `$HOME/work`; Studio state is stored under
   `$HOME/work/.studio`.
 
-## Platform Warning
+## Running locally (for testing)
 
-Run the image on native `amd64` hardware. On Apple Silicon it can run through
-Rosetta/QEMU, but live Jupyter kernels fail during the `kernel_info` handshake.
-Use an amd64 Linux VM, lab host, or Kubernetes node for full functionality.
-
-## Build And Run
+In production the image is built and published by CI (a merge to `main` pushes
+`ghcr.io/pegasus-isi/studio-webapp:main`, which studio-system pulls). To build
+and run it yourself for testing:
 
 ```bash
 docker build --platform linux/amd64 -t pegasus/studio-webapp:latest .
-
-./local-test-instance.sh
+./local-test-instance.sh          # → http://localhost:8888
 ```
 
-Open <http://localhost:8888>. Build on native `amd64` — see the Platform
-Warning above.
+> **Build and run on native `amd64` hardware.** On Apple Silicon the image runs
+> under Rosetta/QEMU, but live Jupyter kernels fail the `kernel_info` handshake —
+> use an amd64 Linux VM, lab host, or Kubernetes node for full functionality.
 
 `local-test-instance.sh` runs the image as your UID/GID with a throwaway home.
 All knobs are optional environment variables:
