@@ -138,16 +138,15 @@ def test_generate_uses_resolved_generator_filename(client, monkeypatch, tmp_path
     proj_dir.mkdir()
     (proj_dir / "workflow-generator.py").write_text("# gen\n")
 
-    monkeypatch.setattr(
-        wf,
-        "discover_projects",
-        lambda: [{
+    async def _projects(ws=None):
+        return [{
             "project_id": "quickstart",
             "project_dir": str(proj_dir),
             "has_generator": True,
             "generator_file": "workflow-generator.py",
-        }],
-    )
+        }]
+
+    monkeypatch.setattr(wf, "discover_projects_async", _projects)
 
     captured: dict = {}
 

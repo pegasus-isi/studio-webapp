@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from services.workflow_monitor import get_workflow_detail
-from services.workflow_scanner import discover_runs, get_run_status
+from services.workflow_scanner import discover_runs_async, get_run_status_async
 
 if TYPE_CHECKING:
     from db import Database
@@ -186,7 +186,9 @@ class NotificationEngine:
                 log.warning("notification_scan_failed", error=str(e))
 
     async def _scan(self, seed_only: bool) -> None:
-        runs = discover_runs(self._workspace_root)
+        # Off-load the blocking scan (BE-1): this runs every 10s and must not
+        # freeze the loop that serves requests/streams for the whole container.
+        runs = await discover_runs_async(self._workspace_root)
         # Prune _seen for runs that no longer exist (deleted submit dirs), so
         # the map doesn't grow unbounded on a long-lived pod (BE-9).
         live_dirs = {r["run_dir"] for r in runs}
@@ -207,7 +209,7 @@ class NotificationEngine:
             )
 
             detail = await get_workflow_detail(run_dir)
-            status = detail.get("status") or get_run_status(run_dir)
+            status = detail.get("status") or await get_run_status_async(run_dir)
             failed = int(detail.get("failed_jobs", 0) or 0)
             total = int(detail.get("total_jobs", 0) or 0)
 

@@ -28,7 +28,10 @@ from services.workflow_monitor import (
     run_pegasus_analyzer,
     tail_workflow_events,
 )
-from services.workflow_scanner import discover_projects, discover_runs, get_run_status
+from services.workflow_scanner import (
+    discover_projects_async,
+    discover_runs_async,
+)
 from services.workflow_submitter import (
     run_planned_workflow,
     submit_workflow,
@@ -76,14 +79,16 @@ async def list_workflows() -> WorkflowListResponse:
 
     # discover_runs scans SCAN_ROOT and excludes cloned-repo / test-fixture
     # braindumps, so only genuine runs are listed.
-    runs = discover_runs()
+    runs = await discover_runs_async()
     workflows = []
 
     for run in runs:
         run_dir = run["run_dir"]
-        status = get_run_status(run_dir)
 
-        # Try to get stats from stampede DB
+        # get_workflow_detail already resolves status (from events, or via
+        # get_run_status in its own fallback), so we don't call get_run_status
+        # separately here — that was up to two pegasus-status runs per run per
+        # poll (BE-1 bonus).
         detail = await get_workflow_detail(run_dir)
 
         wf = WorkflowRunResponse(
@@ -91,7 +96,7 @@ async def list_workflows() -> WorkflowListResponse:
             run_name=run.get("run_name", ""),
             name=run["name"],
             run_dir=run_dir,
-            status=detail.get("status", status),
+            status=detail.get("status", "unknown"),
             total_jobs=detail.get("total_jobs", 0),
             completed_jobs=detail.get("completed_jobs", 0),
             failed_jobs=detail.get("failed_jobs", 0),
@@ -106,7 +111,7 @@ async def list_workflows() -> WorkflowListResponse:
             run_id=run["run_id"],
             name=run["name"],
             run_dir=run_dir,
-            status=detail.get("status", status),
+            status=detail.get("status", "unknown"),
             total_jobs=detail.get("total_jobs", 0),
             completed_jobs=detail.get("completed_jobs", 0),
             failed_jobs=detail.get("failed_jobs", 0),
@@ -122,7 +127,7 @@ async def list_workflows() -> WorkflowListResponse:
 @router.get("/projects", response_model=WorkflowProjectListResponse)
 async def list_projects() -> WorkflowProjectListResponse:
     """List workflow projects from ~/work/workflows/."""
-    raw = discover_projects()
+    raw = await discover_projects_async()
     projects = [
         WorkflowProjectResponse(
             project_id=p["project_id"],
@@ -149,7 +154,7 @@ async def get_project_params(project_id: str) -> dict:
     argparse (different per workflow); ``plan`` params are the standard
     pegasus-plan options used by Plan/Submit.
     """
-    projects = discover_projects()
+    projects = await discover_projects_async()
     proj = next((p for p in projects if p["project_id"] == project_id), None)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
@@ -170,7 +175,7 @@ async def generate_workflow(
     project_id: str, req: GenerateRequest = GenerateRequest()
 ) -> dict:
     """Run workflow_generator.py in a project directory with the given args."""
-    projects = discover_projects()
+    projects = await discover_projects_async()
     proj = next((p for p in projects if p["project_id"] == project_id), None)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
@@ -223,7 +228,7 @@ async def build_project_image(
     """
     from main import db
 
-    projects = discover_projects()
+    projects = await discover_projects_async()
     proj = next((p for p in projects if p["project_id"] == project_id), None)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
@@ -274,7 +279,7 @@ async def plan_workflow(
     project_id: str, req: PlanRequest = PlanRequest()
 ) -> dict:
     """Run pegasus-plan (without --submit) on a project."""
-    projects = discover_projects()
+    projects = await discover_projects_async()
     proj = next((p for p in projects if p["project_id"] == project_id), None)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
@@ -392,7 +397,7 @@ async def submit_project(
     Submits the dir a prior Plan produced instead of re-planning. Falls back to
     plan+submit if nothing has been planned yet.
     """
-    projects = discover_projects()
+    projects = await discover_projects_async()
     proj = next((p for p in projects if p["project_id"] == project_id), None)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
@@ -578,7 +583,7 @@ def _find_run_workflow_file(run_dir: str) -> str | None:
 @router.get("/projects/{project_id}/graph.json")
 async def project_graph_json(project_id: str) -> dict:
     """Workflow structure for the interactive DAG viewer (no run statuses)."""
-    projects = discover_projects()
+    projects = await discover_projects_async()
     proj = next((p for p in projects if p["project_id"] == project_id), None)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
@@ -598,7 +603,7 @@ async def run_graph_json(run_id: str, include_pegasus: bool = False) -> dict:
     By default returns the abstract workflow (user jobs only). With
     `include_pegasus=true` returns the executable DAG, which also includes the
     Pegasus auxiliary jobs (stage-in/out, create-dir, cleanup, register)."""
-    runs = discover_runs()
+    runs = await discover_runs_async()
     run = next((r for r in runs if r["run_id"] == run_id), None)
     if not run or not os.path.isdir(run["run_dir"]):
         raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
@@ -668,8 +673,9 @@ async def _resolve_run_dir(run_id: str) -> str:
             run_dir = r["run_dir"]
             break
     if not run_dir:
+        scanned = await discover_runs_async()
         run_dir = next(
-            (r["run_dir"] for r in discover_runs() if r["run_id"] == run_id), None
+            (r["run_dir"] for r in scanned if r["run_id"] == run_id), None
         )
     if not run_dir or not os.path.isdir(run_dir):
         raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
@@ -754,7 +760,7 @@ async def delete_workflow(run_id: str) -> dict:
             run_dir = r["run_dir"]
             break
     if not run_dir:
-        for r in discover_runs():
+        for r in await discover_runs_async():
             if r["run_id"] == run_id:
                 run_dir = r["run_dir"]
                 break
