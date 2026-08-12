@@ -90,14 +90,17 @@ Zustand, TanStack Query, xterm.js, and lucide-react.
 
 Primary routes:
 
-| Route | Purpose |
-|-------|---------|
-| `/` | Dashboard: workflow summary, recent runs, resources, quick actions |
-| `/workflows` | Workflow projects, runs, actions, and details |
-| `/examples` | Example-workflow marketplace: browse and add to the workspace |
-| `/provisioning` | Pool inventory, workflow demand, pressure findings (read-only) |
-| `/notebooks` | Opens JupyterLab at `/jupyter/lab` |
-| `/settings` | LLM providers, chat engine, Tools (install + launch AI tools / bash terminal), Pegasus options |
+| Route | Nav label | Purpose |
+|-------|-----------|---------|
+| `/` | Home | Dashboard: workflow summary, recent runs, resources, quick actions |
+| `/workflows` | Workflows | Workflow projects, runs, actions, and details |
+| `/marketplace` | Marketplace | Browse workflows sourced live from GitHub (PegasusHub registry + curated Pegasus-ISI); "Add" git-clones one into the workspace |
+| `/provisioning` | Resources | Pool inventory, workflow demand, pressure findings, OSPool capacity (read-only) |
+| `/notebooks` | Notebooks | Opens JupyterLab at `/jupyter/lab` |
+| `/settings` | Settings | LLM providers, chat engine + shell-command approval, Tools (install + launch AI tools / bash terminal), container registry |
+
+A chrome-less `/chat` page renders the same chat for embedding into JupyterLab
+(iframe, origin-checked postMessage handshake).
 
 The frontend consumes REST APIs, SSE chat streams, and WebSocket PTY sessions.
 
@@ -120,10 +123,13 @@ Router groups:
 | `terminal` | Browser bash PTY |
 | `ai_terminal` | AI tool PTYs |
 | `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate |
-| `chat` | PegasusAI SSE chat; pluggable engine — shared `opencode serve` proxy (default) or builtin loop (fallback) |
+| `chat` | PegasusAI SSE chat; pluggable engine — shared `opencode serve` proxy (default) or builtin loop (fallback); per-turn shell-command approval |
 | `jupyter` | Status plus back-compat start/stop no-ops |
 | `dashboard` | Aggregate landing-page data (projects, runs, resources, versions) |
-| `provisioning` | HTCondor pool inventory + queue demand + pressure (read-only) |
+| `provisioning` | HTCondor pool inventory + queue demand + pressure + OSPool capacity (read-only) |
+| `notifications` | Notification feed + prefs; SSE stream for live toasts |
+| `marketplace` | GitHub-sourced workflow catalog; "Add" git-clones into the workspace |
+| `pegasus_bot` | Same-origin proxy to the cluster-internal PegasusAI Bot server (search/feedback) |
 
 JupyterLab is not started or stopped by the API. `/api/jupyter/start` and
 `/api/jupyter/stop` remain as compatibility no-ops and return current status.
@@ -135,8 +141,12 @@ Studio discovers workflow projects and Pegasus runs under the workspace.
 Project actions:
 
 - **Generate** runs a project's `workflow_generator.py`.
-- **Plan** runs `pegasus-plan -s <site> -o <output-site>`.
-- **Submit** runs `pegasus-plan --submit`.
+- **Plan** runs `pegasus-plan -s <site> -o <output-site>` (no submit) and
+  captures the planned run directory.
+- **Run** submits that planned dir via `pegasus-run`, falling back to a full
+  `pegasus-plan --submit` when there's no reusable planned dir.
+- **Build** builds (and optionally pushes) the project's container image via
+  podman, streaming the log over SSE.
 
 Before rendering action forms, Studio introspects each project's
 `workflow_generator.py` `argparse` definition and builds a parameter form for
@@ -202,21 +212,15 @@ Adapters translate the shared knowledge into each tool's native format:
 
 ## LLM Configuration
 
-Supported providers are `anthropic`, `openai`, `fabric`, `nrp`, `custom`, and
-`ollama`. Initial configuration can come from environment variables, and runtime
-configuration is stored in SQLite.
+Supported providers are `gateway` (the zero-config default — an internal
+OpenAI-compatible gateway, so chat/tools work with no keys), `anthropic`,
+`openai`, `google`, `fabric`, `nrp`, `custom`, and `ollama`.
 
-Important variables:
-
-| Variable | Purpose |
-|----------|---------|
-| `LLM_PROVIDER` / `LLM_MODEL` | Default provider and optional model |
-| `ANTHROPIC_API_KEY` | Anthropic provider and Claude Code |
-| `OPENAI_API_KEY` | OpenAI provider and Codex CLI |
-| `FABRIC_AI_API_KEY` | FABRIC AI gateway |
-| `NRP_API_KEY` | NRP Nautilus eLLM |
-| `CUSTOM_BASE_URL` / `CUSTOM_API_KEY` | Custom OpenAI-compatible endpoint |
-| `OLLAMA_HOST` | Ollama endpoint |
+Configuration is done at runtime on the Settings page and stored in SQLite;
+there is no env-var seeding (the old `seed_config.py` step was removed, so
+`LLM_PROVIDER`/`ANTHROPIC_API_KEY`/… are not read). Keys are write-only over the
+API — responses report only whether a key is set — and are encrypted at rest
+when `STUDIO_SECRET_KEY` is provided (see Database).
 
 The built-in chat supports both OpenAI Chat Completions and the OpenAI Responses
 API and falls back when an endpoint requires Responses.
@@ -225,17 +229,25 @@ API and falls back when an endpoint requires Responses.
 
 SQLite lives under the workspace, normally `$HOME/work/.studio/studio.db`.
 
-Main tables:
+Tables:
 
 | Table | Purpose |
 |-------|---------|
 | `tool_installations` | Installed/running tool state |
 | `llm_config` | Active LLM provider, model, key, base URL |
+| `provider_configs` | Saved multi-provider configs (name, key, base URL, active flag) |
 | `workflow_runs` | Discovered workflow run metadata |
-| `chat_messages` | Built-in chat history |
+| `chat_messages` | Built-in chat history + 👍/👎 feedback |
+| `notifications` | Notification feed rows |
+| `notification_log` | Durable dedup-key ledger (survives clear, so fire-once guards hold) |
+| `app_settings` | Key/value app settings (e.g. container registry, chat engine) |
 
-This plaintext storage model is acceptable for V1 because each container is a
-single-user environment protected by upstream authentication.
+The DB is a single-user store protected by upstream authentication. Stored
+secrets (LLM API keys, the registry password) are additionally encrypted at
+rest when `STUDIO_SECRET_KEY` is set — the key is derived from that
+operator-provided secret, which must live off the workspace PVC so a leak of
+the DB file alone doesn't expose them. With no secret configured they fall back
+to plaintext (with a warning).
 
 ## API Surface
 
@@ -267,12 +279,15 @@ Common endpoints:
 | `GET` | `/api/workflows/{run_id}/events` | Workflow event stream |
 | `POST` | `/api/workflows/{run_id}/analyze` | Run diagnostics |
 | `GET` | `/api/workflows/{run_id}/estimate` | Remaining-time estimate (historical mean) |
+| `DELETE` | `/api/workflows/{run_id}` | **Destructive**: cancel if running, then remove the run's submit directory from disk |
 | `GET` | `/api/dashboard` | Aggregate landing-page snapshot |
-| `GET` | `/api/provisioning/status` | Pool inventory, demand, pressure findings |
-| `GET` | `/api/examples` | List bundled example workflows |
-| `POST` | `/api/examples/{id}/add` | Copy an example into the workspace |
+| `GET` | `/api/provisioning/status` | Pool inventory, demand, pressure findings, OSPool capacity |
+| `GET` | `/api/marketplace` | Workflow catalog sourced live from GitHub |
+| `POST` | `/api/marketplace/{id}/add` | git-clone a catalog workflow into the workspace |
 | `POST` | `/api/chat/stream` | Built-in SSE chat (engine-dispatched) |
-| `GET/PUT` | `/api/chat/engine` | Chat engine selection (builtin / opencode) + attach info |
+| `POST` | `/api/chat/permission` | Approve/deny a pending shell command (per-turn gate) |
+| `GET/PUT` | `/api/chat/engine`, `/api/chat/command-approval` | Chat engine selection + approval posture |
+| `GET` | `/api/notifications` | Notification feed (+ `/prefs`, `/stream` SSE) |
 | `GET` | `/api/jupyter/status` | JupyterLab status |
 | `WS` | `/ws/terminal` | Bash PTY |
 | `WS` | `/ws/terminal/{tool_id}` | AI tool PTY |

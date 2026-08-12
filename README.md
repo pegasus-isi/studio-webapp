@@ -61,16 +61,16 @@ should provide equivalent user-namespace support through the cluster policy.
 
 ## Main Views
 
-| View | Purpose |
-|------|---------|
-| Dashboard | Landing page: capabilities, recent runs, resources at a glance |
-| Workflows | Discover projects and runs; generate, plan, build, submit, monitor, and analyze workflows |
-| Examples | Browse ready-made example workflows and add one to the workspace |
-| Provisioning | HTCondor pool inventory, workflow demand, and pressure findings |
-| Notebooks | Open the always-on JupyterLab instance |
-| Settings | LLM providers, chat engine, **Tools** (install + launch AI tools / bash terminal), Pegasus options |
-| PegasusAI Chat | Built-in SSE chat with file, shell, and Pegasus tool use |
-| Terminal | Browser PTY connected to the workspace |
+| View (nav label) | Route | Purpose |
+|------------------|-------|---------|
+| Home | `/` | Landing page: capabilities, recent runs, resources at a glance |
+| Workflows | `/workflows` | Discover projects and runs; generate, plan, build, submit, monitor, and analyze workflows |
+| Marketplace | `/marketplace` | Browse workflows sourced live from GitHub (PegasusHub registry + curated Pegasus-ISI list) and "Add" (git-clone) one into the workspace |
+| Resources | `/provisioning` | HTCondor pool inventory, workflow demand, pressure findings, and an OSPool (OSG) capacity panel |
+| Notebooks | `/notebooks` | Open the always-on JupyterLab instance |
+| Settings | `/settings` | LLM providers, chat engine + shell-command approval, **Tools** (install + launch AI tools / bash terminal), container registry |
+| PegasusAI Chat | (slide-in panel + `/chat`) | Built-in SSE chat with file, shell, and Pegasus tool use; per-turn approval before shell commands run |
+| Terminal | (panel) | Browser PTY connected to the workspace |
 
 Workflow Generate / Plan / Submit introspect each project's
 `workflow_generator.py` `argparse` definition at runtime, so each workflow gets
@@ -78,13 +78,13 @@ its own parameter form.
 
 ## AI Tools
 
-Settings → Tools can install and launch:
+The built-in **PegasusAI Chat** panel is always available (not an installable
+tool). Settings → Tools can install and launch the CLI/agent tools:
 
 | Tool | Type |
 |------|------|
-| PegasusAI Chat | Built-in web chat |
+| OpenCode | Terminal/web (bundled in the image; also powers the default chat engine) |
 | Claude Code | Terminal |
-| OpenCode | Terminal/web tool integration |
 | Codex CLI | Terminal |
 | Antigravity | Terminal |
 
@@ -119,17 +119,21 @@ to bypass the proxy if the server is directly browser-reachable.
 
 ## Configuration
 
+> **LLM configuration is done in the UI, not via env vars.** Providers and API
+> keys are entered on the Settings page and stored in the workspace SQLite DB
+> (write-only over the API — GETs report only whether a key is set). The
+> zero-config default is the internal `gateway` provider, so chat/tools work out
+> of the box with no keys. Legacy `LLM_PROVIDER`/`ANTHROPIC_API_KEY`/… env vars
+> are **no longer read** (the old `seed_config.py` step was removed).
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `STUDIO_WORKSPACE_DIR` | `$HOME/work` | Workspace root for projects, SQLite state, and tool configs |
-| `LLM_PROVIDER` | unset | `anthropic`, `openai`, `fabric`, `nrp`, `custom`, or `ollama` |
-| `LLM_MODEL` | provider default | Optional model override |
-| `ANTHROPIC_API_KEY` | unset | Anthropic key |
-| `OPENAI_API_KEY` | unset | OpenAI key |
-| `FABRIC_AI_API_KEY` | unset | FABRIC AI gateway key |
-| `NRP_API_KEY` | unset | NRP Nautilus eLLM key |
-| `CUSTOM_BASE_URL` / `CUSTOM_API_KEY` | unset | Custom OpenAI-compatible endpoint |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
+| `STUDIO_SCAN_DIR` | `$HOME` | Root scanned for `braindump.yml` runs (the run list + notification scan) |
+| `STUDIO_SECRET_KEY` / `STUDIO_SECRET_KEY_FILE` | unset | Master secret used to encrypt stored API keys + the registry password at rest. Unset → stored plaintext with a warning. Must come from a sealed secret, **not** the PVC |
+| `STUDIO_LLM_GATEWAY_URL` | internal | Base URL for the zero-config `gateway` provider |
+| `STUDIO_ALLOWED_ORIGINS` | (empty) | Extra CORS origins (same-origin is always allowed) |
+| `STUDIO_TRUST_AUTH_HEADER` | `0` | Trust `X-Auth-User` for the display identity (opt-in; prod identity comes from `JUPYTERHUB_USER`) |
 | `NPM_CONFIG_PREFIX` | `/opt/npm-global` | npm global install prefix |
 | `STUDIO_POOL_CACHE_TTL` | `15` | Seconds between HTCondor pool/queue snapshots (provisioning + dashboard) |
 | `STUDIO_RESOURCE_WAIT_SECONDS` | `300` | Idle-job queue wait past which a resource alert is raised |
@@ -146,8 +150,16 @@ to bypass the proxy if the server is directly browser-reachable.
 | `PEGASUS_BOT_CLIENT_URL` | `<prefix>/api/pegasus-bot` | Server URL injected into the extension; defaults to the same-origin proxy path. Override to point the browser at a directly-reachable server |
 | `STUDIO_ENABLE_PEGASUS_BOT` | `1` | Inject the PegasusAI Bot config (server + env user) into JupyterLab (`0` leaves the bundled extension inert / manual) |
 
-The Settings page can update LLM configuration at runtime; values are stored in
-the workspace SQLite database.
+### HTCondor connection
+
+Studio submits and monitors on the HTCondor pool named by `CONDOR_HOST` in
+`docker/htcondor/90-studio.conf` (baked into the image at
+`/etc/condor/config.d/90-studio.conf`; the default AP is `ap.pegasus-ai.org`).
+There is **no** first-class Studio env var for this — to point at a different
+pool, override that config file (a `config.d` drop-in, a different `COPY`, or
+HTCondor's own `_CONDOR_CONDOR_HOST` / `CONDOR_CONFIG` overrides at runtime).
+The separate OSPool (OSG) capacity panel is configurable via `STUDIO_OSPOOL_CM`
+(empty disables it) and `STUDIO_OSPOOL_OWNER`.
 
 ## Development
 
@@ -169,11 +181,11 @@ npm ci
 npm run dev
 ```
 
-Tests:
+Tests / gates (CI runs neither — run before every PR):
 
 ```bash
-cd studio-api && pytest
-cd studio-web && npm test
+cd studio-api && pytest -q                       # ~235 tests
+cd studio-web && node_modules/.bin/tsc --noEmit   # NOT `npm test`/`npm run lint` — those don't work
 ```
 
 ## Source Layout
