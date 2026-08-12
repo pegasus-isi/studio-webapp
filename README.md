@@ -49,15 +49,42 @@ Use an amd64 Linux VM, lab host, or Kubernetes node for full functionality.
 ## Build And Run
 
 ```bash
-docker build -t pegasus/studio-webapp:latest .
+docker build --platform linux/amd64 -t pegasus/studio-webapp:latest .
 
 ./local-test-instance.sh
 ```
 
-Open <http://localhost:8888>.
+Open <http://localhost:8888>. Build on native `amd64` — see the Platform
+Warning above.
 
-`--privileged` is needed for local Apptainer execution. Kubernetes deployments
-should provide equivalent user-namespace support through the cluster policy.
+`local-test-instance.sh` runs the image as your UID/GID with a throwaway home.
+All knobs are optional environment variables:
+
+| Env | Purpose |
+|-----|---------|
+| `IMAGE` / `PORT` | Image to run / host port (default `pegasus/studio-webapp:latest`, `8888`) |
+| `STUDIO_HOME` | Persist the container home here instead of a tmp dir (keeps SQLite state, tool configs, cloned workflows across runs) |
+| `CONDOR_HOST` | Point Studio's HTCondor client at a different AP / central manager (also sets the schedd host) |
+| `CONDOR_SCHEDD_HOST` | Schedd host, if different from `CONDOR_HOST` |
+| `CONDOR_TOKENS_DIR` | Host dir of HTCondor IDTOKENs, mounted read-only and used as the token directory — **required to authenticate to a real pool** |
+| `CONDOR_CONFIG_DROPIN` | Host path to a condor config file, mounted as `/etc/condor/config.d/99-local.conf` (wins over the baked config; alternative to the `CONDOR_*` knobs) |
+| `PRIVILEGED=1` | Run `--privileged` (needed for local Apptainer workflow execution) |
+| `EXTRA_DOCKER_ARGS` | Extra args appended to `docker run` |
+| `DRY_RUN=1` | Print the `docker run` command instead of executing it |
+
+Example — drive a local build against a real submit host (see
+[HTCondor connection](#htcondor-connection) for the credential requirement):
+
+```bash
+CONDOR_HOST=my-ap.example.org \
+CONDOR_TOKENS_DIR="$HOME/.condor/tokens.d" \
+STUDIO_HOME=/tmp/studio-home \
+./local-test-instance.sh
+```
+
+`--privileged` (via `PRIVILEGED=1`) is needed for local Apptainer execution.
+Kubernetes deployments should provide equivalent user-namespace support through
+the cluster policy.
 
 ## Main Views
 
@@ -152,12 +179,27 @@ to bypass the proxy if the server is directly browser-reachable.
 
 ### HTCondor connection
 
-Studio submits and monitors on the HTCondor pool named by `CONDOR_HOST` in
-`docker/htcondor/90-studio.conf` (baked into the image at
-`/etc/condor/config.d/90-studio.conf`; the default AP is `ap.pegasus-ai.org`).
-There is **no** first-class Studio env var for this — to point at a different
-pool, override that config file (a `config.d` drop-in, a different `COPY`, or
-HTCondor's own `_CONDOR_CONDOR_HOST` / `CONDOR_CONFIG` overrides at runtime).
+Studio is a pure HTCondor **client** (the container runs no Condor daemons); it
+submits and monitors on the pool named by `CONDOR_HOST` in
+`docker/htcondor/90-studio.conf`, baked into the image at
+`/etc/condor/config.d/90-studio.conf` (default AP `ap.pegasus-ai.org`). In
+production, studio-system injects the trust domain and per-user IDTOKEN at
+spawn; the image ships no credentials.
+
+Connecting to a different host is two things:
+
+1. **Point at the host.** HTCondor honors `_CONDOR_<KNOB>` env vars, which
+   override the baked config with no rebuild. `local-test-instance.sh` wires
+   these for you via `CONDOR_HOST` / `CONDOR_SCHEDD_HOST` (or mount a full
+   drop-in with `CONDOR_CONFIG_DROPIN`).
+2. **Authenticate.** `condor_q`/`condor_status` and `pegasus-plan --submit`
+   only work against a pool that trusts your client, so you need an HTCondor
+   **IDTOKEN** for that pool's trust domain in the token directory — pass the
+   host dir via `CONDOR_TOKENS_DIR` (mounted read-only). The token's issuer
+   (`iss`) must match the pool's trust domain, and the AP's ports must be
+   reachable. Without a token the UI still loads but the Resources panel shows
+   "unavailable" and submits fail auth.
+
 The separate OSPool (OSG) capacity panel is configurable via `STUDIO_OSPOOL_CM`
 (empty disables it) and `STUDIO_OSPOOL_OWNER`.
 
