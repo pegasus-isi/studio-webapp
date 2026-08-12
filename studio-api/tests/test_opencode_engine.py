@@ -359,7 +359,12 @@ def test_chat_stream_dispatches_to_opencode(client, monkeypatch):
         return None
 
     async def fake_turn(**kw):
-        oce.engine.last_turn = {"text": "Hi from opencode", "tools": []}
+        # The router persists from the per-call turn_sink now (BE-3), not the
+        # engine's shared last_turn.
+        sink = kw.get("turn_sink")
+        if sink is not None:
+            sink["text"] = "Hi from opencode"
+            sink["tools"] = []
         yield 'data: {"content": "Hi from opencode"}\n\n'
 
     monkeypatch.setattr(oce.engine, "ensure_running", ok)
@@ -463,3 +468,30 @@ def test_router_backstops_engine_crash(client, monkeypatch):
     assert res.status_code == 200
     assert "engine fell over" in res.text
     assert "[DONE]" in res.text
+
+
+def test_turn_sink_receives_result_and_is_per_call(monkeypatch):
+    """BE-3: stream_turn writes the final text/tools into a caller-owned
+    turn_sink so two overlapping turns can't cross-persist via shared state."""
+    events = [
+        _ev("message.part.updated", sessionID="ses_test1", part=TEXT_PART, time=1),
+        _ev("message.part.delta", sessionID="ses_test1", messageID="msg_1",
+            partID="prt_text", field="text", delta="Sink me"),
+        _ev("session.idle", sessionID="ses_test1"),
+    ]
+    eng = _patched_engine(monkeypatch, events)
+
+    async def go():
+        sink: dict = {}
+        active: dict = {}
+        async for _ in eng.stream_turn(
+            text="hi", conversation_id="c1", agent_id="general",
+            request_id="reqS", active_clients=active, turn_sink=sink,
+        ):
+            pass
+        return sink
+
+    sink = asyncio.run(go())
+    assert sink["text"] == "Sink me"
+    # The caller's own dict is populated (not just the engine's mirror).
+    assert isinstance(sink.get("tools"), list)

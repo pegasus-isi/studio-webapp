@@ -23,9 +23,10 @@ Event translation into the chat panel's existing vocabulary:
 * ``message.updated`` (assistant)      -> token usage for the meta footer.
 * ``session.idle``                     -> end of turn.
 * ``session.error``                    -> ``error``.
-* ``permission.asked``                 -> auto-approved ("always") to match
-  the built-in chat's execute-without-asking behavior. Tightening this is
-  the same policy decision as the run_command posture (TODO-PLAN item 1).
+* ``permission.asked``                 -> forwarded to the user as a
+  ``permission_request`` and answered from their Approve/Deny decision
+  (SEC-4), unless command approval is switched off, in which case it is
+  auto-approved ("always").
 """
 
 from __future__ import annotations
@@ -362,15 +363,25 @@ class OpenCodeEngine:
         agent_id: str | None,
         request_id: str,
         active_clients: dict[str, httpx.AsyncClient],
+        turn_sink: dict[str, Any] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Send one user turn and yield studio-format SSE strings.
 
         Registers its event-stream client under *active_clients* so the
         existing POST /api/chat/stop contract cancels an OpenCode turn too.
-        The final assistant text is exposed via ``self.last_turn`` for the
-        caller to persist. Caller emits the trailing ``[DONE]``.
+        Caller emits the trailing ``[DONE]``.
+
+        The final assistant text/tools are written into *turn_sink* (a
+        caller-owned dict) for persistence. It MUST be per-call: the engine is
+        a process-wide singleton, so two overlapping turns (two tabs, or the
+        panel + the Jupyter-iframed chat) sharing one accumulator would make
+        conversation A persist B's text. ``self.last_turn`` mirrors it only as
+        a back-compat convenience and is unsafe under concurrency.
         """
-        self.last_turn: dict[str, Any] = {"text": "", "tools": []}
+        turn: dict[str, Any] = turn_sink if turn_sink is not None else {}
+        turn["text"] = ""
+        turn["tools"] = []
+        self.last_turn = turn
         auth = await self._auth()
 
         try:
@@ -465,7 +476,7 @@ class OpenCodeEngine:
                 if ev is None:  # event stream ended underneath us
                     # Keep whatever already streamed so the caller persists
                     # the partial turn instead of dropping it from history.
-                    self.last_turn["text"] = "".join(emitted_text)
+                    turn["text"] = "".join(emitted_text)
                     yield _sse({"error": "OpenCode event stream disconnected."})
                     return
 
@@ -493,7 +504,7 @@ class OpenCodeEngine:
                         status = str(state.get("status") or "")
                         if status == "running" and f"{call_id}:call" not in tool_phase_seen:
                             tool_phase_seen.add(f"{call_id}:call")
-                            self.last_turn["tools"].append(tool)
+                            turn["tools"].append(tool)
                             yield _sse({"tool_call": {
                                 "id": call_id, "name": tool,
                                 "arguments": state.get("input") or {},
@@ -576,7 +587,7 @@ class OpenCodeEngine:
                 elif etype == "session.idle":
                     break
             else:
-                self.last_turn["text"] = "".join(emitted_text)
+                turn["text"] = "".join(emitted_text)
                 yield _sse({"error": "OpenCode turn timed out."})
                 aborted = True
                 return
@@ -588,7 +599,7 @@ class OpenCodeEngine:
                 final_text = await self._final_text(auth, sid)
                 if final_text:
                     yield _sse({"content": final_text})
-            self.last_turn["text"] = final_text
+            turn["text"] = final_text
 
             tot_in = sum(t["input"] for t in tokens_by_msg.values())
             tot_out = sum(t["output"] for t in tokens_by_msg.values())
@@ -611,7 +622,7 @@ class OpenCodeEngine:
             # with a bare [DONE] — no error text, nothing persisted, cause
             # only in logs. Surface it and keep the partial turn.
             log.warning("opencode_turn_failed", error=str(e), exc_info=True)
-            self.last_turn["text"] = "".join(emitted_text)
+            turn["text"] = "".join(emitted_text)
             yield _sse({"error": f"OpenCode turn failed: {e}"})
         finally:
             if aborted:
