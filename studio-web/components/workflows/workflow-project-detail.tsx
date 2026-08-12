@@ -458,68 +458,67 @@ export function WorkflowProjectDetail({ projectId }: Props) {
             <ul className="divide-y divide-line rounded-md border border-line">
               {project.runs.map((run) => (
                 <li key={run.run_id}>
-                  <button
-                    onClick={() =>
-                      setSelectedRunId(
-                        selectedRunId === run.run_id ? null : run.run_id
-                      )
-                    }
+                  {/* Row is a flex container, NOT a <button>: the DAG and
+                      Delete actions are real sibling <button>s so the markup is
+                      valid and both are keyboard-reachable (FE-9). */}
+                  <div
                     className={cn(
-                      "w-full px-4 py-3 text-left transition-colors hover:bg-base",
+                      "flex items-center justify-between gap-2 px-4 py-3 transition-colors hover:bg-base",
                       selectedRunId === run.run_id && "bg-pegasus-50 dark:bg-pegasus-400/10"
                     )}
                   >
-                    <div className="flex items-center justify-between">
-                      <span
-                        className="font-mono text-sm text-fg"
-                        title={run.run_id}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelectedRunId(
+                          selectedRunId === run.run_id ? null : run.run_id
+                        )
+                      }
+                      aria-expanded={selectedRunId === run.run_id}
+                      title={run.run_id}
+                      className="flex-1 truncate text-left font-mono text-sm text-fg"
+                    >
+                      {run.run_name || `${run.run_id.slice(0, 12)}...`}
+                    </button>
+                    <span className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDag({
+                            url: apiUrl(`workflows/${run.run_id}/graph.json`),
+                            title: `${run.run_name || run.run_id.slice(0, 12)} — DAG`,
+                            live: true,
+                          })
+                        }
+                        title="Visualize the planned DAG"
+                        className="rounded border border-line px-2 py-0.5 text-xs text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
                       >
-                        {run.run_name || `${run.run_id.slice(0, 12)}...`}
+                        DAG
+                      </button>
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-xs font-medium",
+                          statusColor(run.status)
+                        )}
+                      >
+                        {run.status}
                       </span>
-                      <span className="flex items-center gap-2">
-                        <span
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDag({
-                              url: apiUrl(
-                                `workflows/${run.run_id}/graph.json`
-                              ),
-                              title: `${run.run_name || run.run_id.slice(0, 12)} — DAG`,
-                              live: true,
-                            });
-                          }}
-                          title="Visualize the planned DAG"
-                          className="cursor-pointer rounded border border-line px-2 py-0.5 text-xs text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
-                        >
-                          DAG
-                        </span>
-                        <span
-                          className={cn(
-                            "rounded-full px-2 py-0.5 text-xs font-medium",
-                            statusColor(run.status)
-                          )}
-                        >
-                          {run.status}
-                        </span>
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setRunToDelete({
-                              run_id: run.run_id,
-                              label: run.run_name || run.run_id.slice(0, 12),
-                            });
-                          }}
-                          title="Delete this run"
-                          aria-label="Delete this run"
-                          className="cursor-pointer rounded border border-line px-2 py-0.5 text-xs text-fgmuted hover:border-red-400 hover:text-red-600 dark:hover:text-red-400"
-                        >
-                          Delete
-                        </span>
-                      </span>
-                    </div>
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRunToDelete({
+                            run_id: run.run_id,
+                            label: run.run_name || run.run_id.slice(0, 12),
+                          })
+                        }
+                        title="Delete this run"
+                        aria-label="Delete this run"
+                        className="rounded border border-line px-2 py-0.5 text-xs text-fgmuted hover:border-red-400 hover:text-red-600 dark:hover:text-red-400"
+                      >
+                        Delete
+                      </button>
+                    </span>
+                  </div>
                   {selectedRunId === run.run_id && (
                     <RunJobsPanel runId={run.run_id} />
                   )}

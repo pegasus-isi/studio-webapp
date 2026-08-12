@@ -8,11 +8,15 @@ export function cn(...inputs: ClassValue[]) {
 
 /** Human-friendly duration: 45s, 12m, 1h 05m. */
 export function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.max(0, Math.round(seconds))}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
+  // Guard NaN/Infinity/negative up front (FE-9): NaN slipped past the `< 60`
+  // check and rendered "NaNm"/"NaNh".
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  // Floor, not round: round(3570/60) = 60 produced "60m" instead of "59m".
+  const totalMinutes = Math.floor(seconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const rest = totalMinutes % 60;
   return rest ? `${hours}h ${String(rest).padStart(2, "0")}m` : `${hours}h`;
 }
 

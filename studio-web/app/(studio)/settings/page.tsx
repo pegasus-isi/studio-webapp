@@ -889,123 +889,24 @@ function RegistrySection() {
 }
 
 function PegasusOptionsTab() {
-  const [executionSite, setExecutionSite] = useState("local");
-  const [planningFlags, setPlanningFlags] = useState({
-    force: false,
-    submit: true,
-    cleanup: "none" as string,
-  });
-  const [pegasusPath, setPegasusPath] = useState("");
-  const [saved, setSaved] = useState(false);
-
-  const handleSave = () => {
-    // TODO: persist via API when backend endpoint is available
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
-  };
-
+  // Execution site, planning flags (--force/--submit/--cleanup) and the
+  // Pegasus path used to live here as fields with a "Save" button, but nothing
+  // consumed them — Plan/Run read the per-project parameter form, and the
+  // "Saved" toast was a placebo (values reset on reload). They were removed
+  // rather than left misleading (FE-7). The container registry below IS
+  // persisted and drives the Build Image action.
   return (
     <div className="space-y-6">
       <p className="text-sm text-fgmuted">
-        Configure Pegasus WMS execution defaults for workflow planning and
-        submission.
+        Per-run planning options — execution site, <code>--force</code>/
+        <code>--submit</code>/<code>--cleanup</code>, and generator arguments —
+        are set on each workflow&apos;s <strong>Plan</strong> /{" "}
+        <strong>Run</strong> form, so they can differ per workflow. This tab
+        holds the container registry used when building workflow images.
       </p>
-
-      {/* Execution site */}
-      <div>
-        <label className="block text-sm font-medium text-fg">
-          Execution Site
-        </label>
-        <select
-          value={executionSite}
-          onChange={(e) => setExecutionSite(e.target.value)}
-          className="mt-1 block w-full rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
-        >
-          <option value="local">local</option>
-          <option value="condorpool">condorpool</option>
-          <option value="slurm">slurm</option>
-          <option value="sge">sge</option>
-        </select>
-        <p className="mt-1 text-xs text-fgsubtle">
-          Target execution site for pegasus-plan --sites
-        </p>
-      </div>
-
-      {/* Planning options */}
-      <div>
-        <label className="block text-sm font-medium text-fg">
-          Default Planning Options
-        </label>
-        <div className="mt-2 space-y-2">
-          <label className="flex items-center gap-2 text-sm text-fgmuted">
-            <input
-              type="checkbox"
-              checked={planningFlags.force}
-              onChange={(e) =>
-                setPlanningFlags((f) => ({ ...f, force: e.target.checked }))
-              }
-              className="rounded border-line text-pegasus-600 focus:ring-pegasus-500"
-            />
-            --force (overwrite existing run directory)
-          </label>
-          <label className="flex items-center gap-2 text-sm text-fgmuted">
-            <input
-              type="checkbox"
-              checked={planningFlags.submit}
-              onChange={(e) =>
-                setPlanningFlags((f) => ({ ...f, submit: e.target.checked }))
-              }
-              className="rounded border-line text-pegasus-600 focus:ring-pegasus-500"
-            />
-            --submit (automatically submit after planning)
-          </label>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-fgmuted">--cleanup</span>
-            <select
-              value={planningFlags.cleanup}
-              onChange={(e) =>
-                setPlanningFlags((f) => ({ ...f, cleanup: e.target.value }))
-              }
-              className="rounded-md border border-line px-2 py-1 text-sm focus:border-pegasus-500 focus:ring-pegasus-500"
-            >
-              <option value="none">none</option>
-              <option value="leaf">leaf</option>
-              <option value="inplace">inplace</option>
-            </select>
-          </div>
-        </div>
-      </div>
 
       {/* Container registry — persisted; drives the Build Image action */}
       <RegistrySection />
-
-      {/* Pegasus install path */}
-      <div>
-        <label className="block text-sm font-medium text-fg">
-          Pegasus Installation Path
-        </label>
-        <input
-          type="text"
-          value={pegasusPath}
-          onChange={(e) => setPegasusPath(e.target.value)}
-          placeholder="/usr/bin (auto-detected if empty)"
-          className="mt-1 block w-full rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
-        />
-        <p className="mt-1 text-xs text-fgsubtle">
-          Leave empty to use Pegasus from PATH
-        </p>
-      </div>
-
-      {/* Save */}
-      <div className="flex items-center gap-3 pt-2">
-        <button
-          onClick={handleSave}
-          className="rounded-md bg-pegasus-600 px-4 py-2 text-sm text-white hover:bg-pegasus-700"
-        >
-          Save Options
-        </button>
-        {saved && <span className="text-sm text-green-600">Saved</span>}
-      </div>
     </div>
   );
 }

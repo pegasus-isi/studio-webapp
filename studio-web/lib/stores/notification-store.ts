@@ -24,15 +24,14 @@ interface NotificationStore {
   dismissToast: (id: string) => void;
 }
 
-function countUnread(list: Notification[]): number {
-  return list.reduce((n, x) => (x.read ? n : n + 1), 0);
-}
-
 export const useNotificationStore = create<NotificationStore>((set) => ({
   notifications: [],
   unread: 0,
   toasts: [],
 
+  // unread is the server's true count and is adjusted by deltas below, never
+  // recomputed from `notifications` — that list is capped (~100 server-side),
+  // so recomputing collapsed a real count like 137 to ~99 (FE-9).
   setAll: (notifications, unread) => set({ notifications, unread }),
 
   receive: (n) =>
@@ -40,15 +39,20 @@ export const useNotificationStore = create<NotificationStore>((set) => ({
       // Dedup by id — the watch loop refreshes existing rows in place.
       const existing = s.notifications.findIndex((x) => x.id === n.id);
       let notifications: Notification[];
+      let unreadDelta = 0;
       if (existing >= 0) {
+        const prev = s.notifications[existing];
         notifications = [...s.notifications];
         notifications[existing] = n;
+        if (prev.read && !n.read) unreadDelta = 1;
+        else if (!prev.read && n.read) unreadDelta = -1;
       } else {
         notifications = [n, ...s.notifications];
+        unreadDelta = n.read ? 0 : 1;
       }
       return {
         notifications,
-        unread: countUnread(notifications),
+        unread: Math.max(0, s.unread + unreadDelta),
         // Surface a fresh toast — but only for unread notifications. Muted
         // categories arrive already-read: recorded in history, no pop-up.
         toasts: n.read
@@ -59,10 +63,14 @@ export const useNotificationStore = create<NotificationStore>((set) => ({
 
   markRead: (id) =>
     set((s) => {
-      const notifications = s.notifications.map((n) =>
-        n.id === id ? { ...n, read: true } : n
-      );
-      return { notifications, unread: countUnread(notifications) };
+      const target = s.notifications.find((n) => n.id === id);
+      const wasUnread = target ? !target.read : false;
+      return {
+        notifications: s.notifications.map((n) =>
+          n.id === id ? { ...n, read: true } : n
+        ),
+        unread: wasUnread ? Math.max(0, s.unread - 1) : s.unread,
+      };
     }),
 
   markAllRead: () =>
@@ -73,10 +81,11 @@ export const useNotificationStore = create<NotificationStore>((set) => ({
 
   remove: (id) =>
     set((s) => {
-      const notifications = s.notifications.filter((n) => n.id !== id);
+      const target = s.notifications.find((n) => n.id === id);
+      const wasUnread = target ? !target.read : false;
       return {
-        notifications,
-        unread: countUnread(notifications),
+        notifications: s.notifications.filter((n) => n.id !== id),
+        unread: wasUnread ? Math.max(0, s.unread - 1) : s.unread,
         toasts: s.toasts.filter((t) => t.id !== id),
       };
     }),
