@@ -22,8 +22,14 @@ export function jupyterUrl(path = "/lab"): string {
 
 export function websocketUrl(path: string): string {
   const relativePath = appRelativePath(`ws/${path.replace(/^\/+/, "")}`);
-  const base = typeof document !== "undefined" ? document.baseURI : "/";
-  const url = new URL(relativePath, base);
+  // No DOM (SSR): a ws:// URL can't be resolved without an origin, and
+  // `new URL(rel, "/")` would throw. Callers only open sockets client-side, so
+  // return the relative path as a harmless stub (FE-9 — the old guard checked
+  // `document` but still dereferenced `window` right after).
+  if (typeof document === "undefined" || typeof window === "undefined") {
+    return relativePath;
+  }
+  const url = new URL(relativePath, document.baseURI);
   url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
 }

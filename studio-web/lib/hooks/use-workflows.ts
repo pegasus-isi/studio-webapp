@@ -19,12 +19,15 @@ export function useWorkflowProjects() {
   });
 }
 
-export function useWorkflowJobs(runId: string) {
+export function useWorkflowJobs(runId: string, active = true) {
+  // A terminal run's jobs never change, so pass active=false to fetch once and
+  // stop polling (FE-9). The list hooks keep polling regardless — they must
+  // still discover newly-submitted runs.
   return useQuery({
     queryKey: ["workflows", runId, "jobs"],
     queryFn: () => api.getWorkflowJobs(runId),
     enabled: !!runId,
-    refetchInterval: 5_000,
+    refetchInterval: active ? 5_000 : false,
   });
 }
 

@@ -298,8 +298,13 @@ export async function submitWorkflow(
   site = "condorpool",
   outputSite = "local"
 ) {
+  const qs = new URLSearchParams({
+    workflow_dir: workflowDir,
+    site,
+    output_site: outputSite,
+  });
   return request<{ status: string; run_dir?: string; output?: string }>(
-    `/workflows/submit?workflow_dir=${encodeURIComponent(workflowDir)}&site=${site}&output_site=${outputSite}`,
+    `/workflows/submit?${qs}`,
     { method: "POST" }
   );
 }

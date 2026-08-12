@@ -39,12 +39,6 @@ export function WorkflowList({ projects, workflows }: Props) {
             {projects.map((proj) => {
               const active = selectedProjectId === proj.project_id;
 
-              // Compute progress from runs
-              const totalJobs = proj.runs.reduce(
-                (sum, r) => sum + (("total_jobs" in r ? (r as unknown as WorkflowRun).total_jobs : 0)),
-                0
-              );
-
               return (
                 <li key={proj.project_id}>
                   <button
