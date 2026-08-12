@@ -8,6 +8,16 @@ import tempfile
 import pytest
 from fastapi.testclient import TestClient
 
+# Freeze the scan root to a throwaway dir at collection time — BEFORE any test
+# imports workflow_scanner (whose module-level SCAN_ROOT is captured on first
+# import). Without this, a test that imports the scanner before the `client`
+# fixture patches HOME would freeze SCAN_ROOT to the developer's real $HOME, and
+# every discover_runs()/notification scan would then recursively glob the whole
+# home directory — turning the suite from seconds into minutes. STUDIO_SCAN_DIR
+# takes precedence over HOME in that constant, so an empty temp dir makes the
+# scan instant. Individual tests may still monkeypatch SCAN_ROOT on top.
+os.environ.setdefault("STUDIO_SCAN_DIR", tempfile.mkdtemp())
+
 
 @pytest.fixture
 def tmp_db(tmp_path):
