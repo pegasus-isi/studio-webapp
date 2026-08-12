@@ -7,7 +7,36 @@
  */
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+
+// localStorage wrapper that never throws (FE-3). A QuotaExceededError on write
+// (or storage being disabled) is swallowed rather than bubbling up as an
+// uncaught error; the partialize cap keeps us well under quota in normal use,
+// so this is the last-resort guard. SSR-safe: localStorage is only touched
+// inside the methods, which persist doesn't call on the server.
+const safeLocalStorage = {
+  getItem: (name: string): string | null => {
+    try {
+      return globalThis.localStorage?.getItem(name) ?? null;
+    } catch {
+      return null;
+    }
+  },
+  setItem: (name: string, value: string): void => {
+    try {
+      globalThis.localStorage?.setItem(name, value);
+    } catch {
+      /* quota exceeded or storage disabled — drop this write */
+    }
+  },
+  removeItem: (name: string): void => {
+    try {
+      globalThis.localStorage?.removeItem(name);
+    } catch {
+      /* ignore */
+    }
+  },
+};
 
 export interface ChatMsg {
   id: string;
@@ -104,6 +133,38 @@ const newId = () => `c-${genId()}`;
 const deriveTitle = (text: string) =>
   text.trim().replace(/\s+/g, " ").slice(0, 40) || "New chat";
 
+// Persist bounds (FE-3): the full messagesById used to be written to
+// localStorage with no cap, so tool-result blobs eventually tripped
+// QuotaExceededError and chat history silently stopped surviving reloads.
+const MAX_PERSIST_CONVERSATIONS = 50;
+const MAX_PERSIST_MESSAGES_PER_CONV = 200;
+
+// Shared "update the current assistant turn" mutation (FE-2). Every streaming
+// frame (text, tool_call, tool_result, meta, message_id, permission) lands on
+// the last assistant bubble — creating it when the turn opens with a non-text
+// frame (the normal tool-first agent shape). Without this, a tool_call before
+// the first token was dropped and an early message_id disabled feedback.
+type ChatMsgUpdater = (m: ChatMsg) => ChatMsg;
+
+function _mutateLastAssistant(
+  s: ChatStore,
+  convId: string | undefined,
+  update: ChatMsgUpdater
+): Partial<ChatStore> {
+  const cid = convId ?? s.activeId;
+  const arr = [...(s.messagesById[cid] || [])];
+  const last = arr[arr.length - 1];
+  if (last && last.role === "assistant") {
+    arr[arr.length - 1] = update({ ...last });
+  } else {
+    arr.push(update({ id: genId(), role: "assistant", content: "" }));
+  }
+  return {
+    messagesById: { ...s.messagesById, [cid]: arr },
+    ...(cid === s.activeId ? { messages: arr } : {}),
+  };
+}
+
 const _firstId = newId();
 
 export const useChatStore = create<ChatStore>()(
@@ -142,80 +203,36 @@ export const useChatStore = create<ChatStore>()(
         }),
 
       appendToLast: (text, convId) =>
-        set((s) => {
-          const cid = convId ?? s.activeId;
-          const arr = [...(s.messagesById[cid] || [])];
-          const last = arr[arr.length - 1];
-          if (last && last.role === "assistant") {
-            arr[arr.length - 1] = { ...last, content: last.content + text };
-          } else {
-            arr.push({ id: genId(), role: "assistant", content: text });
-          }
-          return {
-            messagesById: { ...s.messagesById, [cid]: arr },
-            ...(cid === s.activeId ? { messages: arr } : {}),
-          };
-        }),
+        set((s) =>
+          _mutateLastAssistant(s, convId, (m) => ({
+            ...m,
+            content: m.content + text,
+          }))
+        ),
 
       addToolCall: (call, convId) =>
-        set((s) => {
-          const cid = convId ?? s.activeId;
-          const arr = [...(s.messagesById[cid] || [])];
-          const last = arr[arr.length - 1];
-          if (last && last.role === "assistant") {
-            arr[arr.length - 1] = {
-              ...last,
-              toolCalls: [...(last.toolCalls || []), call],
-            };
-          }
-          return {
-            messagesById: { ...s.messagesById, [cid]: arr },
-            ...(cid === s.activeId ? { messages: arr } : {}),
-          };
-        }),
+        set((s) =>
+          _mutateLastAssistant(s, convId, (m) => ({
+            ...m,
+            toolCalls: [...(m.toolCalls || []), call],
+          }))
+        ),
 
       addToolResult: (result, convId) =>
-        set((s) => {
-          const cid = convId ?? s.activeId;
-          const arr = [...(s.messagesById[cid] || [])];
-          const last = arr[arr.length - 1];
-          if (last && last.role === "assistant") {
-            arr[arr.length - 1] = {
-              ...last,
-              toolResults: [...(last.toolResults || []), result],
-            };
-          }
-          return {
-            messagesById: { ...s.messagesById, [cid]: arr },
-            ...(cid === s.activeId ? { messages: arr } : {}),
-          };
-        }),
+        set((s) =>
+          _mutateLastAssistant(s, convId, (m) => ({
+            ...m,
+            toolResults: [...(m.toolResults || []), result],
+          }))
+        ),
 
       addPermissionRequest: (req, convId) =>
-        set((s) => {
-          const cid = convId ?? s.activeId;
-          const arr = [...(s.messagesById[cid] || [])];
-          const last = arr[arr.length - 1];
-          if (last && last.role === "assistant") {
-            arr[arr.length - 1] = {
-              ...last,
-              pendingApprovals: [...(last.pendingApprovals || []), req],
-            };
-          } else {
-            // Permission asked before any assistant text — make a bubble to
-            // carry the card (empty content, so nothing is sent to the model).
-            arr.push({
-              id: genId(),
-              role: "assistant",
-              content: "",
-              pendingApprovals: [req],
-            });
-          }
-          return {
-            messagesById: { ...s.messagesById, [cid]: arr },
-            ...(cid === s.activeId ? { messages: arr } : {}),
-          };
-        }),
+        set((s) =>
+          _mutateLastAssistant(s, convId, (m) => ({
+            ...m,
+            pendingApprovals: [...(m.pendingApprovals || []), req],
+          }))
+        ),
 
       clearPermissionRequest: (callId, convId) =>
         set((s) => {
@@ -237,32 +254,12 @@ export const useChatStore = create<ChatStore>()(
         }),
 
       setLastMeta: (meta, convId) =>
-        set((s) => {
-          const cid = convId ?? s.activeId;
-          const arr = [...(s.messagesById[cid] || [])];
-          const last = arr[arr.length - 1];
-          if (last && last.role === "assistant") {
-            arr[arr.length - 1] = { ...last, meta };
-          }
-          return {
-            messagesById: { ...s.messagesById, [cid]: arr },
-            ...(cid === s.activeId ? { messages: arr } : {}),
-          };
-        }),
+        set((s) => _mutateLastAssistant(s, convId, (m) => ({ ...m, meta }))),
 
       setLastServerId: (serverId, convId) =>
-        set((s) => {
-          const cid = convId ?? s.activeId;
-          const arr = [...(s.messagesById[cid] || [])];
-          const last = arr[arr.length - 1];
-          if (last && last.role === "assistant") {
-            arr[arr.length - 1] = { ...last, serverId };
-          }
-          return {
-            messagesById: { ...s.messagesById, [cid]: arr },
-            ...(cid === s.activeId ? { messages: arr } : {}),
-          };
-        }),
+        set((s) =>
+          _mutateLastAssistant(s, convId, (m) => ({ ...m, serverId }))
+        ),
 
       setMessageFeedback: (messageId, feedback, convId) =>
         set((s) => {
@@ -277,22 +274,7 @@ export const useChatStore = create<ChatStore>()(
         }),
 
       setLastError: (error, convId) =>
-        set((s) => {
-          const cid = convId ?? s.activeId;
-          const arr = [...(s.messagesById[cid] || [])];
-          const last = arr[arr.length - 1];
-          if (last && last.role === "assistant") {
-            arr[arr.length - 1] = { ...last, error };
-          } else {
-            // No assistant bubble yet (error before first token) — create one to
-            // carry the error, with empty content so nothing is sent as history.
-            arr.push({ id: genId(), role: "assistant", content: "", error });
-          }
-          return {
-            messagesById: { ...s.messagesById, [cid]: arr },
-            ...(cid === s.activeId ? { messages: arr } : {}),
-          };
-        }),
+        set((s) => _mutateLastAssistant(s, convId, (m) => ({ ...m, error }))),
 
       setStreaming: (streaming, requestId) =>
         set({ isStreaming: streaming, requestId: requestId ?? null }),
@@ -364,14 +346,31 @@ export const useChatStore = create<ChatStore>()(
     }),
     {
       name: "studio-chat",
-      partialize: (s) => ({
-        conversations: s.conversations,
-        activeId: s.activeId,
-        messagesById: s.messagesById,
-        agentId: s.agentId,
-        provider: s.provider,
-        model: s.model,
-      }),
+      version: 1,
+      storage: createJSONStorage(() => safeLocalStorage),
+      partialize: (s) => {
+        // Bound what we persist (FE-3): cap conversations and messages/conv so
+        // tool-result blobs can't grow the payload past localStorage's ~5 MB
+        // and trip QuotaExceededError (which silently loses ALL history).
+        const keptConvs = s.conversations.slice(0, MAX_PERSIST_CONVERSATIONS);
+        const keptIds = new Set(keptConvs.map((c) => c.id));
+        const messagesById: Record<string, ChatMsg[]> = {};
+        for (const id of keptIds) {
+          const msgs = s.messagesById[id] || [];
+          messagesById[id] =
+            msgs.length > MAX_PERSIST_MESSAGES_PER_CONV
+              ? msgs.slice(-MAX_PERSIST_MESSAGES_PER_CONV)
+              : msgs;
+        }
+        return {
+          conversations: keptConvs,
+          activeId: keptIds.has(s.activeId) ? s.activeId : keptConvs[0]?.id,
+          messagesById,
+          agentId: s.agentId,
+          provider: s.provider,
+          model: s.model,
+        };
+      },
       // messages mirrors messagesById[activeId] — recompute after rehydrate.
       onRehydrateStorage: () => (state) => {
         if (state) {
