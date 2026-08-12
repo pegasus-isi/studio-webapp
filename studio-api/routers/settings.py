@@ -68,20 +68,11 @@ async def get_settings() -> SettingsResponse:
 
 @router.put("", response_model=SettingsResponse)
 async def update_settings(req: LLMConfigRequest) -> SettingsResponse:
+    """Legacy LLM-config save. Routes through the same guarded path as
+    ``PUT /api/llm/config`` (BE-5) so it can't wipe the stored key on an
+    omitted-key save or persist a keyless required-key provider."""
     from main import db
+    from routers.llm import save_llm_config
 
-    await db.set_llm_config(
-        provider=req.provider.value,
-        model=req.model,
-        api_key=req.api_key,
-        base_url=req.base_url,
-        extra_config=req.extra_config,
-    )
-
-    # Propagate to installed tools + restart the OpenCode chat server so the new
-    # provider actually takes effect (serve loads provider config at startup).
-    from routers.llm import _propagate_and_restart
-
-    await _propagate_and_restart(db)
-
+    await save_llm_config(db, req)
     return await get_settings()

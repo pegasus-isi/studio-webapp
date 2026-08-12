@@ -89,12 +89,15 @@ async def get_llm_config() -> LLMConfigResponse:
     return _config_response(data)
 
 
-@router.put("/config", response_model=LLMConfigResponse)
-async def update_llm_config(req: LLMConfigRequest) -> LLMConfigResponse:
-    from main import db
+async def save_llm_config(db, req: LLMConfigRequest) -> None:
+    """Validate + persist an LLM config, then propagate to tools.
 
-    # A request that omits the key (e.g. only changing the model) must not
-    # wipe the stored one.
+    Shared by ``PUT /api/llm/config`` and the legacy ``PUT /api/settings`` so
+    both enforce the same guards (BE-5): a request that omits the key keeps the
+    stored one (never wipes it), and a keyed provider saved without a key is
+    rejected up front instead of failing deep in chat as "No api key passed
+    in". Raises ``HTTPException(400)`` on an invalid config.
+    """
     api_key = req.api_key
     base_url = req.base_url
     if not api_key:
@@ -120,6 +123,12 @@ async def update_llm_config(req: LLMConfigRequest) -> LLMConfigResponse:
 
     await _propagate_and_restart(db)
 
+
+@router.put("/config", response_model=LLMConfigResponse)
+async def update_llm_config(req: LLMConfigRequest) -> LLMConfigResponse:
+    from main import db
+
+    await save_llm_config(db, req)
     data = await db.get_llm_config()
     return _config_response(data or {})
 
