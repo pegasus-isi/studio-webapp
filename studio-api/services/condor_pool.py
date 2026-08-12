@@ -522,11 +522,27 @@ async def get_ospool_status(force: bool = False) -> dict[str, Any]:
         return data
 
 
+def _cache_fresh(force: bool) -> bool:
+    return (
+        not force
+        and _cache["data"] is not None
+        and (time.monotonic() - _cache["ts"]) < _CACHE_TTL
+    )
+
+
 async def get_status(force: bool = False) -> dict[str, Any]:
     """Combined supply/demand/pressure snapshot, cached for _CACHE_TTL seconds."""
+    # Fast path: a warm cache returns WITHOUT taking the lock, so a read never
+    # blocks behind an in-flight refresh's slow condor_status/condor_q/OSPool
+    # queries (BE-9 — callers could otherwise queue for the whole refresh).
+    if _cache_fresh(force):
+        return _cache["data"]
+
     async with _cache_lock:
-        age = time.monotonic() - _cache["ts"]
-        if not force and _cache["data"] is not None and age < _CACHE_TTL:
+        # Re-check under the lock: a concurrent caller may have just refreshed
+        # while we waited, so we return its result instead of re-querying
+        # (collapses a cold-start stampede into a single query set).
+        if _cache_fresh(force):
             return _cache["data"]
 
         slot_ads, slot_err = await _run_json(["condor_status", "-json"])

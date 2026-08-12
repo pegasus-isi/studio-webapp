@@ -7,6 +7,7 @@ import glob as _glob
 import os
 import re
 import shutil
+import sys
 import time
 
 import structlog
@@ -206,10 +207,18 @@ def _best_effort_rmtree(run_dir: str) -> list[str]:
     live process still has open)."""
     held: list[str] = []
 
-    def _onerror(func, path, exc_info):  # noqa: ANN001 - shutil callback shape
-        held.append(path)
+    if sys.version_info >= (3, 12):
+        # onexc replaced the deprecated onerror in 3.12 (prod runs 3.12); it
+        # passes the exception instead of an exc_info tuple.
+        def _onexc(func, path, exc):  # noqa: ANN001 - shutil callback shape
+            held.append(path)
 
-    shutil.rmtree(run_dir, onerror=_onerror)
+        shutil.rmtree(run_dir, onexc=_onexc)
+    else:
+        def _onerror(func, path, exc_info):  # noqa: ANN001 - shutil callback shape
+            held.append(path)
+
+        shutil.rmtree(run_dir, onerror=_onerror)
     return held
 
 

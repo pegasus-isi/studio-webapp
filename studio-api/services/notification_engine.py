@@ -187,6 +187,11 @@ class NotificationEngine:
 
     async def _scan(self, seed_only: bool) -> None:
         runs = discover_runs(self._workspace_root)
+        # Prune _seen for runs that no longer exist (deleted submit dirs), so
+        # the map doesn't grow unbounded on a long-lived pod (BE-9).
+        live_dirs = {r["run_dir"] for r in runs}
+        for gone in [d for d in self._seen if d not in live_dirs]:
+            del self._seen[gone]
         for run in runs:
             run_dir = run["run_dir"]
             run_id = run["run_id"]

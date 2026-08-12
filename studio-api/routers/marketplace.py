@@ -176,11 +176,17 @@ async def _catalog(force: bool = False) -> list[dict[str, Any]]:
 
         merged: dict[str, dict[str, Any]] = {}
         # Curated first so our ids/descriptions win; registry fills the rest.
+        # Skip an entry whose repo OR id is already taken. The id check matters
+        # (BE-9): two distinct-repo entries sharing an id used to silently
+        # overwrite the first's id slot, dropping it from the catalog even
+        # though its repo key survived. An explicit skip keeps the curated one.
         for entry in curated + registry:
             key = _norm_repo(entry["repo_url"])
-            if key and key not in merged:
-                merged[entry["id"]] = entry
-                merged[key] = entry  # dedup marker
+            eid = entry["id"]
+            if not key or key in merged or eid in merged:
+                continue
+            merged[eid] = entry
+            merged[key] = entry  # dedup marker
         catalog = [v for k, v in merged.items() if k == v["id"]]
         catalog.sort(key=_sort_key)
 

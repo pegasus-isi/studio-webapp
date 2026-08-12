@@ -227,11 +227,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # alerts via `engine.notify(...)`.
     from services.notification_engine import engine as notification_engine
 
-    workspace_root = os.environ.get(
-        "STUDIO_WORKSPACE_DIR",
-        os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-    )
-    notification_engine.start(db, workspace_root)
+    # Watch the SAME root the run list scans (STUDIO_SCAN_DIR, else $HOME), not
+    # $HOME/work — otherwise a run submitted outside ~/work is listed but never
+    # produces a completed/failed notification (BE-8). Compute it here at
+    # startup (reading the env now) rather than importing workflow_scanner's
+    # SCAN_ROOT, which is frozen at import time: under the test harness that
+    # constant can freeze to the real $HOME before HOME is patched, which would
+    # point the scan at the developer's entire home directory.
+    scan_root = os.environ.get("STUDIO_SCAN_DIR") or os.environ.get("HOME", "/tmp")
+    notification_engine.start(db, scan_root)
     await notification_engine.refresh_prefs()
 
     yield

@@ -34,6 +34,17 @@ _active_clients: dict[str, httpx.AsyncClient] = {}
 # Base URLs discovered to require the OpenAI *Responses* API (e.g. gpt-5.5 on
 # the FABRIC/RENCI proxy) rather than Chat Completions. Populated on first 400.
 _RESPONSES_ENDPOINTS: set[str] = set()
+_RESPONSES_ENDPOINTS_MAX = 128
+
+
+def _memoize_responses_endpoint(base_url: str) -> None:
+    """Remember a base URL that needs the Responses API, bounded so the set
+    can't grow without limit on a long-lived pod (BE-9). In practice there are
+    only a handful of distinct endpoints; the cap is a backstop."""
+    if len(_RESPONSES_ENDPOINTS) < _RESPONSES_ENDPOINTS_MAX:
+        _RESPONSES_ENDPOINTS.add(base_url)
+
+
 _RESPONSES_HINTS = (
     "moved to 'input'",
     "Responses API",
@@ -110,12 +121,26 @@ def _clip_ui_result(text: str) -> str:
 
 
 def _trim_history(msgs: list[dict]) -> list[dict]:
-    """Keep only the most recent messages so context stays bounded. The final
-    (newest) user message is always within the tail, so the current ask is
-    never dropped."""
-    if len(msgs) > _MAX_HISTORY_MESSAGES:
-        return msgs[-_MAX_HISTORY_MESSAGES:]
-    return msgs
+    """Keep only the most recent messages so context stays bounded, trimmed to
+    a valid conversation boundary.
+
+    A blind ``msgs[-40:]`` can start on an assistant message or mid
+    tool-exchange; the Anthropic Messages API then 400s ("first message must
+    use the 'user' role"), so once a conversation passed 40 messages every
+    turn failed (BE-4). Advance the start to the first genuine user turn — a
+    ``user`` message whose content is a plain string, i.e. not a tool-result
+    carrier (Anthropic tool results ride on a ``user`` message with a list
+    content and must keep their preceding assistant ``tool_use``). The current
+    ask is always such a message, so the tail is never empty."""
+    if len(msgs) <= _MAX_HISTORY_MESSAGES:
+        return msgs
+    tail = msgs[-_MAX_HISTORY_MESSAGES:]
+    for i, m in enumerate(tail):
+        if m.get("role") == "user" and isinstance(m.get("content"), str):
+            return tail[i:]
+    # No clean user turn in the tail (pathological) — fall back to the newest
+    # message so we never send an assistant-first or empty list.
+    return tail[-1:]
 
 
 def _clip_tool_result(text: str) -> str:
@@ -843,7 +868,7 @@ async def _openai_dispatch(
         # A 400 that explicitly says "use the Responses API" is definitive —
         # memoize so we skip the chat probe next time.
         if status == 400 and any(h in body for h in _RESPONSES_HINTS):
-            _RESPONSES_ENDPOINTS.add(base_url)
+            _memoize_responses_endpoint(base_url)
             async for ev in responses():
                 yield ev
             return
@@ -853,7 +878,7 @@ async def _openai_dispatch(
         if status in (404, 405) or (status is not None and status >= 500):
             rgen = responses()
             rfirst = await rgen.__anext__()
-            _RESPONSES_ENDPOINTS.add(base_url)
+            _memoize_responses_endpoint(base_url)
             yield rfirst
             async for ev in rgen:
                 yield ev
@@ -990,6 +1015,7 @@ async def _opencode_stream(
     expanded, _skill = _process_slash_command(user_text)
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        client_gone = False
         try:
             if last.get("role") == "user" and user_text:
                 try:
@@ -1000,16 +1026,20 @@ async def _opencode_stream(
                 except Exception:
                     pass
 
+            # Per-call sink, NOT engine.last_turn: the engine is a
+            # process-wide singleton, so two overlapping turns sharing its
+            # accumulator would cross-persist (BE-3).
+            turn: dict[str, Any] = {}
             async for chunk in oc_engine.stream_turn(
                 text=expanded,
                 conversation_id=conversation_id,
                 agent_id=agent_id,
                 request_id=request_id,
                 active_clients=_active_clients,
+                turn_sink=turn,
             ):
                 yield chunk
 
-            turn = getattr(oc_engine, "last_turn", None) or {}
             if turn.get("text"):
                 try:
                     msg_id = await db.add_chat_message(
@@ -1029,8 +1059,16 @@ async def _opencode_stream(
             # in logs — never let that happen again.
             log.error("opencode_stream_failed", error=str(e))
             yield f"data: {json.dumps({'error': f'Chat engine error: {e}'})}\n\n"
+        except GeneratorExit:
+            # Client disconnected (Stop / tab close). Yielding in the finally
+            # while unwinding a GeneratorExit raises "async generator ignored
+            # GeneratorExit" — log noise that masks real errors (BE-9). Flag it
+            # so the finally skips the trailing [DONE]; cleanup still runs.
+            client_gone = True
+            raise
         finally:
-            yield "data: [DONE]\n\n"
+            if not client_gone:
+                yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -1162,6 +1200,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                 "duration_s": round(time.monotonic() - t0, 1),
             }}) + "\n\n"
 
+        client_gone = False
         try:
             # Convert messages to provider format. Expand slash commands in
             # every user message (not just the latest) so a `/scaffold …` from
@@ -1384,10 +1423,17 @@ async def chat_stream(request: Request) -> StreamingResponse:
             except Exception:
                 pass
 
+        except GeneratorExit:
+            # Client disconnected — skip the finally's [DONE] yield to avoid
+            # "async generator ignored GeneratorExit" noise (BE-9). Resource
+            # cleanup below still runs.
+            client_gone = True
+            raise
         finally:
             _active_clients.pop(request_id, None)
             await client.aclose()
-            yield "data: [DONE]\n\n"
+            if not client_gone:
+                yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         event_generator(),

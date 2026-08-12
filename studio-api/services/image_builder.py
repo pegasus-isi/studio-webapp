@@ -145,9 +145,16 @@ async def _run_streaming(
         cwd=cwd,
     )
     if stdin_data is not None and proc.stdin is not None:
-        proc.stdin.write(stdin_data)
-        await proc.stdin.drain()
-        proc.stdin.close()
+        # A builder that rejects the login and exits before reading stdin makes
+        # write/drain raise BrokenPipeError; without this guard it would abort
+        # the whole SSE generator instead of letting the normal exit-code path
+        # report the login failure (BE-9).
+        try:
+            proc.stdin.write(stdin_data)
+            await proc.stdin.drain()
+            proc.stdin.close()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     pending: asyncio.Task | None = None
     try:

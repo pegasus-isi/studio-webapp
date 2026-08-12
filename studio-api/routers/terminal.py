@@ -74,6 +74,7 @@ async def _llm_env() -> dict[str, str]:
     key_map = {
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
+        "google": "GOOGLE_API_KEY",
         "fabric": "FABRIC_AI_API_KEY",
         "nrp": "NRP_API_KEY",
     }

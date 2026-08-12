@@ -237,6 +237,7 @@ async def build_project_image(
     from services.image_builder import stream_build
 
     async def event_stream():
+        client_gone = False
         try:
             async for chunk in stream_build(
                 project_id=project_id,
@@ -248,8 +249,14 @@ async def build_project_image(
                 push=req.push,
             ):
                 yield chunk
+        except GeneratorExit:
+            # Client disconnected — skip the finally's [DONE] to avoid the
+            # "async generator ignored GeneratorExit" noise (BE-9).
+            client_gone = True
+            raise
         finally:
-            yield "data: [DONE]\n\n"
+            if not client_gone:
+                yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         event_stream(),
@@ -621,34 +628,58 @@ async def run_graph_json(run_id: str, include_pegasus: bool = False) -> dict:
         if node is not None:
             node["status"] = j.get("status") or node["status"]
             node["exec_job_id"] = exec_id
-    graph["workflow_status"] = run.get("status")
+    # discover_runs() entries carry no "status" (BE-8), so run.get("status")
+    # was always None and the DAG viewer couldn't tell running from done.
+    # Derive it from the joined node statuses instead.
+    graph["workflow_status"] = _derive_workflow_status(graph["nodes"])
     return graph
+
+
+def _derive_workflow_status(nodes: list[dict]) -> str | None:
+    """Roll per-node statuses up into a workflow status for the DAG viewer.
+    Active (any node still in flight) wins over failed wins over succeeded;
+    None when nothing has started or the graph is empty."""
+    statuses = {str(n.get("status") or "unsubmitted") for n in nodes}
+    if not nodes:
+        return None
+    if statuses & {"pending", "queued", "running", "held"}:
+        return "running"
+    if "failed" in statuses:
+        return "failed"
+    if statuses <= {"succeeded"}:
+        return "succeeded"
+    return None
+
+
+async def _resolve_run_dir(run_id: str) -> str:
+    """Resolve a run's submit dir from the DB, falling back to a filesystem
+    scan (BE-7).
+
+    Several endpoints looked up ``run_dir`` in the DB only, so they 404'd for
+    any run not yet upserted by ``GET /api/workflows`` — a fresh DB after a
+    restart, a pruned row, or a direct deep link. This mirrors the fallback
+    ``get_workflow``/``estimate`` already had. Raises 404 if the run is unknown
+    or its directory is gone from disk."""
+    from main import db
+
+    run_dir = None
+    for r in await db.list_workflow_runs():
+        if r["run_id"] == run_id:
+            run_dir = r["run_dir"]
+            break
+    if not run_dir:
+        run_dir = next(
+            (r["run_dir"] for r in discover_runs() if r["run_id"] == run_id), None
+        )
+    if not run_dir or not os.path.isdir(run_dir):
+        raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
+    return run_dir
 
 
 @router.get("/{run_id}")
 async def get_workflow(run_id: str) -> dict:
     """Get detailed workflow info by run ID."""
-    from main import db
-
-    # Look up run_dir from DB or scan
-    db_runs = await db.list_workflow_runs()
-    run_dir = None
-    for r in db_runs:
-        if r["run_id"] == run_id:
-            run_dir = r["run_dir"]
-            break
-
-    if not run_dir:
-        # Try scanning
-        runs = discover_runs()
-        for r in runs:
-            if r["run_id"] == run_id:
-                run_dir = r["run_dir"]
-                break
-
-    if not run_dir or not os.path.isdir(run_dir):
-        raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
-
+    run_dir = await _resolve_run_dir(run_id)
     detail = await get_workflow_detail(run_dir)
     detail["run_id"] = run_id
     detail["run_dir"] = run_dir
@@ -658,18 +689,7 @@ async def get_workflow(run_id: str) -> dict:
 @router.get("/{run_id}/jobs")
 async def get_jobs(run_id: str) -> dict:
     """Get job-level status for a workflow."""
-    from main import db
-
-    db_runs = await db.list_workflow_runs()
-    run_dir = None
-    for r in db_runs:
-        if r["run_id"] == run_id:
-            run_dir = r["run_dir"]
-            break
-
-    if not run_dir or not os.path.isdir(run_dir):
-        raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
-
+    run_dir = await _resolve_run_dir(run_id)
     jobs = await get_workflow_jobs(run_dir)
     return {"run_id": run_id, "jobs": jobs}
 
@@ -677,17 +697,7 @@ async def get_jobs(run_id: str) -> dict:
 @router.get("/{run_id}/events")
 async def workflow_events(run_id: str) -> StreamingResponse:
     """SSE stream of real-time workflow monitoring events."""
-    from main import db
-
-    db_runs = await db.list_workflow_runs()
-    run_dir = None
-    for r in db_runs:
-        if r["run_id"] == run_id:
-            run_dir = r["run_dir"]
-            break
-
-    if not run_dir or not os.path.isdir(run_dir):
-        raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
+    run_dir = await _resolve_run_dir(run_id)
 
     async def event_stream():
         async for event in tail_workflow_events(run_dir):
@@ -708,24 +718,7 @@ async def workflow_events(run_id: str) -> StreamingResponse:
 @router.get("/{run_id}/estimate")
 async def estimate_workflow(run_id: str) -> dict:
     """Estimated remaining wall-clock for a run (historical-mean heuristic)."""
-    from main import db
-
-    db_runs = await db.list_workflow_runs()
-    run_dir = None
-    for r in db_runs:
-        if r["run_id"] == run_id:
-            run_dir = r["run_dir"]
-            break
-
-    if not run_dir:
-        runs = discover_runs()
-        for r in runs:
-            if r["run_id"] == run_id:
-                run_dir = r["run_dir"]
-                break
-
-    if not run_dir or not os.path.isdir(run_dir):
-        raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
+    run_dir = await _resolve_run_dir(run_id)
 
     from services.runtime_estimate import estimate_remaining
 
@@ -737,18 +730,7 @@ async def estimate_workflow(run_id: str) -> dict:
 @router.post("/{run_id}/analyze")
 async def analyze_workflow(run_id: str) -> dict:
     """Run pegasus-analyzer on a workflow."""
-    from main import db
-
-    db_runs = await db.list_workflow_runs()
-    run_dir = None
-    for r in db_runs:
-        if r["run_id"] == run_id:
-            run_dir = r["run_dir"]
-            break
-
-    if not run_dir or not os.path.isdir(run_dir):
-        raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
-
+    run_dir = await _resolve_run_dir(run_id)
     output = await run_pegasus_analyzer(run_dir)
     return {"run_id": run_id, "analysis": output}
 
