@@ -219,7 +219,7 @@ files and configured LLM keys — with no auth. Bind to `127.0.0.1` and proxy lo
 **Status:** ✅ echo fixed — PR #64 (2026-08-11): keys are write-only
 (`has_api_key` presence flag, registry-password pattern); model discovery for
 saved providers moved server-side. Plaintext **at rest** (S7) — ✅ fixed in
-PR #TBD7 (2026-08-12): `secretbox` envelope-encrypts stored keys + the registry
+PR #136 (2026-08-12): `secretbox` envelope-encrypts stored keys + the registry
 password with a key derived from `STUDIO_SECRET_KEY` (fail-open to plaintext +
 warning when unset; transparent migration). Activation needs studio-system to
 inject the sealed secret.
