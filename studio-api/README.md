@@ -105,8 +105,9 @@ All tests use temporary SQLite DBs and need no Pegasus, HTCondor, or LLM keys.
 
 ### Jupyter
 
-JupyterLab runs **always-on** under supervisord (served at `/jupyter/`).
-`GET /api/jupyter/status` reports it; `POST /api/jupyter/start|stop` are no-ops.
+JupyterLab runs **always-on** under supervisord (served at `/jupyter/`);
+`GET /api/jupyter/status` reports whether it's up. The studio does not start or
+stop it.
 
 ## Environment Variables
 
