@@ -144,12 +144,9 @@ to bypass the proxy if the server is directly browser-reachable.
 
 ## Configuration
 
-> **LLM configuration is done in the UI, not via env vars.** Providers and API
-> keys are entered on the Settings page and stored in the workspace SQLite DB
-> (write-only over the API — GETs report only whether a key is set). The
-> zero-config default is the internal `gateway` provider, so chat/tools work out
-> of the box with no keys. Legacy `LLM_PROVIDER`/`ANTHROPIC_API_KEY`/… env vars
-> are **no longer read** (the old `seed_config.py` step was removed).
+> **LLM providers and API keys are configured in the Settings UI, not here.**
+> They're stored in the workspace SQLite DB; the default `gateway` provider
+> needs no key, so chat and tools work out of the box.
 
 | Variable | Default | Description |
 |----------|---------|-------------|

@@ -76,7 +76,7 @@ All tests use temporary SQLite DBs and need no Pegasus, HTCondor, or LLM keys.
 | Method | Path | Notes |
 |--------|------|-------|
 | GET | `/api/health`, `/api/health/detailed` | liveness + DB/Pegasus/HTCondor |
-| GET/PUT | `/api/settings` | legacy LLM-config accessor (shares the validated `llm` save path) |
+| GET/PUT | `/api/settings` | LLM-config accessor (shares the validated `llm` save path) |
 | GET/PUT | `/api/llm/config` | active provider/model; **keys are write-only** — GETs return `has_api_key`, never the value |
 | GET/PUT | `/api/llm/provider-configs` | saved providers (also write-only keys) |
 | GET | `/api/llm/provider-configs/{id}/models` | model discovery using the **stored** key (server-side) |
@@ -103,11 +103,10 @@ All tests use temporary SQLite DBs and need no Pegasus, HTCondor, or LLM keys.
 | * | `/api/files…` | workspace CRUD (path-confined) |
 | WS | `/ws/terminal`, `/ws/terminal/{tool_id}` | bash / AI-tool PTY |
 
-### Jupyter (back-compat no-ops)
+### Jupyter
 
-JupyterLab runs **always-on** under supervisord (served at `/jupyter/`), so
-`POST /api/jupyter/start|stop` are no-ops kept for back-compat; only
-`GET /api/jupyter/status` is meaningful.
+JupyterLab runs **always-on** under supervisord (served at `/jupyter/`).
+`GET /api/jupyter/status` reports it; `POST /api/jupyter/start|stop` are no-ops.
 
 ## Environment Variables
 
@@ -145,9 +144,6 @@ Supervised by supervisord. `docker/entrypoint.sh`:
 3. Backgrounds `propagate_llm.py` (hard-timeout'd) to sync tool configs.
 4. `exec supervisord` — which starts nginx, studio-api (uvicorn), JupyterLab,
    and `opencode serve`.
-
-There is **no** `seed_config.py` step (it was removed); setting LLM env vars does
-not seed provider config.
 
 ## Supported LLM Providers
 

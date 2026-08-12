@@ -124,15 +124,15 @@ Router groups:
 | `ai_terminal` | AI tool PTYs |
 | `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate |
 | `chat` | PegasusAI SSE chat; pluggable engine — shared `opencode serve` proxy (default) or builtin loop (fallback); per-turn shell-command approval |
-| `jupyter` | Status plus back-compat start/stop no-ops |
+| `jupyter` | Status; start/stop are no-ops (JupyterLab is always-on) |
 | `dashboard` | Aggregate landing-page data (projects, runs, resources, versions) |
 | `provisioning` | HTCondor pool inventory + queue demand + pressure + OSPool capacity (read-only) |
 | `notifications` | Notification feed + prefs; SSE stream for live toasts |
 | `marketplace` | GitHub-sourced workflow catalog; "Add" git-clones into the workspace |
 | `pegasus_bot` | Same-origin proxy to the cluster-internal PegasusAI Bot server (search/feedback) |
 
-JupyterLab is not started or stopped by the API. `/api/jupyter/start` and
-`/api/jupyter/stop` remain as compatibility no-ops and return current status.
+JupyterLab runs always-on under supervisord; the API does not start or stop it.
+`/api/jupyter/start` and `/api/jupyter/stop` are no-ops that return current status.
 
 ## Workflow Model
 
@@ -216,11 +216,9 @@ Supported providers are `gateway` (the zero-config default — an internal
 OpenAI-compatible gateway, so chat/tools work with no keys), `anthropic`,
 `openai`, `google`, `fabric`, `nrp`, `custom`, and `ollama`.
 
-Configuration is done at runtime on the Settings page and stored in SQLite;
-there is no env-var seeding (the old `seed_config.py` step was removed, so
-`LLM_PROVIDER`/`ANTHROPIC_API_KEY`/… are not read). Keys are write-only over the
-API — responses report only whether a key is set — and are encrypted at rest
-when `STUDIO_SECRET_KEY` is provided (see Database).
+Configuration is done at runtime on the Settings page and stored in SQLite.
+Keys are write-only over the API — responses report only whether a key is set —
+and are encrypted at rest when `STUDIO_SECRET_KEY` is provided (see Database).
 
 The built-in chat supports both OpenAI Chat Completions and the OpenAI Responses
 API and falls back when an endpoint requires Responses.
