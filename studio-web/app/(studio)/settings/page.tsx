@@ -10,6 +10,7 @@ import {
   useValidateProvider,
 } from "@/lib/hooks/use-llm";
 import { useTools } from "@/lib/hooks/use-tools";
+import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { ToolCard } from "@/components/tools/tool-card";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
@@ -137,6 +138,7 @@ function ProvidersTab() {
   const upsertConfig = useUpsertProviderConfig();
   const activateProvider = useActivateProvider();
   const deleteConfig = useDeleteProviderConfig();
+  const runAction = useActionToast();
 
   const presets = providerData?.providers ?? [];
   const savedConfigs = configData?.configs ?? [];
@@ -157,16 +159,19 @@ function ProvidersTab() {
     const customCount = savedConfigs.filter((c) =>
       c.provider_id.startsWith("custom")
     ).length;
-    await upsertConfig.mutateAsync({
-      provider_id,
-      name: isCustom
-        ? `Custom Endpoint${customCount ? " " + (customCount + 1) : ""}`
-        : preset?.name || newProviderId,
-      base_url: isCustom ? "" : preset?.base_url || "",
-      default_model: isCustom ? "" : preset?.default_model || "",
-      api_key: "",
-      is_active: savedConfigs.length === 0,
-    });
+    const result = await runAction("Add provider", () =>
+      upsertConfig.mutateAsync({
+        provider_id,
+        name: isCustom
+          ? `Custom Endpoint${customCount ? " " + (customCount + 1) : ""}`
+          : preset?.name || newProviderId,
+        base_url: isCustom ? "" : preset?.base_url || "",
+        default_model: isCustom ? "" : preset?.default_model || "",
+        api_key: "",
+        is_active: savedConfigs.length === 0,
+      })
+    );
+    if (!result) return; // failure already surfaced as a toast
     setNewProviderId("");
     setShowAdd(false);
   };
@@ -201,14 +206,20 @@ function ProvidersTab() {
           key={config.provider_id}
           config={config}
           presets={presets}
-          onSave={async (data) => {
-            await upsertConfig.mutateAsync(data);
-          }}
+          onSave={async (data) =>
+            (await runAction("Save provider", () =>
+              upsertConfig.mutateAsync(data)
+            )) !== undefined
+          }
           onActivate={async () => {
-            await activateProvider.mutateAsync(config.provider_id);
+            await runAction("Activate provider", () =>
+              activateProvider.mutateAsync(config.provider_id)
+            );
           }}
           onDelete={async () => {
-            await deleteConfig.mutateAsync(config.provider_id);
+            await runAction("Delete provider", () =>
+              deleteConfig.mutateAsync(config.provider_id)
+            );
           }}
           isSaving={upsertConfig.isPending}
         />
@@ -280,7 +291,7 @@ function ProviderCard({
     base_url: string;
     default_model: string;
     is_active: boolean;
-  }) => Promise<void>;
+  }) => Promise<boolean>; // resolves true on success (gates the "Saved" note)
   onActivate: () => Promise<void>;
   onDelete: () => Promise<void>;
   isSaving: boolean;
@@ -314,7 +325,9 @@ function ProviderCard({
   const needsBaseUrl = isCustom || config.provider_id === "ollama";
 
   const handleSave = async () => {
-    await onSave({
+    // Only show "Saved" if the save actually succeeded (FE-6) — onSave
+    // resolves false and toasts on failure.
+    const ok = await onSave({
       provider_id: config.provider_id,
       name: name || config.name,
       api_key: apiKey,
@@ -322,6 +335,7 @@ function ProviderCard({
       default_model: model,
       is_active: config.is_active,
     });
+    if (!ok) return;
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { useTools, useStartTool } from "@/lib/hooks/use-tools";
+import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { TerminalTabs } from "@/components/terminal/terminal-tabs";
 
 export function GlobalTerminalPanel() {
@@ -14,6 +15,7 @@ export function GlobalTerminalPanel() {
 
   const { data } = useTools();
   const startTool = useStartTool();
+  const runAction = useActionToast();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -39,8 +41,10 @@ export function GlobalTerminalPanel() {
 
   const handleLaunchTool = async (toolId: string, toolName: string) => {
     setDropdownOpen(false);
-    await startTool.mutateAsync(toolId);
-    addTab(toolId, toolName);
+    const result = await runAction(`Launch ${toolName}`, () =>
+      startTool.mutateAsync(toolId)
+    );
+    if (result) addTab(toolId, toolName);
   };
 
   if (!terminalOpen) return null;
