@@ -142,22 +142,12 @@ RUN ARCH=$(dpkg --print-architecture) && \
 COPY docker/htcondor/90-studio.conf /etc/condor/config.d/90-studio.conf
 COPY docker/pegasus/pegasus.properties /etc/pegasus/pegasus.properties
 
-# ---- Pegasus (pinned dev .deb with the monitord plugin patch) ----
-# The Pegasus development apt repo publishes UNSIGNED metadata (no
-# InRelease/Release.gpg as of 2026-08, so [signed-by=…] cannot work and it
-# previously shipped with [trusted=yes]) — and the repo's `pegasus` package
-# was immediately force-downgraded by this pinned .deb anyway. Installing the
-# checksummed .deb directly drops the unsigned repo entirely: sha256 is the
-# integrity anchor, and apt resolves its dependencies from the signed
-# Ubuntu/HTCondor repos. Update BOTH the filename and the hash on a bump.
-RUN PEG_DEB="pegasus_6.0.0~-dev.0202606301145-1+ubuntu24_amd64.deb" && \
-    PEG_SHA256="1fe10d48403bd8c5ce8b0b42712755f518019681b949c47eb0e0ac4d645352bf" && \
-    curl -fsSL -o "/tmp/${PEG_DEB}" \
-        "https://download.pegasus.isi.edu/pegasus-ai/${PEG_DEB}" && \
-    echo "${PEG_SHA256}  /tmp/${PEG_DEB}" | sha256sum -c - && \
+# ---- Pegasus ----
+RUN curl -fsSL https://download.pegasus.isi.edu/pegasus/gpg.txt \
+         -o /etc/apt/trusted.gpg.d/pegasus.asc && \
+    echo 'deb [arch=amd64, trusted=yes] https://download.pegasus.isi.edu/pegasus/development/6.0/ubuntu/ noble main' >/etc/apt/sources.list.d/pegasus.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends "/tmp/${PEG_DEB}" && \
-    rm -f "/tmp/${PEG_DEB}" && \
+    apt-get install -y pegasus && \
     rm -rf /var/lib/apt/lists/* && \
     pegasus-version
 
