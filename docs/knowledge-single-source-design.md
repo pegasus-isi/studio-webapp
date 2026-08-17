@@ -189,8 +189,9 @@ binary — **still to confirm**).
 
 ## 5. Decisions
 
-D1, D2 and D3 are **approved**. D4-D8 are proposed and still need a call; note
-that phase 3 cannot land until D4 is settled.
+D1-D5, D7 and D8 are **approved**, and D1-D5 and D7 are implemented. D6 is
+partially done: the content/config split landed, the `$HOME` write path has not
+changed yet.
 
 | # | Decision | Status | Consequence |
 |---|---|---|---|
@@ -198,11 +199,11 @@ that phase 3 cannot land until D4 is settled.
 | D2 | **`studio-webapp/knowledge/{skills,agents}` is deleted, not synced.** | ✅ approved | Enforces C1. A CI check fails the build if either path reappears. |
 | D3 | **The three agents move into the plugin.** | ✅ approved, implemented | `agents/` is a native Claude Code plugin directory, so plugin users gain them rather than carrying dead weight. |
 | D3a | **`provd` ships nowhere until it is fully tested and validated.** Held out of the plugin *and* removed from studio-webapp; kept only as a local working copy. | ✅ approved, implemented | It has never been exercised end to end against a running provd daemon, and both destinations are shipping targets — the marketplace is public, and a studio-webapp merge redeploys to live user pods. Removing it is safe: no code references it, only its own two files. It re-enters under D3 once it works, with the frontmatter already worked out (unprefixed name per the `kiso` precedent, `allowed-tools` matching `pegasus-scaffold`). |
-| D4 | **Distribute the one tree two ways from one repo: the git marketplace, and a `pegasus-ai-knowledge` wheel whose package data *is* that tree.** | proposed | Submodules assume you control a build; OOD has no image. Both targets `pip install` a pinned version. Supersedes the submodule idea. |
-| D5 | **Split the reference doc rather than dedupe it.** Plugin keeps `references/PEGASUS.md`; studio-webapp keeps a small `knowledge/overlay/STUDIO_ENV.md` describing only the container (workspace root, PVC, where runs land). | proposed | The Studio environment is genuinely not portable and does not belong in a plugin someone installs on a laptop. Everything else in `PEGASUS_AI.md` is a condensed restatement and is deleted in favour of the real guide. Generated context gets *better*. |
-| D6 | **Config becomes environment, not filesystem mutation.** Launchers export the pointers; adapters stop writing to `$HOME` by default. | proposed | Fixes the cwd problem and the OOD problem with one change. Removes the unconditional `home_path()` behaviour at 10 call sites. |
-| D7 | **`metadata.json` is deleted; skill name/description come from `SKILL.md` frontmatter,** with `order:` as an optional frontmatter key. | proposed | Removes 9 files and one entire class of drift (a description can no longer disagree with its own skill). |
-| D8 | **Do not redirect `CLAUDE_CONFIG_DIR` on OOD.** Redirect only `CLAUDE_CODE_PLUGIN_CACHE_DIR`, and declare the marketplace via `--settings`. | proposed | `CLAUDE_CONFIG_DIR` holds credentials; moving it to scratch forces a re-login every session. Leaving it alone means the user's own `~/.claude` is untouched *and* their login persists. |
+| D4 | **Distribute the one tree two ways from one repo: the git marketplace, and a `pegasus-ai-knowledge` wheel whose package data *is* that tree.** | ✅ approved, implemented | Submodules assume you control a build; OOD has no image. Both targets `pip install` a pinned version. Supersedes the submodule idea. |
+| D5 | **Split the reference doc rather than dedupe it.** Plugin keeps `references/PEGASUS.md`; studio-webapp keeps a small `knowledge/overlay/STUDIO_ENV.md` describing only the container (workspace root, PVC, where runs land). | ✅ approved, implemented | The Studio environment is genuinely not portable and does not belong in a plugin someone installs on a laptop. Everything else in `PEGASUS_AI.md` is a condensed restatement and is deleted in favour of the real guide. Generated context gets *better*. |
+| D6 | **Config becomes environment, not filesystem mutation.** Launchers export the pointers; adapters stop writing to `$HOME` by default. | partially done | Fixes the cwd problem and the OOD problem with one change. Removes the unconditional `home_path()` behaviour at 10 call sites. |
+| D7 | **`metadata.json` is deleted; skill name/description come from `SKILL.md` frontmatter,** with `order:` as an optional frontmatter key. | ✅ approved, implemented | Removes 9 files and one entire class of drift (a description can no longer disagree with its own skill). |
+| D8 | **On OOD, writing to `$HOME` is permitted, but ask the first time and remember the answer.** Redirect `CLAUDE_CODE_PLUGIN_CACHE_DIR` regardless of the answer. | ✅ approved | Asking once is cheap and avoids anything appearing in a site-owned home directory as a surprise. `CLAUDE_CONFIG_DIR` is still left alone even when consent is given: it holds credentials, so relocating it forces a re-login every session. The plugin cache moves either way, because it performs git clones and those do not belong on quota-limited NFS. |
 
 ## 6. Target architecture
 
@@ -269,10 +270,11 @@ which is what exists today.
   consented case.
 - `studio-webapp/knowledge/` shrinks from 35 files to one overlay document.
 
-## 8. The consent prompt, scoped down
+## 8. The consent prompt
 
-Keep it, as tier 3 only, and ask the honest question. Not "may I install a
-plugin" — the environment path makes that unnecessary — but:
+Writing to `$HOME` on OOD is allowed. The rule is to **ask the first time and
+remember the answer**. Ask the honest question, though: not "may I install a
+plugin", which the environment path makes unnecessary, but:
 
 > May I keep your LLM credentials and session history at `~/.pegasus-ai`, or
 > should they be discarded when this session ends?
@@ -281,12 +283,14 @@ That is a real tradeoff. Make it one-time, remembered, reversible, and wire it
 to the `uninstall()` methods the adapters already implement; those are the right
 bones.
 
-Two rules hold regardless of the answer:
+Three rules hold regardless of the answer:
 
-1. Never modify a pre-existing dotfile the user owns. `upsert_managed_block` is
-   careful, but not writing there at all is safer and now possible.
+1. Never modify a pre-existing dotfile the user owns without saying so.
+   `upsert_managed_block` is careful, but not writing there at all is safer and
+   now possible.
 2. Never put the plugin cache on `$HOME` on OOD, consent or not. It performs git
-   clones onto quota'd NFS.
+   clones onto quota-limited NFS.
+3. Leave `CLAUDE_CONFIG_DIR` alone even with consent — it holds credentials.
 
 ## 9. Migration plan
 
@@ -307,17 +311,24 @@ Exercise it end to end against a running provd daemon, then add it as
 than left shipping unvalidated (D3a); the text is preserved in this repo's git
 history and as a local working copy.
 
-**Phase 2 — publish the wheel** (marketplace repo)
+**Phase 2 — publish the wheel** (marketplace repo) — **done, marketplace PR #5**
 `pegasus-ai-knowledge`, package data = the tree, exposing `root()` /
 `seed_dir()`. Tag and publish a pinned version.
 
-**Phase 3 — studio consumes it** (studio-webapp)
-`pip install pegasus-ai-knowledge==X.Y.Z` in the Dockerfile, replacing
-`COPY knowledge/`. `KNOWLEDGE_ROOT` resolves from the package. `common.py` reads
-`SKILL.md` + frontmatter instead of `canonical.md` + `metadata.json`, and
-`assets/{templates,examples}` instead of `{templates,examples}`. Delete
-`knowledge/{skills,agents,templates,examples,mcp}`; keep
-`knowledge/overlay/STUDIO_ENV.md`. Add the CI guard for D2.
+**Phase 3 — studio consumes it** (studio-webapp) — **done**
+The Dockerfile installs the package from a pinned git ref (`KNOWLEDGE_REF`)
+rather than a version on PyPI, since the package is not published yet; the
+install line was verified against the real ref. `studio-api/knowledge/layout.py`
+is now the only module that knows where the tree is or what shape it has, and
+resolves per call (env → installed package → legacy `/opt`) so tests and the
+container can differ. Skill metadata comes from frontmatter. All six duplicated
+`KNOWLEDGE_ROOT` constants and `routers/knowledge.py` go through it. The
+duplicated tree is deleted and CI fails if it reappears. 240 tests pass, `tsc`
+clean.
+
+One behaviour fix fell out: the skills listing previously included
+metadata-only directories, which appeared in `/api/knowledge/skills` but 404'd
+on fetch. A skill is now defined by having a document.
 
 **Phase 4 — profiles + environment config** (studio-webapp)
 Introduce `STUDIO_DEPLOYMENT`, build the seed dir at image build, move config to
@@ -331,7 +342,21 @@ Phases 1-2 and 3-4 are separate PR pairs across two repos; each phase is
 independently revertable. Note the ordering constraint: phase 3 cannot land
 before phase 2 publishes.
 
-## 10. Open questions
+## 10. Measured cost of the switch
+
+Composing the overlay with the real 44 KB guide makes the generated context
+**46 KB, roughly 12k tokens**, against ~18.5 KB (~5k tokens) for the old
+condensed restatement. That is a real per-session cost, paid by every tool.
+
+It buys correctness: the restatement was the thing that drifted. But the guide
+does not have to be resident. The plugin already ships it at
+`references/PEGASUS.md` and the skills reference it, so for Claude Code it is
+duplicated into context that the skills could load on demand. Worth a follow-up:
+compose overlay + appendix only, and have the context point at the guide's path
+rather than inlining it. That would put the always-on cost *below* where it
+started while keeping one authored copy.
+
+## 11. Open questions
 
 - **Q1 — user-visible rename.** Adopting plugin names turns `/scaffold` into
   `/pegasus-scaffold`. Stripping the prefix in the adapters preserves today's
