@@ -145,8 +145,11 @@ Project actions:
   captures the planned run directory.
 - **Run** submits that planned dir via `pegasus-run`, falling back to a full
   `pegasus-plan --submit` when there's no reusable planned dir.
-- **Build** builds (and optionally pushes) the project's container image via
-  Apptainer, streaming the log over SSE.
+- **Build** runs `apptainer build` on the project's `Apptainer/<Name>.def`,
+  writing the `.sif` beside it so the Transformation Catalog can reference it as
+  `file:///abs/path/X.sif` with `image_site="local"`, and streaming the log over
+  SSE. A registry is optional: when one is configured the `.sif` is also pushed
+  over ORAS, but a workflow does not need it.
 
 Before rendering action forms, Studio introspects each project's
 `workflow_generator.py` `argparse` definition and builds a parameter form for
@@ -188,17 +191,29 @@ adapter. Starting a terminal tool creates a WebSocket PTY in the workspace.
 
 ## Knowledge Layer
 
-Canonical knowledge is stored in `knowledge/` and copied into the runtime image
-at `/opt/pegasus-ai/knowledge/`.
+Knowledge is authored once, in
+[pegasus-isi/claude-plugin-marketplace](https://github.com/pegasus-isi/claude-plugin-marketplace),
+and installed into the runtime image as the `pegasus-ai-knowledge` package
+(pinned by the `KNOWLEDGE_REF` build arg). Studio does not keep a copy; CI fails
+if one reappears under `knowledge/`.
 
 | Directory | Contents |
 |-----------|----------|
-| `skills/` | Tool-agnostic skill prompts |
-| `agents/` | Persona prompts |
-| `templates/` | Workflow generator, wrapper, Apptainer definition, README templates |
-| `examples/` | Curated Pegasus workflow examples |
-| `references/` | Shared Pegasus and PegasusAI context |
-| `mcp/` | MCP server definitions |
+| `skills/<name>/SKILL.md` | Skill prompts, with name/description in frontmatter |
+| `agents/*.md` | Specialist subagent prompts |
+| `assets/templates/` | Workflow generator, wrapper, Apptainer definition, README templates |
+| `assets/examples/` | Curated Pegasus workflow examples |
+| `references/PEGASUS.md` | The portable Pegasus development guide |
+| `.mcp.json` | MCP server definitions |
+
+`knowledge/overlay/STUDIO_ENV.md` in this repo is the one piece that stays here:
+Studio-specific environment context (what persists, where runs are discovered)
+that does not belong in a plugin someone installs on a laptop. Generated context
+is the overlay followed by the portable guide.
+
+`studio-api/knowledge/layout.py` resolves the tree — `KNOWLEDGE_ROOT` env, then
+the installed package, then the legacy `/opt/pegasus-ai/knowledge` path — and is
+the only module that knows the on-disk shape.
 
 Adapters translate the shared knowledge into each tool's native format:
 
