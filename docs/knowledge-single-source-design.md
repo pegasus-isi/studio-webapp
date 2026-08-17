@@ -364,10 +364,15 @@ started while keeping one authored copy.
   what the same skill is called. Recommendation: take the rename, note it in
   release notes. Settled for `provd` itself, which stays unprefixed following the
   `kiso` precedent already in the plugin.
-- **Q2 — Docker vs Apptainer.** D1 means Studio inherits the plugin's Apptainer
-  skill and loses its Docker one. Studio has a podman-based image builder, so
-  Docker guidance may still be wanted. If so the plugin should carry *both*
-  skills. That is a content decision for the marketplace, not a fork.
+- **Q2 — Docker vs Apptainer. Resolved: Apptainer.** Studio's Build Image action
+  built a project Dockerfile with podman and pushed it to a registry, which
+  contradicted the guidance it ships: the skills build a `.sif` from a definition
+  file and reference it as `file:///abs/path/X.sif` with `image_site="local"`, no
+  registry involved. The builder now runs `apptainer build`, writes the `.sif`
+  beside the definition, and reports the catalog snippet. podman and its rootless
+  storage config are gone from the image. The `.sif` push path (ORAS) is retained
+  but **unverified in this environment** — there is no Apptainer on the dev host,
+  so only argv construction is covered by tests.
 - **Q3 — `CLAUDE_CODE_PLUGIN_SEED_DIR` is undocumented.** Verified working here,
   but pin a minimum Claude Code version and keep the `--settings` +
   `extraKnownMarketplaces` route as the fallback, since that path is in the
