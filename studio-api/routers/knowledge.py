@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import structlog
@@ -125,3 +126,27 @@ async def list_examples() -> dict[str, list[dict[str, str]]]:
             examples.append({"name": fname, "path": fpath})
 
     return {"examples": examples}
+
+
+@router.get("/marketplace")
+async def marketplace_status() -> dict[str, object]:
+    """Which marketplace checkout this session reads, and at which commit.
+
+    The SHA is the version — there is no package number to consult — so this is
+    the only way a user can tell which skills they are running.
+    """
+    from knowledge import checkout
+
+    return checkout.status()
+
+
+@router.post("/marketplace/update")
+async def marketplace_update(force: bool = False) -> dict[str, object]:
+    """Fast-forward the checkout to upstream.
+
+    Declines rather than discards when the checkout is dirty or carries local
+    commits; the reason comes back in the response so the UI can say why.
+    """
+    from knowledge import checkout
+
+    return await asyncio.to_thread(checkout.update, force=force)

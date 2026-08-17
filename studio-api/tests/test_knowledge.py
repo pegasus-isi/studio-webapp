@@ -171,3 +171,20 @@ def test_templates_prefers_plugin_assets_layout(monkeypatch, tmp_path):
 
     (tmp_path / "assets" / "templates").mkdir(parents=True)
     assert layout.templates_dir() == str(tmp_path / "assets" / "templates")
+
+
+def test_marketplace_endpoints(client, monkeypatch, tmp_path):
+    """The UI needs the SHA and a way to update; both must survive a
+    non-git tree rather than 500."""
+    plain = tmp_path / "mkt"
+    (plain / ".claude-plugin").mkdir(parents=True)
+    monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", str(plain))
+
+    body = client.get("/api/knowledge/marketplace").json()
+    assert body["path"] == str(plain)
+    assert body["exists"] is True
+    assert body["is_git"] is False
+
+    body = client.post("/api/knowledge/marketplace/update").json()
+    assert body["updated"] is False
+    assert body["reason"] == "not a git checkout"
