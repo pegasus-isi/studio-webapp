@@ -201,7 +201,7 @@ changed yet.
 | D2 | **`studio-webapp/knowledge/{skills,agents}` is deleted, not synced.** | ✅ approved | Enforces C1. A CI check fails the build if either path reappears. |
 | D3 | **The three agents move into the plugin.** | ✅ approved, implemented | `agents/` is a native Claude Code plugin directory, so plugin users gain them rather than carrying dead weight. |
 | D3a | **`provd` ships nowhere until it is fully tested and validated.** Held out of the plugin *and* removed from studio-webapp; kept only as a local working copy. | ✅ approved, implemented | It has never been exercised end to end against a running provd daemon, and both destinations are shipping targets — the marketplace is public, and a studio-webapp merge redeploys to live user pods. Removing it is safe: no code references it, only its own two files. It re-enters under D3 once it works, with the frontmatter already worked out (unprefixed name per the `kiso` precedent, `allowed-tools` matching `pegasus-scaffold`). |
-| D4 | **Distribute the one tree two ways from one repo: the git marketplace, and a `pegasus-ai-knowledge` wheel whose package data *is* that tree.** | ✅ approved, implemented | Submodules assume you control a build; OOD has no image. Both targets `pip install` a pinned version. Supersedes the submodule idea. |
+| D4 | **Deliver the one tree by pinned git checkout, not by packaging it.** Superseded the wheel, which superseded the submodule. | ✅ approved, implemented | Footprint and content are the same either way (1.0 MB clone vs 1.1 MB wheel), so the deciding factor is updates. The SHA *is* the version — a package version has to be bumped by hand and silently lies when it isn't, which for a knowledge base is the whole question. `git pull` moves kilobytes where a reinstall re-downloads everything, rollback is a checkout, and Claude Code's own marketplaces are git-shaped. `.git` is kept (320 KB) so all of that works in a running pod. |
 | D5 | **Split the reference doc rather than dedupe it.** Plugin keeps `references/PEGASUS.md`; studio-webapp keeps a small `knowledge/overlay/STUDIO_ENV.md` describing only the container (workspace root, PVC, where runs land). | ✅ approved, implemented | The Studio environment is genuinely not portable and does not belong in a plugin someone installs on a laptop. Everything else in `PEGASUS_AI.md` is a condensed restatement and is deleted in favour of the real guide. Generated context gets *better*. |
 | D6 | **Discovery comes from the environment, not from copying files into whatever directory a tool happens to start in.** Writing to `$HOME` stays: Studio owns it, and on OOD it is permitted with consent (D8). What goes away is the *workspace-scoped* copy and the `$HOME` fallback that existed only to compensate for it being cwd-bound. | partially done | This is what actually fixes the cwd problem: env pointers are cwd-independent by construction, so a user who leaves the workspace keeps their skills. The `$HOME` writes were never the problem; being the *mechanism* was. Two things still move off `$HOME` on OOD regardless: the plugin cache (git clones on quota-limited NFS) and nothing at all from `CLAUDE_CONFIG_DIR` (credentials). |
 | D7 | **`metadata.json` is deleted; skill name/description come from `SKILL.md` frontmatter,** with `order:` as an optional frontmatter key. | ✅ approved, implemented | Removes 9 files and one entire class of drift (a description can no longer disagree with its own skill). |
@@ -314,14 +314,17 @@ Exercise it end to end against a running provd daemon, then add it as
 than left shipping unvalidated (D3a); the text is preserved in this repo's git
 history and as a local working copy.
 
-**Phase 2 — publish the wheel** (marketplace repo) — **done, marketplace PR #5**
-`pegasus-ai-knowledge`, package data = the tree, exposing `root()` /
-`seed_dir()`. Tag and publish a pinned version.
+**Phase 2 — packaging** (marketplace repo) — **withdrawn**
+A `pegasus-ai-knowledge` wheel was built and verified end to end (marketplace
+PR #5), then closed in favour of a pinned git checkout: same bytes, better update
+story, one less layer. The seed-writing logic the package carried moved to
+`studio-api/knowledge/seed.py`, so it is still implemented and tested once.
 
 **Phase 3 — studio consumes it** (studio-webapp) — **done**
-The Dockerfile installs the package from a pinned git ref (`KNOWLEDGE_REF`)
-rather than a version on PyPI, since the package is not published yet; the
-install line was verified against the real ref. `studio-api/knowledge/layout.py`
+The Dockerfile clones the marketplace and checks out `KNOWLEDGE_REF`, keeping
+`.git`, and sets `KNOWLEDGE_ROOT` at the plugin directory. Verified end to end:
+checkout → `seed.write_seed()` → Claude Code loads 8 skills and 3 agents, and
+`git pull` updates the tree in place. `studio-api/knowledge/layout.py`
 is now the only module that knows where the tree is or what shape it has, and
 resolves per call (env → installed package → legacy `/opt`) so tests and the
 container can differ. Skill metadata comes from frontmatter. All six duplicated

@@ -305,15 +305,27 @@ COPY docker/supervisor/scripts/ /etc/supervisor/scripts/
 RUN chmod +x /etc/supervisor/scripts/*.sh
 
 # ---- Knowledge assets (skills, agents, MCP, templates, examples) ----
-# Authored once in pegasus-isi/claude-plugin-marketplace and installed here as a
-# package. Studio deliberately does not carry its own copy: when it did, the two
-# drifted to the point of giving different container advice depending on which
-# AI tool the user launched. Pinned to a commit so an image rebuild is
-# reproducible; bump KNOWLEDGE_REF to take new skills.
-ARG KNOWLEDGE_REF=7655381
-RUN pip install --no-cache-dir --break-system-packages \
-        "pegasus-ai-knowledge @ git+https://github.com/pegasus-isi/claude-plugin-marketplace@${KNOWLEDGE_REF}" && \
-    python3 -c "import pegasus_ai_knowledge as k; print(k.plugin_dir())"
+# Authored once in pegasus-isi/claude-plugin-marketplace and checked out here.
+# Studio deliberately does not carry its own copy: when it did, the two drifted
+# to the point of giving different container advice depending on which AI tool
+# the user launched. Pinned to a commit so a rebuild is reproducible; bump
+# KNOWLEDGE_REF to take new skills.
+#
+# A checkout rather than a package because the update story is better in every
+# direction that matters here: the SHA is the version (a package version has to
+# be bumped by hand and silently lies when it isn't), `git pull` moves kilobytes
+# where a reinstall re-downloads everything, and rollback is a checkout. .git is
+# kept — 320 KB — so all three work inside a running pod without a rebuild.
+ARG KNOWLEDGE_REF=main
+ARG KNOWLEDGE_REPO=https://github.com/pegasus-isi/claude-plugin-marketplace.git
+RUN git clone --quiet "${KNOWLEDGE_REPO}" /opt/pegasus-ai/marketplace && \
+    git -C /opt/pegasus-ai/marketplace checkout --quiet "${KNOWLEDGE_REF}" && \
+    git -C /opt/pegasus-ai/marketplace log -1 --format='knowledge %H %s' && \
+    test -f /opt/pegasus-ai/marketplace/plugins/pegasus-ai/.mcp.json
+
+# Everything reads the tree through this; studio-api/knowledge/layout.py takes it
+# as the first-priority override.
+ENV KNOWLEDGE_ROOT=/opt/pegasus-ai/marketplace/plugins/pegasus-ai
 
 # Studio-specific context (which directories persist, where runs land) that does
 # not belong in a plugin someone installs on a laptop. Composed on top of the

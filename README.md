@@ -116,7 +116,7 @@ tool). Settings → Tools can install and launch the CLI/agent tools:
 All tools share one knowledge base — skills, specialist subagents, templates and
 the Pegasus reference guide — authored in
 [pegasus-isi/claude-plugin-marketplace](https://github.com/pegasus-isi/claude-plugin-marketplace)
-and installed here as the `pegasus-ai-knowledge` package. Per-tool adapters
+and checked out into the image at `/opt/pegasus-ai/marketplace`. Per-tool adapters
 translate it into each tool's native config, so Claude Code and OpenCode answer
 the same question the same way. npm globals install under `/opt/npm-global`,
 which is writable by arbitrary runtime UIDs.
@@ -237,7 +237,7 @@ cd studio-web && node_modules/.bin/tsc --noEmit   # NOT `npm test`/`npm run lint
 | [docker/](docker/) | nginx, Jupyter, HTCondor, entrypoint, and supervisord config |
 | [studio-api/](studio-api/) | FastAPI backend, SQLite state, tool adapters, workflow services |
 | [studio-web/](studio-web/) | Next.js frontend |
-| [knowledge/overlay/](knowledge/overlay/) | Studio-specific environment context; the shared skills/agents come from the `pegasus-ai-knowledge` package |
+| [knowledge/overlay/](knowledge/overlay/) | Studio-specific environment context; the shared skills/agents come from the marketplace checkout at `/opt/pegasus-ai/marketplace` |
 | [SPEC.md](SPEC.md) | Current design specification |
 
 ## License

@@ -18,6 +18,7 @@ studio-api/
 │   └── propagator.py       # Push the active LLM config to installed tools
 ├── knowledge/              # Per-tool adapters that GENERATE runtime config
 │   ├── layout.py           # Resolves the knowledge tree + reads its layout
+│   ├── seed.py             # Writes the Claude Code plugin seed directory
 │   ├── adapters.py         # KnowledgeAdapter ABC + registry
 │   ├── claude_code.py / opencode.py / codex_cli.py / antigravity.py / web_chat.py
 ├── services/               # workflow scan/submit/monitor, condor pool, image
@@ -117,7 +118,8 @@ stop it.
 | `HOME` | set by KubeSpawner | user home; workspace defaults to `$HOME/work` |
 | `STUDIO_WORKSPACE_DIR` | `$HOME/work` | workspace root (DB, tool configs, projects) |
 | `STUDIO_SCAN_DIR` | `$HOME` | root scanned for `braindump.yml` runs |
-| `KNOWLEDGE_ROOT` | (unset) | override the knowledge tree path. Unset resolves the installed `pegasus-ai-knowledge` package, then the legacy `/opt/pegasus-ai/knowledge`. Set it for local dev, where neither exists. |
+| `KNOWLEDGE_ROOT` | set by the image | knowledge tree path. Unset falls back to the marketplace checkout, then the legacy `/opt/pegasus-ai/knowledge`. Set it for local dev, where neither exists. |
+| `KNOWLEDGE_MARKETPLACE` | `/opt/pegasus-ai/marketplace` | the marketplace checkout the image makes |
 | `KNOWLEDGE_OVERLAY` | `/opt/pegasus-ai/overlay` | Studio-specific context composed on top of the portable Pegasus guide |
 | `STUDIO_CHAT_ENGINE_DEFAULT` | `opencode` | default chat engine |
 | `STUDIO_ALLOWED_ORIGINS` | (empty) | extra CORS origins (same-origin always allowed) |
