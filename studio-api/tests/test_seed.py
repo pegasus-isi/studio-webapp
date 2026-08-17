@@ -104,30 +104,32 @@ def test_rewrite_replaces_a_previous_seed(marketplace, tmp_path):
     assert not os.path.islink(os.path.join(dest, "marketplaces", "scitech"))
 
 
-def test_marketplace_resolution_prefers_site_then_user(monkeypatch, tmp_path):
-    """A container owns /opt; an OOD deployment does not, so a per-user path
-    has to resolve too."""
+def test_marketplace_resolution_prefers_the_user_checkout(monkeypatch, tmp_path):
+    """The user's own checkout wins, in the container as much as on OOD.
+
+    A root-owned tree under /opt can only be changed by rebuilding the image,
+    and any `git pull` into it is undone by the next pod restart.
+    """
     from knowledge import layout
 
     monkeypatch.delenv("KNOWLEDGE_MARKETPLACE", raising=False)
-    site = tmp_path / "opt"
+    seed_dir = tmp_path / "opt"
     user = tmp_path / "home" / ".local" / "share" / "pegasus-ai" / "marketplace"
-    monkeypatch.setattr(layout, "SITE_MARKETPLACE", str(site))
+    monkeypatch.setattr(layout, "SITE_MARKETPLACE", str(seed_dir))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "home" / ".local" / "share"))
 
-    # Nothing present: fall back to the site path, so a creator gets the
-    # conventional location rather than a surprise.
-    assert layout.marketplace_root() == str(site)
+    # Nothing yet: name the user path, so whoever creates it uses the right one.
+    assert layout.marketplace_root() == str(user)
 
-    # Only a user checkout (the OOD case).
+    # Only the image seed (before first launch clones it).
+    (seed_dir / ".claude-plugin").mkdir(parents=True)
+    assert layout.marketplace_root() == str(seed_dir)
+
+    # Once the user has their own copy it wins, even though the seed remains.
     (user / ".claude-plugin").mkdir(parents=True)
     assert layout.marketplace_root() == str(user)
 
-    # A site checkout wins once present (vetted, offline, admin-managed).
-    (site / ".claude-plugin").mkdir(parents=True)
-    assert layout.marketplace_root() == str(site)
-
-    # An explicit override beats both.
+    # An explicit override still beats both (a site-staged, read-only copy).
     monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", "/somewhere/else")
     assert layout.marketplace_root() == "/somewhere/else"
 

@@ -21,6 +21,40 @@ mkdir -p /tmp/nginx-client-body /tmp/nginx-proxy /tmp/nginx-fastcgi \
 
 PYTHON="$(which python3 2>/dev/null || which python 2>/dev/null || echo python3)"
 
+# ---- Marketplace checkout (skills, agents, templates) ----
+# The image ships a pinned copy at /opt/pegasus-ai/marketplace, but it is
+# root-owned and replaced on every image rebuild, so it is a seed rather than
+# the thing tools read. Clone it into the user's own $HOME on first launch:
+# there it is writable (skills can be updated with `git pull` or rolled back
+# with `git checkout` — no root, no rebuild) and it persists across pod
+# restarts, which a change under /opt would not.
+#
+# Cloning from the local seed rather than GitHub keeps first launch fast and
+# working with no egress. origin is then repointed upstream so `git pull` does
+# the obvious thing. Non-fatal throughout: layout.py falls back to the seed.
+SEED_MARKETPLACE="/opt/pegasus-ai/marketplace"
+USER_MARKETPLACE="${XDG_DATA_HOME:-${HOME:-/tmp}/.local/share}/pegasus-ai/marketplace"
+if [ ! -d "${USER_MARKETPLACE}/.claude-plugin" ] \
+   && [ -d "${SEED_MARKETPLACE}/.claude-plugin" ]; then
+    if mkdir -p "$(dirname "${USER_MARKETPLACE}")" \
+       && git clone --quiet "${SEED_MARKETPLACE}" "${USER_MARKETPLACE}" 2>/dev/null; then
+        git -C "${USER_MARKETPLACE}" remote set-url origin \
+            "${KNOWLEDGE_REPO_URL:-https://github.com/pegasus-isi/claude-plugin-marketplace.git}" \
+            2>/dev/null || true
+        echo "[studio] Marketplace checked out to ${USER_MARKETPLACE}"
+    else
+        echo "[studio] WARNING: could not create ${USER_MARKETPLACE} —" \
+             "falling back to the read-only ${SEED_MARKETPLACE}" >&2
+    fi
+fi
+
+# What the tools will actually read, for the AGENTS.md seed below and the log.
+if [ -d "${USER_MARKETPLACE}/plugins/pegasus-ai" ]; then
+    RESOLVED_KNOWLEDGE="${USER_MARKETPLACE}/plugins/pegasus-ai"
+else
+    RESOLVED_KNOWLEDGE="${SEED_MARKETPLACE}/plugins/pegasus-ai"
+fi
+
 if [ ! -f "${MARKER}" ]; then
     echo "[studio] First launch — initializing..."
 
@@ -43,7 +77,7 @@ if [ ! -f "${MARKER}" ]; then
     # reinstalls tool *binaries* without re-running them — so if this is
     # skipped, a workspace can end up with no AGENTS.md at all.
     OVERLAY="/opt/pegasus-ai/overlay/STUDIO_ENV.md"
-    GUIDE="${KNOWLEDGE_ROOT:-/opt/pegasus-ai/marketplace/plugins/pegasus-ai}/references/PEGASUS.md"
+    GUIDE="${KNOWLEDGE_ROOT:-${RESOLVED_KNOWLEDGE}}/references/PEGASUS.md"
     if [ -f "${OVERLAY}" ] || [ -f "${GUIDE}" ]; then
         # Written with explicit ifs, not `[ -f x ] && cat x`: under `set -e` a
         # failing test makes the whole && chain the script's last status and

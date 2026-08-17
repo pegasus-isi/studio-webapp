@@ -338,9 +338,12 @@ RUN git clone --quiet "${KNOWLEDGE_REPO}" /opt/pegasus-ai/marketplace && \
 # the .git kept above useless for the pull/rollback/verify it exists for.
 RUN git config --system --add safe.directory /opt/pegasus-ai/marketplace
 
-# Everything reads the tree through this; studio-api/knowledge/layout.py takes it
-# as the first-priority override.
-ENV KNOWLEDGE_ROOT=/opt/pegasus-ai/marketplace/plugins/pegasus-ai
+# Deliberately NOT setting KNOWLEDGE_ROOT: it is the highest-priority override,
+# so pinning it here would force every user onto this read-only copy. The
+# entrypoint clones this into the user's own $HOME checkout at first launch and
+# layout.py prefers that, so skills can be updated or rolled back without root
+# and the change survives a pod restart. This copy is the seed and the fallback.
+ENV KNOWLEDGE_REPO_URL=${KNOWLEDGE_REPO}
 
 # Studio-specific context (which directories persist, where runs land) that does
 # not belong in a plugin someone installs on a laptop. Composed on top of the

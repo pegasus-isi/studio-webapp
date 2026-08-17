@@ -78,16 +78,18 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
 - **Knowledge base** — skills, agents, templates and examples are authored in
   [pegasus-isi/claude-plugin-marketplace](https://github.com/pegasus-isi/claude-plugin-marketplace)
   and checked out into the image at `/opt/pegasus-ai/marketplace` (pinned by the
-  `KNOWLEDGE_REF` build arg; `.git` is kept so the SHA is verifiable and skills
-  can be updated or rolled back with `git pull` / `git checkout` in a running pod). **Do not add a copy under `knowledge/`** — CI fails
+  `KNOWLEDGE_REF` build arg). That copy is a **seed**: the entrypoint clones it
+  into `~/.local/share/pegasus-ai/marketplace` at first launch, which is what
+  tools read — writable, so skills update with `git pull` and roll back with
+  `git checkout`, no root and no rebuild, and it survives pod restarts. **Do not add a copy under `knowledge/`** — CI fails
   if `knowledge/{skills,agents,templates,examples,mcp,references}` reappears,
   because a second copy is how the two drifted into giving different container
   advice per tool. `knowledge/overlay/STUDIO_ENV.md` is Studio's own environment
   context and is composed on top of the shared guide.
   `studio-api/knowledge/layout.py` resolves the tree (`KNOWLEDGE_ROOT` env, set
-  by the image → `marketplace_root()`: `KNOWLEDGE_MARKETPLACE`, then
-  `/opt/pegasus-ai/marketplace`, then `~/.local/share/pegasus-ai/marketplace` for
-  deployments that do not own `/opt` → legacy `/opt/pegasus-ai/knowledge`);
+  by the image → `marketplace_root()`: `KNOWLEDGE_MARKETPLACE`, then the
+  user's own `~/.local/share/pegasus-ai/marketplace`, then the image-baked seed
+  at `/opt/pegasus-ai/marketplace` → legacy `/opt/pegasus-ai/knowledge`);
   everything else goes through it. `knowledge/seed.py` writes the Claude Code plugin seed
   directory that points at the checkout. Per-tool adapters in `studio-api/knowledge/` *generate*
   `CLAUDE.md`/`AGENTS.md`/`.mcp.json`/`.opencode/` into the user's runtime workspace —

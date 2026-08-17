@@ -1,11 +1,10 @@
 """Where the Pegasus AI knowledge tree lives, and what shape it has.
 
 The skills, agents, templates and examples are authored once, in
-pegasus-isi/claude-plugin-marketplace, and reach this container as the installed
-``pegasus_ai_knowledge`` package. Studio does not carry its own copy: a second
-copy is what let the two drift apart, to the point where Claude Code users were
-told to build Apptainer images while opencode users were told to build Docker
-ones.
+pegasus-isi/claude-plugin-marketplace, and reach a deployment as a git checkout.
+Studio does not carry its own copy: a second copy is what let the two drift
+apart, to the point where Claude Code users were told to build Apptainer images
+while opencode users were told to build Docker ones.
 
 Everything that needs the tree goes through this module, so there is one
 resolution order and one place that knows the on-disk shape.
@@ -72,12 +71,21 @@ def marketplace_root() -> str:
 
     1. ``KNOWLEDGE_MARKETPLACE``, so a launcher can point at a site-staged copy
        (an HPC software stack, a module prefix) with no writes and no egress
-    2. ``/opt/pegasus-ai/marketplace``, which the container image checks out
-    3. ``~/.local/share/pegasus-ai/marketplace``, for a deployment that owns
-       neither the image nor ``/opt`` — Open OnDemand, primarily
+    2. ``~/.local/share/pegasus-ai/marketplace`` — the user's own checkout
+    3. ``/opt/pegasus-ai/marketplace``, the copy baked into the container image
 
-    Falls back to the site path when nothing exists yet, so callers that are
-    *creating* the checkout get the conventional location.
+    The user copy is preferred everywhere, including in the container. A
+    root-owned tree under ``/opt`` is read-only to the user, so skills could
+    only ever be updated by rebuilding the image, and any ``git pull`` would be
+    undone by the next pod restart. Under ``$HOME`` the checkout is writable,
+    survives restarts (``$HOME`` is the persistent mount), and behaves the same
+    way on a deployment that owns no image at all.
+
+    The image copy stays as the seed the user copy is cloned from at first
+    launch, and as the fallback if that clone could not be made.
+
+    Falls back to the user path when nothing exists yet, so callers that are
+    *creating* the checkout get the location it should live in.
 
     Resolved per call, not cached at import: the same reason ``knowledge_root``
     is, and because a constant here could disagree with what ``knowledge_root``
@@ -88,11 +96,11 @@ def marketplace_root() -> str:
     if env:
         return env
 
-    for candidate in (SITE_MARKETPLACE, user_marketplace_root()):
+    for candidate in (user_marketplace_root(), SITE_MARKETPLACE):
         if os.path.isdir(os.path.join(candidate, ".claude-plugin")):
             return candidate
 
-    return SITE_MARKETPLACE
+    return user_marketplace_root()
 
 
 def marketplace_plugin_dir(name: str = DEFAULT_PLUGIN) -> str:
