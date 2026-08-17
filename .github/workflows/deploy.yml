@@ -23,6 +23,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Skills and agents are authored in pegasus-isi/claude-plugin-marketplace
+      # and installed as the pegasus-ai-knowledge package. A copy here is how the
+      # two drifted apart before, so reintroducing one fails the build rather
+      # than quietly diverging again. Studio-specific context goes in
+      # knowledge/overlay/, which is composed on top of the shared guide.
+      - name: No second copy of the knowledge base
+        run: |
+          for dir in knowledge/skills knowledge/agents knowledge/templates \
+                     knowledge/examples knowledge/mcp knowledge/references; do
+            if [ -e "$dir" ]; then
+              echo "::error::$dir must not exist — the knowledge base is authored in"
+              echo "::error::pegasus-isi/claude-plugin-marketplace and installed as a package."
+              echo "::error::Studio-specific context belongs in knowledge/overlay/."
+              exit 1
+            fi
+          done
+          echo "knowledge/ carries only the Studio overlay:"
+          find knowledge -type f | sort
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

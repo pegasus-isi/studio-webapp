@@ -41,14 +41,17 @@ def test_dashboard_lists_skills(client, monkeypatch, tmp_path):
 
     skills_dir = tmp_path / "skills" / "scaffold"
     skills_dir.mkdir(parents=True)
-    (skills_dir / "metadata.json").write_text(json.dumps({
-        "name": "Scaffold",
-        "description": "Generate a complete Pegasus workflow project",
-        "slash_command": "/scaffold",
-        "order": 1,
-    }))
+    # A skill is its document; name/description/order come from frontmatter, so
+    # a listed skill is always one that can actually be fetched.
+    (skills_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: scaffold\n"
+        "description: Generate a complete Pegasus workflow project\n"
+        "order: 1\n"
+        "---\n\n# Scaffold\n"
+    )
     os.makedirs(tmp_path / "agents", exist_ok=True)
-    monkeypatch.setattr(knowledge, "KNOWLEDGE_ROOT", str(tmp_path))
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(tmp_path))
 
     async def fake_status(force=False):
         return {"available": False, "pool": {"available": False},

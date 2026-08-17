@@ -12,15 +12,17 @@ from typing import Any
 
 import structlog
 
+from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
-from knowledge.common import copy_agents_to_dir, copy_skills_to_dir
+from knowledge.common import (
+    build_knowledge_appendix,
+    copy_agents_to_dir,
+    copy_skills_to_dir,
+)
 from llm.providers import PROVIDERS, _resolve_api_key, _resolve_base_url, provider_type
 
 log = structlog.get_logger()
 
-KNOWLEDGE_ROOT = os.environ.get(
-    "KNOWLEDGE_ROOT", "/opt/pegasus-ai/knowledge"
-)
 
 
 def _global_config_dir() -> str:
@@ -41,14 +43,17 @@ class OpenCodeAdapter(KnowledgeAdapter):
         # Copy PEGASUS_AI.md as AGENTS.md — into the workspace and the global
         # config dir, so the config's `instructions: ["AGENTS.md"]` resolves
         # whether opencode starts in ~/work or anywhere else.
-        src = os.path.join(KNOWLEDGE_ROOT, "references", "PEGASUS_AI.md")
-        if os.path.isfile(src):
+        content = layout.context_document()
+        if content:
+            appendix = build_knowledge_appendix()
+            body = content + ("\n" + appendix if appendix else "")
             for dst_dir in (workspace, _global_config_dir()):
                 try:
                     os.makedirs(dst_dir, exist_ok=True)
-                    shutil.copy2(src, os.path.join(dst_dir, "AGENTS.md"))
+                    with open(os.path.join(dst_dir, "AGENTS.md"), "w") as f:
+                        f.write(body)
                 except OSError as e:
-                    log.warning("opencode_agents_copy_failed", dir=dst_dir, error=str(e))
+                    log.warning("opencode_agents_write_failed", dir=dst_dir, error=str(e))
 
         # Seed .opencode/agents/ and .opencode/skills/
         copy_agents_to_dir(os.path.join(workspace, ".opencode", "agents"))

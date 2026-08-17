@@ -323,7 +323,20 @@ COPY docker/supervisor/scripts/ /etc/supervisor/scripts/
 RUN chmod +x /etc/supervisor/scripts/*.sh
 
 # ---- Knowledge assets (skills, agents, MCP, templates, examples) ----
-COPY knowledge/ /opt/pegasus-ai/knowledge/
+# Authored once in pegasus-isi/claude-plugin-marketplace and installed here as a
+# package. Studio deliberately does not carry its own copy: when it did, the two
+# drifted to the point of giving different container advice depending on which
+# AI tool the user launched. Pinned to a commit so an image rebuild is
+# reproducible; bump KNOWLEDGE_REF to take new skills.
+ARG KNOWLEDGE_REF=7655381
+RUN pip install --no-cache-dir --break-system-packages \
+        "pegasus-ai-knowledge @ git+https://github.com/pegasus-isi/claude-plugin-marketplace@${KNOWLEDGE_REF}" && \
+    python3 -c "import pegasus_ai_knowledge as k; print(k.plugin_dir())"
+
+# Studio-specific context (which directories persist, where runs land) that does
+# not belong in a plugin someone installs on a laptop. Composed on top of the
+# portable guide when a tool's context file is generated.
+COPY knowledge/overlay/ /opt/pegasus-ai/overlay/
 
 # ---- Entrypoint ----
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh

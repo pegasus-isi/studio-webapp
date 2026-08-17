@@ -13,14 +13,12 @@ from typing import Any
 
 import structlog
 
+from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
 from llm.providers import PROVIDERS
 
 log = structlog.get_logger()
 
-KNOWLEDGE_ROOT = os.environ.get(
-    "KNOWLEDGE_ROOT", "/opt/pegasus-ai/knowledge"
-)
 
 
 class JupyterLabAdapter(KnowledgeAdapter):

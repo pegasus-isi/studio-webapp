@@ -15,15 +15,13 @@ from typing import Any
 
 import structlog
 
+from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import build_knowledge_appendix
 from llm.providers import PROVIDERS
 
 log = structlog.get_logger()
 
-KNOWLEDGE_ROOT = os.environ.get(
-    "KNOWLEDGE_ROOT", "/opt/pegasus-ai/knowledge"
-)
 
 # MCP servers to configure in config.toml
 MCP_SERVERS = {
@@ -97,7 +95,7 @@ def _seed_codex_skills(workspace: str) -> int:
 
     Returns count of skills seeded.
     """
-    skills_src = os.path.join(KNOWLEDGE_ROOT, "skills")
+    skills_src = layout.skills_dir()
     if not os.path.isdir(skills_src):
         return 0
 
@@ -124,7 +122,7 @@ def _seed_codex_agents(workspace: str) -> int:
 
     Returns count of agents seeded.
     """
-    agents_src = os.path.join(KNOWLEDGE_ROOT, "agents")
+    agents_src = layout.agents_dir()
     if not os.path.isdir(agents_src):
         return 0
 
@@ -203,11 +201,9 @@ class CodexCLIAdapter(KnowledgeAdapter):
 
     def install(self, workspace: str, llm_config: dict[str, Any]) -> None:
         # Copy PEGASUS_AI.md as AGENTS.md and append skills/agents appendix
-        src = os.path.join(KNOWLEDGE_ROOT, "references", "PEGASUS_AI.md")
         dst = os.path.join(workspace, "AGENTS.md")
-        if os.path.isfile(src):
-            with open(src) as f:
-                content = f.read()
+        content = layout.context_document()
+        if content:
             appendix = build_knowledge_appendix()
             with open(dst, "w") as f:
                 f.write(content)

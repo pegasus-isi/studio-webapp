@@ -16,9 +16,7 @@ import structlog
 
 log = structlog.get_logger()
 
-KNOWLEDGE_ROOT = os.environ.get(
-    "KNOWLEDGE_ROOT", "/opt/pegasus-ai/knowledge"
-)
+from knowledge import layout
 
 
 def build_skills_appendix() -> str:
@@ -32,8 +30,7 @@ def build_skills_appendix() -> str:
         Generate a complete Pegasus workflow project from a pipeline description
         ...
     """
-    skills_dir = os.path.join(KNOWLEDGE_ROOT, "skills")
-    if not os.path.isdir(skills_dir):
+    if not layout.skill_names():
         return ""
 
     sections: list[str] = []
@@ -43,28 +40,14 @@ def build_skills_appendix() -> str:
         "follow the instructions in the corresponding skill document.\n"
     )
 
-    for name in sorted(os.listdir(skills_dir)):
-        skill_dir = os.path.join(skills_dir, name)
-        if not os.path.isdir(skill_dir):
-            continue
-
-        # Read metadata
-        meta_path = os.path.join(skill_dir, "metadata.json")
-        slash_cmd = f"/{name}"
-        display_name = name.replace("-", " ").title()
-        description = ""
-
-        if os.path.isfile(meta_path):
-            try:
-                with open(meta_path) as f:
-                    meta = json.load(f)
-                display_name = meta.get("name", display_name)
-                description = meta.get("description", "")
-                slash_cmd = meta.get("slash_command", slash_cmd)
-            except Exception:
-                pass
-
-        sections.append(f"- **`{slash_cmd}`** — {display_name}: {description}")
+    for name, meta in sorted(
+        ((n, layout.skill_meta(n)) for n in layout.skill_names()),
+        key=lambda item: (int(item[1].get("order", 999)), item[0]),
+    ):
+        sections.append(
+            f"- **`{meta['slash_command']}`** — {meta['name']}: "
+            f"{meta['description']}"
+        )
 
     return "\n".join(sections) + "\n"
 
@@ -79,7 +62,7 @@ def build_agents_appendix() -> str:
         - **workflow-architect**: Expert Pegasus WMS workflow designer...
         - **pipeline-debugger**: LLM-powered Pegasus workflow debugging...
     """
-    agents_dir = os.path.join(KNOWLEDGE_ROOT, "agents")
+    agents_dir = layout.agents_dir()
     if not os.path.isdir(agents_dir):
         return ""
 
@@ -279,7 +262,7 @@ def unmerge_json_top(path: str, keys: list[str]) -> None:
 
 def copy_agents_to_dir(dst_dir: str) -> int:
     """Copy all agent .md files to dst_dir. Returns count copied."""
-    agents_src = os.path.join(KNOWLEDGE_ROOT, "agents")
+    agents_src = layout.agents_dir()
     if not os.path.isdir(agents_src):
         return 0
 
@@ -300,7 +283,7 @@ def copy_skills_to_dir(dst_dir: str, filename: str = "SKILL.md") -> int:
 
     Returns count copied.
     """
-    skills_src = os.path.join(KNOWLEDGE_ROOT, "skills")
+    skills_src = layout.skills_dir()
     if not os.path.isdir(skills_src):
         return 0
 
