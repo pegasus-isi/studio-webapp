@@ -15,6 +15,7 @@ local commits.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from typing import Any
 
@@ -27,6 +28,9 @@ log = structlog.get_logger()
 # Short: this runs on the startup path, and a hung fetch must never be what
 # keeps a user waiting for their server.
 GIT_TIMEOUT_S = int(os.environ.get("STUDIO_KNOWLEDGE_GIT_TIMEOUT", "20"))
+
+# Kept in step with knowledge/claude_code.py DEFAULT_PLUGINS.
+DEFAULT_REFRESH_PLUGINS = ["pegasus-ai@scitech", "pegasus-dev@scitech"]
 
 
 def _git(root: str, *args: str, timeout: int | None = None) -> tuple[int, str]:
@@ -81,6 +85,34 @@ def status() -> dict[str, Any]:
     return info
 
 
+def refresh_installed_plugins(plugins: list[str] | None = None) -> None:
+    """Ask Claude Code to re-materialize its plugin cache from the checkout.
+
+    Claude Code copies a plugin out of its marketplace at install time into
+    ~/.claude/plugins/cache. When the marketplace is a directory that we then
+    fast-forward, that cache is the one copy a `git pull` does not reach — a pod
+    was found serving skills from an install weeks earlier, naming a skill that
+    had since been withdrawn.
+
+    Whether it re-copies on its own for a directory source is not something this
+    code should depend on, so ask explicitly. `plugin update` is local,
+    idempotent and a no-op when already current; failure is not interesting
+    enough to surface, since the checkout itself is already correct.
+    """
+    if not shutil.which("claude"):
+        return
+    for plugin in plugins or DEFAULT_REFRESH_PLUGINS:
+        try:
+            subprocess.run(
+                ["claude", "plugin", "update", plugin],
+                capture_output=True,
+                text=True,
+                timeout=GIT_TIMEOUT_S,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            log.info("plugin_refresh_skipped", plugin=plugin, error=str(exc))
+
+
 def update(*, force: bool = False) -> dict[str, Any]:
     """Fast-forward the checkout to its upstream.
 
@@ -109,6 +141,7 @@ def update(*, force: bool = False) -> dict[str, Any]:
     after = status()
     changed = after["sha"] != before["sha"]
     if changed:
+        refresh_installed_plugins()
         log.info(
             "knowledge_updated",
             path=root,

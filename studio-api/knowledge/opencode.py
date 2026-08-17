@@ -16,8 +16,8 @@ from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import (
     build_knowledge_appendix,
-    copy_agents_to_dir,
-    copy_skills_to_dir,
+    link_agents_to_dir,
+    link_skills_to_dir,
 )
 from llm.providers import PROVIDERS, _resolve_api_key, _resolve_base_url, provider_type
 
@@ -56,8 +56,8 @@ class OpenCodeAdapter(KnowledgeAdapter):
                     log.warning("opencode_agents_write_failed", dir=dst_dir, error=str(e))
 
         # Seed .opencode/agents/ and .opencode/skills/
-        copy_agents_to_dir(os.path.join(workspace, ".opencode", "agents"))
-        copy_skills_to_dir(os.path.join(workspace, ".opencode", "skills"))
+        link_agents_to_dir(os.path.join(workspace, ".opencode", "agents"))
+        link_skills_to_dir(os.path.join(workspace, ".opencode", "skills"))
 
         # Write opencode.json (global — read from any cwd)
         self.update_llm_config(workspace, llm_config)
