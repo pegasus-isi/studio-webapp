@@ -82,9 +82,11 @@ Present blast radius, 10 call sites across 2 adapters plus opencode's
 (`mcpServers` merge), `~/.claude/settings.json`, and the `~/.antigravity/`
 equivalents.
 
-If config becomes a **launch-time environment concern** instead of a filesystem
-mutation, both problems close at once: environment is cwd-independent *and*
-writes nothing.
+If discovery becomes a **launch-time environment concern** instead of a
+file copied into whichever directory the tool started in, both problems close at
+once: environment is cwd-independent by construction, and it does not need a
+`$HOME` fallback to be found. Writing to `$HOME` is still fine — it is where a
+per-user tool's config belongs — it just stops being the workaround.
 
 Worth stating plainly, because it removes the original motivation: **Studio does
 not require anything to live under `~/work`.** Content and config can sit
@@ -201,7 +203,7 @@ changed yet.
 | D3a | **`provd` ships nowhere until it is fully tested and validated.** Held out of the plugin *and* removed from studio-webapp; kept only as a local working copy. | ✅ approved, implemented | It has never been exercised end to end against a running provd daemon, and both destinations are shipping targets — the marketplace is public, and a studio-webapp merge redeploys to live user pods. Removing it is safe: no code references it, only its own two files. It re-enters under D3 once it works, with the frontmatter already worked out (unprefixed name per the `kiso` precedent, `allowed-tools` matching `pegasus-scaffold`). |
 | D4 | **Distribute the one tree two ways from one repo: the git marketplace, and a `pegasus-ai-knowledge` wheel whose package data *is* that tree.** | ✅ approved, implemented | Submodules assume you control a build; OOD has no image. Both targets `pip install` a pinned version. Supersedes the submodule idea. |
 | D5 | **Split the reference doc rather than dedupe it.** Plugin keeps `references/PEGASUS.md`; studio-webapp keeps a small `knowledge/overlay/STUDIO_ENV.md` describing only the container (workspace root, PVC, where runs land). | ✅ approved, implemented | The Studio environment is genuinely not portable and does not belong in a plugin someone installs on a laptop. Everything else in `PEGASUS_AI.md` is a condensed restatement and is deleted in favour of the real guide. Generated context gets *better*. |
-| D6 | **Config becomes environment, not filesystem mutation.** Launchers export the pointers; adapters stop writing to `$HOME` by default. | partially done | Fixes the cwd problem and the OOD problem with one change. Removes the unconditional `home_path()` behaviour at 10 call sites. |
+| D6 | **Discovery comes from the environment, not from copying files into whatever directory a tool happens to start in.** Writing to `$HOME` stays: Studio owns it, and on OOD it is permitted with consent (D8). What goes away is the *workspace-scoped* copy and the `$HOME` fallback that existed only to compensate for it being cwd-bound. | partially done | This is what actually fixes the cwd problem: env pointers are cwd-independent by construction, so a user who leaves the workspace keeps their skills. The `$HOME` writes were never the problem; being the *mechanism* was. Two things still move off `$HOME` on OOD regardless: the plugin cache (git clones on quota-limited NFS) and nothing at all from `CLAUDE_CONFIG_DIR` (credentials). |
 | D7 | **`metadata.json` is deleted; skill name/description come from `SKILL.md` frontmatter,** with `order:` as an optional frontmatter key. | ✅ approved, implemented | Removes 9 files and one entire class of drift (a description can no longer disagree with its own skill). |
 | D8 | **On OOD, writing to `$HOME` is permitted, but ask the first time and remember the answer.** Redirect `CLAUDE_CODE_PLUGIN_CACHE_DIR` regardless of the answer. | ✅ approved | Asking once is cheap and avoids anything appearing in a site-owned home directory as a surprise. `CLAUDE_CONFIG_DIR` is still left alone even when consent is given: it holds credentials, so relocating it forces a re-login every session. The plugin cache moves either way, because it performs git clones and those do not belong on quota-limited NFS. |
 
@@ -261,13 +263,14 @@ which is what exists today.
 
 ## 7. What this removes
 
-- The workspace-scoped `CLAUDE.md` / `.mcp.json` / `.opencode/` writes: the
-  environment overlay can ride in via
-  `--append-system-prompt "$(cat .../STUDIO_ENV.md)"`, which is cwd-independent
-  and write-free.
-- With that gone, the last reason to touch `~/.claude/CLAUDE.md` disappears, and
-  `upsert_managed_block` is no longer on the default path. It stays for the
-  consented case.
+- The workspace-scoped `CLAUDE.md` / `.mcp.json` / `.opencode/` copies, whose
+  only purpose was to be found in the current directory. The environment overlay
+  can ride in via `--append-system-prompt "$(cat .../STUDIO_ENV.md)"` instead,
+  which works from any cwd.
+- With those gone, the `$HOME` writes stop being a *fallback for cwd-bound
+  config* and become what they should have been: the normal place a per-user
+  tool keeps its configuration. `upsert_managed_block` stays, and is still the
+  right tool for not clobbering a user's own global memory.
 - `studio-webapp/knowledge/` shrinks from 35 files to one overlay document.
 
 ## 8. The consent prompt
@@ -332,7 +335,9 @@ on fetch. A skill is now defined by having a document.
 
 **Phase 4 — profiles + environment config** (studio-webapp)
 Introduce `STUDIO_DEPLOYMENT`, build the seed dir at image build, move config to
-env vars in `entrypoint.sh`, stop writing `$HOME` on the default path.
+env vars in `entrypoint.sh`, and drop the workspace-scoped duplicates. `$HOME`
+writes remain: on Studio unconditionally, on OOD behind the first-run consent in
+D8. The plugin cache is redirected off `$HOME` on OOD either way.
 
 **Phase 5 — OOD app**
 Launcher script per §6. Verify against a real site home directory, ideally one
