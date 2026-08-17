@@ -59,7 +59,7 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
 
 - **studio-api/** — FastAPI + async SQLite (`~/work/.studio/studio.db`, hand-rolled
   migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 15 services
-  in `services/` (workflow scan/submit/monitor, condor pool, image builder via podman,
+  in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
   opencode chat engine, notifications, terminal/PTY sessions). Workflow runs are
   discovered by globbing `**/braindump.yml` under `$HOME`; monitoring tails
   `workflow-events.jsonl` written by an external `workflow-monitor --serve` process.

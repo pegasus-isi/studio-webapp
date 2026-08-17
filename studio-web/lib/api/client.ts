@@ -326,7 +326,7 @@ export interface WorkflowProject {
   status: string;
   has_generator: boolean;
   has_workflow_yml: boolean;
-  has_dockerfile: boolean;
+  has_container_def: boolean;
   runs: WorkflowProjectRun[];
 }
 

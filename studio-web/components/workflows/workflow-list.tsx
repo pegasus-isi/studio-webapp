@@ -65,7 +65,7 @@ export function WorkflowList({ projects, workflows }: Props) {
                     <div className="mt-1 flex items-center gap-2 text-xs text-fgsubtle">
                       {proj.has_generator && <span>generator</span>}
                       {proj.has_workflow_yml && <span>yml</span>}
-                      {proj.has_dockerfile && <span>docker</span>}
+                      {proj.has_container_def && <span>apptainer</span>}
                       {proj.runs.length > 0 && (
                         <span className="ml-auto">
                           {proj.runs.length} run{proj.runs.length !== 1 ? "s" : ""}

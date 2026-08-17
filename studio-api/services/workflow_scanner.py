@@ -191,9 +191,12 @@ def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
             os.path.join(project_dir, PEGASUSHUB_MARKER)
         )
 
-        has_dockerfile = os.path.isfile(
-            os.path.join(project_dir, "Docker", "Dockerfile")
-        ) or os.path.isfile(os.path.join(project_dir, "Dockerfile"))
+        # An Apptainer definition file is what "Build Image" consumes; the
+        # workflow then references the resulting .sif by absolute path.
+        has_container_def = bool(
+            glob.glob(os.path.join(project_dir, "Apptainer", "*.def"))
+            or glob.glob(os.path.join(project_dir, "*.def"))
+        )
 
         # Skip directories that don't look like workflow projects
         if not has_generator and not has_workflow_yml and not has_pegasushub:
@@ -250,7 +253,7 @@ def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
                 os.path.basename(generator_path) if generator_path else None
             ),
             "has_workflow_yml": has_workflow_yml,
-            "has_dockerfile": has_dockerfile,
+            "has_container_def": has_container_def,
             "submitted_runs": submitted_runs,
         })
 
