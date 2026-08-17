@@ -146,7 +146,7 @@ Project actions:
 - **Run** submits that planned dir via `pegasus-run`, falling back to a full
   `pegasus-plan --submit` when there's no reusable planned dir.
 - **Build** builds (and optionally pushes) the project's container image via
-  podman, streaming the log over SSE.
+  Apptainer, streaming the log over SSE.
 
 Before rendering action forms, Studio introspects each project's
 `workflow_generator.py` `argparse` definition and builds a parameter form for
@@ -195,7 +195,7 @@ at `/opt/pegasus-ai/knowledge/`.
 |-----------|----------|
 | `skills/` | Tool-agnostic skill prompts |
 | `agents/` | Persona prompts |
-| `templates/` | Workflow generator, wrapper, Dockerfile, README templates |
+| `templates/` | Workflow generator, wrapper, Apptainer definition, README templates |
 | `examples/` | Curated Pegasus workflow examples |
 | `references/` | Shared Pegasus and PegasusAI context |
 | `mcp/` | MCP server definitions |

@@ -225,8 +225,8 @@ export function WorkflowProjectDetail({ projectId }: Props) {
               setBuiltImage(ev.image);
               append(
                 ev.pushed
-                  ? `✓ pushed ${ev.image}`
-                  : `✓ built ${ev.image} (not pushed)`
+                  ? `✓ built ${ev.image} and pushed ${ev.ref}`
+                  : `✓ built ${ev.image}`
               );
             } else if (ev.status === "error") {
               append(`✗ ${ev.error}`);
@@ -294,8 +294,8 @@ export function WorkflowProjectDetail({ projectId }: Props) {
               exists={project.has_workflow_yml}
             />
             <FileCheck
-              label="Dockerfile"
-              exists={project.has_dockerfile}
+              label="Apptainer def"
+              exists={project.has_container_def}
             />
           </div>
         </div>
@@ -369,11 +369,11 @@ export function WorkflowProjectDetail({ projectId }: Props) {
               </button>
             )}
 
-            {project.has_dockerfile && (
+            {project.has_container_def && (
               <button
                 onClick={handleBuild}
                 disabled={isBusy}
-                title="Build the project's Dockerfile and push it to the configured registry (Settings → Pegasus Options)"
+                title="Build the project's Apptainer definition into a .sif beside it (and publish it if a registry is set in Settings → Pegasus Options)"
                 className="rounded-md bg-sky-700 px-4 py-2 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
               >
                 {building ? "Building..." : "Build Image"}

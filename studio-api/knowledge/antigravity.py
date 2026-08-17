@@ -12,6 +12,7 @@ from typing import Any
 
 import structlog
 
+from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import (
     build_knowledge_appendix,
@@ -25,9 +26,6 @@ from llm.providers import PROVIDERS, provider_type
 
 log = structlog.get_logger()
 
-KNOWLEDGE_ROOT = os.environ.get(
-    "KNOWLEDGE_ROOT", "/opt/pegasus-ai/knowledge"
-)
 
 
 class AntigravityAdapter(KnowledgeAdapter):
@@ -38,11 +36,9 @@ class AntigravityAdapter(KnowledgeAdapter):
         os.makedirs(dst_dir, exist_ok=True)
 
         # Copy context.md and append skills/agents appendix
-        src = os.path.join(KNOWLEDGE_ROOT, "references", "PEGASUS_AI.md")
         dst = os.path.join(dst_dir, "context.md")
-        if os.path.isfile(src):
-            with open(src) as f:
-                content = f.read()
+        content = layout.context_document()
+        if content:
             appendix = build_knowledge_appendix()
             body = content + ("\n" + appendix if appendix else "")
             with open(dst, "w") as f:

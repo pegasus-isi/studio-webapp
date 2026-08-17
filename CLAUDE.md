@@ -59,7 +59,7 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
 
 - **studio-api/** — FastAPI + async SQLite (`~/work/.studio/studio.db`, hand-rolled
   migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 15 services
-  in `services/` (workflow scan/submit/monitor, condor pool, image builder via podman,
+  in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
   opencode chat engine, notifications, terminal/PTY sessions). Workflow runs are
   discovered by globbing `**/braindump.yml` under `$HOME`; monitoring tails
   `workflow-events.jsonl` written by an external `workflow-monitor --serve` process.
@@ -75,10 +75,21 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   WebSocket`, `router.push("/…")`) — always go through `lib/urls.ts`. Left-nav links are
   full-page reloads, so panel/tab/chat state persists via Zustand `persist`
   (`lib/stores/`).
-- **knowledge/** — canonical tool-agnostic skill/agent knowledge base, installed to
-  `/opt/pegasus-ai/knowledge/`. Per-tool adapters in `studio-api/knowledge/` *generate*
+- **Knowledge base** — skills, agents, templates and examples are authored in
+  [pegasus-isi/claude-plugin-marketplace](https://github.com/pegasus-isi/claude-plugin-marketplace)
+  and installed here as the `pegasus-ai-knowledge` package (pinned by the
+  `KNOWLEDGE_REF` build arg). **Do not add a copy under `knowledge/`** — CI fails
+  if `knowledge/{skills,agents,templates,examples,mcp,references}` reappears,
+  because a second copy is how the two drifted into giving different container
+  advice per tool. `knowledge/overlay/STUDIO_ENV.md` is Studio's own environment
+  context and is composed on top of the shared guide.
+  `studio-api/knowledge/layout.py` resolves the tree (`KNOWLEDGE_ROOT` env →
+  installed package → legacy `/opt/pegasus-ai/knowledge`); everything else goes
+  through it. Per-tool adapters in `studio-api/knowledge/` *generate*
   `CLAUDE.md`/`AGENTS.md`/`.mcp.json`/`.opencode/` into the user's runtime workspace —
   those generated files are product output, not repo config.
+  For local backend dev, either `pip install` the package or point `KNOWLEDGE_ROOT`
+  at a checkout's `plugins/pegasus-ai`, otherwise the tree resolves empty.
 - **jupyter-pegasus-ai-client/** — vendored copy of TauferLab's private client (see its
   `VENDORED.md`); local mods are limited to three files (`src/configPlugin.tsx`,
   `src/api.ts`, `src/toolbarPlugin.ts`). Disable with `--build-arg

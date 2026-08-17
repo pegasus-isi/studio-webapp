@@ -197,7 +197,7 @@ class WorkflowProjectResponse(BaseModel):
     status: ProjectStatus
     has_generator: bool = False
     has_workflow_yml: bool = False
-    has_dockerfile: bool = False
+    has_container_def: bool = False
     runs: list[WorkflowProjectRunResponse] = Field(default_factory=list)
 
 

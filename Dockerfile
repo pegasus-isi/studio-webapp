@@ -178,21 +178,13 @@ RUN curl -fsSL "https://github.com/apptainer/apptainer/releases/download/v${APPT
     # symlink so it picks up apptainer regardless of which name it looks for.
     { command -v singularity >/dev/null 2>&1 || ln -sf /usr/bin/apptainer /usr/bin/singularity; }
 
-# ---- Podman (daemonless image builds) ----
-# The workflow page's Build Image action builds project Dockerfiles with
-# podman (rootless, no daemon — there is no dockerd in this container) and
-# pushes to the registry configured in Settings. fuse-overlayfs backs the
-# rootless storage driver; podman falls back to vfs where userns/fuse are
-# unavailable (slower but correct). storage.conf tunes rootless builds for
-# the deployment reality: NFS-backed $HOME (force_mask, kept deliberately —
-# cache survives pod restarts) and spawner UIDs without /etc/subuid ranges
-# (ignore_chown_errors).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      podman fuse-overlayfs slirp4netns && \
-    rm -rf /var/lib/apt/lists/*
-COPY docker/containers/storage.conf /etc/containers/storage.conf
-# Mounted into Build Image runs so apt keeps running as root (avoids the
-# _apt privilege-drop failing under podman's single-UID mapping). See
+# ---- Build Image support ----
+# The workflow page's Build Image action builds a project's Apptainer definition
+# into a .sif with the apptainer installed above; there is no separate OCI
+# builder, because a workflow references the .sif by absolute path
+# (image_site="local") rather than pulling an image from a registry.
+# Bound into build runs so apt keeps running as root, avoiding the _apt
+# privilege-drop failure wherever root is emulated rather than real. See
 # studio-api/services/image_builder.py.
 COPY docker/containers/apt-no-sandbox.conf /etc/studio/apt-no-sandbox.conf
 
@@ -313,7 +305,20 @@ COPY docker/supervisor/scripts/ /etc/supervisor/scripts/
 RUN chmod +x /etc/supervisor/scripts/*.sh
 
 # ---- Knowledge assets (skills, agents, MCP, templates, examples) ----
-COPY knowledge/ /opt/pegasus-ai/knowledge/
+# Authored once in pegasus-isi/claude-plugin-marketplace and installed here as a
+# package. Studio deliberately does not carry its own copy: when it did, the two
+# drifted to the point of giving different container advice depending on which
+# AI tool the user launched. Pinned to a commit so an image rebuild is
+# reproducible; bump KNOWLEDGE_REF to take new skills.
+ARG KNOWLEDGE_REF=7655381
+RUN pip install --no-cache-dir --break-system-packages \
+        "pegasus-ai-knowledge @ git+https://github.com/pegasus-isi/claude-plugin-marketplace@${KNOWLEDGE_REF}" && \
+    python3 -c "import pegasus_ai_knowledge as k; print(k.plugin_dir())"
+
+# Studio-specific context (which directories persist, where runs land) that does
+# not belong in a plugin someone installs on a laptop. Composed on top of the
+# portable guide when a tool's context file is generated.
+COPY knowledge/overlay/ /opt/pegasus-ai/overlay/
 
 # ---- Entrypoint ----
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh

@@ -93,8 +93,8 @@ def test_claude_code_writes_global_config(tmp_path, monkeypatch):
 
     kroot = tmp_path / "knowledge"
     _seed_knowledge(str(kroot))
-    monkeypatch.setattr(claude_code, "KNOWLEDGE_ROOT", str(kroot))
-    monkeypatch.setattr(antigravity, "KNOWLEDGE_ROOT", str(kroot))
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(kroot))
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(kroot))
 
     home = tmp_path / "home"
     ws = home / "work"
@@ -122,7 +122,7 @@ def test_claude_code_global_is_non_destructive(tmp_path, monkeypatch):
 
     kroot = tmp_path / "knowledge"
     _seed_knowledge(str(kroot))
-    monkeypatch.setattr(claude_code, "KNOWLEDGE_ROOT", str(kroot))
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(kroot))
 
     home = tmp_path / "home"
     ws = home / "work"
@@ -166,7 +166,7 @@ def test_antigravity_writes_global_config(tmp_path, monkeypatch):
 
     kroot = tmp_path / "knowledge"
     _seed_knowledge(str(kroot))
-    monkeypatch.setattr(antigravity, "KNOWLEDGE_ROOT", str(kroot))
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(kroot))
 
     home = tmp_path / "home"
     ws = home / "work"

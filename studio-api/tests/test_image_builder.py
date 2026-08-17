@@ -31,61 +31,76 @@ def test_image_ref():
 
 
 def test_build_command_default(monkeypatch):
-    # No forced isolation by default; no apt mount when the conf is absent.
-    monkeypatch.setattr(ib, "_BUILD_ISOLATION", "")
-    monkeypatch.setattr(ib, "_APT_CONF_PATH", "/nonexistent/apt.conf")
-    assert ib.build_command("podman", "img:latest", "Dockerfile", ".") == [
-        "podman", "build", "-t", "img:latest", "-f", "Dockerfile", ".",
+    monkeypatch.setattr(ib, "_APT_FIX", False)
+    monkeypatch.setattr(ib, "_FAKEROOT", "0")
+    assert ib.build_command("apptainer", "img.sif", "img.def") == [
+        "apptainer", "build", "--force", "img.sif", "img.def",
     ]
 
 
-def test_build_command_isolation_configurable(monkeypatch):
-    monkeypatch.setattr(ib, "_BUILD_ISOLATION", "chroot")
-    monkeypatch.setattr(ib, "_APT_CONF_PATH", "/nonexistent/apt.conf")
-    assert "--isolation=chroot" in ib.build_command(
-        "podman", "img:latest", "Dockerfile", "."
-    )
-    # docker never gets --isolation.
-    assert "--isolation" not in " ".join(
-        ib.build_command("docker", "img:latest", "Dockerfile", ".")
-    )
+def test_build_command_fakeroot_follows_euid(monkeypatch):
+    """%post needs root; when the process is not root that has to be emulated."""
+    monkeypatch.setattr(ib, "_APT_FIX", False)
+    monkeypatch.setattr(ib, "_FAKEROOT", "")
+
+    monkeypatch.setattr(ib.os, "geteuid", lambda: 1000)
+    assert "--fakeroot" in ib.build_command("apptainer", "i.sif", "i.def")
+
+    monkeypatch.setattr(ib.os, "geteuid", lambda: 0)
+    assert "--fakeroot" not in ib.build_command("apptainer", "i.sif", "i.def")
+
+    # An explicit setting wins either way, for hosts with neither subuid ranges
+    # nor a setuid install.
+    monkeypatch.setattr(ib, "_FAKEROOT", "0")
+    monkeypatch.setattr(ib.os, "geteuid", lambda: 1000)
+    assert "--fakeroot" not in ib.build_command("apptainer", "i.sif", "i.def")
 
 
-def test_build_command_apt_mount(monkeypatch, tmp_path):
-    # When the apt no-sandbox conf exists it is mounted for podman/buildah
-    # (fixes apt's _apt privilege drop under single-UID mapping), not docker.
+def test_build_command_apt_bind(monkeypatch, tmp_path):
+    """The apt no-sandbox conf is bound in when present."""
     conf = tmp_path / "apt-no-sandbox.conf"
     conf.write_text('APT::Sandbox::User "root";\n')
-    monkeypatch.setattr(ib, "_BUILD_ISOLATION", "")
     monkeypatch.setattr(ib, "_APT_FIX", True)
     monkeypatch.setattr(ib, "_APT_CONF_PATH", str(conf))
+    monkeypatch.setattr(ib, "_FAKEROOT", "0")
 
-    cmd = ib.build_command("podman", "img:latest", "Dockerfile", ".")
-    assert "-v" in cmd
-    assert f"{conf}:/etc/apt/apt.conf.d/00-studio-no-sandbox.conf:ro" in cmd
-    # Disabling the fix drops the mount.
+    cmd = ib.build_command("apptainer", "img.sif", "img.def")
+    assert "--bind" in cmd
+    assert any(str(conf) in part for part in cmd)
+
     monkeypatch.setattr(ib, "_APT_FIX", False)
-    assert "-v" not in ib.build_command("podman", "img:latest", "Dockerfile", ".")
-    # docker never gets the mount.
-    monkeypatch.setattr(ib, "_APT_FIX", True)
-    assert "-v" not in ib.build_command("docker", "img:latest", "Dockerfile", ".")
+    assert "--bind" not in ib.build_command("apptainer", "img.sif", "img.def")
 
 
-def test_find_dockerfile_prefers_docker_dir(tmp_path):
+def test_find_definition_prefers_apptainer_dir(tmp_path):
     proj = tmp_path / "proj"
-    (proj / "Docker").mkdir(parents=True)
-    (proj / "Docker" / "Dockerfile").write_text("FROM scratch\n")
-    (proj / "Dockerfile").write_text("FROM scratch\n")
-    dockerfile, context = ib.find_dockerfile(str(proj))
-    assert dockerfile.endswith(os.path.join("Docker", "Dockerfile"))
-    assert context.endswith("Docker")
+    (proj / "Apptainer").mkdir(parents=True)
+    (proj / "Apptainer" / "Tools.def").write_text("Bootstrap: docker\n")
+    (proj / "Root.def").write_text("Bootstrap: docker\n")
 
-    (proj / "Docker" / "Dockerfile").unlink()
-    dockerfile, context = ib.find_dockerfile(str(proj))
-    assert dockerfile.endswith("Dockerfile")
-    assert context == str(proj)
+    definition, sif = ib.find_definition(str(proj))
+    assert definition.endswith(os.path.join("Apptainer", "Tools.def"))
+    # The .sif lands beside the .def so the workflow can reference it by path.
+    assert sif == os.path.join(str(proj), "Apptainer", "Tools.sif")
 
-    assert ib.find_dockerfile(str(tmp_path)) is None
+    (proj / "Apptainer" / "Tools.def").unlink()
+    definition, sif = ib.find_definition(str(proj))
+    assert definition.endswith("Root.def")
+    assert sif == os.path.join(str(proj), "Root.sif")
+
+
+def test_find_definition_missing(tmp_path):
+    assert ib.find_definition(str(tmp_path)) is None
+
+
+def test_find_definition_is_deterministic(tmp_path):
+    """Several definitions: the first in sorted order, so rebuilds agree."""
+    proj = tmp_path / "proj"
+    (proj / "Apptainer").mkdir(parents=True)
+    for name in ("zebra.def", "alpha.def", "middle.def"):
+        (proj / "Apptainer" / name).write_text("Bootstrap: docker\n")
+    definition, _ = ib.find_definition(str(proj))
+    assert definition.endswith("alpha.def")
 
 
 # --- stream_build ---
@@ -104,8 +119,8 @@ def _collect_events(gen):
 
 def _build_kwargs(tmp_path, **overrides):
     proj = tmp_path / "proj"
-    (proj / "Docker").mkdir(parents=True, exist_ok=True)
-    (proj / "Docker" / "Dockerfile").write_text("FROM scratch\n")
+    (proj / "Apptainer").mkdir(parents=True, exist_ok=True)
+    (proj / "Apptainer" / "Tools.def").write_text("Bootstrap: docker\nFrom: ubuntu:22.04\n")
     kw = dict(
         project_id="proj",
         project_dir=str(proj),
@@ -123,7 +138,7 @@ def test_stream_build_no_builder(monkeypatch, tmp_path):
     monkeypatch.setattr(ib, "detect_builder", lambda: None)
     events = _collect_events(ib.stream_build(**_build_kwargs(tmp_path)))
     assert events[-1]["status"] == "error"
-    assert "podman" in events[-1]["error"]
+    assert "apptainer" in events[-1]["error"].lower()
 
 
 def test_stream_build_success_local(monkeypatch, tmp_path):
@@ -135,11 +150,13 @@ def test_stream_build_success_local(monkeypatch, tmp_path):
     assert phases == ["build"]
     final = events[-1]
     assert final["status"] == "success"
-    assert final["image"] == "docker.io/kthare10/proj:latest"
+    # The artifact is a file in the project, not a registry reference.
+    assert final["image"].endswith(os.path.join("Apptainer", "Tools.sif"))
     assert final["pushed"] is False
     # echo printed the build args back as a "log line"
-    assert any("build -t docker.io/kthare10/proj:latest" in e.get("line", "")
-               for e in events)
+    assert any("build --force" in e.get("line", "") for e in events)
+    # The user is told how to reference it from the Transformation Catalog.
+    assert any('image_site="local"' in e.get("line", "") for e in events)
 
 
 def test_stream_build_failure(monkeypatch, tmp_path):
@@ -160,6 +177,8 @@ def test_stream_build_push_without_registry(monkeypatch, tmp_path):
     assert final["pushed"] is False
     assert any("No container registry configured" in e.get("line", "")
                for e in events)
+    # A local .sif is a complete result, not a degraded one.
+    assert final["image"].endswith(".sif")
 
 
 def test_stream_build_push_with_login(monkeypatch, tmp_path):
@@ -173,6 +192,10 @@ def test_stream_build_push_with_login(monkeypatch, tmp_path):
     final = events[-1]
     assert final["status"] == "success"
     assert final["pushed"] is True
+    assert final["ref"] == "docker.io/kthare10/proj:latest"
+    # Apptainer publishes the .sif over ORAS, not as an OCI image manifest.
+    assert any("oras://docker.io/kthare10/proj:latest" in e.get("line", "")
+               for e in events)
     # Password must never appear in any streamed line (echo prints argv).
     assert not any("s3cret" in json.dumps(e) for e in events)
     assert any("--password-stdin" in e.get("line", "") for e in events)
@@ -185,13 +208,13 @@ def test_build_endpoint_streams(client, monkeypatch, tmp_path):
     from routers import workflows as wf
 
     proj_dir = tmp_path / "csv"
-    (proj_dir / "Docker").mkdir(parents=True)
-    (proj_dir / "Docker" / "Dockerfile").write_text("FROM scratch\n")
+    (proj_dir / "Apptainer").mkdir(parents=True)
+    (proj_dir / "Apptainer" / "Tools.def").write_text("Bootstrap: docker\n")
 
     async def _projects(ws=None):
         return [{
             "project_id": "csv", "project_dir": str(proj_dir),
-            "has_dockerfile": True,
+            "has_container_def": True,
         }]
 
     monkeypatch.setattr(wf, "discover_projects_async", _projects)
@@ -203,12 +226,12 @@ def test_build_endpoint_streams(client, monkeypatch, tmp_path):
     assert "[DONE]" in res.text
 
 
-def test_build_endpoint_requires_dockerfile(client, monkeypatch):
+def test_build_endpoint_requires_definition(client, monkeypatch):
     from routers import workflows as wf
 
     async def _projects(ws=None):
         return [{
-            "project_id": "csv", "project_dir": "/tmp/x", "has_dockerfile": False,
+            "project_id": "csv", "project_dir": "/tmp/x", "has_container_def": False,
         }]
 
     monkeypatch.setattr(wf, "discover_projects_async", _projects)

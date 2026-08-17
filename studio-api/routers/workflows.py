@@ -136,7 +136,7 @@ async def list_projects() -> WorkflowProjectListResponse:
             status=p["status"],
             has_generator=p["has_generator"],
             has_workflow_yml=p["has_workflow_yml"],
-            has_dockerfile=p["has_dockerfile"],
+            has_container_def=p["has_container_def"],
             runs=[
                 WorkflowProjectRunResponse(**r) for r in p["submitted_runs"]
             ],
@@ -221,10 +221,12 @@ async def generate_workflow(
 async def build_project_image(
     project_id: str, req: BuildRequest = BuildRequest()
 ) -> StreamingResponse:
-    """Build (and push) the project's container image, streaming the log.
+    """Build (and optionally push) the project's container, streaming the log.
 
-    Registry + credentials come from settings (see /api/settings/registry);
-    without a registry the image is built locally and push is skipped.
+    Builds the project's Apptainer definition into a .sif beside it, which is
+    what the Transformation Catalog references. Registry + credentials come from
+    settings (see /api/settings/registry); without a registry the .sif stays
+    local, which is all a workflow needs.
     """
     from main import db
 
@@ -232,8 +234,11 @@ async def build_project_image(
     proj = next((p for p in projects if p["project_id"] == project_id), None)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
-    if not proj["has_dockerfile"]:
-        raise HTTPException(status_code=400, detail="Project has no Dockerfile")
+    if not proj["has_container_def"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Project has no Apptainer definition file (Apptainer/*.def)",
+        )
 
     import secretbox
 

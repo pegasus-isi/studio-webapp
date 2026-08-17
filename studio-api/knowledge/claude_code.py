@@ -13,6 +13,7 @@ from typing import Any
 
 import structlog
 
+from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import (
     build_knowledge_appendix,
@@ -26,9 +27,6 @@ from llm.providers import PROVIDERS, provider_type
 
 log = structlog.get_logger()
 
-KNOWLEDGE_ROOT = os.environ.get(
-    "KNOWLEDGE_ROOT", "/opt/pegasus-ai/knowledge"
-)
 
 # Marketplace repo for plugin registration
 MARKETPLACE_REPO = "pegasus-isi/claude-plugin-marketplace"
@@ -45,10 +43,8 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
 
     def install(self, workspace: str, llm_config: dict[str, Any]) -> None:
         # Copy CLAUDE.md from references and append skills/agents appendix.
-        src = os.path.join(KNOWLEDGE_ROOT, "references", "PEGASUS_AI.md")
-        if os.path.isfile(src):
-            with open(src) as f:
-                content = f.read()
+        content = layout.context_document()
+        if content:
             appendix = build_knowledge_appendix()
             body = content + ("\n" + appendix if appendix else "")
             # Workspace CLAUDE.md (project memory; Studio owns ~/work).
@@ -60,11 +56,11 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
             upsert_managed_block(home_path(".claude", "CLAUDE.md"), body)
             log.info("claude_code_claude_md_written", path=dst)
 
-        # Write .mcp.json from knowledge/mcp/ (project scope) and merge the same
+        # Write .mcp.json from the knowledge tree (project scope) and merge the same
         # servers into ~/.claude.json (user scope) so they resolve from any cwd.
-        mcp_src = os.path.join(KNOWLEDGE_ROOT, "mcp", "servers.json")
+        mcp_src = layout.mcp_servers_path()
         mcp_dst = os.path.join(workspace, ".mcp.json")
-        if os.path.isfile(mcp_src):
+        if mcp_src and os.path.isfile(mcp_src):
             shutil.copy2(mcp_src, mcp_dst)
             try:
                 with open(mcp_src) as f:
@@ -178,8 +174,8 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
         # global config intact.
         remove_managed_block(home_path(".claude", "CLAUDE.md"))
         server_names = ["pegasus-docs", "kiso-docs"]
-        mcp_src = os.path.join(KNOWLEDGE_ROOT, "mcp", "servers.json")
-        if os.path.isfile(mcp_src):
+        mcp_src = layout.mcp_servers_path()
+        if mcp_src and os.path.isfile(mcp_src):
             try:
                 with open(mcp_src) as f:
                     server_names = list((json.load(f) or {}).get("mcpServers", {}))

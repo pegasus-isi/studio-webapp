@@ -1,20 +1,26 @@
 """Container image build & push for workflow projects.
 
-Most Pegasus workflows here ship a Dockerfile and reference the built image
-from a registry (workers pull it via Apptainer at run time), so "Build Image"
-is a first-class lifecycle step between Generate and Plan.
+Workflows here ship an Apptainer definition file and reference the built ``.sif``
+from the Transformation Catalog as ``file:///abs/path/X.sif`` with
+``image_site="local"``, so no registry round-trip is required — Pegasus stages the
+``.sif`` like any other input file. "Build Image" is therefore a first-class
+lifecycle step between Generate and Plan, and its output is a file in the project.
 
-The studio container has no Docker daemon; builds use a daemonless OCI
-builder — podman preferred, buildah/docker accepted when present. Output
-streams to the client as SSE lines with silence pings every few seconds so
-proxies never see an idle response (see the Envoy timeout incident).
+Builds run ``apptainer build`` (``singularity`` accepted as the same CLI under an
+older name). Output streams to the client as SSE lines with silence pings every
+few seconds so proxies never see an idle response (see the Envoy timeout
+incident).
 
-Credentials are supplied via ``--password-stdin`` — never on argv.
+Push is optional and only happens when a registry is configured. Apptainer pushes
+a ``.sif`` to an OCI registry over ORAS, which is a different artifact from a
+Docker image: it is the same file, stored in a registry, not an OCI image
+manifest. Credentials are supplied via ``--password-stdin`` — never on argv.
 """
 
 from __future__ import annotations
 
 import asyncio
+import glob
 import json
 import os
 import re
@@ -26,24 +32,28 @@ import structlog
 
 log = structlog.get_logger()
 
-_BUILDERS = ("podman", "buildah", "docker")
+# Same CLI, two names. Apptainer is the current project; singularity is the
+# older name still present on some hosts.
+_BUILDERS = ("apptainer", "singularity")
 _BUILD_TIMEOUT_S = int(os.environ.get("STUDIO_BUILD_TIMEOUT", "1800"))
 _PING_INTERVAL_S = 10.0
 
-# Optional RUN-step isolation for podman/buildah (empty = builder default).
-# NOTE: chroot isolation does NOT fix the apt/subuid problem below — under a
-# single-UID mapping there is still no uid 42/65534 to setuid() to — so it is
-# off by default. Left as a knob for environments that need it.
-_BUILD_ISOLATION = os.environ.get("STUDIO_BUILD_ISOLATION", "")
+# %post runs as root inside the build sandbox. When the studio process is not
+# root, that has to be emulated: --fakeroot uses subuid/subgid ranges where they
+# exist and falls back to Apptainer's rootless path otherwise. Default on for a
+# non-root euid, and overridable because a host with neither subuid ranges nor a
+# setuid installation may need it off (and a privileged container running as root
+# does not need it at all).
+_FAKEROOT = os.environ.get("STUDIO_BUILD_FAKEROOT", "").lower()
 
-# apt (Debian/Ubuntu base images) drops privileges to the _apt user during
-# downloads. Under podman's single-UID mapping (spawner UIDs have no
-# /etc/subuid ranges) that setuid()/setgroups() to uid 42 / gid 65534 fails:
+# apt (Debian/Ubuntu bases) drops privileges to the _apt user during downloads.
+# Where root is emulated rather than real, that setuid()/setgroups() to uid 42 /
+# gid 65534 fails:
 #   E: setgroups 65534 failed - setgroups (1: Operation not permitted)
-# Mounting an apt.conf that pins Sandbox::User to root keeps apt running as
-# the (mapped) root and skips the privilege drop entirely — the reliable fix
-# that needs no subuid ranges. Debian/Ubuntu bases only; disable for images
-# without /etc/apt/apt.conf.d (e.g. Alpine) via STUDIO_BUILD_APT_FIX=0.
+# Binding an apt.conf that pins Sandbox::User to root keeps apt running as the
+# (emulated) root and skips the privilege drop entirely. Debian/Ubuntu bases
+# only; disable for images without /etc/apt/apt.conf.d (e.g. Alpine) via
+# STUDIO_BUILD_APT_FIX=0.
 _APT_FIX = os.environ.get("STUDIO_BUILD_APT_FIX", "1").lower() not in (
     "0", "false", "no",
 )
@@ -53,54 +63,69 @@ _APT_CONF_PATH = os.environ.get(
 
 
 def detect_builder() -> str | None:
-    """First available daemonless-capable image builder on PATH."""
+    """First available Apptainer-compatible builder on PATH."""
     for binary in _BUILDERS:
         if shutil.which(binary):
             return binary
     return None
 
 
-def build_command(
-    builder: str, ref: str, dockerfile: str, context: str
-) -> list[str]:
-    """Build argv. For podman/buildah, add optional --isolation and mount the
-    apt no-sandbox conf (docker manages its own daemon/uids — neither applies).
+def _use_fakeroot() -> bool:
+    if _FAKEROOT in ("1", "true", "yes"):
+        return True
+    if _FAKEROOT in ("0", "false", "no"):
+        return False
+    return os.geteuid() != 0
+
+
+def build_command(builder: str, sif: str, definition: str) -> list[str]:
+    """Build argv for turning a definition file into a ``.sif``.
+
+    ``--force`` overwrites a previous build rather than prompting, since this
+    runs unattended behind an HTTP request.
     """
-    cmd = [builder, "build"]
-    if builder in ("podman", "buildah"):
-        if _BUILD_ISOLATION:
-            cmd += [f"--isolation={_BUILD_ISOLATION}"]
-        if _APT_FIX and os.path.isfile(_APT_CONF_PATH):
-            cmd += [
-                "-v",
-                f"{_APT_CONF_PATH}:/etc/apt/apt.conf.d/00-studio-no-sandbox.conf:ro",
-            ]
-    cmd += ["-t", ref, "-f", dockerfile, context]
+    cmd = [builder, "build", "--force"]
+    if _use_fakeroot():
+        cmd.append("--fakeroot")
+    if _APT_FIX and os.path.isfile(_APT_CONF_PATH):
+        cmd += [
+            "--bind",
+            f"{_APT_CONF_PATH}:/etc/apt/apt.conf.d/00-studio-no-sandbox.conf:ro",
+        ]
+    cmd += [sif, definition]
     return cmd
 
 
-def find_dockerfile(project_dir: str) -> tuple[str, str] | None:
-    """(dockerfile_path, build_context_dir) for a project, or None.
+def find_definition(project_dir: str) -> tuple[str, str] | None:
+    """(definition_path, sif_path) for a project, or None.
 
-    Convention in these workflows: ``<project>/Docker/Dockerfile`` with the
-    Docker/ directory as context; plain ``<project>/Dockerfile`` also works.
+    Convention in these workflows: ``<project>/Apptainer/<Name>.def``, with the
+    ``.sif`` written beside it so the Transformation Catalog can reference it by
+    absolute path. A definition at the project root also works. Where a project
+    carries several, the first in sorted order wins, which keeps repeated builds
+    deterministic.
     """
-    for rel in (os.path.join("Docker", "Dockerfile"), "Dockerfile"):
-        path = os.path.join(project_dir, rel)
-        if os.path.isfile(path):
-            return path, os.path.dirname(path)
+    for pattern in (
+        os.path.join(project_dir, "Apptainer", "*.def"),
+        os.path.join(project_dir, "*.def"),
+    ):
+        matches = sorted(glob.glob(pattern))
+        if matches:
+            definition = matches[0]
+            stem = os.path.splitext(os.path.basename(definition))[0]
+            return definition, os.path.join(os.path.dirname(definition), f"{stem}.sif")
     return None
 
 
 def normalize_registry(registry: str) -> str:
-    """Settings value -> OCI registry prefix.
+    """Settings value -> registry prefix.
 
     Accepts the Pegasus container-catalog style ("docker:///kthare10/") as
     well as plain prefixes ("kthare10", "ghcr.io/foo"). A prefix without a
     registry host resolves to Docker Hub.
     """
     reg = (registry or "").strip()
-    reg = re.sub(r"^docker:/*", "", reg).strip("/")
+    reg = re.sub(r"^(docker|oras):/*", "", reg).strip("/")
     if not reg:
         return ""
     host = reg.split("/", 1)[0]
@@ -193,10 +218,11 @@ async def stream_build(
     tag: str,
     push: bool,
 ) -> AsyncGenerator[str, None]:
-    """Build (and optionally push) a project image, yielding SSE strings.
+    """Build (and optionally push) a project's container, yielding SSE strings.
 
     Events: ``{"phase": ...}``, ``{"line": ...}``, then a terminal
-    ``{"status": "success"|"error", "image": ..., "pushed": bool}``.
+    ``{"status": "success"|"error", "image": <sif path>, "pushed": bool}`` with
+    ``"ref"`` carrying the registry reference when a push happened.
     The caller appends the ``[DONE]`` terminator.
     """
     builder = detect_builder()
@@ -204,24 +230,27 @@ async def stream_build(
         yield _sse({
             "status": "error",
             "error": (
-                "No image builder found (podman/buildah/docker). "
-                "Rebuild the studio image to include podman."
+                "No Apptainer found (apptainer/singularity). "
+                "Rebuild the studio image to include Apptainer."
             ),
         })
         return
 
-    found = find_dockerfile(project_dir)
+    found = find_definition(project_dir)
     if found is None:
-        yield _sse({"status": "error", "error": "No Dockerfile in this project."})
+        yield _sse({
+            "status": "error",
+            "error": (
+                "No Apptainer definition file in this project. Expected "
+                "Apptainer/<Name>.def — ask the assistant for /pegasus-apptainer."
+            ),
+        })
         return
-    dockerfile, context = found
+    definition, sif = found
 
-    ref = image_ref(registry, project_id, tag)
-    prefix = normalize_registry(registry)
     deadline = time.monotonic() + _BUILD_TIMEOUT_S
-
-    cmd = build_command(builder, ref, dockerfile, context)
-    yield _sse({"phase": "build", "image": ref, "builder": builder})
+    cmd = build_command(builder, sif, definition)
+    yield _sse({"phase": "build", "image": sif, "builder": builder})
     yield _sse({"line": f"$ {' '.join(cmd)}"})
 
     rc = 1
@@ -235,27 +264,41 @@ async def stream_build(
         else:
             rc = value
     if rc != 0:
-        yield _sse({"status": "error", "image": ref,
+        yield _sse({"status": "error", "image": sif,
                     "error": f"Build failed (exit {rc})."})
         return
 
+    yield _sse({"line": (
+        f"Reference it from the Transformation Catalog as "
+        f'image="file://{sif}" with image_site="local".'
+    )})
+
     if not push:
-        yield _sse({"status": "success", "image": ref, "pushed": False})
-        return
-    if not prefix:
-        yield _sse({"line": (
-            "No container registry configured — image built locally only. "
-            "Set a registry in Settings → Pegasus Options to enable push."
-        )})
-        yield _sse({"status": "success", "image": ref, "pushed": False})
+        yield _sse({"status": "success", "image": sif, "pushed": False})
         return
 
+    prefix = normalize_registry(registry)
+    if not prefix:
+        # Not a failure: the local .sif is what the workflow actually references.
+        yield _sse({"line": (
+            "No container registry configured — the .sif stays local, which is "
+            "all a workflow needs. Set a registry in Settings → Pegasus Options "
+            "to also publish it."
+        )})
+        yield _sse({"status": "success", "image": sif, "pushed": False})
+        return
+
+    ref = image_ref(registry, project_id, tag)
     registry_host = prefix.split("/", 1)[0]
     if username and password:
-        yield _sse({"phase": "login", "line": f"$ {builder} login {registry_host}"})
+        yield _sse({
+            "phase": "login",
+            "line": f"$ {builder} registry login oras://{registry_host}",
+        })
         rc = 1
         async for kind, value in _run_streaming(
-            [builder, "login", registry_host, "-u", username, "--password-stdin"],
+            [builder, "registry", "login", "--username", username,
+             "--password-stdin", f"oras://{registry_host}"],
             stdin_data=password.encode(), deadline=deadline,
         ):
             if kind == "line":
@@ -265,15 +308,15 @@ async def stream_build(
             else:
                 rc = value
         if rc != 0:
-            yield _sse({"status": "error", "image": ref,
+            yield _sse({"status": "error", "image": sif,
                         "error": f"Registry login failed (exit {rc})."})
             return
 
     yield _sse({"phase": "push"})
-    yield _sse({"line": f"$ {builder} push {ref}"})
+    yield _sse({"line": f"$ {builder} push {sif} oras://{ref}"})
     rc = 1
     async for kind, value in _run_streaming(
-        [builder, "push", ref], deadline=deadline,
+        [builder, "push", sif, f"oras://{ref}"], deadline=deadline,
     ):
         if kind == "line":
             yield _sse({"line": value})
@@ -282,9 +325,9 @@ async def stream_build(
         else:
             rc = value
     if rc != 0:
-        yield _sse({"status": "error", "image": ref,
+        yield _sse({"status": "error", "image": sif, "ref": ref,
                     "error": f"Push failed (exit {rc}). Check registry credentials."})
         return
 
-    log.info("image_pushed", project_id=project_id, image=ref)
-    yield _sse({"status": "success", "image": ref, "pushed": True})
+    log.info("image_pushed", project_id=project_id, sif=sif, ref=ref)
+    yield _sse({"status": "success", "image": sif, "ref": ref, "pushed": True})
