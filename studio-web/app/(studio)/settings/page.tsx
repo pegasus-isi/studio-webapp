@@ -547,6 +547,91 @@ function ProviderCard({
 
 /* ─── Tools Tab ─── */
 
+/* ─── Knowledge base (marketplace checkout) ─── */
+
+/**
+ * The checkout is a git working copy in the user's $HOME, so its version is a
+ * commit SHA rather than a package number. Showing it is the only way to tell
+ * which skills a session is actually running; Update fast-forwards it, and
+ * declines rather than discards when there are local changes.
+ */
+function KnowledgeSection() {
+  const [status, setStatus] = useState<api.MarketplaceStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      setStatus(await api.getMarketplaceStatus());
+    } catch {
+      setStatus(null);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const onUpdate = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const next = await api.updateMarketplace();
+      setStatus(next);
+      setNote(
+        next.updated
+          ? `Updated to ${next.short_sha}`
+          : `No change${next.reason ? ` — ${next.reason}` : " — already current"}`
+      );
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : "Update failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!status?.exists) return null;
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-fg">Pegasus knowledge base</h2>
+          <p className="mt-1 text-xs text-fgmuted">
+            {status.skills} skills shared by every AI tool.
+          </p>
+          <p className="mt-1 break-all font-mono text-xs text-fgsubtle">
+            {status.path}
+          </p>
+          {status.short_sha && (
+            <p className="mt-1 text-xs text-fgmuted">
+              <span className="font-mono">{status.short_sha}</span>
+              {status.subject ? ` — ${status.subject}` : ""}
+            </p>
+          )}
+          {(status.dirty || status.ahead > 0) && (
+            <p className="mt-1 text-xs text-amber-600">
+              {status.dirty
+                ? "Local edits — updates are declined so they are not lost."
+                : `${status.ahead} local commit(s) — updates are declined.`}
+            </p>
+          )}
+        </div>
+        {status.is_git && (
+          <button
+            onClick={onUpdate}
+            disabled={busy}
+            className="shrink-0 rounded-md border border-line px-3 py-1.5 text-sm text-fg transition-colors hover:border-gray-400 disabled:opacity-50"
+          >
+            {busy ? "Updating..." : "Update"}
+          </button>
+        )}
+      </div>
+      {note && <p className="mt-2 text-xs text-fgmuted">{note}</p>}
+    </div>
+  );
+}
+
 function ToolsTab() {
   const { data, isLoading } = useTools();
   const addTab = useToolStore((s) => s.addTab);
@@ -582,6 +667,8 @@ function ToolsTab() {
           <span className="block text-xs text-fgmuted">Open a new shell session</span>
         </span>
       </button>
+
+      <KnowledgeSection />
 
       {isLoading ? (
         <p className="text-sm text-fgsubtle">Loading tools...</p>

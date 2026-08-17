@@ -13,7 +13,7 @@ from typing import Any
 
 import structlog
 
-from knowledge import layout
+from knowledge import layout, seed
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import (
     build_knowledge_appendix,
@@ -36,6 +36,24 @@ DEFAULT_PLUGINS = [
     "pegasus-ai@scitech",
     "pegasus-dev@scitech",
 ]
+
+
+def _marketplace_source() -> tuple[str, dict[str, Any]]:
+    """(marketplace name, Claude Code source spec) for the tree in use.
+
+    A ``directory`` source is read in place and never refreshed over the
+    network, so the pod stays on the commit its image pinned.
+    """
+    root = layout.marketplace_root()
+    try:
+        return seed.marketplace_name(root), {"source": "directory", "path": root}
+    except (OSError, KeyError, ValueError) as exc:
+        log.info(
+            "claude_code_marketplace_fallback_github",
+            checkout=root,
+            error=str(exc),
+        )
+        return "scitech", {"source": "github", "repo": MARKETPLACE_REPO}
 
 
 class ClaudeCodeAdapter(KnowledgeAdapter):
@@ -137,19 +155,23 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
             if preset.get("api_key_env"):
                 settings["api_key_env"] = preset["api_key_env"]
 
-            # Register the plugin marketplace from GitHub
+            # Register the plugin marketplace. Prefer the local checkout: every
+            # other tool reads it, so sourcing Claude Code from GitHub instead
+            # would put one tool on marketplace main while the rest sat on the
+            # pinned commit — the same skills, two versions, which is the split
+            # this whole arrangement exists to prevent. Falls back to GitHub
+            # where there is no checkout (a dev laptop, say).
+            name, source = _marketplace_source()
             settings.setdefault("extraKnownMarketplaces", {})
-            settings["extraKnownMarketplaces"]["scitech"] = {
-                "source": {
-                    "source": "github",
-                    "repo": MARKETPLACE_REPO,
-                }
-            }
+            settings["extraKnownMarketplaces"][name] = {"source": source}
 
-            # Enable plugins by default
+            # Enable plugins by default. The marketplace name is read from the
+            # manifest rather than assumed: Claude Code enforces that the key
+            # matches it, and reports a mismatch as "plugin not found".
             settings.setdefault("enabledPlugins", {})
             for plugin_name in DEFAULT_PLUGINS:
-                settings["enabledPlugins"][plugin_name] = True
+                plugin = plugin_name.split("@", 1)[0]
+                settings["enabledPlugins"][f"{plugin}@{name}"] = True
 
             self._write_settings(settings_path, settings)
             log.info(

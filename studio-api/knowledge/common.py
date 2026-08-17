@@ -260,39 +260,56 @@ def unmerge_json_top(path: str, keys: list[str]) -> None:
         pass
 
 
-def copy_agents_to_dir(dst_dir: str) -> int:
-    """Copy all agent .md files to dst_dir. Returns count copied."""
-    agents_src = layout.agents_dir()
-    if not os.path.isdir(agents_src):
-        return 0
+def link_tree(src: str, dst: str) -> bool:
+    """Point ``dst`` at ``src`` with a symlink, replacing whatever was there.
 
-    os.makedirs(dst_dir, exist_ok=True)
-    count = 0
-    for fname in os.listdir(agents_src):
-        if fname.endswith(".md"):
-            shutil.copy2(
-                os.path.join(agents_src, fname),
-                os.path.join(dst_dir, fname),
-            )
-            count += 1
-    return count
+    Tools want skills under their own directory (``.opencode/skills``,
+    ``.agents/skills``). Copying them there made a per-user duplicate that went
+    stale the moment the shared checkout moved: a workspace seeded weeks ago
+    still offered the skills of that week, and nothing ever refreshed it. Live
+    pods were found carrying three different versions of the same skills.
 
+    A symlink gives the tool the layout it expects while there stays exactly one
+    copy on disk, so a ``git pull`` in the checkout is visible everywhere at
+    once. An existing real directory is removed first — it is generated product
+    output, not the user's work, and leaving it would keep the stale copy
+    winning.
 
-def copy_skills_to_dir(dst_dir: str, filename: str = "SKILL.md") -> int:
-    """Copy all skill canonical.md files to dst_dir/<skill>/<filename>.
-
-    Returns count copied.
+    Falls back to copying where symlinks are unavailable. Returns True if a
+    symlink was made.
     """
-    skills_src = layout.skills_dir()
-    if not os.path.isdir(skills_src):
-        return 0
+    if not os.path.isdir(src):
+        return False
 
-    count = 0
-    for skill_name in os.listdir(skills_src):
-        canonical = os.path.join(skills_src, skill_name, "canonical.md")
-        if os.path.isfile(canonical):
-            skill_dst = os.path.join(dst_dir, skill_name)
-            os.makedirs(skill_dst, exist_ok=True)
-            shutil.copy2(canonical, os.path.join(skill_dst, filename))
-            count += 1
-    return count
+    os.makedirs(os.path.dirname(dst.rstrip("/")) or ".", exist_ok=True)
+
+    if os.path.islink(dst):
+        if os.path.realpath(dst) == os.path.realpath(src):
+            return True
+        os.unlink(dst)
+    elif os.path.isdir(dst):
+        shutil.rmtree(dst)
+    elif os.path.exists(dst):
+        os.unlink(dst)
+
+    try:
+        os.symlink(src, dst, target_is_directory=True)
+        return True
+    except OSError as e:
+        log.warning("knowledge_symlink_failed_copying", src=src, dst=dst, error=str(e))
+        shutil.copytree(src, dst)
+        return False
+
+
+def link_agents_to_dir(dst_dir: str) -> bool:
+    """Point a tool's agents directory at the shared checkout."""
+    return link_tree(layout.agents_dir(), dst_dir)
+
+
+def link_skills_to_dir(dst_dir: str) -> bool:
+    """Point a tool's skills directory at the shared checkout.
+
+    The checkout already uses ``<skill>/SKILL.md``, which is the layout every
+    tool here expects, so no per-skill rewriting is needed.
+    """
+    return link_tree(layout.skills_dir(), dst_dir)

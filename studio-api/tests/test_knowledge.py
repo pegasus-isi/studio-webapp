@@ -151,14 +151,14 @@ def test_knowledge_root_resolution_order(monkeypatch, tmp_path):
     assert layout.knowledge_root() == str(tmp_path)
 
     monkeypatch.delenv("KNOWLEDGE_ROOT", raising=False)
-    monkeypatch.setattr(layout, "MARKETPLACE_PLUGIN_DIR", str(tmp_path / "absent"))
+    monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", str(tmp_path / "absent"))
     assert layout.knowledge_root() == "/opt/pegasus-ai/knowledge"
 
     # The image sets KNOWLEDGE_ROOT, but a checkout is found without it too.
-    checkout = tmp_path / "marketplace" / "plugins" / "pegasus-ai"
-    checkout.mkdir(parents=True)
-    monkeypatch.setattr(layout, "MARKETPLACE_PLUGIN_DIR", str(checkout))
-    assert layout.knowledge_root() == str(checkout)
+    checkout = tmp_path / "marketplace"
+    (checkout / "plugins" / "pegasus-ai").mkdir(parents=True)
+    monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", str(checkout))
+    assert layout.knowledge_root() == str(checkout / "plugins" / "pegasus-ai")
 
 
 def test_templates_prefers_plugin_assets_layout(monkeypatch, tmp_path):
@@ -171,3 +171,80 @@ def test_templates_prefers_plugin_assets_layout(monkeypatch, tmp_path):
 
     (tmp_path / "assets" / "templates").mkdir(parents=True)
     assert layout.templates_dir() == str(tmp_path / "assets" / "templates")
+
+
+def test_marketplace_endpoints(client, monkeypatch, tmp_path):
+    """The UI needs the SHA and a way to update; both must survive a
+    non-git tree rather than 500."""
+    plain = tmp_path / "mkt"
+    (plain / ".claude-plugin").mkdir(parents=True)
+    monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", str(plain))
+
+    body = client.get("/api/knowledge/marketplace").json()
+    assert body["path"] == str(plain)
+    assert body["exists"] is True
+    assert body["is_git"] is False
+
+    body = client.post("/api/knowledge/marketplace/update").json()
+    assert body["updated"] is False
+    assert body["reason"] == "not a git checkout"
+
+
+def test_tool_skill_dirs_are_symlinks_not_copies(monkeypatch, tmp_path):
+    """One copy on disk, so a checkout update is visible to every tool at once.
+
+    Copies were found going stale per user: a live pod carried three different
+    versions of the same skills, including one naming a skill that had been
+    withdrawn.
+    """
+    from knowledge.common import link_skills_to_dir
+
+    root = tmp_path / "checkout"
+    (root / "skills" / "pegasus-scaffold").mkdir(parents=True)
+    (root / "skills" / "pegasus-scaffold" / "SKILL.md").write_text(
+        "---\nname: pegasus-scaffold\ndescription: d\n---\n"
+    )
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+
+    dst = tmp_path / "work" / ".opencode" / "skills"
+    assert link_skills_to_dir(str(dst)) is True
+    assert os.path.islink(dst)
+    assert (dst / "pegasus-scaffold" / "SKILL.md").is_file()
+
+    # A skill added upstream appears immediately — the point of the symlink.
+    (root / "skills" / "pegasus-debug").mkdir()
+    (root / "skills" / "pegasus-debug" / "SKILL.md").write_text("---\nname: x\n---\n")
+    assert (dst / "pegasus-debug" / "SKILL.md").is_file()
+
+
+def test_a_stale_copy_is_replaced(monkeypatch, tmp_path):
+    """Existing workspaces carry real directories of outdated skills."""
+    from knowledge.common import link_skills_to_dir
+
+    root = tmp_path / "checkout"
+    (root / "skills" / "pegasus-apptainer").mkdir(parents=True)
+    (root / "skills" / "pegasus-apptainer" / "SKILL.md").write_text("---\nname: a\n---\n")
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+
+    # The stale copy a pod was found with: old names, and a withdrawn skill.
+    dst = tmp_path / "work" / ".opencode" / "skills"
+    (dst / "dockerfile").mkdir(parents=True)
+    (dst / "provd").mkdir()
+
+    assert link_skills_to_dir(str(dst)) is True
+    assert os.path.islink(dst)
+    assert not (dst / "provd").exists()
+    assert (dst / "pegasus-apptainer").is_dir()
+
+
+def test_relinking_is_idempotent(monkeypatch, tmp_path):
+    from knowledge.common import link_skills_to_dir
+
+    root = tmp_path / "checkout"
+    (root / "skills").mkdir(parents=True)
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+    dst = tmp_path / ".opencode" / "skills"
+
+    assert link_skills_to_dir(str(dst)) is True
+    assert link_skills_to_dir(str(dst)) is True
+    assert os.path.realpath(dst) == os.path.realpath(root / "skills")

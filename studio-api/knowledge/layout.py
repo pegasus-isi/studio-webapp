@@ -1,11 +1,10 @@
 """Where the Pegasus AI knowledge tree lives, and what shape it has.
 
 The skills, agents, templates and examples are authored once, in
-pegasus-isi/claude-plugin-marketplace, and reach this container as the installed
-``pegasus_ai_knowledge`` package. Studio does not carry its own copy: a second
-copy is what let the two drift apart, to the point where Claude Code users were
-told to build Apptainer images while opencode users were told to build Docker
-ones.
+pegasus-isi/claude-plugin-marketplace, and reach a deployment as a git checkout.
+Studio does not carry its own copy: a second copy is what let the two drift
+apart, to the point where Claude Code users were told to build Apptainer images
+while opencode users were told to build Docker ones.
 
 Everything that needs the tree goes through this module, so there is one
 resolution order and one place that knows the on-disk shape.
@@ -41,16 +40,72 @@ OVERLAY_ROOT = os.environ.get("KNOWLEDGE_OVERLAY", "/opt/pegasus-ai/overlay")
 # Where the Dockerfile checks the marketplace out. Kept as a git working copy so
 # the pinned SHA is verifiable, and so skills can be updated or rolled back in a
 # running pod without rebuilding the image.
-MARKETPLACE_ROOT = os.environ.get(
-    "KNOWLEDGE_MARKETPLACE", "/opt/pegasus-ai/marketplace"
-)
-MARKETPLACE_PLUGIN_DIR = os.path.join(MARKETPLACE_ROOT, "plugins", "pegasus-ai")
+SITE_MARKETPLACE = "/opt/pegasus-ai/marketplace"
+
+# Studio in a container owns /opt. An Open OnDemand deployment does not: there is
+# no image build to populate it and usually no root to create it, so a per-user
+# location has to work too.
+USER_MARKETPLACE_SUBPATH = os.path.join("pegasus-ai", "marketplace")
+
+DEFAULT_PLUGIN = "pegasus-ai"
 
 # Portable reference doc, as named in the plugin. The legacy name is the
 # condensed Studio restatement that the overlay replaces.
 _REFERENCE_NAMES = ("PEGASUS.md", "PEGASUS_AI.md")
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
+def user_marketplace_root() -> str:
+    """Per-user marketplace location, for deployments that do not own ``/opt``."""
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(
+        os.environ.get("HOME", "/tmp"), ".local", "share"
+    )
+    return os.path.join(base, USER_MARKETPLACE_SUBPATH)
+
+
+def marketplace_root() -> str:
+    """Resolve the marketplace checkout.
+
+    Order:
+
+    1. ``KNOWLEDGE_MARKETPLACE``, so a launcher can point at a site-staged copy
+       (an HPC software stack, a module prefix) with no writes and no egress
+    2. ``~/.local/share/pegasus-ai/marketplace`` — the user's own checkout
+    3. ``/opt/pegasus-ai/marketplace``, the copy baked into the container image
+
+    The user copy is preferred everywhere, including in the container. A
+    root-owned tree under ``/opt`` is read-only to the user, so skills could
+    only ever be updated by rebuilding the image, and any ``git pull`` would be
+    undone by the next pod restart. Under ``$HOME`` the checkout is writable,
+    survives restarts (``$HOME`` is the persistent mount), and behaves the same
+    way on a deployment that owns no image at all.
+
+    The image copy stays as the seed the user copy is cloned from at first
+    launch, and as the fallback if that clone could not be made.
+
+    Falls back to the user path when nothing exists yet, so callers that are
+    *creating* the checkout get the location it should live in.
+
+    Resolved per call, not cached at import: the same reason ``knowledge_root``
+    is, and because a constant here could disagree with what ``knowledge_root``
+    resolved — which would point Claude Code at one tree while every other tool
+    read another, the exact split this module exists to prevent.
+    """
+    env = os.environ.get("KNOWLEDGE_MARKETPLACE")
+    if env:
+        return env
+
+    for candidate in (user_marketplace_root(), SITE_MARKETPLACE):
+        if os.path.isdir(os.path.join(candidate, ".claude-plugin")):
+            return candidate
+
+    return user_marketplace_root()
+
+
+def marketplace_plugin_dir(name: str = DEFAULT_PLUGIN) -> str:
+    """Path to one plugin inside the resolved marketplace checkout."""
+    return os.path.join(marketplace_root(), "plugins", name)
 
 
 def knowledge_root() -> str:
@@ -60,7 +115,7 @@ def knowledge_root() -> str:
 
     1. ``KNOWLEDGE_ROOT``, which the image sets and a developer or test can point
        at a scratch tree
-    2. the marketplace checkout the image makes, if the variable is unset
+    2. the resolved marketplace checkout, wherever it lives
     3. ``/opt/pegasus-ai/knowledge``, the path older images copied into
 
     Resolved on each call rather than cached at import: tests monkeypatch the
@@ -71,8 +126,9 @@ def knowledge_root() -> str:
     if env:
         return env
 
-    if os.path.isdir(MARKETPLACE_PLUGIN_DIR):
-        return MARKETPLACE_PLUGIN_DIR
+    plugin_dir = marketplace_plugin_dir()
+    if os.path.isdir(plugin_dir):
+        return plugin_dir
 
     return "/opt/pegasus-ai/knowledge"
 

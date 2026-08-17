@@ -16,8 +16,8 @@ from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import (
     build_knowledge_appendix,
-    copy_agents_to_dir,
-    copy_skills_to_dir,
+    link_agents_to_dir,
+    link_skills_to_dir,
 )
 from llm.providers import PROVIDERS, _resolve_api_key, _resolve_base_url, provider_type
 
@@ -56,10 +56,10 @@ class OpenCodeAdapter(KnowledgeAdapter):
                     log.warning("opencode_agents_write_failed", dir=dst_dir, error=str(e))
 
         # Seed .opencode/agents/ and .opencode/skills/
-        copy_agents_to_dir(os.path.join(workspace, ".opencode", "agents"))
-        copy_skills_to_dir(os.path.join(workspace, ".opencode", "skills"))
+        link_agents_to_dir(os.path.join(workspace, ".opencode", "agents"))
+        link_skills_to_dir(os.path.join(workspace, ".opencode", "skills"))
 
-        # Write opencode.json (global + workspace)
+        # Write opencode.json (global — read from any cwd)
         self.update_llm_config(workspace, llm_config)
         log.info("opencode_installed", workspace=workspace)
 
@@ -122,16 +122,14 @@ class OpenCodeAdapter(KnowledgeAdapter):
             },
         }
 
-        # Write both the global config (picked up from any cwd — the fix for
-        # terminals started outside ~/work) and the workspace copy (project
-        # override / back-compat). The PVC mounts at ~, so the global path is
-        # persistent too.
+        # Global config only. It is read from any cwd, so the workspace copy
+        # this used to also write was redundant — byte-identical content in a
+        # second place to keep in sync, and the only non-hidden file Studio put
+        # in the directory users are told to keep workflows in. uninstall()
+        # still removes the legacy copy for workspaces that have one.
         blob = json.dumps(config, indent=2)
         global_dir = _global_config_dir()
-        targets = [
-            os.path.join(global_dir, "opencode.json"),
-            os.path.join(workspace, "opencode.json"),
-        ]
+        targets = [os.path.join(global_dir, "opencode.json")]
         for path in targets:
             try:
                 os.makedirs(os.path.dirname(path), exist_ok=True)

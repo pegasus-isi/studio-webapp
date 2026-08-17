@@ -21,6 +21,54 @@ mkdir -p /tmp/nginx-client-body /tmp/nginx-proxy /tmp/nginx-fastcgi \
 
 PYTHON="$(which python3 2>/dev/null || which python 2>/dev/null || echo python3)"
 
+# ---- Marketplace checkout (skills, agents, templates) ----
+# The image ships a pinned copy at /opt/pegasus-ai/marketplace. It is a template
+# to copy from, not the tree tools read: it is root-owned and is replaced
+# wholesale on every image rebuild.
+#
+# (Not to be confused with the Claude Code *plugin seed directory* written by
+# knowledge/seed.py — that one points Claude Code at whichever checkout wins.) Clone it into the user's own $HOME on first launch:
+# there it is writable (skills can be updated with `git pull` or rolled back
+# with `git checkout` — no root, no rebuild) and it persists across pod
+# restarts, which a change under /opt would not.
+#
+# Cloning from the local seed rather than GitHub keeps first launch fast and
+# working with no egress. origin is then repointed upstream so `git pull` does
+# the obvious thing. Non-fatal throughout: layout.py falls back to the seed.
+IMAGE_MARKETPLACE="/opt/pegasus-ai/marketplace"
+USER_MARKETPLACE="${XDG_DATA_HOME:-${HOME:-/tmp}/.local/share}/pegasus-ai/marketplace"
+if [ ! -d "${USER_MARKETPLACE}/.claude-plugin" ] \
+   && [ -d "${IMAGE_MARKETPLACE}/.claude-plugin" ]; then
+    if mkdir -p "$(dirname "${USER_MARKETPLACE}")" \
+       && git clone --quiet "${IMAGE_MARKETPLACE}" "${USER_MARKETPLACE}" 2>/dev/null; then
+        git -C "${USER_MARKETPLACE}" remote set-url origin \
+            "${KNOWLEDGE_REPO_URL:-https://github.com/pegasus-isi/claude-plugin-marketplace.git}" \
+            2>/dev/null || true
+        echo "[studio] Marketplace checked out to ${USER_MARKETPLACE}"
+    else
+        echo "[studio] WARNING: could not create ${USER_MARKETPLACE} —" \
+             "falling back to the read-only ${IMAGE_MARKETPLACE}" >&2
+    fi
+fi
+
+# Keep the user's checkout current. Only fast-forwards, and only when the
+# checkout is clean and carries no local commits — a user who edited a skill or
+# pinned an older commit meant it, and losing that would be worse than being a
+# few commits behind. Backgrounded with a timeout because it touches the network
+# and NFS: being offline is normal and must never delay the spawn.
+if [ -d "${USER_MARKETPLACE}/.git" ]; then
+    ( cd /opt/studio-api \
+      && timeout 30 "${PYTHON}" -c 'from knowledge import checkout; r = checkout.update(); print("[studio] knowledge", r.get("short_sha"), "updated" if r.get("updated") else "unchanged", r.get("reason") or "")' \
+      || true ) &
+fi
+
+# What the tools will actually read, for the AGENTS.md seed below and the log.
+if [ -d "${USER_MARKETPLACE}/plugins/pegasus-ai" ]; then
+    RESOLVED_KNOWLEDGE="${USER_MARKETPLACE}/plugins/pegasus-ai"
+else
+    RESOLVED_KNOWLEDGE="${IMAGE_MARKETPLACE}/plugins/pegasus-ai"
+fi
+
 if [ ! -f "${MARKER}" ]; then
     echo "[studio] First launch — initializing..."
 
@@ -37,8 +85,28 @@ if [ ! -f "${MARKER}" ]; then
         exit 1
     fi
 
-    if [ -f "/opt/pegasus-ai/knowledge/references/PEGASUS_AI.md" ]; then
-        cp /opt/pegasus-ai/knowledge/references/PEGASUS_AI.md "${WORK}/AGENTS.md"
+    # Seed AGENTS.md: the Studio environment overlay followed by the portable
+    # Pegasus guide, matching what the knowledge adapters generate. Only the
+    # tool adapters rewrite this afterwards, and the startup reconcile
+    # reinstalls tool *binaries* without re-running them — so if this is
+    # skipped, a workspace can end up with no AGENTS.md at all.
+    OVERLAY="/opt/pegasus-ai/overlay/STUDIO_ENV.md"
+    GUIDE="${KNOWLEDGE_ROOT:-${RESOLVED_KNOWLEDGE}}/references/PEGASUS.md"
+    if [ -f "${OVERLAY}" ] || [ -f "${GUIDE}" ]; then
+        # Written with explicit ifs, not `[ -f x ] && cat x`: under `set -e` a
+        # failing test makes the whole && chain the script's last status and
+        # kills the entrypoint before supervisord ever starts.
+        : > "${WORK}/AGENTS.md"
+        if [ -f "${OVERLAY}" ]; then
+            cat "${OVERLAY}" >> "${WORK}/AGENTS.md"
+            printf '\n' >> "${WORK}/AGENTS.md"
+        fi
+        if [ -f "${GUIDE}" ]; then
+            cat "${GUIDE}" >> "${WORK}/AGENTS.md"
+        fi
+        echo "[studio] Wrote ${WORK}/AGENTS.md"
+    else
+        echo "[studio] WARNING: no knowledge tree found — AGENTS.md not written" >&2
     fi
 
     touch "${MARKER}"

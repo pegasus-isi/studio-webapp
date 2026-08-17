@@ -565,6 +565,33 @@ export interface AgentInfo {
   description: string;
 }
 
+export interface MarketplaceStatus {
+  path: string;
+  exists: boolean;
+  is_git: boolean;
+  sha: string | null;
+  short_sha: string | null;
+  subject: string | null;
+  committed_at: string | null;
+  dirty: boolean;
+  ahead: number;
+  skills: number;
+  updated?: boolean;
+  reason?: string | null;
+}
+
+/** Which marketplace checkout this session reads, and at which commit. */
+export async function getMarketplaceStatus() {
+  return request<MarketplaceStatus>("/knowledge/marketplace");
+}
+
+/** Fast-forward the checkout. Declines (rather than discards) local changes. */
+export async function updateMarketplace() {
+  return request<MarketplaceStatus>("/knowledge/marketplace/update", {
+    method: "POST",
+  });
+}
+
 export async function getSkills() {
   return request<{ skills: SkillMeta[] }>("/knowledge/skills");
 }

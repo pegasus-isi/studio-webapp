@@ -17,7 +17,7 @@ import structlog
 
 from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
-from knowledge.common import build_knowledge_appendix
+from knowledge.common import build_knowledge_appendix, link_skills_to_dir
 from llm.providers import PROVIDERS
 
 log = structlog.get_logger()
@@ -95,23 +95,14 @@ def _seed_codex_skills(workspace: str) -> int:
 
     Returns count of skills seeded.
     """
-    skills_src = layout.skills_dir()
-    if not os.path.isdir(skills_src):
-        return 0
-
-    count = 0
-    for skill_name in sorted(os.listdir(skills_src)):
-        skill_dir = os.path.join(skills_src, skill_name)
-        canonical = os.path.join(skill_dir, "canonical.md")
-        if not os.path.isfile(canonical):
-            continue
-
-        dst_dir = os.path.join(workspace, ".agents", "skills", skill_name)
-        os.makedirs(dst_dir, exist_ok=True)
-        shutil.copy2(canonical, os.path.join(dst_dir, "SKILL.md"))
-        count += 1
-
-    return count
+    # A symlink, not per-skill copies: the checkout already uses
+    # <skill>/SKILL.md, which is exactly what Codex reads, and copying made a
+    # per-user duplicate that never caught up with the shared checkout. The
+    # copy loop this replaces also looked for canonical.md, which the current
+    # layout does not have — so it had quietly started seeding nothing at all.
+    if link_skills_to_dir(os.path.join(workspace, ".agents", "skills")):
+        return len(layout.skill_names())
+    return 0
 
 
 def _seed_codex_agents(workspace: str) -> int:
