@@ -17,6 +17,7 @@ studio-api/
 │   ├── providers.py        # Provider registry, key-requirement + model discovery
 │   └── propagator.py       # Push the active LLM config to installed tools
 ├── knowledge/              # Per-tool adapters that GENERATE runtime config
+│   ├── layout.py           # Resolves the knowledge tree + reads its layout
 │   ├── adapters.py         # KnowledgeAdapter ABC + registry
 │   ├── claude_code.py / opencode.py / codex_cli.py / antigravity.py / web_chat.py
 ├── services/               # workflow scan/submit/monitor, condor pool, image
@@ -24,7 +25,7 @@ studio-api/
 │                           # chat_permissions, procutil, …
 ├── init_db.py              # CLI: initialize / migrate the SQLite schema
 ├── propagate_llm.py        # CLI: propagate the saved LLM config to installed tools
-└── tests/                  # ~230 tests; no Pegasus/Condor/keys needed
+└── tests/                  # ~240 tests; no Pegasus/Condor/keys needed
 ```
 
 The SQLite DB (`~/work/.studio/studio.db`) has **8 tables**: `app_settings`,
@@ -116,7 +117,8 @@ stop it.
 | `HOME` | set by KubeSpawner | user home; workspace defaults to `$HOME/work` |
 | `STUDIO_WORKSPACE_DIR` | `$HOME/work` | workspace root (DB, tool configs, projects) |
 | `STUDIO_SCAN_DIR` | `$HOME` | root scanned for `braindump.yml` runs |
-| `KNOWLEDGE_ROOT` | `/opt/pegasus-ai/knowledge` | shared knowledge store |
+| `KNOWLEDGE_ROOT` | (unset) | override the knowledge tree path. Unset resolves the installed `pegasus-ai-knowledge` package, then the legacy `/opt/pegasus-ai/knowledge`. Set it for local dev, where neither exists. |
+| `KNOWLEDGE_OVERLAY` | `/opt/pegasus-ai/overlay` | Studio-specific context composed on top of the portable Pegasus guide |
 | `STUDIO_CHAT_ENGINE_DEFAULT` | `opencode` | default chat engine |
 | `STUDIO_ALLOWED_ORIGINS` | (empty) | extra CORS origins (same-origin always allowed) |
 | `STUDIO_TRUST_AUTH_HEADER` | `0` | trust `X-Auth-User` for display identity (opt-in) |
