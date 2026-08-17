@@ -35,7 +35,7 @@ log = structlog.get_logger()
 
 def marketplace_manifest(marketplace_dir: str | None = None) -> dict:
     """Read the marketplace manifest from a checkout."""
-    root = marketplace_dir or layout.MARKETPLACE_ROOT
+    root = marketplace_dir or layout.marketplace_root()
     with open(os.path.join(root, ".claude-plugin", "marketplace.json")) as fh:
         return json.load(fh)
 
@@ -65,7 +65,7 @@ def write_seed(
     ``copy=True`` where symlinks are unavailable, or where the seed must not
     change under a running tool.
     """
-    root = os.path.abspath(marketplace_dir or layout.MARKETPLACE_ROOT)
+    root = os.path.abspath(marketplace_dir or layout.marketplace_root())
     name = marketplace_name(root)
 
     markets = os.path.join(dest, "marketplaces")

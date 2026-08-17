@@ -37,8 +37,28 @@ if [ ! -f "${MARKER}" ]; then
         exit 1
     fi
 
-    if [ -f "/opt/pegasus-ai/knowledge/references/PEGASUS_AI.md" ]; then
-        cp /opt/pegasus-ai/knowledge/references/PEGASUS_AI.md "${WORK}/AGENTS.md"
+    # Seed AGENTS.md: the Studio environment overlay followed by the portable
+    # Pegasus guide, matching what the knowledge adapters generate. Only the
+    # tool adapters rewrite this afterwards, and the startup reconcile
+    # reinstalls tool *binaries* without re-running them — so if this is
+    # skipped, a workspace can end up with no AGENTS.md at all.
+    OVERLAY="/opt/pegasus-ai/overlay/STUDIO_ENV.md"
+    GUIDE="${KNOWLEDGE_ROOT:-/opt/pegasus-ai/marketplace/plugins/pegasus-ai}/references/PEGASUS.md"
+    if [ -f "${OVERLAY}" ] || [ -f "${GUIDE}" ]; then
+        # Written with explicit ifs, not `[ -f x ] && cat x`: under `set -e` a
+        # failing test makes the whole && chain the script's last status and
+        # kills the entrypoint before supervisord ever starts.
+        : > "${WORK}/AGENTS.md"
+        if [ -f "${OVERLAY}" ]; then
+            cat "${OVERLAY}" >> "${WORK}/AGENTS.md"
+            printf '\n' >> "${WORK}/AGENTS.md"
+        fi
+        if [ -f "${GUIDE}" ]; then
+            cat "${GUIDE}" >> "${WORK}/AGENTS.md"
+        fi
+        echo "[studio] Wrote ${WORK}/AGENTS.md"
+    else
+        echo "[studio] WARNING: no knowledge tree found — AGENTS.md not written" >&2
     fi
 
     touch "${MARKER}"

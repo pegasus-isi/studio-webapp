@@ -85,8 +85,10 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   advice per tool. `knowledge/overlay/STUDIO_ENV.md` is Studio's own environment
   context and is composed on top of the shared guide.
   `studio-api/knowledge/layout.py` resolves the tree (`KNOWLEDGE_ROOT` env, set
-  by the image → the checkout → legacy `/opt/pegasus-ai/knowledge`); everything
-  else goes through it. `knowledge/seed.py` writes the Claude Code plugin seed
+  by the image → `marketplace_root()`: `KNOWLEDGE_MARKETPLACE`, then
+  `/opt/pegasus-ai/marketplace`, then `~/.local/share/pegasus-ai/marketplace` for
+  deployments that do not own `/opt` → legacy `/opt/pegasus-ai/knowledge`);
+  everything else goes through it. `knowledge/seed.py` writes the Claude Code plugin seed
   directory that points at the checkout. Per-tool adapters in `studio-api/knowledge/` *generate*
   `CLAUDE.md`/`AGENTS.md`/`.mcp.json`/`.opencode/` into the user's runtime workspace —
   those generated files are product output, not repo config.

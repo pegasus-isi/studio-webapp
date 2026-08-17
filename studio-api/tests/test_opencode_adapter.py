@@ -6,7 +6,7 @@ import json
 import os
 
 
-def test_writes_global_and_workspace_config(tmp_path, monkeypatch):
+def test_writes_global_config_only(tmp_path, monkeypatch):
     from knowledge.opencode import OpenCodeAdapter
 
     home = tmp_path / "home"
@@ -28,7 +28,10 @@ def test_writes_global_and_workspace_config(tmp_path, monkeypatch):
     global_cfg = home / ".config" / "opencode" / "opencode.json"
     ws_cfg = workspace / "opencode.json"
     assert global_cfg.is_file()  # picked up from any cwd
-    assert ws_cfg.is_file()
+    # No workspace copy: it held byte-identical content, was a second thing to
+    # keep in sync, and was the only non-hidden file Studio placed in the
+    # directory users keep workflows in.
+    assert not ws_cfg.exists()
 
     cfg = json.loads(global_cfg.read_text())
     # model is "<provider>/<modelId>" with a clean model id.
@@ -66,3 +69,20 @@ def test_xdg_config_home_respected(tmp_path, monkeypatch):
         str(ws), {"provider": "gateway", "model": "Default", "base_url": "u"}
     )
     assert (xdg / "opencode" / "opencode.json").is_file()
+
+
+def test_uninstall_still_removes_a_legacy_workspace_config(tmp_path, monkeypatch):
+    """Workspaces seeded before the workspace copy was dropped still have one."""
+    from knowledge.opencode import OpenCodeAdapter
+
+    home = tmp_path / "home"
+    workspace = home / "work"
+    workspace.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    legacy = workspace / "opencode.json"
+    legacy.write_text("{}")
+
+    OpenCodeAdapter().uninstall(str(workspace))
+    assert not legacy.exists()

@@ -326,12 +326,17 @@ RUN chmod +x /etc/supervisor/scripts/*.sh
 # be bumped by hand and silently lies when it isn't), `git pull` moves kilobytes
 # where a reinstall re-downloads everything, and rollback is a checkout. .git is
 # kept — 320 KB — so all three work inside a running pod without a rebuild.
-ARG KNOWLEDGE_REF=main
+ARG KNOWLEDGE_REF=322cc64ce6c63db6f025a2f6e7bd2b6f6ace5cd9
 ARG KNOWLEDGE_REPO=https://github.com/pegasus-isi/claude-plugin-marketplace.git
 RUN git clone --quiet "${KNOWLEDGE_REPO}" /opt/pegasus-ai/marketplace && \
     git -C /opt/pegasus-ai/marketplace checkout --quiet "${KNOWLEDGE_REF}" && \
     git -C /opt/pegasus-ai/marketplace log -1 --format='knowledge %H %s' && \
-    test -f /opt/pegasus-ai/marketplace/plugins/pegasus-ai/.mcp.json
+    test -f /opt/pegasus-ai/marketplace/plugins/pegasus-ai/.mcp.json && \
+    chmod -R a+rX /opt/pegasus-ai/marketplace
+# The checkout is root-owned and the pod runs as whatever UID KubeSpawner
+# injects, so git refuses it ("detected dubious ownership") — which would make
+# the .git kept above useless for the pull/rollback/verify it exists for.
+RUN git config --system --add safe.directory /opt/pegasus-ai/marketplace
 
 # Everything reads the tree through this; studio-api/knowledge/layout.py takes it
 # as the first-priority override.

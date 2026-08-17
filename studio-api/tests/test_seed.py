@@ -102,3 +102,49 @@ def test_rewrite_replaces_a_previous_seed(marketplace, tmp_path):
 
     seed.write_seed(dest, marketplace_dir=str(marketplace), copy=True)
     assert not os.path.islink(os.path.join(dest, "marketplaces", "scitech"))
+
+
+def test_marketplace_resolution_prefers_site_then_user(monkeypatch, tmp_path):
+    """A container owns /opt; an OOD deployment does not, so a per-user path
+    has to resolve too."""
+    from knowledge import layout
+
+    monkeypatch.delenv("KNOWLEDGE_MARKETPLACE", raising=False)
+    site = tmp_path / "opt"
+    user = tmp_path / "home" / ".local" / "share" / "pegasus-ai" / "marketplace"
+    monkeypatch.setattr(layout, "SITE_MARKETPLACE", str(site))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "home" / ".local" / "share"))
+
+    # Nothing present: fall back to the site path, so a creator gets the
+    # conventional location rather than a surprise.
+    assert layout.marketplace_root() == str(site)
+
+    # Only a user checkout (the OOD case).
+    (user / ".claude-plugin").mkdir(parents=True)
+    assert layout.marketplace_root() == str(user)
+
+    # A site checkout wins once present (vetted, offline, admin-managed).
+    (site / ".claude-plugin").mkdir(parents=True)
+    assert layout.marketplace_root() == str(site)
+
+    # An explicit override beats both.
+    monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", "/somewhere/else")
+    assert layout.marketplace_root() == "/somewhere/else"
+
+
+def test_seed_follows_the_resolver(monkeypatch, tmp_path, marketplace):
+    """seed and knowledge_root must never resolve to different trees.
+
+    A constant here once meant Claude Code could be pointed at one checkout
+    while every other tool read another — the split this design exists to end.
+    """
+    from knowledge import layout, seed as seed_mod
+
+    monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", str(marketplace))
+    dest = seed_mod.write_seed(str(tmp_path / "seed"))
+    entry = json.loads(
+        (tmp_path / "seed" / "known_marketplaces.json").read_text()
+    )["scitech"]
+    assert entry["source"]["path"] == str(marketplace.resolve())
+    assert layout.marketplace_root() == str(marketplace)
+    assert dest

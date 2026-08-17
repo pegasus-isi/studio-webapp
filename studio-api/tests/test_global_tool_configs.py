@@ -193,3 +193,34 @@ def test_antigravity_writes_global_config(tmp_path, monkeypatch):
     settings = json.loads(_read(str(home / ".antigravity" / "settings.json")))
     assert settings == {"keep": 1}
     assert not (home / ".antigravity" / "context.md").exists()
+
+
+def test_claude_code_prefers_the_local_checkout(monkeypatch, tmp_path):
+    """Claude Code must read the same pinned tree as every other tool.
+
+    Sourcing it from GitHub instead put one tool on marketplace main while the
+    rest sat on the image's pinned commit.
+    """
+    import json as _json
+
+    from knowledge import claude_code
+
+    mkt = tmp_path / "marketplace"
+    (mkt / ".claude-plugin").mkdir(parents=True)
+    (mkt / ".claude-plugin" / "marketplace.json").write_text(
+        _json.dumps({"name": "scitech", "plugins": []})
+    )
+    monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", str(mkt))
+
+    name, source = claude_code._marketplace_source()
+    assert name == "scitech"
+    assert source == {"source": "directory", "path": str(mkt)}
+
+
+def test_claude_code_falls_back_to_github_without_a_checkout(monkeypatch, tmp_path):
+    from knowledge import claude_code
+
+    monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", str(tmp_path / "absent"))
+    name, source = claude_code._marketplace_source()
+    assert name == "scitech"
+    assert source["source"] == "github"
