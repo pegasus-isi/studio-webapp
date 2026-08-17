@@ -45,8 +45,9 @@ plugin `SKILL.md`:
 | scaffold | pegasus-scaffold | 415 |
 | wrapper | pegasus-wrapper | 235 |
 
-Only in studio: the `provd` skill, and three agents (`workflow-architect`,
-`data-engineer`, `pipeline-debugger`).
+Only in studio: three agents (`workflow-architect`, `data-engineer`,
+`pipeline-debugger`), plus the `provd` skill (see D3a — it was never duplicated,
+and is now withdrawn from both repos pending validation).
 Only in the plugin: 13 real workflow generators under `assets/examples/`, and
 `skills/kiso/references/experiment-configuration.md`.
 
@@ -175,11 +176,11 @@ the phase-1 content in place, confirming the inventory Claude Code actually
 loads:
 
 ```
-Skills (9)  kiso, pegasus-apptainer, pegasus-convert, pegasus-debug, pegasus-help,
-            pegasus-review, pegasus-scaffold, pegasus-wrapper, provd
+Skills (8)  kiso, pegasus-apptainer, pegasus-convert, pegasus-debug, pegasus-help,
+            pegasus-review, pegasus-scaffold, pegasus-wrapper
 Agents (3)  workflow-architect, data-engineer, pipeline-debugger
 MCP servers (2)  pegasus-docs, kiso-docs
-Always-on: ~711 tok added to every session
+Always-on: ~665 tok added to every session
 ```
 
 Other tools: opencode honors `XDG_CONFIG_HOME` / `XDG_DATA_HOME`. Codex uses
@@ -195,7 +196,8 @@ that phase 3 cannot land until D4 is settled.
 |---|---|---|---|
 | D1 | **pegasus-isi/claude-plugin-marketplace is the single source of truth.** | ✅ approved | It is the public artifact with outside users, it is currently ahead (Apptainer), and Studio already reaches for it at runtime (`claude_code.py:34`). |
 | D2 | **`studio-webapp/knowledge/{skills,agents}` is deleted, not synced.** | ✅ approved | Enforces C1. A CI check fails the build if either path reappears. |
-| D3 | **`provd` and the three agents move into the plugin.** | ✅ approved, implemented | `agents/` is a native Claude Code plugin directory, so plugin users gain them rather than carrying dead weight. |
+| D3 | **The three agents move into the plugin.** | ✅ approved, implemented | `agents/` is a native Claude Code plugin directory, so plugin users gain them rather than carrying dead weight. |
+| D3a | **`provd` ships nowhere until it is fully tested and validated.** Held out of the plugin *and* removed from studio-webapp; kept only as a local working copy. | ✅ approved, implemented | It has never been exercised end to end against a running provd daemon, and both destinations are shipping targets — the marketplace is public, and a studio-webapp merge redeploys to live user pods. Removing it is safe: no code references it, only its own two files. It re-enters under D3 once it works, with the frontmatter already worked out (unprefixed name per the `kiso` precedent, `allowed-tools` matching `pegasus-scaffold`). |
 | D4 | **Distribute the one tree two ways from one repo: the git marketplace, and a `pegasus-ai-knowledge` wheel whose package data *is* that tree.** | proposed | Submodules assume you control a build; OOD has no image. Both targets `pip install` a pinned version. Supersedes the submodule idea. |
 | D5 | **Split the reference doc rather than dedupe it.** Plugin keeps `references/PEGASUS.md`; studio-webapp keeps a small `knowledge/overlay/STUDIO_ENV.md` describing only the container (workspace root, PVC, where runs land). | proposed | The Studio environment is genuinely not portable and does not belong in a plugin someone installs on a laptop. Everything else in `PEGASUS_AI.md` is a condensed restatement and is deleted in favour of the real guide. Generated context gets *better*. |
 | D6 | **Config becomes environment, not filesystem mutation.** Launchers export the pointers; adapters stop writing to `$HOME` by default. | proposed | Fixes the cwd problem and the OOD problem with one change. Removes the unconditional `home_path()` behaviour at 10 call sites. |
@@ -288,15 +290,22 @@ Two rules hold regardless of the answer:
 
 ## 9. Migration plan
 
-**Phase 1 — marketplace absorbs everything** (marketplace repo) — **done, on
-branch `feat/absorb-provd-skill-and-agents`**
-`provd` moved to `skills/provd/SKILL.md` (frontmatter aligned with the other
-skills, `allowed-tools` added); the three agents moved to `agents/` with explicit
-`name:` frontmatter. The two non-portable rules in `workflow-architect` and
-`data-engineer` mandating `$HOME/work/` and naming JupyterLab were rewritten as
-environment-neutral guidance, since per D5 they belong in the Studio overlay and
-are stale anyway. `order:` frontmatter is deferred with D7. Q2 (Docker vs
-Apptainer) is still open and is content, not structure.
+**Phase 1 — marketplace absorbs the agents** (marketplace repo) — **done, on
+branch `feat/absorb-pegasus-agents`**
+The three agents moved to `agents/` with explicit `name:` frontmatter. The two
+non-portable rules in `workflow-architect` and `data-engineer` mandating
+`$HOME/work/` and naming JupyterLab were rewritten as environment-neutral
+guidance, since per D5 they belong in the Studio overlay and are stale anyway.
+Verified inventory: 8 skills, 3 agents, ~665 tok always-on.
+
+`provd` is held back per D3a. `order:` frontmatter is deferred with D7. Q2
+(Docker vs Apptainer) is still open and is content, not structure.
+
+**Phase 1b — `provd` re-enters once validated** (marketplace repo)
+Exercise it end to end against a running provd daemon, then add it as
+`skills/provd/SKILL.md`. It is removed from studio-webapp in the meantime rather
+than left shipping unvalidated (D3a); the text is preserved in this repo's git
+history and as a local working copy.
 
 **Phase 2 — publish the wheel** (marketplace repo)
 `pegasus-ai-knowledge`, package data = the tree, exposing `root()` /
