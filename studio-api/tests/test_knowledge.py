@@ -151,10 +151,14 @@ def test_knowledge_root_resolution_order(monkeypatch, tmp_path):
     assert layout.knowledge_root() == str(tmp_path)
 
     monkeypatch.delenv("KNOWLEDGE_ROOT", raising=False)
-    root = layout.knowledge_root()
-    # Either the package is installed (container, or a dev who pip-installed it)
-    # or we fall back to the path older images copied into.
-    assert root.endswith("plugins/pegasus-ai") or root == "/opt/pegasus-ai/knowledge"
+    monkeypatch.setattr(layout, "MARKETPLACE_PLUGIN_DIR", str(tmp_path / "absent"))
+    assert layout.knowledge_root() == "/opt/pegasus-ai/knowledge"
+
+    # The image sets KNOWLEDGE_ROOT, but a checkout is found without it too.
+    checkout = tmp_path / "marketplace" / "plugins" / "pegasus-ai"
+    checkout.mkdir(parents=True)
+    monkeypatch.setattr(layout, "MARKETPLACE_PLUGIN_DIR", str(checkout))
+    assert layout.knowledge_root() == str(checkout)
 
 
 def test_templates_prefers_plugin_assets_layout(monkeypatch, tmp_path):

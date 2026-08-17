@@ -1,0 +1,104 @@
+"""Tests for the Claude Code plugin seed writer.
+
+Each assertion here corresponds to a failure that is silent in practice: a
+missing field drops the marketplace with an invisible warning, and a key that
+does not match the manifest name surfaces as "plugin not found".
+"""
+
+from __future__ import annotations
+
+import json
+import os
+
+import pytest
+
+from knowledge import seed
+
+
+@pytest.fixture
+def marketplace(tmp_path):
+    """A minimal marketplace checkout."""
+    root = tmp_path / "marketplace"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "marketplace.json").write_text(json.dumps({
+        "name": "scitech",
+        "owner": {"name": "Pegasus"},
+        "plugins": [{"name": "pegasus-ai", "source": "./plugins/pegasus-ai"}],
+    }))
+    (root / "plugins" / "pegasus-ai" / "skills").mkdir(parents=True)
+    return root
+
+
+def test_seed_layout(marketplace, tmp_path):
+    dest = seed.write_seed(str(tmp_path / "seed"), marketplace_dir=str(marketplace))
+
+    known = json.loads(
+        (tmp_path / "seed" / "known_marketplaces.json").read_text()
+    )
+    assert list(known) == ["scitech"]
+    assert os.path.isdir(os.path.join(dest, "marketplaces", "scitech"))
+
+
+def test_entry_carries_the_mandatory_fields(marketplace, tmp_path):
+    """An entry with only `source` is dropped, and the warning is invisible."""
+    seed.write_seed(str(tmp_path / "seed"), marketplace_dir=str(marketplace))
+    entry = json.loads(
+        (tmp_path / "seed" / "known_marketplaces.json").read_text()
+    )["scitech"]
+
+    assert entry["installLocation"]
+    assert entry["lastUpdated"].endswith("Z")
+    assert entry["source"] == {
+        "source": "directory", "path": str(marketplace.resolve()),
+    }
+
+
+def test_key_matches_the_manifest_name(marketplace, tmp_path):
+    """Registering under any other key fails as 'plugin not found'."""
+    (marketplace / ".claude-plugin" / "marketplace.json").write_text(json.dumps({
+        "name": "something-else", "plugins": [],
+    }))
+    seed.write_seed(str(tmp_path / "seed"), marketplace_dir=str(marketplace))
+
+    known = json.loads(
+        (tmp_path / "seed" / "known_marketplaces.json").read_text()
+    )
+    assert list(known) == ["something-else"]
+    assert os.path.isdir(
+        os.path.join(tmp_path, "seed", "marketplaces", "something-else")
+    )
+
+
+def test_symlink_keeps_one_copy_so_git_pull_is_visible(marketplace, tmp_path):
+    dest = seed.write_seed(str(tmp_path / "seed"), marketplace_dir=str(marketplace))
+    target = os.path.join(dest, "marketplaces", "scitech")
+    assert os.path.islink(target)
+
+    # Updating the checkout is immediately visible through the seed — this is
+    # what makes `git pull` the update mechanism.
+    (marketplace / "plugins" / "pegasus-ai" / "skills" / "new").mkdir()
+    assert os.path.isdir(os.path.join(target, "plugins", "pegasus-ai", "skills", "new"))
+
+
+def test_copy_mode_detaches_from_the_checkout(marketplace, tmp_path):
+    dest = seed.write_seed(
+        str(tmp_path / "seed"), marketplace_dir=str(marketplace), copy=True
+    )
+    target = os.path.join(dest, "marketplaces", "scitech")
+    assert not os.path.islink(target)
+
+    (marketplace / "plugins" / "pegasus-ai" / "skills" / "new").mkdir()
+    assert not os.path.isdir(
+        os.path.join(target, "plugins", "pegasus-ai", "skills", "new")
+    )
+
+
+def test_rewrite_replaces_a_previous_seed(marketplace, tmp_path):
+    """Re-seeding is idempotent, including switching between link and copy."""
+    dest = str(tmp_path / "seed")
+    seed.write_seed(dest, marketplace_dir=str(marketplace), copy=True)
+    seed.write_seed(dest, marketplace_dir=str(marketplace))
+    assert os.path.islink(os.path.join(dest, "marketplaces", "scitech"))
+
+    seed.write_seed(dest, marketplace_dir=str(marketplace), copy=True)
+    assert not os.path.islink(os.path.join(dest, "marketplaces", "scitech"))

@@ -38,6 +38,14 @@ log = structlog.get_logger()
 # on top of the portable guide when generating a tool's context file.
 OVERLAY_ROOT = os.environ.get("KNOWLEDGE_OVERLAY", "/opt/pegasus-ai/overlay")
 
+# Where the Dockerfile checks the marketplace out. Kept as a git working copy so
+# the pinned SHA is verifiable, and so skills can be updated or rolled back in a
+# running pod without rebuilding the image.
+MARKETPLACE_ROOT = os.environ.get(
+    "KNOWLEDGE_MARKETPLACE", "/opt/pegasus-ai/marketplace"
+)
+MARKETPLACE_PLUGIN_DIR = os.path.join(MARKETPLACE_ROOT, "plugins", "pegasus-ai")
+
 # Portable reference doc, as named in the plugin. The legacy name is the
 # condensed Studio restatement that the overlay replaces.
 _REFERENCE_NAMES = ("PEGASUS.md", "PEGASUS_AI.md")
@@ -50,9 +58,9 @@ def knowledge_root() -> str:
 
     Order:
 
-    1. ``KNOWLEDGE_ROOT``, so a developer or a test can point at a scratch tree
-    2. the installed ``pegasus_ai_knowledge`` package, which is the real answer
-       in a built image
+    1. ``KNOWLEDGE_ROOT``, which the image sets and a developer or test can point
+       at a scratch tree
+    2. the marketplace checkout the image makes, if the variable is unset
     3. ``/opt/pegasus-ai/knowledge``, the path older images copied into
 
     Resolved on each call rather than cached at import: tests monkeypatch the
@@ -63,12 +71,8 @@ def knowledge_root() -> str:
     if env:
         return env
 
-    try:
-        import pegasus_ai_knowledge
-
-        return str(pegasus_ai_knowledge.plugin_dir())
-    except Exception as exc:  # ImportError, or the plugin missing from the wheel
-        log.debug("knowledge_package_unavailable", error=str(exc))
+    if os.path.isdir(MARKETPLACE_PLUGIN_DIR):
+        return MARKETPLACE_PLUGIN_DIR
 
     return "/opt/pegasus-ai/knowledge"
 

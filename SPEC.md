@@ -193,9 +193,10 @@ adapter. Starting a terminal tool creates a WebSocket PTY in the workspace.
 
 Knowledge is authored once, in
 [pegasus-isi/claude-plugin-marketplace](https://github.com/pegasus-isi/claude-plugin-marketplace),
-and installed into the runtime image as the `pegasus-ai-knowledge` package
-(pinned by the `KNOWLEDGE_REF` build arg). Studio does not keep a copy; CI fails
-if one reappears under `knowledge/`.
+and checked out into the runtime image at `/opt/pegasus-ai/marketplace`, pinned
+by the `KNOWLEDGE_REF` build arg. `.git` is kept, so the pinned SHA is verifiable
+and skills can be updated or rolled back in a running pod without a rebuild.
+Studio does not keep a copy; CI fails if one reappears under `knowledge/`.
 
 | Directory | Contents |
 |-----------|----------|
@@ -211,9 +212,10 @@ Studio-specific environment context (what persists, where runs are discovered)
 that does not belong in a plugin someone installs on a laptop. Generated context
 is the overlay followed by the portable guide.
 
-`studio-api/knowledge/layout.py` resolves the tree — `KNOWLEDGE_ROOT` env, then
-the installed package, then the legacy `/opt/pegasus-ai/knowledge` path — and is
-the only module that knows the on-disk shape.
+`studio-api/knowledge/layout.py` resolves the tree — `KNOWLEDGE_ROOT` env (set by
+the image), then the checkout, then the legacy `/opt/pegasus-ai/knowledge` path —
+and is the only module that knows the on-disk shape. `knowledge/seed.py` writes
+the Claude Code plugin seed directory that points at it.
 
 Adapters translate the shared knowledge into each tool's native format:
 

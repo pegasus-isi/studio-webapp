@@ -77,19 +77,21 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   (`lib/stores/`).
 - **Knowledge base** — skills, agents, templates and examples are authored in
   [pegasus-isi/claude-plugin-marketplace](https://github.com/pegasus-isi/claude-plugin-marketplace)
-  and installed here as the `pegasus-ai-knowledge` package (pinned by the
-  `KNOWLEDGE_REF` build arg). **Do not add a copy under `knowledge/`** — CI fails
+  and checked out into the image at `/opt/pegasus-ai/marketplace` (pinned by the
+  `KNOWLEDGE_REF` build arg; `.git` is kept so the SHA is verifiable and skills
+  can be updated or rolled back with `git pull` / `git checkout` in a running pod). **Do not add a copy under `knowledge/`** — CI fails
   if `knowledge/{skills,agents,templates,examples,mcp,references}` reappears,
   because a second copy is how the two drifted into giving different container
   advice per tool. `knowledge/overlay/STUDIO_ENV.md` is Studio's own environment
   context and is composed on top of the shared guide.
-  `studio-api/knowledge/layout.py` resolves the tree (`KNOWLEDGE_ROOT` env →
-  installed package → legacy `/opt/pegasus-ai/knowledge`); everything else goes
-  through it. Per-tool adapters in `studio-api/knowledge/` *generate*
+  `studio-api/knowledge/layout.py` resolves the tree (`KNOWLEDGE_ROOT` env, set
+  by the image → the checkout → legacy `/opt/pegasus-ai/knowledge`); everything
+  else goes through it. `knowledge/seed.py` writes the Claude Code plugin seed
+  directory that points at the checkout. Per-tool adapters in `studio-api/knowledge/` *generate*
   `CLAUDE.md`/`AGENTS.md`/`.mcp.json`/`.opencode/` into the user's runtime workspace —
   those generated files are product output, not repo config.
-  For local backend dev, either `pip install` the package or point `KNOWLEDGE_ROOT`
-  at a checkout's `plugins/pegasus-ai`, otherwise the tree resolves empty.
+  For local backend dev, point `KNOWLEDGE_ROOT` at a clone's
+  `plugins/pegasus-ai`, otherwise the tree resolves empty.
 - **jupyter-pegasus-ai-client/** — vendored copy of TauferLab's private client (see its
   `VENDORED.md`); local mods are limited to three files (`src/configPlugin.tsx`,
   `src/api.ts`, `src/toolbarPlugin.ts`). Disable with `--build-arg
