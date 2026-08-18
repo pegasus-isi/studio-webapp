@@ -302,3 +302,51 @@ def test_update_llm_config_restores_claude_md(monkeypatch, tmp_path):
 
     ClaudeCodeAdapter().update_llm_config(str(workspace), {"provider": "anthropic"})
     assert (workspace / "CLAUDE.md").is_file()
+
+
+def test_config_root_is_home_not_the_workspace(monkeypatch, tmp_path):
+    """Tools look in the directory they start in, upwards — and that is $HOME.
+
+    Writing to $HOME/work produced files that existed but were never found: a
+    terminal opens at ~, so nothing below it is on the search path.
+    """
+    from knowledge.common import config_root
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert config_root() == str(tmp_path)
+
+
+def test_legacy_workspace_copies_are_pruned(monkeypatch, tmp_path):
+    """Otherwise the stale copy wins whenever cwd happens to be ~/work."""
+    from knowledge.common import prune_legacy_workspace_copies
+
+    home = tmp_path / "home"
+    workspace = home / "work"
+    workspace.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    (workspace / "CLAUDE.md").write_text("old")
+    (workspace / "AGENTS.md").write_text("old")
+    (workspace / "opencode.json").write_text("{}")
+    (workspace / ".opencode" / "skills").mkdir(parents=True)
+    keep = workspace / "my-workflow"
+    keep.mkdir()
+
+    removed = prune_legacy_workspace_copies(str(workspace))
+
+    assert set(removed) >= {"CLAUDE.md", "AGENTS.md", "opencode.json", ".opencode"}
+    assert not (workspace / "CLAUDE.md").exists()
+    assert not (workspace / ".opencode").exists()
+    # Only generated names are touched — never the user's own work.
+    assert keep.is_dir()
+
+
+def test_pruning_never_deletes_the_live_files(monkeypatch, tmp_path):
+    """If the workspace *is* the config root, pruning must be a no-op."""
+    from knowledge.common import prune_legacy_workspace_copies
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "CLAUDE.md").write_text("live")
+
+    assert prune_legacy_workspace_copies(str(tmp_path)) == []
+    assert (tmp_path / "CLAUDE.md").read_text() == "live"

@@ -98,22 +98,26 @@ fi
 # only create it during install(), and startup runs update_llm_config(), so a
 # workspace that lost the file — a user clearing it out, say — otherwise never
 # got it back and the tools ran with no Pegasus context at all.
+# Written at $HOME, not $HOME/work: every tool looks in the directory it starts
+# in and then upwards, and terminals start at $HOME, so a copy one directory
+# down existed without being found.
+CONFIG_ROOT="${HOME:-/tmp}"
 OVERLAY="/opt/pegasus-ai/overlay/STUDIO_ENV.md"
 GUIDE="${KNOWLEDGE_ROOT:-${RESOLVED_KNOWLEDGE}}/references/PEGASUS.md"
-if [ ! -f "${WORK}/AGENTS.md" ] && { [ -f "${OVERLAY}" ] || [ -f "${GUIDE}" ]; }; then
+if [ ! -f "${CONFIG_ROOT}/AGENTS.md" ] && { [ -f "${OVERLAY}" ] || [ -f "${GUIDE}" ]; }; then
     # Written with explicit ifs, not `[ -f x ] && cat x`: under `set -e` a
     # failing test makes the whole && chain the script's last status and
     # kills the entrypoint before supervisord ever starts.
-    : > "${WORK}/AGENTS.md"
+    : > "${CONFIG_ROOT}/AGENTS.md"
     if [ -f "${OVERLAY}" ]; then
-        cat "${OVERLAY}" >> "${WORK}/AGENTS.md"
-        printf '\n' >> "${WORK}/AGENTS.md"
+        cat "${OVERLAY}" >> "${CONFIG_ROOT}/AGENTS.md"
+        printf '\n' >> "${CONFIG_ROOT}/AGENTS.md"
     fi
     if [ -f "${GUIDE}" ]; then
-        cat "${GUIDE}" >> "${WORK}/AGENTS.md"
+        cat "${GUIDE}" >> "${CONFIG_ROOT}/AGENTS.md"
     fi
-    echo "[studio] Wrote ${WORK}/AGENTS.md"
-elif [ ! -f "${WORK}/AGENTS.md" ]; then
+    echo "[studio] Wrote ${CONFIG_ROOT}/AGENTS.md"
+elif [ ! -f "${CONFIG_ROOT}/AGENTS.md" ]; then
     echo "[studio] WARNING: no knowledge tree found — AGENTS.md not written" >&2
 fi
 

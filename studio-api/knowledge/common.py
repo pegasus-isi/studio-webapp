@@ -140,6 +140,71 @@ def ensure_context_file(path: str) -> bool:
     return True
 
 
+# Generated tool config that used to be written into the workspace ($HOME/work).
+# Terminals and tools start in $HOME, so a file one directory down was invisible
+# unless the user happened to cd into it — the same cwd problem the $HOME-scoped
+# copies were added to work around. These are pruned from the workspace so the
+# stale copy cannot win when cwd is ~/work.
+LEGACY_WORKSPACE_FILES = (
+    "CLAUDE.md",
+    "AGENTS.md",
+    "opencode.json",
+    ".mcp.json",
+)
+LEGACY_WORKSPACE_DIRS = (
+    ".opencode",
+    ".agents",
+)
+
+
+def config_root() -> str:
+    """Where generated tool config belongs: the user's ``$HOME``.
+
+    Every tool here looks for its config in the directory it starts in and then
+    upwards, and terminals start in ``$HOME``. Writing to ``$HOME/work`` meant
+    the files existed but were not found.
+    """
+    return os.environ.get("HOME", "/tmp")
+
+
+def prune_legacy_workspace_copies(workspace: str) -> list[str]:
+    """Remove generated config left behind in the workspace.
+
+    Skipped when the workspace *is* the config root, so this can never delete
+    the live files. Only ever touches names this code generates.
+    """
+    root = os.path.realpath(config_root())
+    if not workspace or os.path.realpath(workspace) == root:
+        return []
+
+    removed: list[str] = []
+    for name in LEGACY_WORKSPACE_FILES:
+        path = os.path.join(workspace, name)
+        if os.path.isfile(path) or os.path.islink(path):
+            try:
+                os.unlink(path)
+                removed.append(name)
+            except OSError:
+                pass
+    for name in LEGACY_WORKSPACE_DIRS:
+        path = os.path.join(workspace, name)
+        if os.path.islink(path):
+            try:
+                os.unlink(path)
+                removed.append(name)
+            except OSError:
+                pass
+        elif os.path.isdir(path):
+            try:
+                shutil.rmtree(path)
+                removed.append(name)
+            except OSError:
+                pass
+    if removed:
+        log.info("legacy_workspace_config_pruned", workspace=workspace, removed=removed)
+    return removed
+
+
 def home_path(*parts: str) -> str:
     """Resolve a path under the user's HOME.
 
