@@ -16,6 +16,7 @@ from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import (
     build_knowledge_appendix,
+    ensure_context_file,
     link_agents_to_dir,
     link_skills_to_dir,
 )
@@ -65,6 +66,9 @@ class OpenCodeAdapter(KnowledgeAdapter):
 
     def update_llm_config(self, workspace: str, llm_config: dict[str, Any]) -> None:
         """Rewrite opencode.json with the current provider config."""
+        # Runs on every start, so it is also where a deleted AGENTS.md comes back.
+        ensure_context_file(os.path.join(workspace, "AGENTS.md"))
+        ensure_context_file(os.path.join(_global_config_dir(), "AGENTS.md"))
         provider = llm_config.get("provider", "anthropic")
         ptype = provider_type(provider)  # custom-<id> -> "custom", etc.
         model = llm_config.get("model")

@@ -248,3 +248,57 @@ def test_relinking_is_idempotent(monkeypatch, tmp_path):
     assert link_skills_to_dir(str(dst)) is True
     assert link_skills_to_dir(str(dst)) is True
     assert os.path.realpath(dst) == os.path.realpath(root / "skills")
+
+
+def test_context_files_are_restored_when_missing(monkeypatch, tmp_path):
+    """A workspace that lost CLAUDE.md/AGENTS.md never got them back.
+
+    They are written by install(), but startup only runs update_llm_config(),
+    so a user who cleared their workspace ran every tool with no Pegasus
+    context until they reinstalled something from Settings.
+    """
+    from knowledge.common import ensure_context_file
+
+    root = tmp_path / "checkout"
+    (root / "references").mkdir(parents=True)
+    (root / "references" / "PEGASUS.md").write_text("# Pegasus guide\n")
+    (root / "skills").mkdir()
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+    monkeypatch.setenv("KNOWLEDGE_OVERLAY", str(tmp_path / "no-overlay"))
+
+    target = tmp_path / "work" / "AGENTS.md"
+    assert ensure_context_file(str(target)) is True
+    assert "Pegasus guide" in target.read_text()
+
+
+def test_context_file_never_overwrites_user_edits(monkeypatch, tmp_path):
+    from knowledge.common import ensure_context_file
+
+    root = tmp_path / "checkout"
+    (root / "references").mkdir(parents=True)
+    (root / "references" / "PEGASUS.md").write_text("# Pegasus guide\n")
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+
+    target = tmp_path / "work" / "AGENTS.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("my own notes\n")
+
+    assert ensure_context_file(str(target)) is False
+    assert target.read_text() == "my own notes\n"
+
+
+def test_update_llm_config_restores_claude_md(monkeypatch, tmp_path):
+    """The startup path, end to end: config propagation heals the workspace."""
+    from knowledge.claude_code import ClaudeCodeAdapter
+
+    root = tmp_path / "checkout"
+    (root / "references").mkdir(parents=True)
+    (root / "references" / "PEGASUS.md").write_text("# Pegasus guide\n")
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    workspace = tmp_path / "home" / "work"
+    workspace.mkdir(parents=True)
+
+    ClaudeCodeAdapter().update_llm_config(str(workspace), {"provider": "anthropic"})
+    assert (workspace / "CLAUDE.md").is_file()

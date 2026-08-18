@@ -27,10 +27,12 @@ PYTHON="$(which python3 2>/dev/null || which python 2>/dev/null || echo python3)
 # wholesale on every image rebuild.
 #
 # (Not to be confused with the Claude Code *plugin seed directory* written by
-# knowledge/seed.py — that one points Claude Code at whichever checkout wins.) Clone it into the user's own $HOME on first launch:
-# there it is writable (skills can be updated with `git pull` or rolled back
-# with `git checkout` — no root, no rebuild) and it persists across pod
-# restarts, which a change under /opt would not.
+# knowledge/seed.py — that one points Claude Code at whichever checkout wins.)
+#
+# Clone it into the user's own $HOME on first launch: there it is writable, so
+# skills can be updated with `git pull` or rolled back with `git checkout` —
+# no root, no rebuild — and it persists across pod restarts, which a change
+# under /opt would not.
 #
 # Cloning from the local seed rather than GitHub keeps first launch fast and
 # working with no egress. origin is then repointed upstream so `git pull` does
@@ -85,32 +87,34 @@ if [ ! -f "${MARKER}" ]; then
         exit 1
     fi
 
-    # Seed AGENTS.md: the Studio environment overlay followed by the portable
-    # Pegasus guide, matching what the knowledge adapters generate. Only the
-    # tool adapters rewrite this afterwards, and the startup reconcile
-    # reinstalls tool *binaries* without re-running them — so if this is
-    # skipped, a workspace can end up with no AGENTS.md at all.
-    OVERLAY="/opt/pegasus-ai/overlay/STUDIO_ENV.md"
-    GUIDE="${KNOWLEDGE_ROOT:-${RESOLVED_KNOWLEDGE}}/references/PEGASUS.md"
-    if [ -f "${OVERLAY}" ] || [ -f "${GUIDE}" ]; then
-        # Written with explicit ifs, not `[ -f x ] && cat x`: under `set -e` a
-        # failing test makes the whole && chain the script's last status and
-        # kills the entrypoint before supervisord ever starts.
-        : > "${WORK}/AGENTS.md"
-        if [ -f "${OVERLAY}" ]; then
-            cat "${OVERLAY}" >> "${WORK}/AGENTS.md"
-            printf '\n' >> "${WORK}/AGENTS.md"
-        fi
-        if [ -f "${GUIDE}" ]; then
-            cat "${GUIDE}" >> "${WORK}/AGENTS.md"
-        fi
-        echo "[studio] Wrote ${WORK}/AGENTS.md"
-    else
-        echo "[studio] WARNING: no knowledge tree found — AGENTS.md not written" >&2
-    fi
-
     touch "${MARKER}"
     echo "[studio] Initialization complete."
+fi
+
+# AGENTS.md: the Studio environment overlay followed by the portable Pegasus
+# guide, matching what the knowledge adapters generate.
+#
+# Written on every start when absent, not only on first launch. The adapters
+# only create it during install(), and startup runs update_llm_config(), so a
+# workspace that lost the file — a user clearing it out, say — otherwise never
+# got it back and the tools ran with no Pegasus context at all.
+OVERLAY="/opt/pegasus-ai/overlay/STUDIO_ENV.md"
+GUIDE="${KNOWLEDGE_ROOT:-${RESOLVED_KNOWLEDGE}}/references/PEGASUS.md"
+if [ ! -f "${WORK}/AGENTS.md" ] && { [ -f "${OVERLAY}" ] || [ -f "${GUIDE}" ]; }; then
+    # Written with explicit ifs, not `[ -f x ] && cat x`: under `set -e` a
+    # failing test makes the whole && chain the script's last status and
+    # kills the entrypoint before supervisord ever starts.
+    : > "${WORK}/AGENTS.md"
+    if [ -f "${OVERLAY}" ]; then
+        cat "${OVERLAY}" >> "${WORK}/AGENTS.md"
+        printf '\n' >> "${WORK}/AGENTS.md"
+    fi
+    if [ -f "${GUIDE}" ]; then
+        cat "${GUIDE}" >> "${WORK}/AGENTS.md"
+    fi
+    echo "[studio] Wrote ${WORK}/AGENTS.md"
+elif [ ! -f "${WORK}/AGENTS.md" ]; then
+    echo "[studio] WARNING: no knowledge tree found — AGENTS.md not written" >&2
 fi
 
 # Pegasus agent endpoint — without it pegasus-analyzer probes the default
