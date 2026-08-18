@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from knowledge.adapters import get_adapter
+from knowledge.common import config_root, prune_legacy_workspace_copies
 
 if TYPE_CHECKING:
     from db import Database
@@ -53,7 +54,8 @@ class LLMPropagator:
             if adapter is None:
                 continue
             try:
-                adapter.update_llm_config(WORKSPACE_ROOT, config)
+                prune_legacy_workspace_copies(WORKSPACE_ROOT)
+                adapter.update_llm_config(config_root(), config)
                 log.info("llm_propagated", tool_id=tool_id)
             except Exception as e:
                 log.warning(

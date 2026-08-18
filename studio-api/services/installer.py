@@ -11,6 +11,7 @@ from typing import Any
 import structlog
 
 from knowledge.adapters import get_adapter
+from knowledge.common import config_root, prune_legacy_workspace_copies
 from services.procutil import communicate_or_kill
 from services.tool_env import npm_prefix, with_tool_paths
 
@@ -133,7 +134,8 @@ class ToolInstaller:
         llm_config = await db.get_llm_config() or {}
         adapter = get_adapter(tool_id)
         if adapter:
-            adapter.install(WORKSPACE_ROOT, llm_config)
+            prune_legacy_workspace_copies(WORKSPACE_ROOT)
+            adapter.install(config_root(), llm_config)
 
         # Update DB
         await db.install_tool(tool_id)
@@ -144,7 +146,10 @@ class ToolInstaller:
         """Uninstall a tool: call adapter.uninstall, remove from DB."""
         adapter = get_adapter(tool_id)
         if adapter:
-            adapter.uninstall(WORKSPACE_ROOT)
+            # Config lives at the config root now; also clear anything an older
+            # build left in the workspace so uninstall really removes it all.
+            adapter.uninstall(config_root())
+            prune_legacy_workspace_copies(WORKSPACE_ROOT)
 
         await db.remove_tool(tool_id)
         log.info("tool_uninstalled", tool_id=tool_id)
