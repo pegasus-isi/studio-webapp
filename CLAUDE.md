@@ -24,7 +24,7 @@ docker build --platform linux/amd64 -t pegasus/studio-webapp:latest .
 # Backend dev (studio-api/)
 cd studio-api
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt pytest httpx
-python init_db.py                 # creates ~/work/.studio/studio.db
+python init_db.py                 # creates ~/.studio/studio.db
 uvicorn main:app --reload --port 8080   # Swagger at /docs
 
 # Frontend dev (studio-web/)
@@ -57,7 +57,7 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
 `docker/entrypoint.sh` runs `init_db.py` (first launch only) then `exec supervisord`.
 `opencode serve` runs on localhost:**4747** for the chat engine.
 
-- **studio-api/** — FastAPI + async SQLite (`~/work/.studio/studio.db`, hand-rolled
+- **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
   migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 15 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
   opencode chat engine, notifications, terminal/PTY sessions). Workflow runs are

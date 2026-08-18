@@ -9,7 +9,11 @@
 set -euo pipefail
 
 WORK="${HOME:-/tmp}/work"
-STUDIO_DIR="${WORK}/.studio"
+# Studio's own state lives beside the user's other config, not inside the
+# directory they keep workflows in: a `rm -rf` in the workspace should not be
+# able to take the settings database with it. init_db.py migrates an existing
+# database from the old location on first start.
+STUDIO_DIR="${HOME:-/tmp}/.studio"
 MARKER="${STUDIO_DIR}/.initialized"
 
 # workflows/ is where the Marketplace "Add" clones into and where the scaffold

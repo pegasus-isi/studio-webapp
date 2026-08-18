@@ -30,7 +30,7 @@ studio-api/
 └── tests/                  # ~240 tests; no Pegasus/Condor/keys needed
 ```
 
-The SQLite DB (`~/work/.studio/studio.db`) has **8 tables**: `app_settings`,
+The SQLite DB (`~/.studio/studio.db`; an existing one is moved out of `~/work/.studio` on first start) has **8 tables**: `app_settings`,
 `llm_config`, `provider_configs`, `tool_installations`, `workflow_runs`,
 `chat_messages`, `notifications`, `notification_log`.
 
@@ -47,7 +47,7 @@ The SQLite DB (`~/work/.studio/studio.db`) has **8 tables**: `app_settings`,
 cd studio-api
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt pytest httpx
-python init_db.py          # creates ~/work/.studio/studio.db
+python init_db.py          # creates ~/.studio/studio.db
 ```
 
 ### 4. Run the dev server

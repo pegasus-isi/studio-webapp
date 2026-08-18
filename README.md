@@ -37,8 +37,9 @@ JupyterLab is always on and opens in a separate browser tab.
   behind the proxy.
 - Workflow status comes from `workflow-monitor --serve` JSONL events, started
   automatically on submit.
-- The workspace defaults to `$HOME/work`; Studio state is stored under
-  `$HOME/work/.studio`.
+- The workspace defaults to `$HOME/work` and holds workflow projects; Studio's
+  own state lives at `$HOME/.studio`, and generated tool config (`CLAUDE.md`,
+  `AGENTS.md`, `.mcp.json`) at `$HOME`.
 
 ## Running locally (for testing)
 

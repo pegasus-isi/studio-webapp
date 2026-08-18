@@ -350,3 +350,38 @@ def test_pruning_never_deletes_the_live_files(monkeypatch, tmp_path):
 
     assert prune_legacy_workspace_copies(str(tmp_path)) == []
     assert (tmp_path / "CLAUDE.md").read_text() == "live"
+
+
+def test_state_dir_is_home_not_the_workspace(monkeypatch, tmp_path):
+    """The DB is Studio's state, not the user's work.
+
+    Living at ~/work/.studio put settings, LLM configuration and history inside
+    the directory users are told to work in, where a `rm -rf` could take them.
+    """
+    import db as db_mod
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert db_mod._state_dir() == str(tmp_path / ".studio")
+
+
+def test_legacy_database_is_moved_not_abandoned(monkeypatch, tmp_path):
+    """Repointing alone would be indistinguishable from data loss."""
+    import db as db_mod
+
+    legacy_dir = tmp_path / "work" / ".studio"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "studio.db").write_text("PRETEND SQLITE")
+    (legacy_dir / "studio.db-wal").write_text("wal")
+    monkeypatch.setattr(db_mod, "_LEGACY_DB_PATH", str(legacy_dir / "studio.db"))
+
+    new_path = tmp_path / ".studio" / "studio.db"
+    assert db_mod._migrate_legacy_db(str(new_path)) is True
+    assert new_path.read_text() == "PRETEND SQLITE"
+    # The write-ahead log follows, so a stale one cannot be applied later.
+    assert (tmp_path / ".studio" / "studio.db-wal").is_file()
+    assert not (legacy_dir / "studio.db").exists()
+
+    # Idempotent: a later start must never clobber the live database.
+    (legacy_dir / "studio.db").write_text("STALE")
+    assert db_mod._migrate_legacy_db(str(new_path)) is False
+    assert new_path.read_text() == "PRETEND SQLITE"
