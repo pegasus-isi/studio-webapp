@@ -158,6 +158,10 @@ def _init_repo(path):
         ["init", "-q", "-b", "main"],
         ["config", "user.email", "t@example.com"],
         ["config", "user.name", "t"],
+        # The developer's global config may set commit.gpgsign; signing here
+        # would depend on an agent holding a passphrase, so the suite would
+        # pass or fail based on whether someone had recently signed something.
+        ["config", "commit.gpgsign", "false"],
         ["add", "-A"],
         ["commit", "-q", "-m", "seed"],
     ):

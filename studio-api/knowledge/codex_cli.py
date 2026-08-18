@@ -17,7 +17,11 @@ import structlog
 
 from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
-from knowledge.common import build_knowledge_appendix, link_skills_to_dir
+from knowledge.common import (
+    build_knowledge_appendix,
+    ensure_context_file,
+    link_skills_to_dir,
+)
 from llm.providers import PROVIDERS
 
 log = structlog.get_logger()
@@ -220,6 +224,8 @@ class CodexCLIAdapter(KnowledgeAdapter):
         from the provider_configs DB table. If not present, falls back to
         writing just the single active provider.
         """
+        # Runs on every start, so a deleted AGENTS.md is restored here.
+        ensure_context_file(os.path.join(workspace, "AGENTS.md"))
         provider = llm_config.get("provider", "openai")
         model = llm_config.get("model", "")
         api_key = llm_config.get("api_key", "")

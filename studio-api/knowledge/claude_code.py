@@ -17,6 +17,7 @@ from knowledge import layout, seed
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import (
     build_knowledge_appendix,
+    ensure_context_file,
     home_path,
     merge_json_mapping,
     remove_managed_block,
@@ -114,6 +115,8 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
 
     def update_llm_config(self, workspace: str, llm_config: dict[str, Any]) -> None:
         """Set env vars and write settings.json with provider + plugin config."""
+        # Runs on every start, so it is also where a deleted CLAUDE.md comes back.
+        ensure_context_file(os.path.join(workspace, "CLAUDE.md"))
         provider = llm_config.get("provider", "anthropic")
         ptype = provider_type(provider)  # custom-<id> -> "custom", etc.
         api_key = llm_config.get("api_key", "")
