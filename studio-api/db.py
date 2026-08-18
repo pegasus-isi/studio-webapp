@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -36,8 +37,51 @@ def _default_workspace() -> str:
         return os.path.join(home, "work")
     return "/tmp/studio-work"
 
-_DEFAULT_DB_DIR = os.path.join(_default_workspace(), ".studio")
+def _state_dir() -> str:
+    """Where Studio keeps its own state.
+
+    ``$HOME/.studio``, not ``$HOME/work/.studio``. The workspace holds workflow
+    projects; the database is Studio's, and burying it inside the directory
+    users are told to work in meant a `rm -rf` there could take the settings,
+    LLM configuration and history with it. ``$HOME`` also matches where every
+    other piece of generated config now lives.
+    """
+    home = os.environ.get("HOME")
+    if home:
+        return os.path.join(home, ".studio")
+    return "/tmp/studio-state"
+
+
+_DEFAULT_DB_DIR = _state_dir()
 _DEFAULT_DB_PATH = os.path.join(_DEFAULT_DB_DIR, "studio.db")
+
+# Where the database used to live. Kept only to move it on first start.
+_LEGACY_DB_PATH = os.path.join(_default_workspace(), ".studio", "studio.db")
+
+
+def _migrate_legacy_db(new_path: str) -> bool:
+    """Move a database left at the old workspace location.
+
+    Copies rather than repoints: the database holds the user's settings, LLM
+    configuration, chat history and run records, so simply pointing at a new
+    empty path would look exactly like data loss.
+
+    The -wal and -shm siblings come too — leaving them behind risks a stale
+    write-ahead log being applied to the wrong file later.
+    """
+    if os.path.exists(new_path) or not os.path.isfile(_LEGACY_DB_PATH):
+        return False
+    try:
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
+        for suffix in ("", "-wal", "-shm"):
+            src = _LEGACY_DB_PATH + suffix
+            if os.path.isfile(src):
+                shutil.move(src, new_path + suffix)
+    except OSError as e:
+        log.warning("db_migrate_failed", src=_LEGACY_DB_PATH, dst=new_path, error=str(e))
+        return False
+    log.info("db_migrated", src=_LEGACY_DB_PATH, dst=new_path)
+    return True
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tool_installations (
@@ -153,6 +197,7 @@ class Database:
 
     async def connect(self) -> None:
         os.makedirs(os.path.dirname(self._path), exist_ok=True)
+        _migrate_legacy_db(self._path)
         last_err: Exception | None = None
         for attempt in range(1, _CONNECT_ATTEMPTS + 1):
             try:

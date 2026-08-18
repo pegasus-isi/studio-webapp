@@ -326,7 +326,13 @@ RUN git clone --quiet "${KNOWLEDGE_REPO}" /opt/pegasus-ai/marketplace && \
 # The checkout is root-owned and the pod runs as whatever UID KubeSpawner
 # injects, so git refuses it ("detected dubious ownership") — which would make
 # the .git kept above useless for the pull/rollback/verify it exists for.
-RUN git config --system --add safe.directory /opt/pegasus-ai/marketplace
+#
+# BOTH paths are needed. `git -C <dir>` checks the working-tree path, but
+# `git clone <dir>` resolves the source to <dir>/.git and checks that instead —
+# so with only the first entry, inspection worked while the clone the entrypoint
+# makes failed, and failed quietly.
+RUN git config --system --add safe.directory /opt/pegasus-ai/marketplace && \
+    git config --system --add safe.directory /opt/pegasus-ai/marketplace/.git
 
 # Deliberately NOT setting KNOWLEDGE_ROOT: it is the highest-priority override,
 # so pinning it here would force every user onto this read-only copy. The

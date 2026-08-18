@@ -187,6 +187,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         log.warning("reconcile_error", error=str(e))
 
+    # Re-run the knowledge adapters for installed tools, from inside the process
+    # that already owns the DB connection.
+    #
+    # The entrypoint also runs propagate_llm.py, but that is a second process
+    # opening the same NFS-backed SQLite while this one is starting, and it
+    # loses the race: a pod was found whose propagate_llm.log stopped at
+    # "database_connected", killed by its 20s timeout, so no adapter had run —
+    # CLAUDE.md was never written and stale per-workspace copies were never
+    # pruned, with nothing but that truncated log to say so.
+    #
+    # Reconcile above only reinstalls binaries; it does not touch tool config.
+    try:
+        from llm.propagator import LLMPropagator
+
+        await LLMPropagator().propagate(db)
+    except Exception as e:
+        log.warning("llm_propagate_error", error=str(e))
+
     # Periodically reap terminal sessions nobody has been attached to for a
     # long time (server-held shells survive reloads, not abandonment).
     import asyncio

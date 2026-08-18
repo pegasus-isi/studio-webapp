@@ -9,10 +9,16 @@
 set -euo pipefail
 
 WORK="${HOME:-/tmp}/work"
-STUDIO_DIR="${WORK}/.studio"
+# Studio's own state lives beside the user's other config, not inside the
+# directory they keep workflows in: a `rm -rf` in the workspace should not be
+# able to take the settings database with it. init_db.py migrates an existing
+# database from the old location on first start.
+STUDIO_DIR="${HOME:-/tmp}/.studio"
 MARKER="${STUDIO_DIR}/.initialized"
 
-mkdir -p "${WORK}" "${STUDIO_DIR}"
+# workflows/ is where the Marketplace "Add" clones into and where the scaffold
+# skills are told to put projects, so it should exist before anyone looks.
+mkdir -p "${WORK}" "${STUDIO_DIR}" "${WORK}/workflows"
 
 # Nginx temp dirs must exist before nginx starts (non-root can't create them
 # under /var/lib/nginx, so we use /tmp paths configured in nginx.conf).
@@ -41,15 +47,19 @@ IMAGE_MARKETPLACE="/opt/pegasus-ai/marketplace"
 USER_MARKETPLACE="${XDG_DATA_HOME:-${HOME:-/tmp}/.local/share}/pegasus-ai/marketplace"
 if [ ! -d "${USER_MARKETPLACE}/.claude-plugin" ] \
    && [ -d "${IMAGE_MARKETPLACE}/.claude-plugin" ]; then
+    CLONE_ERR=""
     if mkdir -p "$(dirname "${USER_MARKETPLACE}")" \
-       && git clone --quiet "${IMAGE_MARKETPLACE}" "${USER_MARKETPLACE}" 2>/dev/null; then
+       && CLONE_ERR="$(git clone --quiet "${IMAGE_MARKETPLACE}" "${USER_MARKETPLACE}" 2>&1)"; then
         git -C "${USER_MARKETPLACE}" remote set-url origin \
             "${KNOWLEDGE_REPO_URL:-https://github.com/pegasus-isi/claude-plugin-marketplace.git}" \
             2>/dev/null || true
         echo "[studio] Marketplace checked out to ${USER_MARKETPLACE}"
     else
+        # Print git's own message: a bare "could not create" sent one
+        # investigation looking at NFS permissions when the cause was git
+        # refusing the source repository's ownership.
         echo "[studio] WARNING: could not create ${USER_MARKETPLACE} —" \
-             "falling back to the read-only ${IMAGE_MARKETPLACE}" >&2
+             "falling back to the read-only ${IMAGE_MARKETPLACE}: ${CLONE_ERR}" >&2
     fi
 fi
 

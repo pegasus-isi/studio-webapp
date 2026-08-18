@@ -75,7 +75,11 @@ The workspace defaults to `$HOME/work`; application code also supports
 The workspace contains:
 
 - Workflow projects and generated files.
-- SQLite state under `.studio/studio.db`.
+
+Studio's own SQLite state lives at `$HOME/.studio/studio.db`, outside the
+workspace: it holds settings, LLM configuration and history, which should not
+be inside the directory users are told to work in. A database at the old
+`~/work/.studio` path is moved on first start.
 
 Generated tool configuration (`CLAUDE.md`, `AGENTS.md`, `.mcp.json`,
 `.opencode/`, `.agents/`) is written to **`$HOME`**, not the workspace: these
@@ -248,7 +252,7 @@ API and falls back when an endpoint requires Responses.
 
 ## Database
 
-SQLite lives under the workspace, normally `$HOME/work/.studio/studio.db`.
+SQLite lives at `$HOME/.studio/studio.db`, outside the workspace.
 
 Tables:
 
