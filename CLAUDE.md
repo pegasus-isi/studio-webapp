@@ -116,10 +116,20 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
 - **All commits GPG-signed** — use the `gpg-commit` skill.
 - **Branch + PR always**: `feat/<slug>` or `fix/<slug>`, push, `gh pr create`. **Do not
   merge PRs unless explicitly asked** — a merge publishes the production image.
-- **Every PR needs an associated GitHub issue.** Before opening a PR, create one
-  (`gh issue create`) describing the problem/feature it addresses, and link it from
-  the PR body with a closing keyword (`Closes #NN`) so the merge closes it. If an
-  issue already exists for the work, reference that instead of creating a duplicate.
+- **Every PR needs an associated GitHub issue — no exceptions.** Create it
+  (`gh issue create`) **before** `gh pr create`, describing the problem or feature
+  in its own terms, and link it from the PR body with a closing keyword
+  (`Closes #NN`) so the merge closes it. If an issue already exists, reference that
+  rather than creating a duplicate.
+  - This holds for **every** PR, including one-line fixes, follow-ups that repair
+    a defect in a PR merged minutes earlier, docs-only changes, and anything done
+    under time pressure. Rapid follow-ups are exactly when this gets skipped, and
+    they are the changes whose motivation is hardest to reconstruct later.
+  - The issue is not paperwork for the PR: it records *why* — the symptom, the
+    evidence, what was observed in a pod or a log. A PR says what changed; the
+    issue is where someone finds out what was actually wrong.
+  - If a PR was opened without one, create the issue afterwards and link it, then
+    close it if the PR already merged. Do not leave it unlinked.
 - No enforced formatter/linter. Python: `from __future__ import annotations`, PEP 604
   unions, type hints, structlog `log.info("event_name", key=value)`. TS: strict, `@/*`
   alias. Comments in both codebases explain failure modes and "why" — match that tone.
