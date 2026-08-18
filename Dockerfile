@@ -51,6 +51,7 @@ RUN ok=0; for i in 1 2 3 4 5; do \
         wget \
         git \
         vim \
+        poppler-utils \
         build-essential \
         software-properties-common \
         python3.12 \
@@ -100,7 +101,8 @@ RUN python3 -m pip install --no-cache-dir \
     numpy \
     pandas \
     matplotlib \
-    scipy
+    scipy \
+    pypdf
 
 # Defensive: ensure no RTC/collaboration/awareness/document packages slipped in
 # transitively — they drive the 403 collaboration-room loop behind the proxy.

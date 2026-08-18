@@ -41,6 +41,26 @@ Create all of these during scaffolding, not "later":
 
 Do not tell the user to add any of these afterwards.
 
+## Reading PDFs
+
+Your file-reading tool returns text. Handed a PDF it gets binary and you will
+conclude you cannot read PDFs — you can, through a shell:
+
+```bash
+pdftotext -layout paper.pdf -        # to stdout, columns preserved
+pdftotext -layout -f 3 -l 8 paper.pdf -   # pages 3-8 only, for long documents
+pdfinfo paper.pdf                    # page count first, before extracting a large one
+```
+
+Extract, then read the text. Do not tell the user PDFs are unsupported, and do
+not ask them to convert a file by hand.
+
+For programmatic use in a workflow or notebook, `pypdf` is installed.
+
+One real limit: a scanned or image-only PDF yields little or no text, because
+there is none to extract. Say that plainly rather than reporting an empty
+summary — those need OCR, which is not installed.
+
 ## Tooling available here
 
 - **MCP servers**: `pegasus-docs` (Pegasus WMS documentation and source) and
