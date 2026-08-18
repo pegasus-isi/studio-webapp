@@ -76,9 +76,15 @@ The workspace contains:
 
 - Workflow projects and generated files.
 - SQLite state under `.studio/studio.db`.
-- Tool configuration files such as `AGENTS.md`, `CLAUDE.md`, `.mcp.json`, or
-  `.opencode/`.
-- JupyterLab's working directory.
+
+Generated tool configuration (`CLAUDE.md`, `AGENTS.md`, `.mcp.json`,
+`.opencode/`, `.agents/`) is written to **`$HOME`**, not the workspace: these
+tools search from the directory they start in and upwards, and terminals start
+at `$HOME`, so a copy in the workspace existed without ever being found.
+
+JupyterLab is rooted at `$HOME` for the same reason — a browser that could not
+see above the workspace made those files look absent, and workflow runs are
+discovered by scanning all of `$HOME` anyway.
 
 In Kubernetes, mount the user's PVC at `$HOME` or set `STUDIO_WORKSPACE_DIR` to
 the mounted workspace path.
