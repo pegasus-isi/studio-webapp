@@ -224,3 +224,48 @@ def test_saved_provider_models_without_saved_row_uses_preset(client, monkeypatch
     assert resp.json()["valid"] is True
     assert seen["api_key"] == ""
     assert seen["base_url"]  # preset default resolved server-side
+
+
+def test_custom_provider_can_be_added_before_it_is_configured(client):
+    """A custom endpoint is created empty and configured in its card.
+
+    Validating the create deadlocked it: the field supplying the base URL only
+    renders once a row exists, and the row could not be saved without the base
+    URL — so custom endpoints could not be added at all.
+    """
+    resp = client.put("/api/llm/provider-configs", json={
+        "provider_id": "custom-abc123",
+        "name": "Custom Endpoint",
+        "base_url": "",
+        "default_model": "",
+        "api_key": "",
+        "is_active": True,
+    })
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert body["provider_id"] == "custom-abc123"
+    # Never active while unconfigured: chat would point at an endpoint that
+    # cannot answer.
+    assert body["is_active"] is False
+
+
+def test_an_unconfigured_custom_provider_cannot_be_activated(client):
+    client.put("/api/llm/provider-configs", json={
+        "provider_id": "custom-def456", "name": "Draft",
+        "base_url": "", "default_model": "", "api_key": "", "is_active": False,
+    })
+
+    resp = client.post("/api/llm/provider-configs/custom-def456/activate")
+    assert resp.status_code == 400
+    assert "base URL" in resp.json()["detail"]
+
+
+def test_a_preset_provider_still_requires_its_key(client):
+    """Relaxing the custom create must not relax the preset rule."""
+    resp = client.put("/api/llm/provider-configs", json={
+        "provider_id": "anthropic", "name": "Anthropic",
+        "base_url": "", "default_model": "", "api_key": "", "is_active": False,
+    })
+    assert resp.status_code == 400
+    assert "API key" in resp.json()["detail"]

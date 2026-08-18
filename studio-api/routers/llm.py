@@ -255,9 +255,25 @@ async def upsert_provider_config(req: ProviderConfigRequest) -> ProviderConfigRe
         if existing:
             api_key = existing.get("api_key") or ""
 
-    error = await check_api_key_requirement(req.provider_id, api_key, req.base_url)
-    if error:
-        raise HTTPException(status_code=400, detail=error)
+    # A custom endpoint is created empty and configured afterwards, in the card
+    # that only renders once the row exists. Validating the create therefore
+    # deadlocked it: the field that supplies the base URL could not appear until
+    # a row was saved, and the row could not be saved without the base URL, so
+    # custom providers could not be added at all.
+    #
+    # The draft is allowed through instead. Activation still validates (see
+    # activate_provider below), so an unconfigured endpoint can be saved but
+    # never used.
+    draft = provider_type(req.provider_id) == "custom" and not (
+        req.base_url or ""
+    ).strip()
+
+    if not draft:
+        error = await check_api_key_requirement(
+            req.provider_id, api_key, req.base_url
+        )
+        if error:
+            raise HTTPException(status_code=400, detail=error)
 
     await db.upsert_provider_config(
         provider_id=req.provider_id,
@@ -265,12 +281,16 @@ async def upsert_provider_config(req: ProviderConfigRequest) -> ProviderConfigRe
         api_key=api_key,
         base_url=req.base_url,
         default_model=req.default_model,
-        is_active=req.is_active,
+        is_active=req.is_active and not draft,
     )
 
-    # If this is the active provider, sync to llm_config
-    if req.is_active:
+    # If this is the active provider, sync to llm_config. Never for a draft:
+    # the first provider added is submitted with is_active, and activating one
+    # with no base URL would leave chat pointing at an endpoint that cannot work.
+    if req.is_active and not draft:
         await db.set_active_provider(req.provider_id)
+    elif draft:
+        log.info("provider_draft_saved", provider_id=req.provider_id)
 
     # Always propagate so tool configs (e.g. codex config.toml) stay in sync
     await _propagate_and_restart(db)
