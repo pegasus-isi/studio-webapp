@@ -151,9 +151,28 @@ LEGACY_WORKSPACE_FILES = (
     "opencode.json",
     ".mcp.json",
 )
-LEGACY_WORKSPACE_DIRS = (
+# Generated *inside* those directories. Listed individually rather than removing
+# the parent, so a user's own project settings sitting beside ours (a
+# .claude/settings.local.json, say) are not collateral. Empty parents are
+# cleaned up afterwards.
+LEGACY_WORKSPACE_PATHS = (
+    os.path.join(".opencode", "skills"),
+    os.path.join(".opencode", "agents"),
+    os.path.join(".opencode", "opencode.json"),
+    os.path.join(".agents", "skills"),
+    os.path.join(".codex", "agents"),
+    os.path.join(".claude", "settings.json"),
+    os.path.join(".antigravity", "context.md"),
+)
+
+# Parents to remove once whatever we generated inside them is gone — and only
+# if nothing else remains.
+LEGACY_WORKSPACE_PARENTS = (
     ".opencode",
     ".agents",
+    ".codex",
+    ".claude",
+    ".antigravity",
 )
 
 
@@ -171,35 +190,44 @@ def prune_legacy_workspace_copies(workspace: str) -> list[str]:
     """Remove generated config left behind in the workspace.
 
     Skipped when the workspace *is* the config root, so this can never delete
-    the live files. Only ever touches names this code generates.
+    the live files. Only ever touches paths this code generates.
     """
     root = os.path.realpath(config_root())
     if not workspace or os.path.realpath(workspace) == root:
         return []
 
     removed: list[str] = []
-    for name in LEGACY_WORKSPACE_FILES:
-        path = os.path.join(workspace, name)
-        if os.path.isfile(path) or os.path.islink(path):
-            try:
+
+    def _drop(rel: str) -> None:
+        path = os.path.join(workspace, rel)
+        try:
+            if os.path.islink(path):
                 os.unlink(path)
-                removed.append(name)
-            except OSError:
-                pass
-    for name in LEGACY_WORKSPACE_DIRS:
-        path = os.path.join(workspace, name)
-        if os.path.islink(path):
-            try:
-                os.unlink(path)
-                removed.append(name)
-            except OSError:
-                pass
-        elif os.path.isdir(path):
-            try:
+            elif os.path.isdir(path):
                 shutil.rmtree(path)
+            elif os.path.exists(path):
+                os.unlink(path)
+            else:
+                return
+        except OSError:
+            return
+        removed.append(rel)
+
+    for name in LEGACY_WORKSPACE_FILES:
+        _drop(name)
+    for rel in LEGACY_WORKSPACE_PATHS:
+        _drop(rel)
+
+    # Only empty ones: anything the user put there keeps the directory alive.
+    for name in LEGACY_WORKSPACE_PARENTS:
+        path = os.path.join(workspace, name)
+        try:
+            if os.path.isdir(path) and not os.path.islink(path) and not os.listdir(path):
+                os.rmdir(path)
                 removed.append(name)
-            except OSError:
-                pass
+        except OSError:
+            pass
+
     if removed:
         log.info("legacy_workspace_config_pruned", workspace=workspace, removed=removed)
     return removed

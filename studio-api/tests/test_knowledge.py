@@ -317,7 +317,12 @@ def test_config_root_is_home_not_the_workspace(monkeypatch, tmp_path):
 
 
 def test_legacy_workspace_copies_are_pruned(monkeypatch, tmp_path):
-    """Otherwise the stale copy wins whenever cwd happens to be ~/work."""
+    """Otherwise the stale copy wins whenever cwd happens to be ~/work.
+
+    A live pod was found with .opencode, .agents, .codex, .claude and
+    .antigravity all still sitting in the workspace months after the config
+    moved, quietly shadowing the current tree.
+    """
     from knowledge.common import prune_legacy_workspace_copies
 
     home = tmp_path / "home"
@@ -329,16 +334,40 @@ def test_legacy_workspace_copies_are_pruned(monkeypatch, tmp_path):
     (workspace / "AGENTS.md").write_text("old")
     (workspace / "opencode.json").write_text("{}")
     (workspace / ".opencode" / "skills").mkdir(parents=True)
+    (workspace / ".agents" / "skills").mkdir(parents=True)
+    (workspace / ".codex" / "agents").mkdir(parents=True)
+    (workspace / ".claude").mkdir()
+    (workspace / ".claude" / "settings.json").write_text("{}")
+    (workspace / ".antigravity").mkdir()
+    (workspace / ".antigravity" / "context.md").write_text("old")
     keep = workspace / "my-workflow"
     keep.mkdir()
 
     removed = prune_legacy_workspace_copies(str(workspace))
 
-    assert set(removed) >= {"CLAUDE.md", "AGENTS.md", "opencode.json", ".opencode"}
-    assert not (workspace / "CLAUDE.md").exists()
-    assert not (workspace / ".opencode").exists()
+    assert "CLAUDE.md" in removed and "opencode.json" in removed
+    for parent in (".opencode", ".agents", ".codex", ".claude", ".antigravity"):
+        assert not (workspace / parent).exists(), parent
     # Only generated names are touched — never the user's own work.
     assert keep.is_dir()
+
+
+def test_pruning_keeps_a_directory_holding_the_users_own_files(monkeypatch, tmp_path):
+    """Removing the parent wholesale would take a user's settings with it."""
+    from knowledge.common import prune_legacy_workspace_copies
+
+    home = tmp_path / "home"
+    workspace = home / "work"
+    (workspace / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    (workspace / ".claude" / "settings.json").write_text("{}")      # ours
+    (workspace / ".claude" / "settings.local.json").write_text("!") # theirs
+
+    prune_legacy_workspace_copies(str(workspace))
+
+    assert not (workspace / ".claude" / "settings.json").exists()
+    assert (workspace / ".claude" / "settings.local.json").read_text() == "!"
 
 
 def test_pruning_never_deletes_the_live_files(monkeypatch, tmp_path):
