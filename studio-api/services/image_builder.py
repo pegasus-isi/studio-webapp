@@ -46,20 +46,22 @@ _PING_INTERVAL_S = 10.0
 # does not need it at all).
 _FAKEROOT = os.environ.get("STUDIO_BUILD_FAKEROOT", "").lower()
 
-# apt (Debian/Ubuntu bases) drops privileges to the _apt user during downloads.
-# Where root is emulated rather than real, that setuid()/setgroups() to uid 42 /
-# gid 65534 fails:
-#   E: setgroups 65534 failed - setgroups (1: Operation not permitted)
-# Binding an apt.conf that pins Sandbox::User to root keeps apt running as the
-# (emulated) root and skips the privilege drop entirely. Debian/Ubuntu bases
-# only; disable for images without /etc/apt/apt.conf.d (e.g. Alpine) via
-# STUDIO_BUILD_APT_FIX=0.
-_APT_FIX = os.environ.get("STUDIO_BUILD_APT_FIX", "1").lower() not in (
-    "0", "false", "no",
-)
-_APT_CONF_PATH = os.environ.get(
-    "STUDIO_BUILD_APT_CONF", "/etc/studio/apt-no-sandbox.conf"
-)
+# %post runs as root inside the build sandbox. When the studio process is not
+# root that has to be emulated: --fakeroot uses subuid/subgid ranges where they
+# exist and falls back to Apptainer's rootless path otherwise.
+#
+# --ignore-fakeroot-command goes with it. Without it Apptainer LD_PRELOADs the
+# *host* libfakeroot.so into the container, which fails whenever their glibcs
+# differ — an ubuntu:22.04 base under this ubuntu:24.04 image dies with
+# "GLIBC_2.38 not found" before %post runs at all. The kernel user-namespace
+# root mapping needs no such library.
+#
+# Note apt still cannot drop privileges to _apt under an emulated root
+# ("setgroups: Operation not permitted"). That is fixed in the definition file,
+# where /etc/apt/apt.conf.d exists — see the pegasus-apptainer skill. It cannot
+# be fixed with --bind: Apptainer will not create a bind destination that is
+# absent from the container, so binding an apt.conf failed every build with
+# "destination doesn't exist in container".
 
 
 def detect_builder() -> str | None:
@@ -86,12 +88,7 @@ def build_command(builder: str, sif: str, definition: str) -> list[str]:
     """
     cmd = [builder, "build", "--force"]
     if _use_fakeroot():
-        cmd.append("--fakeroot")
-    if _APT_FIX and os.path.isfile(_APT_CONF_PATH):
-        cmd += [
-            "--bind",
-            f"{_APT_CONF_PATH}:/etc/apt/apt.conf.d/00-studio-no-sandbox.conf:ro",
-        ]
+        cmd += ["--fakeroot", "--ignore-fakeroot-command"]
     cmd += [sif, definition]
     return cmd
 
