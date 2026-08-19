@@ -5,7 +5,7 @@ Scenario B of the chat-engine design: Studio runs ONE shared OpenCode server
 join the *same* runtime with `opencode attach $OPENCODE_ATTACH_URL` (env is
 injected into Studio terminals), so panel and terminal share sessions live.
 
-Wire protocol (verified against opencode 1.17.20 via its /doc OpenAPI spec):
+Wire protocol (verified against opencode 1.18.8 via its /doc OpenAPI spec):
 
 * ``POST /session``                     -> create session (id ``ses_…``)
 * ``POST /session/{id}/prompt_async``   -> send user parts, returns 204

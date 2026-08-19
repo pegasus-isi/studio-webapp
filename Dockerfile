@@ -227,7 +227,7 @@ ENV PATH="/opt/npm-global/bin:${PATH}"
 # event translation is validated against this release's API (/doc OpenAPI).
 # The startup seeding step (main._seed_default_tools) registers it as
 # installed and runs its knowledge adapter on first boot.
-RUN npm install -g opencode-ai@1.17.20 && opencode --version \
+RUN npm install -g opencode-ai@1.18.8 && opencode --version \
     # opencode's install (as root) creates /opt/npm-global/lib/node_modules
     # owned root:root 0755 — the earlier `chmod 777` only covered the top dir,
     # so an unprivileged notebook can't `npm install -g` Codex/Claude into it
