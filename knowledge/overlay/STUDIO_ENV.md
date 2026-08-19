@@ -54,28 +54,18 @@ code in chat and report that files were created: the user is watching a file
 browser, and an empty directory is a failure regardless of how good the code in
 the transcript was. After writing, run `ls -R` and show the result.
 
-## What a complete workflow contains
+## Finishing a workflow
 
-All of these, created now — not "later", not "as a next step":
+What a complete workflow contains is defined by the `pegasus-scaffold` skill,
+which lists the deliverables and the checks to run before reporting one as done.
+Invoke it rather than improvising a shorter set — `run_manual.sh` and `README.md`
+are the two that get dropped when the generator took a while to write.
 
-1. `specification.md` — when the user asked for a specification
-2. `workflow_generator.py` — the DAG generator, with all five catalogs
-3. `bin/*` — one wrapper script per pipeline step
-4. `Apptainer/<Name>.def` — the container definition
-5. `run_manual.sh` — runs the pipeline once without Pegasus; `chmod +x` it
-6. `README.md` — what it does and how to run it
-
-**Check before you report it as done:**
+The Studio-specific part is only *where* to verify:
 
 ```bash
 ls -R $HOME/work/workflows/<workflow-name>
 ```
-
-Read that listing against the six items. Anything missing, create it now. Do not
-describe the workflow as complete while an item is absent, and do not tell the
-user to add one themselves — `run_manual.sh` and `README.md` are the two that
-get dropped, and a workflow without them is one nobody else can run or
-understand.
 
 ## Reading PDFs
 
