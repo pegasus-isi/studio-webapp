@@ -77,8 +77,10 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   (`lib/stores/`).
 - **Knowledge base** — skills, agents, templates and examples are authored in
   [pegasus-isi/claude-plugin-marketplace](https://github.com/pegasus-isi/claude-plugin-marketplace)
-  and checked out into the image at `/opt/pegasus-ai/marketplace` (pinned by the
-  `KNOWLEDGE_REF` build arg). That copy is a **seed**: the entrypoint clones it
+  and checked out into the image at `/opt/pegasus-ai/marketplace`, tracking
+  `main` (`KNOWLEDGE_REF` overrides it for a fixed build — the running version is
+  the user checkout's SHA, shown in Settings → Tools, not a build-time pin).
+  That copy is a **template**: the entrypoint clones it
   into `~/.local/share/pegasus-ai/marketplace` at first launch, which is what
   tools read — writable, so skills update with `git pull` and roll back with
   `git checkout`, no root and no rebuild, and it survives pod restarts. **Do not add a copy under `knowledge/`** — CI fails

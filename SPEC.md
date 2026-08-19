@@ -203,9 +203,13 @@ adapter. Starting a terminal tool creates a WebSocket PTY in the workspace.
 
 Knowledge is authored once, in
 [pegasus-isi/claude-plugin-marketplace](https://github.com/pegasus-isi/claude-plugin-marketplace),
-and checked out into the runtime image at `/opt/pegasus-ai/marketplace`, pinned
-by the `KNOWLEDGE_REF` build arg. `.git` is kept, so the pinned SHA is verifiable
-and skills can be updated or rolled back in a running pod without a rebuild.
+and checked out into the runtime image at `/opt/pegasus-ai/marketplace`, which
+tracks `main` (`KNOWLEDGE_REF` overrides it for a fixed build). That copy is a
+template: the entrypoint clones it into the user's own
+`~/.local/share/pegasus-ai/marketplace`, which fast-forwards to `origin/main` at
+each start and is what tools read. `.git` is kept, so a session's skills can be
+updated or rolled back in a running pod without a rebuild, and the checkout's
+SHA — reported in Settings → Tools — is the answer to which skills are in use.
 Studio does not keep a copy; CI fails if one reappears under `knowledge/`.
 
 | Directory | Contents |

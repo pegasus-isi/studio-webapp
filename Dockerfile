@@ -310,15 +310,26 @@ RUN chmod +x /etc/supervisor/scripts/*.sh
 # Authored once in pegasus-isi/claude-plugin-marketplace and checked out here.
 # Studio deliberately does not carry its own copy: when it did, the two drifted
 # to the point of giving different container advice depending on which AI tool
-# the user launched. Pinned to a commit so a rebuild is reproducible; bump
-# KNOWLEDGE_REF to take new skills.
+# the user launched.
 #
 # A checkout rather than a package because the update story is better in every
 # direction that matters here: the SHA is the version (a package version has to
 # be bumped by hand and silently lies when it isn't), `git pull` moves kilobytes
 # where a reinstall re-downloads everything, and rollback is a checkout. .git is
 # kept — 320 KB — so all three work inside a running pod without a rebuild.
-ARG KNOWLEDGE_REF=322cc64ce6c63db6f025a2f6e7bd2b6f6ace5cd9
+#
+# This tracks main rather than pinning a SHA, deliberately. The user's checkout
+# fast-forwards to origin/main at every start, so a pin here would have decided
+# only what the first launch cloned before being superseded seconds later — it
+# would have described the image, never the running system, while reading like a
+# guarantee. What a session is actually running is its checkout's SHA, which the
+# Settings > Tools panel reports and `git -C ~/.local/share/pegasus-ai/marketplace
+# log` confirms.
+#
+# Override to build against a fixed commit when you need one — an incident, a
+# bisect, an air-gapped host that will never pull:
+#   docker build --build-arg KNOWLEDGE_REF=<sha> ...
+ARG KNOWLEDGE_REF=main
 ARG KNOWLEDGE_REPO=https://github.com/pegasus-isi/claude-plugin-marketplace.git
 RUN git clone --quiet "${KNOWLEDGE_REPO}" /opt/pegasus-ai/marketplace && \
     git -C /opt/pegasus-ai/marketplace checkout --quiet "${KNOWLEDGE_REF}" && \
