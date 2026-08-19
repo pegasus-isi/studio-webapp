@@ -271,7 +271,8 @@ def test_context_files_are_restored_when_missing(monkeypatch, tmp_path):
     assert "Pegasus guide" in target.read_text()
 
 
-def test_context_file_never_overwrites_user_edits(monkeypatch, tmp_path):
+def test_a_hand_written_context_file_survives(monkeypatch, tmp_path):
+    """A file the user wrote is kept; the managed block goes above it."""
     from knowledge.common import ensure_context_file
 
     root = tmp_path / "checkout"
@@ -283,8 +284,10 @@ def test_context_file_never_overwrites_user_edits(monkeypatch, tmp_path):
     target.parent.mkdir(parents=True)
     target.write_text("my own notes\n")
 
-    assert ensure_context_file(str(target)) is False
-    assert target.read_text() == "my own notes\n"
+    assert ensure_context_file(str(target)) is True
+    text = target.read_text()
+    assert "my own notes" in text          # theirs, kept
+    assert "Pegasus guide" in text         # ours, added above it
 
 
 def test_update_llm_config_restores_claude_md(monkeypatch, tmp_path):
@@ -414,3 +417,50 @@ def test_legacy_database_is_moved_not_abandoned(monkeypatch, tmp_path):
     (legacy_dir / "studio.db").write_text("STALE")
     assert db_mod._migrate_legacy_db(str(new_path)) is False
     assert new_path.read_text() == "PRETEND SQLITE"
+
+
+def test_a_stale_generated_file_is_refreshed(monkeypatch, tmp_path):
+    """The bug this fixes: guidance shipped in the image never reached users.
+
+    A generated file was written once and never touched again, so a pod kept
+    last week's instructions no matter what the image said — indistinguishable
+    from the fix never having been made.
+    """
+    from knowledge.common import ensure_context_file
+
+    root = tmp_path / "checkout"
+    (root / "references").mkdir(parents=True)
+    (root / "references" / "PEGASUS.md").write_text("# NEW guidance\n")
+    (root / "skills").mkdir()
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+    monkeypatch.setenv("KNOWLEDGE_OVERLAY", str(tmp_path / "none"))
+
+    target = tmp_path / "AGENTS.md"
+    # What an older build left behind: no managed block, but recognisably ours.
+    target.write_text("# OLD guidance\n\n## Available Pegasus Skills\n\n- /scaffold\n")
+
+    assert ensure_context_file(str(target)) is True
+    text = target.read_text()
+    assert "NEW guidance" in text
+    assert "OLD guidance" not in text
+
+
+def test_refreshing_preserves_text_outside_the_block(monkeypatch, tmp_path):
+    from knowledge.common import ensure_context_file
+
+    root = tmp_path / "checkout"
+    (root / "references").mkdir(parents=True)
+    (root / "references" / "PEGASUS.md").write_text("# v1\n")
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+    monkeypatch.setenv("KNOWLEDGE_OVERLAY", str(tmp_path / "none"))
+
+    target = tmp_path / "CLAUDE.md"
+    ensure_context_file(str(target))
+    target.write_text(target.read_text() + "\n## My own notes\n\nkeep me\n")
+
+    (root / "references" / "PEGASUS.md").write_text("# v2\n")
+    assert ensure_context_file(str(target)) is True
+
+    text = target.read_text()
+    assert "v2" in text and "v1" not in text   # ours refreshed
+    assert "keep me" in text                    # theirs untouched
