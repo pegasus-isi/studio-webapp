@@ -103,7 +103,16 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   `src/api.ts`, `src/toolbarPlugin.ts`). Disable with `--build-arg
   ENABLE_PEGASUS_BOT_CLIENT=0`. Respect the vendoring boundary.
 - Chat is engine-dispatched (`routers/chat.py`): `opencode` (default) or `builtin`
-  fallback. The Marketplace is sourced live from GitHub (PegasusHub registry +
+  fallback. **`chat.py` is not legacy** — `_opencode_stream()` lives in it and
+  serves every real session; only the builtin engine's own machinery
+  (`TOOL_DEFINITIONS`, the direct provider calls, the Responses-API fallback) is
+  the seldom-exercised part. Both share `_load_system_prompt()` and
+  `_process_slash_command()`, so a change made "just for the builtin engine"
+  reaches opencode too — which is how the chat lost its context, personas and
+  skills at once when this file kept its own `KNOWLEDGE_ROOT` after the
+  knowledge base moved (#179). Anything reading the knowledge tree goes through
+  `knowledge/layout.py`; nothing should resolve it independently.
+  The Marketplace is sourced live from GitHub (PegasusHub registry +
   curated Pegasus-ISI list), nothing baked in. "Add" git-clones into `~/work/workflows`.
 - Deliberate exclusions: JupyterLab ships **without** `jupyter-ai` and without
   RTC/collaboration extensions (they break behind the proxy) — don't re-add. The ep/
