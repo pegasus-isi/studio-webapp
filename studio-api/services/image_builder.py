@@ -64,6 +64,38 @@ _FAKEROOT = os.environ.get("STUDIO_BUILD_FAKEROOT", "").lower()
 # "destination doesn't exist in container".
 
 
+
+# Apt cannot drop privileges to the _apt user under an emulated root, so every
+# download fails with "setgroups: Operation not permitted" — and the build then
+# limps on to a confusing "pip3: not found" because the packages never arrived.
+#
+# The setting has to be inside the container, where /etc/apt/apt.conf.d exists;
+# a bind mount cannot supply it. Rather than require every definition to carry
+# the line (existing ones do not, and the constraint is the builder's, not the
+# author's), build from an augmented copy. The user's file is never modified,
+# and the log says what was added.
+_APT_FIX_LINE = (
+    "printf 'APT::Sandbox::User \"root\";\\n' > /etc/apt/apt.conf.d/00-studio-no-sandbox"
+)
+_POST_RE = re.compile(r"^\s*%post\b.*$", re.M)
+
+
+def needs_apt_fix(text: str) -> bool:
+    """True if the definition installs with apt and does not already set this."""
+    if "APT::Sandbox::User" in text:
+        return False
+    return bool(re.search(r"^\s*(apt-get|apt|aptitude)\s", text, re.M))
+
+
+def with_apt_fix(text: str) -> str | None:
+    """Return the definition with the apt setting as the first %post step."""
+    m = _POST_RE.search(text)
+    if not m:
+        return None
+    insert_at = m.end()
+    return text[:insert_at] + "\n    " + _APT_FIX_LINE + text[insert_at:]
+
+
 def detect_builder() -> str | None:
     """First available Apptainer-compatible builder on PATH."""
     for binary in _BUILDERS:
@@ -246,8 +278,36 @@ async def stream_build(
     definition, sif = found
 
     deadline = time.monotonic() + _BUILD_TIMEOUT_S
-    cmd = build_command(builder, sif, definition)
+
+    # Build from an augmented copy when apt would fail under an emulated root.
+    # Written beside the original so relative %files paths still resolve.
+    build_def, temp_def = definition, None
+    if _use_fakeroot():
+        try:
+            with open(definition) as fh:
+                text = fh.read()
+            if needs_apt_fix(text):
+                patched = with_apt_fix(text)
+                if patched:
+                    temp_def = os.path.join(
+                        os.path.dirname(definition),
+                        f".studio-build-{os.path.basename(definition)}",
+                    )
+                    with open(temp_def, "w") as fh:
+                        fh.write(patched)
+                    build_def = temp_def
+        except OSError as e:
+            log.warning("apt_fix_skipped", definition=definition, error=str(e))
+
+    cmd = build_command(builder, sif, build_def)
     yield _sse({"phase": "build", "image": sif, "builder": builder})
+    if temp_def:
+        yield _sse({"line": (
+            "note: this build runs unprivileged, where apt cannot drop "
+            "privileges to _apt. Added to %post for this build only "
+            "(your .def is unchanged):\n"
+            f"    {_APT_FIX_LINE}"
+        )})
     yield _sse({"line": f"$ {' '.join(cmd)}"})
 
     rc = 1
@@ -260,6 +320,12 @@ async def stream_build(
             yield ": ping\n\n"
         else:
             rc = value
+    if temp_def:
+        try:
+            os.unlink(temp_def)
+        except OSError:
+            pass
+
     if rc != 0:
         yield _sse({"status": "error", "image": sif,
                     "error": f"Build failed (exit {rc})."})
