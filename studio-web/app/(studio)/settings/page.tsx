@@ -168,7 +168,11 @@ function ProvidersTab() {
         base_url: isCustom ? "" : preset?.base_url || "",
         default_model: isCustom ? "" : preset?.default_model || "",
         api_key: "",
-        is_active: savedConfigs.length === 0,
+        // A custom endpoint starts empty and is configured in its card, so it
+        // cannot be the active provider yet — activating one with no base URL
+        // would point chat at an endpoint that cannot answer. The backend
+        // enforces this too; sending it correctly keeps the UI honest.
+        is_active: savedConfigs.length === 0 && !isCustom,
       })
     );
     if (!result) return; // failure already surfaced as a toast
@@ -323,6 +327,10 @@ function ProviderCard({
   const preset = presets.find((p) => p.id === config.provider_id);
   const isCustom = config.provider_id.startsWith("custom");
   const needsBaseUrl = isCustom || config.provider_id === "ollama";
+  // Saved but not yet usable: a custom endpoint is created empty and configured
+  // here. Without this it looks like any other provider while quietly refusing
+  // to activate.
+  const incomplete = needsBaseUrl && !config.base_url;
 
   const handleSave = async () => {
     // Only show "Saved" if the save actually succeeded (FE-6) — onSave
@@ -399,6 +407,12 @@ function ProviderCard({
           </button>
         </div>
       </div>
+
+      {incomplete && (
+        <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+          Set a base URL below and save before this endpoint can be activated.
+        </p>
+      )}
 
       <div className="mt-3 space-y-3">
         {/* Name (custom endpoints — so multiple are distinguishable) */}
