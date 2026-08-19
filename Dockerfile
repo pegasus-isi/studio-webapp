@@ -318,7 +318,7 @@ RUN chmod +x /etc/supervisor/scripts/*.sh
 # be bumped by hand and silently lies when it isn't), `git pull` moves kilobytes
 # where a reinstall re-downloads everything, and rollback is a checkout. .git is
 # kept — 320 KB — so all three work inside a running pod without a rebuild.
-ARG KNOWLEDGE_REF=322cc64ce6c63db6f025a2f6e7bd2b6f6ace5cd9
+ARG KNOWLEDGE_REF=f82b2980a3399e6f540497ee7d9f3ae42eb2a179
 ARG KNOWLEDGE_REPO=https://github.com/pegasus-isi/claude-plugin-marketplace.git
 RUN git clone --quiet "${KNOWLEDGE_REPO}" /opt/pegasus-ai/marketplace && \
     git -C /opt/pegasus-ai/marketplace checkout --quiet "${KNOWLEDGE_REF}" && \
