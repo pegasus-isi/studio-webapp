@@ -224,8 +224,11 @@ class CodexCLIAdapter(KnowledgeAdapter):
         from the provider_configs DB table. If not present, falls back to
         writing just the single active provider.
         """
-        # Runs on every start, so a deleted AGENTS.md is restored here.
+        # Runs on every start, so a deleted AGENTS.md is restored here — and the
+        # skill links too, which install() alone would never recreate.
         ensure_context_file(os.path.join(workspace, "AGENTS.md"))
+        link_skills_to_dir(os.path.join(workspace, ".agents", "skills"))
+        _seed_codex_agents(workspace)
         provider = llm_config.get("provider", "openai")
         model = llm_config.get("model", "")
         api_key = llm_config.get("api_key", "")

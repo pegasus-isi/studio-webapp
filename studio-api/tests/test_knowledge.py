@@ -464,3 +464,54 @@ def test_refreshing_preserves_text_outside_the_block(monkeypatch, tmp_path):
     text = target.read_text()
     assert "v2" in text and "v1" not in text   # ours refreshed
     assert "keep me" in text                    # theirs untouched
+
+
+def _fake_checkout(tmp_path):
+    root = tmp_path / "checkout"
+    (root / "skills" / "pegasus-scaffold").mkdir(parents=True)
+    (root / "skills" / "pegasus-scaffold" / "SKILL.md").write_text(
+        "---\nname: pegasus-scaffold\ndescription: d\n---\n"
+    )
+    (root / "agents").mkdir()
+    (root / "agents" / "workflow-architect.md").write_text(
+        "---\nname: workflow-architect\ndescription: d\n---\n"
+    )
+    (root / "references").mkdir()
+    (root / "references" / "PEGASUS.md").write_text("# guide\n")
+    return root
+
+
+def test_startup_creates_tool_skill_links(monkeypatch, tmp_path):
+    """The assistant ran with no skills because links were made only by install().
+
+    Startup calls update_llm_config(), so when the config root moved to $HOME
+    nothing ever created .opencode/skills there — and a model with no skills
+    improvises, in one case inventing a question tool that does not exist.
+    """
+    from knowledge.opencode import OpenCodeAdapter
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(_fake_checkout(tmp_path)))
+
+    OpenCodeAdapter().update_llm_config(str(home), {"provider": "gateway"})
+
+    assert (home / ".opencode" / "skills" / "pegasus-scaffold" / "SKILL.md").is_file()
+    assert (home / ".opencode" / "agents" / "workflow-architect.md").is_file()
+    # A symlink, so a checkout update is visible without re-running anything.
+    assert os.path.islink(home / ".opencode" / "skills")
+
+
+def test_codex_startup_creates_skill_links(monkeypatch, tmp_path):
+    from knowledge.codex_cli import CodexCLIAdapter
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(_fake_checkout(tmp_path)))
+
+    CodexCLIAdapter().update_llm_config(str(home), {"provider": "gateway"})
+
+    assert (home / ".agents" / "skills" / "pegasus-scaffold" / "SKILL.md").is_file()

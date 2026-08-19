@@ -66,9 +66,15 @@ class OpenCodeAdapter(KnowledgeAdapter):
 
     def update_llm_config(self, workspace: str, llm_config: dict[str, Any]) -> None:
         """Rewrite opencode.json with the current provider config."""
-        # Runs on every start, so it is also where a deleted AGENTS.md comes back.
+        # Runs on every start, so it is also where a deleted AGENTS.md comes back
+        # and where the skill/agent links are (re)made. install() alone was not
+        # enough: startup only calls this, so when the config root moved to $HOME
+        # the links were never created there and the assistant ran with no skills
+        # at all — improvising instead of following pegasus-scaffold.
         ensure_context_file(os.path.join(workspace, "AGENTS.md"))
         ensure_context_file(os.path.join(_global_config_dir(), "AGENTS.md"))
+        link_agents_to_dir(os.path.join(workspace, ".opencode", "agents"))
+        link_skills_to_dir(os.path.join(workspace, ".opencode", "skills"))
         provider = llm_config.get("provider", "anthropic")
         ptype = provider_type(provider)  # custom-<id> -> "custom", etc.
         model = llm_config.get("model")
