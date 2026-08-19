@@ -13,14 +13,38 @@ what is specific to *this* environment, which the guide cannot know.
 - **`/tmp` does not.** Files there are lost on restart and are invisible to the
   file browser. Never put workflow files in `/tmp`.
 
-Give each workflow its own directory under `$HOME`, named in kebab-case after
-what it does. `$HOME/workflows/<name>/` is a good default, and
-`$HOME/work/workflows/<name>/` is equally fine — Studio discovers runs by
-scanning for `braindump.yml` anywhere under `$HOME`, so the exact location is
-yours to choose. What matters is that it is under `$HOME`, and that one workflow
-does not scatter across several directories.
+## Where a workflow goes — exactly one place
 
-**Ask the user for a workflow name before creating anything.** Do not invent one.
+```
+$HOME/work/workflows/<workflow-name>/
+```
+
+Nowhere else. The Workflows tab lists the immediate children of
+`$HOME/work/workflows/` and nothing deeper or elsewhere, so a project written to
+`$HOME/workflows/`, `$HOME/<name>/` or any other path **does not appear in the UI
+at all** — no Generate, Plan, Run or Build buttons for it, even though the files
+are on disk and look fine in the file browser. It is not a matter of taste or of
+"anywhere under `$HOME`": one directory is scanned.
+
+`<workflow-name>` is kebab-case and describes what the workflow does. **Ask the
+user for it before creating anything** — do not invent one.
+
+**Everything for that workflow lives inside that one directory**, including
+documents you write about it. A specification, README, notes, the generator,
+`bin/`, `Apptainer/` and data all belong under
+`$HOME/work/workflows/<workflow-name>/`. Do not put a specification in `$HOME`
+and the code somewhere else: a scattered project is one the user cannot run.
+
+So a request to "write specification.md first, then build the workflow" means:
+
+```
+$HOME/work/workflows/<workflow-name>/specification.md
+$HOME/work/workflows/<workflow-name>/workflow_generator.py
+$HOME/work/workflows/<workflow-name>/bin/…
+$HOME/work/workflows/<workflow-name>/Apptainer/…
+```
+
+Create the project directory first, then write into it.
 
 ## Writing files
 
