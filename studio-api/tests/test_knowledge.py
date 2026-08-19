@@ -481,13 +481,42 @@ def _fake_checkout(tmp_path):
     return root
 
 
-def test_startup_creates_tool_skill_links(monkeypatch, tmp_path):
-    """The assistant ran with no skills because links were made only by install().
+def test_startup_declares_skills_by_absolute_path(monkeypatch, tmp_path):
+    """Discovery must not depend on where the process started.
 
-    Startup calls update_llm_config(), so when the config root moved to $HOME
-    nothing ever created .opencode/skills there — and a model with no skills
-    improvises, in one case inventing a question tool that does not exist.
+    opencode finds skills by walking up from the cwd. Studio's server starts in
+    ~/work today, so that happened to work — but which skills the model can
+    invoke should not be a property of a directory nobody chose deliberately.
+    Declaring the checkout path settles it from any cwd.
     """
+    import json
+
+    from knowledge.opencode import OpenCodeAdapter
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    checkout = _fake_checkout(tmp_path)
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(checkout))
+
+    OpenCodeAdapter().update_llm_config(str(home), {"provider": "gateway"})
+
+    gdir = home / ".config" / "opencode"
+    config = json.loads((gdir / "opencode.json").read_text())
+
+    assert config["skills"] == {"paths": [str(checkout / "skills")]}
+    # Points at the checkout itself, so a `git pull` is live with no relinking.
+    assert (checkout / "skills" / "pegasus-scaffold" / "SKILL.md").is_file()
+
+    # Same reasoning for the context file: a bare "AGENTS.md" resolves against
+    # whatever project opencode walked up to.
+    assert config["instructions"] == [str(gdir / "AGENTS.md")]
+    assert (gdir / "AGENTS.md").is_file()
+
+
+def test_startup_links_agents_into_the_global_dir(monkeypatch, tmp_path):
+    """~/.config/opencode/agent/<name>.md is the documented any-cwd location."""
     from knowledge.opencode import OpenCodeAdapter
 
     home = tmp_path / "home"
@@ -498,10 +527,36 @@ def test_startup_creates_tool_skill_links(monkeypatch, tmp_path):
 
     OpenCodeAdapter().update_llm_config(str(home), {"provider": "gateway"})
 
-    assert (home / ".opencode" / "skills" / "pegasus-scaffold" / "SKILL.md").is_file()
-    assert (home / ".opencode" / "agents" / "workflow-architect.md").is_file()
-    # A symlink, so a checkout update is visible without re-running anything.
-    assert os.path.islink(home / ".opencode" / "skills")
+    agent = home / ".config" / "opencode" / "agent" / "workflow-architect.md"
+    assert agent.is_file()
+    assert agent.is_symlink()
+
+    # Nothing is left in the location opencode does not document.
+    assert not (home / ".opencode").exists()
+
+
+def test_agent_links_follow_the_checkout(monkeypatch, tmp_path):
+    """An agent removed upstream must stop being offered; the user's own stays."""
+    from knowledge.opencode import OpenCodeAdapter
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    checkout = _fake_checkout(tmp_path)
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(checkout))
+
+    adapter = OpenCodeAdapter()
+    adapter.update_llm_config(str(home), {"provider": "gateway"})
+
+    agent_dir = home / ".config" / "opencode" / "agent"
+    (agent_dir / "my-own.md").write_text("mine")          # hand-written
+    (checkout / "agents" / "workflow-architect.md").unlink()
+
+    adapter.update_llm_config(str(home), {"provider": "gateway"})
+
+    assert not (agent_dir / "workflow-architect.md").exists()
+    assert (agent_dir / "my-own.md").read_text() == "mine"
 
 
 def test_codex_startup_creates_skill_links(monkeypatch, tmp_path):

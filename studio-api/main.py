@@ -205,10 +205,62 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         log.warning("llm_propagate_error", error=str(e))
 
-    # Periodically reap terminal sessions nobody has been attached to for a
-    # long time (server-held shells survive reloads, not abandonment).
     import asyncio
     import os
+
+    async def _refresh_knowledge_checkout() -> None:
+        """Fast-forward the marketplace checkout, then make the update visible.
+
+        opencode reads skills, agents and config once when it starts and never
+        reloads them. The pull used to run from the entrypoint, backgrounded
+        alongside the rest of the boot, which made "does the assistant get
+        today's skills?" a race with no signal either way: a pod was observed
+        winning it by 67 seconds, and losing it looks exactly the same from
+        outside — the checkout on disk is current, `git log` says so, and the
+        assistant quietly follows the skills of whenever the server started.
+
+        Doing it here means one owner, and a restart when (and only when) the
+        checkout actually moved, so the running server picks the new skills up.
+        """
+        from knowledge import checkout
+
+        try:
+            result = await asyncio.to_thread(checkout.update)
+        except Exception as e:
+            log.warning("knowledge_checkout_update_failed", error=str(e))
+            return
+
+        if not result.get("updated"):
+            log.info(
+                "knowledge_checkout_unchanged",
+                sha=result.get("short_sha"),
+                reason=result.get("reason"),
+            )
+            return
+
+        log.info("knowledge_checkout_updated", sha=result.get("short_sha"))
+
+        # Re-run the adapters so generated context/links follow the new tree,
+        # then restart opencode so it re-reads them.
+        try:
+            from llm.propagator import LLMPropagator
+
+            await LLMPropagator().propagate(db)
+        except Exception as e:
+            log.warning("knowledge_repropagate_failed", error=str(e))
+        try:
+            from services.opencode_engine import engine as opencode_engine
+
+            await opencode_engine.forget_sessions(db)
+            await opencode_engine.restart()
+            log.info("opencode_restarted_on_knowledge_update")
+        except Exception as e:
+            log.warning("opencode_restart_failed", error=str(e))
+
+    knowledge_task = asyncio.create_task(_refresh_knowledge_checkout())
+
+    # Periodically reap terminal sessions nobody has been attached to for a
+    # long time (server-held shells survive reloads, not abandonment).
 
     from services import terminal_sessions
 
@@ -263,6 +315,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await opencode_engine.stop()
     prune_task.cancel()
+    knowledge_task.cancel()
     for s in terminal_sessions.list_sessions():
         terminal_sessions.kill(s["id"])
     from services.process_mgr import process_manager

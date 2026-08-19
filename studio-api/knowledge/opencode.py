@@ -17,8 +17,6 @@ from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import (
     build_knowledge_appendix,
     ensure_context_file,
-    link_agents_to_dir,
-    link_skills_to_dir,
 )
 from llm.providers import PROVIDERS, _resolve_api_key, _resolve_base_url, provider_type
 
@@ -35,6 +33,57 @@ def _global_config_dir() -> str:
         os.environ.get("HOME", "/tmp"), ".config"
     )
     return os.path.join(base, "opencode")
+
+
+def _link_agents_into_global() -> int:
+    """Symlink each agent file into opencode's global agent directory.
+
+    ``~/.config/opencode/agent/<name>.md`` is the location opencode documents
+    for agents that should be available from any cwd. Individual files are
+    linked into a real directory rather than symlinking the directory itself:
+    the loader globs for ``<name>.md``, and a link per file is read through
+    ``open()`` like any other file.
+
+    Stale links (an agent removed upstream) are dropped, so the directory always
+    reflects the checkout.
+    """
+    src = layout.agents_dir()
+    dst = os.path.join(_global_config_dir(), "agent")
+    if not os.path.isdir(src):
+        return 0
+
+    try:
+        os.makedirs(dst, exist_ok=True)
+    except OSError as e:
+        log.warning("opencode_agent_dir_failed", dir=dst, error=str(e))
+        return 0
+
+    wanted = {n for n in os.listdir(src) if n.endswith(".md")}
+
+    # Drop links we previously made that no longer have a source. Only links are
+    # removed: an agent the user wrote by hand is theirs, not ours to delete.
+    for name in os.listdir(dst):
+        path = os.path.join(dst, name)
+        if os.path.islink(path) and name not in wanted:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    linked = 0
+    for name in sorted(wanted):
+        target, path = os.path.join(src, name), os.path.join(dst, name)
+        try:
+            if os.path.islink(path) or os.path.exists(path):
+                if os.path.realpath(path) == os.path.realpath(target):
+                    linked += 1
+                    continue
+                os.unlink(path)
+            os.symlink(target, path)
+            linked += 1
+        except OSError as e:
+            log.warning("opencode_agent_link_failed", agent=name, error=str(e))
+    return linked
 
 
 class OpenCodeAdapter(KnowledgeAdapter):
@@ -56,9 +105,7 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 except OSError as e:
                     log.warning("opencode_agents_write_failed", dir=dst_dir, error=str(e))
 
-        # Seed .opencode/agents/ and .opencode/skills/
-        link_agents_to_dir(os.path.join(workspace, ".opencode", "agents"))
-        link_skills_to_dir(os.path.join(workspace, ".opencode", "skills"))
+        _link_agents_into_global()
 
         # Write opencode.json (global — read from any cwd)
         self.update_llm_config(workspace, llm_config)
@@ -67,20 +114,20 @@ class OpenCodeAdapter(KnowledgeAdapter):
     def update_llm_config(self, workspace: str, llm_config: dict[str, Any]) -> None:
         """Rewrite opencode.json with the current provider config."""
         # Runs on every start, so it is also where a deleted AGENTS.md comes back
-        # and where the skill/agent links are (re)made. install() alone was not
+        # and where the agent links are (re)made. install() alone was not
         # enough: startup only calls this, so when the config root moved to $HOME
         # the links were never created there and the assistant ran with no skills
         # at all — improvising instead of following pegasus-scaffold.
         ensure_context_file(os.path.join(workspace, "AGENTS.md"))
         ensure_context_file(os.path.join(_global_config_dir(), "AGENTS.md"))
-        link_agents_to_dir(os.path.join(workspace, ".opencode", "agents"))
-        link_skills_to_dir(os.path.join(workspace, ".opencode", "skills"))
+        _link_agents_into_global()
         provider = llm_config.get("provider", "anthropic")
         ptype = provider_type(provider)  # custom-<id> -> "custom", etc.
         model = llm_config.get("model")
         api_key = llm_config.get("api_key", "")
         base_url = llm_config.get("base_url", "")
 
+        global_dir = _global_config_dir()
         preset = PROVIDERS.get(ptype, PROVIDERS["anthropic"])
         if not model:
             model = preset.get("default_model", "claude-sonnet-4-5-20250929")
@@ -117,7 +164,10 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 },
             },
             "model": f"{provider}/{model_id}",
-            "instructions": ["AGENTS.md"],
+            # Absolute, not "AGENTS.md": a bare name is resolved against the
+            # project opencode walks up to, which is whatever directory the
+            # process happened to start in.
+            "instructions": [os.path.join(global_dir, "AGENTS.md")],
             "mcp": {
                 "pegasus-docs": {
                     "type": "remote",
@@ -132,13 +182,23 @@ class OpenCodeAdapter(KnowledgeAdapter):
             },
         }
 
+        # Point the skill loader straight at the checkout. Declaring the path is
+        # what makes discovery independent of where opencode starts: the loader
+        # otherwise finds skills by walking up from the cwd, so what the model
+        # can invoke depends on the directory a process happened to launch in.
+        # It also keeps one source — the checkout — rather than a linked copy
+        # per tool, where two trees offering the same skill names left which one
+        # answered down to directory-scan order.
+        skills_dir = layout.skills_dir()
+        if os.path.isdir(skills_dir):
+            config["skills"] = {"paths": [skills_dir]}
+
         # Global config only. It is read from any cwd, so the workspace copy
         # this used to also write was redundant — byte-identical content in a
         # second place to keep in sync, and the only non-hidden file Studio put
         # in the directory users are told to keep workflows in. uninstall()
         # still removes the legacy copy for workspaces that have one.
         blob = json.dumps(config, indent=2)
-        global_dir = _global_config_dir()
         targets = [os.path.join(global_dir, "opencode.json")]
         for path in targets:
             try:
@@ -154,9 +214,14 @@ class OpenCodeAdapter(KnowledgeAdapter):
             os.path.join(workspace, t)
             for t in ("AGENTS.md", "opencode.json", ".opencode")
         ]
-        # Also remove the global config we wrote.
+        # Everything we write under $HOME: the global config, its context file,
+        # and the agent links.
         gdir = _global_config_dir()
-        paths += [os.path.join(gdir, "opencode.json"), os.path.join(gdir, "AGENTS.md")]
+        paths += [
+            os.path.join(gdir, "opencode.json"),
+            os.path.join(gdir, "AGENTS.md"),
+            os.path.join(gdir, "agent"),
+        ]
         for path in paths:
             try:
                 if os.path.isfile(path):

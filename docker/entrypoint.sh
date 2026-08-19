@@ -63,16 +63,12 @@ if [ ! -d "${USER_MARKETPLACE}/.claude-plugin" ] \
     fi
 fi
 
-# Keep the user's checkout current. Only fast-forwards, and only when the
-# checkout is clean and carries no local commits — a user who edited a skill or
-# pinned an older commit meant it, and losing that would be worse than being a
-# few commits behind. Backgrounded with a timeout because it touches the network
-# and NFS: being offline is normal and must never delay the spawn.
-if [ -d "${USER_MARKETPLACE}/.git" ]; then
-    ( cd /opt/studio-api \
-      && timeout 30 "${PYTHON}" -c 'from knowledge import checkout; r = checkout.update(); print("[studio] knowledge", r.get("short_sha"), "updated" if r.get("updated") else "unchanged", r.get("reason") or "")' \
-      || true ) &
-fi
+# The checkout is kept current by studio-api at startup, not here. Pulling from
+# the entrypoint raced the tools that read the result: opencode loads skills once
+# when it starts and never reloads, so whether the assistant got today's skills
+# came down to which background job finished first, with nothing in any log to
+# say which way it went. studio-api owns it now and restarts opencode when the
+# checkout actually moves.
 
 # What the tools will actually read, for the AGENTS.md seed below and the log.
 if [ -d "${USER_MARKETPLACE}/plugins/pegasus-ai" ]; then
