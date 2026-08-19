@@ -262,3 +262,55 @@ def test_registry_settings_roundtrip(client):
         "registry": "ghcr.io/pegasus-isi", "username": "", "password": "",
     }).json()
     assert body["has_password"] is False
+
+
+# --- apt sandbox injection ---
+
+
+def test_needs_apt_fix_detects_apt_use():
+    assert ib.needs_apt_fix("%post\n    apt-get update\n")
+    assert ib.needs_apt_fix("%post\n    apt install -y curl\n")
+    # Already handled, by the skill's template or by hand.
+    assert not ib.needs_apt_fix(
+        "%post\n    printf 'APT::Sandbox::User \"root\";' > /etc/apt/apt.conf.d/x\n"
+        "    apt-get update\n"
+    )
+    # Nothing to fix for a base that never calls apt.
+    assert not ib.needs_apt_fix("%post\n    micromamba install -y numpy\n")
+
+
+def test_with_apt_fix_inserts_as_the_first_post_step():
+    """It must precede apt, not merely appear somewhere in %post."""
+    text = "Bootstrap: docker\nFrom: ubuntu:22.04\n\n%post\n    apt-get update\n"
+    out = ib.with_apt_fix(text)
+    body = out.split("%post", 1)[1]
+    assert body.index("APT::Sandbox::User") < body.index("apt-get update")
+    # And the result no longer needs fixing, so a rebuild cannot double it.
+    assert not ib.needs_apt_fix(out)
+
+
+def test_with_apt_fix_declines_without_a_post_section():
+    assert ib.with_apt_fix("Bootstrap: docker\nFrom: ubuntu:22.04\n") is None
+
+
+def test_build_uses_a_patched_copy_and_leaves_the_original_alone(monkeypatch, tmp_path):
+    """The user's file is never edited; the copy is removed afterwards."""
+    monkeypatch.setattr(ib, "detect_builder", lambda: "echo")
+    monkeypatch.setattr(ib, "_FAKEROOT", "1")
+
+    proj = tmp_path / "proj"
+    (proj / "Apptainer").mkdir(parents=True)
+    original = proj / "Apptainer" / "Tools.def"
+    source = "Bootstrap: docker\nFrom: ubuntu:22.04\n\n%post\n    apt-get update\n"
+    original.write_text(source)
+
+    events = _collect_events(ib.stream_build(
+        project_id="proj", project_dir=str(proj), registry="",
+        username="", password="", tag="latest", push=False,
+    ))
+
+    assert events[-1]["status"] == "success"
+    assert original.read_text() == source          # untouched
+    assert any("your .def is unchanged" in e.get("line", "") for e in events)
+    # No temp file left behind.
+    assert not list((proj / "Apptainer").glob(".studio-build-*"))
