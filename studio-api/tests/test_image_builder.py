@@ -31,7 +31,6 @@ def test_image_ref():
 
 
 def test_build_command_default(monkeypatch):
-    monkeypatch.setattr(ib, "_APT_FIX", False)
     monkeypatch.setattr(ib, "_FAKEROOT", "0")
     assert ib.build_command("apptainer", "img.sif", "img.def") == [
         "apptainer", "build", "--force", "img.sif", "img.def",
@@ -40,7 +39,6 @@ def test_build_command_default(monkeypatch):
 
 def test_build_command_fakeroot_follows_euid(monkeypatch):
     """%post needs root; when the process is not root that has to be emulated."""
-    monkeypatch.setattr(ib, "_APT_FIX", False)
     monkeypatch.setattr(ib, "_FAKEROOT", "")
 
     monkeypatch.setattr(ib.os, "geteuid", lambda: 1000)
@@ -49,27 +47,26 @@ def test_build_command_fakeroot_follows_euid(monkeypatch):
     monkeypatch.setattr(ib.os, "geteuid", lambda: 0)
     assert "--fakeroot" not in ib.build_command("apptainer", "i.sif", "i.def")
 
-    # An explicit setting wins either way, for hosts with neither subuid ranges
-    # nor a setuid install.
+    # An explicit setting wins either way.
     monkeypatch.setattr(ib, "_FAKEROOT", "0")
     monkeypatch.setattr(ib.os, "geteuid", lambda: 1000)
     assert "--fakeroot" not in ib.build_command("apptainer", "i.sif", "i.def")
 
 
-def test_build_command_apt_bind(monkeypatch, tmp_path):
-    """The apt no-sandbox conf is bound in when present."""
-    conf = tmp_path / "apt-no-sandbox.conf"
-    conf.write_text('APT::Sandbox::User "root";\n')
-    monkeypatch.setattr(ib, "_APT_FIX", True)
-    monkeypatch.setattr(ib, "_APT_CONF_PATH", str(conf))
-    monkeypatch.setattr(ib, "_FAKEROOT", "0")
+def test_fakeroot_always_bypasses_the_fakeroot_command(monkeypatch):
+    """Apptainer otherwise LD_PRELOADs the host libfakeroot.so into the
+    container, which dies whenever the two glibcs differ — an ubuntu:22.04 base
+    under a 24.04 host fails with "GLIBC_2.38 not found" before %post runs."""
+    monkeypatch.setattr(ib, "_FAKEROOT", "1")
+    cmd = ib.build_command("apptainer", "i.sif", "i.def")
+    assert "--fakeroot" in cmd and "--ignore-fakeroot-command" in cmd
 
-    cmd = ib.build_command("apptainer", "img.sif", "img.def")
-    assert "--bind" in cmd
-    assert any(str(conf) in part for part in cmd)
 
-    monkeypatch.setattr(ib, "_APT_FIX", False)
-    assert "--bind" not in ib.build_command("apptainer", "img.sif", "img.def")
+def test_build_command_never_binds_an_apt_conf(monkeypatch):
+    """Apptainer will not create a bind destination absent from the container,
+    so binding an apt.conf failed every build with "destination doesn't exist"."""
+    monkeypatch.setattr(ib, "_FAKEROOT", "1")
+    assert "--bind" not in ib.build_command("apptainer", "i.sif", "i.def")
 
 
 def test_find_definition_prefers_apptainer_dir(tmp_path):

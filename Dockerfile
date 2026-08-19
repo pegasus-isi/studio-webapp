@@ -185,10 +185,12 @@ RUN curl -fsSL "https://github.com/apptainer/apptainer/releases/download/v${APPT
 # into a .sif with the apptainer installed above; there is no separate OCI
 # builder, because a workflow references the .sif by absolute path
 # (image_site="local") rather than pulling an image from a registry.
-# Bound into build runs so apt keeps running as root, avoiding the _apt
-# privilege-drop failure wherever root is emulated rather than real. See
-# studio-api/services/image_builder.py.
-COPY docker/containers/apt-no-sandbox.conf /etc/studio/apt-no-sandbox.conf
+#
+# Nothing to install for it. An apt.conf used to be copied here and bound into
+# builds to stop apt dropping privileges to _apt under an emulated root, but
+# Apptainer will not create a bind destination that is absent from the
+# container, so it failed every build. The setting now belongs in the definition
+# file's %post, where /etc/apt/apt.conf.d exists.
 
 # ---- workflow event log ----
 # The studio drives workflow status/job/stats views from the JSONL event log
