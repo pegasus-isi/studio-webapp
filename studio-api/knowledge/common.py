@@ -48,6 +48,18 @@ def build_skills_appendix() -> str:
             f"- **`{meta['slash_command']}`** — {meta['name']}: "
             f"{meta['description']}"
         )
+        # A skill that declares deliverables gets them stated here, in the
+        # always-on context. The requirement is defined once, in the skill —
+        # this renders it rather than restating it. Without this the obligation
+        # lived only inside a skill the model had to choose to load, and a
+        # weaker model would finish a workflow with no README or run_manual.sh
+        # and report it complete.
+        required = meta.get("deliverables")
+        if isinstance(required, list) and required:
+            sections.append(
+                "  Every workflow it produces must contain, before you call it "
+                "done: " + ", ".join(f"`{r}`" for r in required) + "."
+            )
 
     return "\n".join(sections) + "\n"
 

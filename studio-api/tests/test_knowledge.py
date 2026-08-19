@@ -556,3 +556,46 @@ def test_chat_system_prompt_uses_the_resolved_tree(monkeypatch, tmp_path):
     assert "PERSONA BODY" in prompt
     # And it says not to emit a tool-call object, which is what went wrong.
     assert "no interactive question tool" in prompt
+
+
+def test_declared_deliverables_reach_the_always_on_context(monkeypatch, tmp_path):
+    """The obligation must not live only inside a skill the model may not load.
+
+    Moving the list out of the overlay and into pegasus-scaffold was right for
+    single-sourcing, but a weaker model never invoked the skill and finished
+    workflows with no README.md or run_manual.sh. The skill still defines the
+    list; the appendix renders it.
+    """
+    from knowledge.common import build_skills_appendix
+
+    root = tmp_path / "checkout"
+    (root / "skills" / "pegasus-scaffold").mkdir(parents=True)
+    (root / "skills" / "pegasus-scaffold" / "SKILL.md").write_text(
+        "---\n"
+        "name: pegasus-scaffold\n"
+        "description: Create a workflow\n"
+        "deliverables:\n"
+        "  - workflow_generator.py\n"
+        "  - run_manual.sh\n"
+        "  - README.md\n"
+        "---\n\nbody\n"
+    )
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+
+    text = build_skills_appendix()
+    assert "run_manual.sh" in text
+    assert "README.md" in text
+    assert "before you call it done" in text
+
+
+def test_a_skill_without_deliverables_adds_nothing(monkeypatch, tmp_path):
+    from knowledge.common import build_skills_appendix
+
+    root = tmp_path / "checkout"
+    (root / "skills" / "pegasus-debug").mkdir(parents=True)
+    (root / "skills" / "pegasus-debug" / "SKILL.md").write_text(
+        "---\nname: pegasus-debug\ndescription: Debug a run\n---\n"
+    )
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+
+    assert "must contain" not in build_skills_appendix()

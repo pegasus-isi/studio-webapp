@@ -189,14 +189,22 @@ def skill_document(name: str) -> str | None:
     )
 
 
+def _collapse(lines: list[str]) -> Any:
+    """A block of `- item` lines is a list; anything else is folded text."""
+    if lines and all(ln.startswith("- ") for ln in lines):
+        return [ln[2:].strip().strip("'\"") for ln in lines]
+    return " ".join(lines).strip()
+
+
 def parse_frontmatter(path: str) -> dict[str, Any]:
     """Parse a markdown file's YAML frontmatter, shallowly.
 
-    Deliberately not a YAML parser. Only scalar ``key: value`` pairs at the top
-    level are read, which covers ``name``, ``description`` and ``order``; nested
-    keys such as ``allowed-tools`` are skipped rather than mis-parsed. Folded
-    values (``description: >``) continue onto following indented lines and are
-    joined, because the kiso skill uses one.
+    Deliberately not a YAML parser. Scalar ``key: value`` pairs are read, which
+    covers ``name``, ``description`` and ``order``. Folded values
+    (``description: >``) continue onto following indented lines and are joined,
+    because the kiso skill uses one. A block of ``  - item`` lines becomes a
+    list, which is how a skill declares its deliverables so they can be surfaced
+    without restating them anywhere else.
     """
     try:
         with open(path) as fh:
@@ -214,12 +222,12 @@ def parse_frontmatter(path: str) -> dict[str, Any]:
 
     for line in match.group(1).split("\n"):
         if line[:1] in (" ", "\t"):
-            if key and folded is not None:
+            if key:
                 folded.append(line.strip())
             continue
 
         if key and folded:
-            data[key] = " ".join(folded).strip()
+            data[key] = _collapse(folded)
         key, folded = None, []
 
         if ":" not in line or line.lstrip().startswith("#"):
@@ -238,7 +246,7 @@ def parse_frontmatter(path: str) -> dict[str, Any]:
         data[raw_key] = value.strip("'\"")
 
     if key and folded:
-        data[key] = " ".join(folded).strip()
+        data[key] = _collapse(folded)
 
     return data
 
@@ -269,6 +277,8 @@ def skill_meta(name: str) -> dict[str, Any]:
     document = skill_document(name)
     if document:
         front = parse_frontmatter(document)
+        if isinstance(front.get("deliverables"), list):
+            meta["deliverables"] = front["deliverables"]
         if front.get("name"):
             meta["slash_command"] = f"/{front['name']}"
         if front.get("description"):
