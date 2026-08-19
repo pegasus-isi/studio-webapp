@@ -13,14 +13,38 @@ what is specific to *this* environment, which the guide cannot know.
 - **`/tmp` does not.** Files there are lost on restart and are invisible to the
   file browser. Never put workflow files in `/tmp`.
 
-Give each workflow its own directory under `$HOME`, named in kebab-case after
-what it does. `$HOME/workflows/<name>/` is a good default, and
-`$HOME/work/workflows/<name>/` is equally fine — Studio discovers runs by
-scanning for `braindump.yml` anywhere under `$HOME`, so the exact location is
-yours to choose. What matters is that it is under `$HOME`, and that one workflow
-does not scatter across several directories.
+## Where a workflow goes — exactly one place
 
-**Ask the user for a workflow name before creating anything.** Do not invent one.
+```
+$HOME/work/workflows/<workflow-name>/
+```
+
+Nowhere else. The Workflows tab lists the immediate children of
+`$HOME/work/workflows/` and nothing deeper or elsewhere, so a project written to
+`$HOME/workflows/`, `$HOME/<name>/` or any other path **does not appear in the UI
+at all** — no Generate, Plan, Run or Build buttons for it, even though the files
+are on disk and look fine in the file browser. It is not a matter of taste or of
+"anywhere under `$HOME`": one directory is scanned.
+
+`<workflow-name>` is kebab-case and describes what the workflow does. **Ask the
+user for it before creating anything** — do not invent one.
+
+**Everything for that workflow lives inside that one directory**, including
+documents you write about it. A specification, README, notes, the generator,
+`bin/`, `Apptainer/` and data all belong under
+`$HOME/work/workflows/<workflow-name>/`. Do not put a specification in `$HOME`
+and the code somewhere else: a scattered project is one the user cannot run.
+
+So a request to "write specification.md first, then build the workflow" means:
+
+```
+$HOME/work/workflows/<workflow-name>/specification.md
+$HOME/work/workflows/<workflow-name>/workflow_generator.py
+$HOME/work/workflows/<workflow-name>/bin/…
+$HOME/work/workflows/<workflow-name>/Apptainer/…
+```
+
+Create the project directory first, then write into it.
 
 ## Writing files
 
@@ -30,16 +54,18 @@ code in chat and report that files were created: the user is watching a file
 browser, and an empty directory is a failure regardless of how good the code in
 the transcript was. After writing, run `ls -R` and show the result.
 
-## What a complete workflow contains
+## Finishing a workflow
 
-Create all of these during scaffolding, not "later":
+What a complete workflow contains is defined by the `pegasus-scaffold` skill,
+which lists the deliverables and the checks to run before reporting one as done.
+Invoke it rather than improvising a shorter set — `run_manual.sh` and `README.md`
+are the two that get dropped when the generator took a while to write.
 
-1. `workflow_generator.py` — the DAG generator, with all five catalogs
-2. `bin/*` — one wrapper script per pipeline step
-3. a container definition for the tool stack, per the container skill
-4. `README.md` — what it does and how to run it
+The Studio-specific part is only *where* to verify:
 
-Do not tell the user to add any of these afterwards.
+```bash
+ls -R $HOME/work/workflows/<workflow-name>
+```
 
 ## Reading PDFs
 
