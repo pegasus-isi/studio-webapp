@@ -24,9 +24,7 @@ log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
-KNOWLEDGE_ROOT = os.environ.get(
-    "KNOWLEDGE_ROOT", "/opt/pegasus-ai/knowledge"
-)
+from knowledge import layout
 
 # Active streaming clients tracked by request_id
 _active_clients: dict[str, httpx.AsyncClient] = {}
@@ -406,21 +404,24 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
     """Build system prompt from PEGASUS_AI.md + tool instructions + agent persona."""
     parts = []
 
-    # Load shared context
-    shared_path = os.path.join(KNOWLEDGE_ROOT, "references", "PEGASUS_AI.md")
-    if os.path.isfile(shared_path):
-        try:
-            with open(shared_path) as f:
-                parts.append(f.read())
-        except Exception:
-            pass
+    # Shared context: the Studio overlay plus the portable Pegasus guide. This
+    # read used to be a hardcoded references/PEGASUS_AI.md under a hardcoded
+    # KNOWLEDGE_ROOT; both moved, and because every lookup here failed silently
+    # the chat lost its context, its agent personas and its skills at once.
+    shared = layout.context_document()
+    if shared:
+        parts.append(shared)
 
     parts.append(
         "\n\n## Tool Use Instructions\n\n"
         "You have access to tools for file operations and shell commands. "
         "Use them to help the user create, run, and debug Pegasus workflows.\n\n"
+        "You have no interactive question tool. To ask something, write the "
+        "question as ordinary prose and wait for the reply — never emit a "
+        "tool-call object as your message.\n\n"
         "WORKSPACE RULES:\n"
-        f"- All files MUST be created under {WORKSPACE_ROOT}\n"
+        f"- Each workflow goes in its own directory under "
+        f"{os.path.join(WORKSPACE_ROOT, 'workflows')}\n"
         "- Use kebab-case directory names (e.g., csv-summary-workflow/)\n"
     )
 
@@ -429,7 +430,7 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
     # traverse out of the agents directory (e.g. "../../../etc/passwd") and
     # leak arbitrary files into the system prompt.
     if agent_id and agent_id != "general" and re.fullmatch(r"[A-Za-z0-9_-]+", agent_id):
-        agent_path = os.path.join(KNOWLEDGE_ROOT, "agents", f"{agent_id}.md")
+        agent_path = os.path.join(layout.agents_dir(), f"{agent_id}.md")
         if os.path.isfile(agent_path):
             try:
                 with open(agent_path) as f:
@@ -899,16 +900,26 @@ async def _openai_dispatch(
 
 # --- Slash commands ---
 
-_SKILL_MAP = {
-    "scaffold": "scaffold",
-    "debug": "debug",
-    "review": "review",
-    "wrapper": "wrapper",
-    "dockerfile": "dockerfile",
-    "convert": "convert",
-    "help": "help",
-    "kiso": "kiso",
-}
+def _skill_for_command(command: str) -> str | None:
+    """Resolve a slash command to a skill in the knowledge tree.
+
+    Built from what is installed rather than a hardcoded table. The table listed
+    the pre-plugin names (scaffold, dockerfile, ...), so after the rename to
+    pegasus-scaffold, pegasus-apptainer and the rest it matched nothing: every
+    slash command expanded to no skill, silently, on the opencode path too.
+
+    Both spellings resolve, so /scaffold keeps working beside /pegasus-scaffold.
+    """
+    names = layout.skill_names()
+    if command in names:
+        return command
+    if f"pegasus-{command}" in names:
+        return f"pegasus-{command}"
+    # The container skill was renamed with the switch away from Docker; users
+    # still type the old command.
+    if command == "dockerfile" and "pegasus-apptainer" in names:
+        return "pegasus-apptainer"
+    return None
 
 
 def _process_slash_command(message: str) -> tuple[str, str | None]:
@@ -920,12 +931,12 @@ def _process_slash_command(message: str) -> tuple[str, str | None]:
     command = parts[0][1:]
     user_args = parts[1] if len(parts) > 1 else ""
 
-    skill_name = _SKILL_MAP.get(command)
+    skill_name = _skill_for_command(command)
     if not skill_name:
         return message, None
 
-    skill_path = os.path.join(KNOWLEDGE_ROOT, "skills", skill_name, "canonical.md")
-    if not os.path.isfile(skill_path):
+    skill_path = layout.skill_document(skill_name)
+    if not skill_path:
         return message, None
 
     try:

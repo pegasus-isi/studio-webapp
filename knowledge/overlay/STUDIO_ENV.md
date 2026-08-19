@@ -67,6 +67,18 @@ The Studio-specific part is only *where* to verify:
 ls -R $HOME/work/workflows/<workflow-name>
 ```
 
+## Asking the user something
+
+You have no interactive question tool here. Ask in ordinary prose and wait for
+the reply. Do not emit a tool-call object as your message — a model that tried
+produced this, verbatim, in the chat window:
+
+```
+[use=question]{ "questions": [ { "question": "What should the workflow be named?", ... } ] }
+```
+
+which the user has to read as JSON and answer by guessing what it wanted.
+
 ## Reading PDFs
 
 Your file-reading tool returns text. Handed a PDF it gets binary and you will
