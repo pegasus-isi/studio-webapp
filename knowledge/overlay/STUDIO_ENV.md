@@ -56,14 +56,26 @@ the transcript was. After writing, run `ls -R` and show the result.
 
 ## What a complete workflow contains
 
-Create all of these during scaffolding, not "later":
+All of these, created now — not "later", not "as a next step":
 
-1. `workflow_generator.py` — the DAG generator, with all five catalogs
-2. `bin/*` — one wrapper script per pipeline step
-3. a container definition for the tool stack, per the container skill
-4. `README.md` — what it does and how to run it
+1. `specification.md` — when the user asked for a specification
+2. `workflow_generator.py` — the DAG generator, with all five catalogs
+3. `bin/*` — one wrapper script per pipeline step
+4. `Apptainer/<Name>.def` — the container definition
+5. `run_manual.sh` — runs the pipeline once without Pegasus; `chmod +x` it
+6. `README.md` — what it does and how to run it
 
-Do not tell the user to add any of these afterwards.
+**Check before you report it as done:**
+
+```bash
+ls -R $HOME/work/workflows/<workflow-name>
+```
+
+Read that listing against the six items. Anything missing, create it now. Do not
+describe the workflow as complete while an item is absent, and do not tell the
+user to add one themselves — `run_manual.sh` and `README.md` are the two that
+get dropped, and a workflow without them is one nobody else can run or
+understand.
 
 ## Reading PDFs
 
