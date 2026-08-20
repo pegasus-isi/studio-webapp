@@ -38,23 +38,31 @@ _BUILDERS = ("apptainer", "singularity")
 _BUILD_TIMEOUT_S = int(os.environ.get("STUDIO_BUILD_TIMEOUT", "1800"))
 _PING_INTERVAL_S = 10.0
 
-# No --fakeroot, and no --ignore-fakeroot-command that used to accompany it.
+# --ignore-fakeroot-command, and deliberately NOT --fakeroot. The two are easy to
+# treat as a pair; they do opposite things here. Measured on real definitions in
+# the same container:
 #
-# That pair produces an EMPTY container and still exits 0. Measured on the same
-# definition, in the same pod, four minutes apart:
+#   --fakeroot --ignore-fakeroot-command : 37,461 bytes, filesystem partition
+#                                         40960-40960 — an EMPTY container,
+#                                         reported as "Build complete", exit 0
+#   (no flags)                           : FATAL in %post — /bin/sh:
+#                                         libc.so.6: version `GLIBC_2.38' not
+#                                         found (required by libfakeroot.so)
+#   --ignore-fakeroot-command            : 312 MB, inspects clean, imports work
 #
-#   with --fakeroot --ignore-fakeroot-command : 37,461 bytes, filesystem
-#                                              partition 40960-40960 (zero length)
-#   without                                  : 265 MB, partition
-#                                              40960-265379840
+# The middle case is why "no flags" is wrong: with the fakeroot *command*
+# available, Apptainer preloads the HOST's libfakeroot.so into the container, so
+# any base older than the host fails before %post runs. ubuntu:22.04 (glibc 2.35)
+# under this 24.04 image (2.39) is the common case, not an edge one.
+# --ignore-fakeroot-command declines that path; the kernel's root-mapped
+# namespace needs no such library.
 #
-# Both printed "INFO: Build complete" and exited 0. A trivial definition (alpine,
-# no %post) survives the flags unharmed, so it only breaks once %post writes real
-# content — which is how it shipped and why it took a worker-node error to find.
+# --fakeroot is the separate, harmful one. A trivial definition (alpine, no
+# %post) survives it, so it only breaks once %post writes real content — which is
+# how it shipped, and why it took a worker-node squashfs error to find.
 #
-# Apptainer's default path builds correctly here, unprivileged, so there is
-# nothing left to emulate. Any flag added back has to be checked against
-# verify_image() below rather than against the exit code.
+# Any change here has to be checked against verify_image() below and against a
+# definition whose base is older than the host. Exit 0 proves nothing.
 
 
 
@@ -117,10 +125,12 @@ def build_command(builder: str, sif: str, definition: str) -> list[str]:
     """Build argv for turning a definition file into a ``.sif``.
 
     ``--force`` overwrites a previous build rather than prompting, since this
-    runs unattended behind an HTTP request. No other flags — see the note above
-    on --fakeroot silently producing an empty image.
+    runs unattended behind an HTTP request. ``--ignore-fakeroot-command`` keeps
+    the host's libfakeroot.so out of the container; ``--fakeroot`` is left off
+    because it silently produces an empty image. See the note above — the two
+    flags look like a pair and are not one.
     """
-    return [builder, "build", "--force", sif, definition]
+    return [builder, "build", "--force", "--ignore-fakeroot-command", sif, definition]
 
 
 # A SIF's descriptor table is written before its filesystem payload, so a build
