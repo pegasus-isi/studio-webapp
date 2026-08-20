@@ -30,18 +30,27 @@ def test_image_ref():
     assert ib.image_ref("kthare10", "x", "") == "docker.io/kthare10/x:latest"
 
 
-def test_build_command_carries_no_flags_but_force():
-    """--fakeroot produced an EMPTY container and still exited 0.
+def test_build_command_ignores_the_fakeroot_command_but_never_uses_fakeroot():
+    """These two flags look like a pair and do opposite things here.
 
-    Measured on one definition minutes apart: with --fakeroot
-    --ignore-fakeroot-command the filesystem partition came out zero-length
-    (37,461-byte file); without them, 265 MB. Both logged "Build complete". A
-    definition with no %post survives the flags, which is why it shipped.
+    Measured on real definitions in the same container:
+
+        --fakeroot --ignore-fakeroot-command -> 37,461 bytes, empty filesystem,
+                                                "Build complete", exit 0
+        (no flags)                           -> FATAL in %post, libfakeroot.so
+                                                needs GLIBC_2.38
+        --ignore-fakeroot-command            -> 312 MB, inspects clean
+
+    Dropping both (the first attempt at fixing the empty-image bug) broke every
+    build whose base image is older than the host, which is the ordinary case:
+    ubuntu:22.04 carries glibc 2.35 and this image is 24.04.
     """
     cmd = ib.build_command("apptainer", "img.sif", "img.def")
-    assert cmd == ["apptainer", "build", "--force", "img.sif", "img.def"]
+    assert cmd == [
+        "apptainer", "build", "--force", "--ignore-fakeroot-command",
+        "img.sif", "img.def",
+    ]
     assert "--fakeroot" not in cmd
-    assert "--ignore-fakeroot-command" not in cmd
 
 
 def test_build_command_never_binds_an_apt_conf():
