@@ -99,6 +99,30 @@ One real limit: a scanned or image-only PDF yields little or no text, because
 there is none to extract. Say that plainly rather than reporting an empty
 summary — those need OCR, which is not installed.
 
+## Container base images
+
+This container runs **Ubuntu 24.04** (glibc 2.39), and workflow containers are
+built here, unprivileged, with Apptainer.
+
+**Prefer a base image matching it** — `ubuntu:24.04`, or a `python:3.12`-era slim
+image. A base older than the host is the usual source of build failures that look
+like nothing to do with the definition:
+
+```
+/bin/sh: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found
+         (required by /.singularity.d/libs/libfakeroot.so)
+FATAL: while running %post section: exit status 1
+```
+
+That is an `ubuntu:22.04` base (glibc 2.35) being handed this host's
+`libfakeroot.so`. It fails before a single `%post` command runs, so nothing in
+the definition is at fault and nothing in the log points at the base image.
+
+Studio's Build Image button passes `--ignore-fakeroot-command`, which avoids it.
+A build run by hand in a terminal needs that flag too — and never `--fakeroot`,
+which produces an empty container while reporting success. Check any hand build
+with `apptainer inspect <sif>` before referencing it from a workflow.
+
 ## Tooling available here
 
 - **MCP servers**: `pegasus-docs` (Pegasus WMS documentation and source) and
