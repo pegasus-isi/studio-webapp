@@ -287,6 +287,14 @@ export async function analyzeWorkflow(id: string) {
   );
 }
 
+/** Take a run out of the Condor queue, leaving its directory (and logs) intact. */
+export async function cancelWorkflow(id: string) {
+  return request<{ run_id: string; status: string; output?: string }>(
+    `/workflows/${id}/cancel`,
+    { method: "POST" }
+  );
+}
+
 export async function deleteWorkflow(id: string) {
   return request<Record<string, unknown>>(`/workflows/${id}`, {
     method: "DELETE",

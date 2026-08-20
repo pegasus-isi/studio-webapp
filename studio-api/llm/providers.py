@@ -47,20 +47,6 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "default_model": "gpt-4o",
         "api_key_env": "OPENAI_API_KEY",
     },
-    "fabric": {
-        "name": "FABRIC AI",
-        "npm": "@ai-sdk/openai-compatible",
-        "base_url": "https://ai.fabric-testbed.net/v1",
-        "default_model": "qwen3-coder-30b",
-        "api_key_env": "FABRIC_AI_API_KEY",
-    },
-    "nrp": {
-        "name": "NRP (Nautilus)",
-        "npm": "@ai-sdk/openai-compatible",
-        "base_url": "https://ellm.nrp-nautilus.io/v1",
-        "default_model": "qwen3-coder-30b",
-        "api_key_env": "NRP_API_KEY",
-    },
     "google": {
         "name": "Google (Gemini)",
         "npm": "@ai-sdk/google",
@@ -97,14 +83,6 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "base_url": "https://api.openai.com/v1",
         "model": "gpt-4o",
     },
-    "fabric": {
-        "base_url": "https://ai.fabric-testbed.net/v1",
-        "model": "qwen3-coder-30b",
-    },
-    "nrp": {
-        "base_url": "https://ellm.nrp-nautilus.io/v1",
-        "model": "qwen3-coder-30b",
-    },
     "google": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta",
         "model": "gemini-2.5-pro",
@@ -117,7 +95,7 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 # Providers that need the model proxy
-PROXY_PROVIDERS = {"fabric", "nrp", "custom", "ollama"}
+PROXY_PROVIDERS = {"custom", "ollama"}
 
 
 def provider_type(provider_id: str) -> str:
@@ -138,7 +116,7 @@ async def check_api_key_requirement(
     A provider saved without a required API key fails much later — at chat
     time, deep inside opencode, as "Authentication Error, No api key passed
     in" — so catch it at save time instead. Known presets that declare an
-    ``api_key_env`` (anthropic, openai, google, fabric, nrp) hard-require a
+    ``api_key_env`` (anthropic, openai, google) hard-require a
     key. Custom endpoints may legitimately be keyless (self-hosted vLLM, an
     internal gateway), so probe ``/models`` without a key and reject only if
     the endpoint demands auth.

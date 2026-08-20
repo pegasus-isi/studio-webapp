@@ -6,6 +6,7 @@ import {
   useWorkflows,
   useWorkflowEstimate,
   useDeleteWorkflow,
+  useCancelWorkflow,
 } from "@/lib/hooks/use-workflows";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
@@ -39,10 +40,16 @@ export function WorkflowDetail({ runId }: Props) {
   const { data, isLoading } = useWorkflowJobs(runId, isRunning);
   const analyze = useAnalyzeWorkflow();
   const deleteRun = useDeleteWorkflow();
+  const cancelRun = useCancelWorkflow();
   const runAction = useActionToast();
   const selectWorkflow = useWorkflowStore((s) => s.selectWorkflow);
   const [analysis, setAnalysis] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  // Only a run with queue presence can be removed from it. "running" covers a
+  // DAG whose jobs are queued or executing; a finished or failed run has nothing
+  // left to remove, and offering the button there just invites a 409.
+  const isQueued = isRunning || run?.status === "submitted";
 
   const setEventSource = useWorkflowStore((s) => s.setEventSource);
   const [liveStats, setLiveStats] = useState<SSEEvent | null>(null);
@@ -116,6 +123,13 @@ export function WorkflowDetail({ runId }: Props) {
     if (result) setAnalysis(result.analysis);
   };
 
+  const handleCancel = async () => {
+    // The run stays selected: its logs are the reason someone removed it from
+    // the queue, and they are still here to read.
+    await runAction("Remove from queue", () => cancelRun.mutateAsync(runId));
+    setConfirmCancel(false);
+  };
+
   const handleDelete = async () => {
     const result = await runAction("Delete run", () =>
       deleteRun.mutateAsync(runId)
@@ -165,6 +179,17 @@ export function WorkflowDetail({ runId }: Props) {
             >
               {analyze.isPending ? "Analyzing..." : "Run Analyzer"}
             </button>
+            {/* Only offered while there is something queued to remove. */}
+            {isQueued && (
+              <button
+                onClick={() => setConfirmCancel(true)}
+                disabled={cancelRun.isPending}
+                title="Remove this run from the Condor queue, keeping its files and logs"
+                className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-fgmuted hover:border-amber-400 hover:text-amber-600 disabled:opacity-50 dark:hover:text-amber-400"
+              >
+                {cancelRun.isPending ? "Removing..." : "Remove from Queue"}
+              </button>
+            )}
             <button
               onClick={() => setConfirmDelete(true)}
               title="Delete this run and its files"
@@ -310,6 +335,17 @@ export function WorkflowDetail({ runId }: Props) {
           </div>
         )}
       </div>
+
+      {confirmCancel && (
+        <ConfirmDialog
+          title="Remove this run from the queue?"
+          message={`This stops run "${run?.name ?? runId}" and removes its jobs from the Condor queue. The run directory, logs and any outputs already produced are kept, so you can still see what happened. Queued work does not resume.`}
+          confirmLabel="Remove from queue"
+          busy={cancelRun.isPending}
+          onConfirm={handleCancel}
+          onCancel={() => setConfirmCancel(false)}
+        />
+      )}
 
       {confirmDelete && (
         <ConfirmDialog

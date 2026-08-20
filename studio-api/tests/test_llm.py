@@ -50,7 +50,11 @@ def test_list_providers(client):
     assert "gateway" in provider_ids
     assert "anthropic" in provider_ids
     assert "openai" in provider_ids
-    assert "fabric" in provider_ids
+    # FABRIC and NRP were presets with hardcoded URLs and per-site key names.
+    # Both are ordinary OpenAI-compatible endpoints, so they are added as custom
+    # endpoints now and no longer take up room in the built-in list.
+    assert "fabric" not in provider_ids
+    assert "nrp" not in provider_ids
 
 
 def _add_provider(client, pid, active=False, base="https://x/v1"):
@@ -97,7 +101,7 @@ def test_delete_inactive_provider_keeps_active(client):
 
 
 def test_put_llm_config_keyed_preset_without_key_rejected(client):
-    resp = client.put("/api/llm/config", json={"provider": "fabric"})
+    resp = client.put("/api/llm/config", json={"provider": "anthropic"})
     assert resp.status_code == 400
     assert "API key" in resp.json()["detail"]
     # Nothing was saved — still on the gateway default.
@@ -125,11 +129,24 @@ def test_put_llm_config_omitted_key_keeps_stored_key(client):
     assert data["model"] == "claude-opus-4-6"
 
 
-def test_upsert_provider_config_keyed_preset_without_key_rejected(client):
+def test_upsert_saves_a_keyless_preset_as_an_inactive_draft(client):
+    """Adding a provider must not require the key up front.
+
+    The key field lives in the provider's card, and the card only renders once
+    the row exists — so rejecting the create made Anthropic, OpenAI and Google
+    impossible to add at all ("unable to add"). The row is saved instead, and
+    kept out of service until it is usable.
+    """
     resp = client.put(
         "/api/llm/provider-configs",
-        json={"provider_id": "fabric", "name": "FABRIC AI", "api_key": ""},
+        json={"provider_id": "anthropic", "name": "Anthropic", "api_key": "",
+              "is_active": True},
     )
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is False   # asked for, refused: unusable
+
+    # And it cannot be pressed into service while still keyless.
+    resp = client.post("/api/llm/provider-configs/anthropic/activate")
     assert resp.status_code == 400
     assert "API key" in resp.json()["detail"]
 
@@ -160,8 +177,9 @@ def test_custom_provider_keyless_allowed_unless_endpoint_demands_auth(
         "/api/llm/provider-configs",
         json={"provider_id": "custom-y", "name": "y", "base_url": "https://y/v1"},
     )
-    assert resp.status_code == 400
-    assert "API key" in resp.json()["detail"]
+    # Saved, but not usable: the endpoint demands a key this row does not have.
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is False
 
     resp = client.post("/api/llm/provider-configs/custom-x/activate")
     assert resp.status_code == 400
@@ -261,11 +279,19 @@ def test_an_unconfigured_custom_provider_cannot_be_activated(client):
     assert "base URL" in resp.json()["detail"]
 
 
-def test_a_preset_provider_still_requires_its_key(client):
-    """Relaxing the custom create must not relax the preset rule."""
+def test_a_keyless_preset_never_becomes_the_active_provider(client):
+    """Saving freely must not let chat point at a provider that cannot answer."""
     resp = client.put("/api/llm/provider-configs", json={
-        "provider_id": "anthropic", "name": "Anthropic",
-        "base_url": "", "default_model": "", "api_key": "", "is_active": False,
+        "provider_id": "google", "name": "Google", "base_url": "",
+        "default_model": "", "api_key": "", "is_active": True,
     })
-    assert resp.status_code == 400
-    assert "API key" in resp.json()["detail"]
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is False
+
+    # Supplying the key makes it activatable, with no re-adding needed.
+    resp = client.put("/api/llm/provider-configs", json={
+        "provider_id": "google", "name": "Google", "base_url": "",
+        "default_model": "", "api_key": "k", "is_active": True,
+    })
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is True

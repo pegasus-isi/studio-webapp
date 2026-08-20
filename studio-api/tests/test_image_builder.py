@@ -30,43 +30,67 @@ def test_image_ref():
     assert ib.image_ref("kthare10", "x", "") == "docker.io/kthare10/x:latest"
 
 
-def test_build_command_default(monkeypatch):
-    monkeypatch.setattr(ib, "_FAKEROOT", "0")
-    assert ib.build_command("apptainer", "img.sif", "img.def") == [
-        "apptainer", "build", "--force", "img.sif", "img.def",
-    ]
+def test_build_command_carries_no_flags_but_force():
+    """--fakeroot produced an EMPTY container and still exited 0.
+
+    Measured on one definition minutes apart: with --fakeroot
+    --ignore-fakeroot-command the filesystem partition came out zero-length
+    (37,461-byte file); without them, 265 MB. Both logged "Build complete". A
+    definition with no %post survives the flags, which is why it shipped.
+    """
+    cmd = ib.build_command("apptainer", "img.sif", "img.def")
+    assert cmd == ["apptainer", "build", "--force", "img.sif", "img.def"]
+    assert "--fakeroot" not in cmd
+    assert "--ignore-fakeroot-command" not in cmd
 
 
-def test_build_command_fakeroot_follows_euid(monkeypatch):
-    """%post needs root; when the process is not root that has to be emulated."""
-    monkeypatch.setattr(ib, "_FAKEROOT", "")
-
-    monkeypatch.setattr(ib.os, "geteuid", lambda: 1000)
-    assert "--fakeroot" in ib.build_command("apptainer", "i.sif", "i.def")
-
-    monkeypatch.setattr(ib.os, "geteuid", lambda: 0)
-    assert "--fakeroot" not in ib.build_command("apptainer", "i.sif", "i.def")
-
-    # An explicit setting wins either way.
-    monkeypatch.setattr(ib, "_FAKEROOT", "0")
-    monkeypatch.setattr(ib.os, "geteuid", lambda: 1000)
-    assert "--fakeroot" not in ib.build_command("apptainer", "i.sif", "i.def")
-
-
-def test_fakeroot_always_bypasses_the_fakeroot_command(monkeypatch):
-    """Apptainer otherwise LD_PRELOADs the host libfakeroot.so into the
-    container, which dies whenever the two glibcs differ — an ubuntu:22.04 base
-    under a 24.04 host fails with "GLIBC_2.38 not found" before %post runs."""
-    monkeypatch.setattr(ib, "_FAKEROOT", "1")
-    cmd = ib.build_command("apptainer", "i.sif", "i.def")
-    assert "--fakeroot" in cmd and "--ignore-fakeroot-command" in cmd
-
-
-def test_build_command_never_binds_an_apt_conf(monkeypatch):
+def test_build_command_never_binds_an_apt_conf():
     """Apptainer will not create a bind destination absent from the container,
     so binding an apt.conf failed every build with "destination doesn't exist"."""
-    monkeypatch.setattr(ib, "_FAKEROOT", "1")
     assert "--bind" not in ib.build_command("apptainer", "i.sif", "i.def")
+
+
+def _fake_sif(path, payload_mb=0):
+    """A file shaped like a SIF whose filesystem partition is real."""
+    with open(path, "wb") as fh:
+        fh.write(b"\x00" * 40960)
+        fh.write(b"hsqs")                       # squashfs superblock magic
+        fh.write(b"\x00" * (payload_mb * 1024 * 1024))
+
+
+def test_verify_image_accepts_a_real_payload(tmp_path):
+    sif = tmp_path / "ok.sif"
+    _fake_sif(sif, payload_mb=1)
+    assert ib.verify_image(str(sif)) is None
+
+
+def test_verify_image_rejects_a_build_with_no_filesystem(tmp_path):
+    """The exact shape apptainer left behind while reporting success: SIF
+    descriptors present, filesystem partition zero-length. `sif list` parses it
+    and `ls` looks plausible, so it reached a worker before anyone noticed."""
+    sif = tmp_path / "empty.sif"
+    sif.write_bytes(b"\x00" * 37461)
+
+    problem = ib.verify_image(str(sif))
+    assert problem and "no filesystem" in problem
+    # Says what a worker would have said, so the two are recognisably the same
+    # failure rather than two mysteries.
+    assert "not a valid squashfs image" in problem
+
+
+def test_verify_image_reports_a_missing_or_truncated_file(tmp_path):
+    assert "unreadable" in (ib.verify_image(str(tmp_path / "nope.sif")) or "")
+    tiny = tmp_path / "tiny.sif"
+    tiny.write_bytes(b"x" * 10)
+    assert "10 bytes" in (ib.verify_image(str(tiny)) or "")
+
+
+def test_verify_image_does_not_reject_a_large_image_of_another_format(tmp_path):
+    """ext3 and encrypted payloads carry no squashfs magic. Refusing a
+    full-size image on one missing magic number would break those for nothing."""
+    sif = tmp_path / "ext3.sif"
+    sif.write_bytes(b"\x00" * (6 * 1024 * 1024))
+    assert ib.verify_image(str(sif)) is None
 
 
 def test_find_definition_prefers_apptainer_dir(tmp_path):
@@ -118,6 +142,11 @@ def _build_kwargs(tmp_path, **overrides):
     proj = tmp_path / "proj"
     (proj / "Apptainer").mkdir(parents=True, exist_ok=True)
     (proj / "Apptainer" / "Tools.def").write_text("Bootstrap: docker\nFrom: ubuntu:22.04\n")
+    # These tests stand a harmless command in for the builder, so nothing writes
+    # the .sif — but the build result is now verified, so one has to be there for
+    # the success path to be reachable at all. Pre-create a valid-looking one,
+    # which is what a real build would have left.
+    _fake_sif(proj / "Apptainer" / "Tools.sif", payload_mb=1)
     kw = dict(
         project_id="proj",
         project_dir=str(proj),
@@ -207,6 +236,7 @@ def test_build_endpoint_streams(client, monkeypatch, tmp_path):
     proj_dir = tmp_path / "csv"
     (proj_dir / "Apptainer").mkdir(parents=True)
     (proj_dir / "Apptainer" / "Tools.def").write_text("Bootstrap: docker\n")
+    _fake_sif(proj_dir / "Apptainer" / "Tools.sif", payload_mb=1)
 
     async def _projects(ws=None):
         return [{
@@ -296,13 +326,14 @@ def test_with_apt_fix_declines_without_a_post_section():
 def test_build_uses_a_patched_copy_and_leaves_the_original_alone(monkeypatch, tmp_path):
     """The user's file is never edited; the copy is removed afterwards."""
     monkeypatch.setattr(ib, "detect_builder", lambda: "echo")
-    monkeypatch.setattr(ib, "_FAKEROOT", "1")
+    monkeypatch.setattr(ib, "_unprivileged_build", lambda: True)
 
     proj = tmp_path / "proj"
     (proj / "Apptainer").mkdir(parents=True)
     original = proj / "Apptainer" / "Tools.def"
     source = "Bootstrap: docker\nFrom: ubuntu:22.04\n\n%post\n    apt-get update\n"
     original.write_text(source)
+    _fake_sif(proj / "Apptainer" / "Tools.sif", payload_mb=1)
 
     events = _collect_events(ib.stream_build(
         project_id="proj", project_dir=str(proj), registry="",

@@ -179,8 +179,13 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     if (result) showOutput(result.output ?? "Submitted");
   };
 
-  // Build the project's container image, streaming the build/push log into
-  // the output panel as it happens (SSE over a fetch POST).
+  // Build the project's container image, streaming the build log into the
+  // output panel as it happens (SSE over a fetch POST).
+  //
+  // Build only — no push. The workflow references the .sif by absolute path
+  // (image_site="local") and Pegasus stages it like any other input, so a
+  // registry round-trip buys nothing here and made "Build Image" fail on
+  // registry problems that had no bearing on the image.
   const handleBuild = async () => {
     setBuilding(true);
     setBuiltImage(null);
@@ -197,7 +202,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tag: "latest", push: true }),
+          body: JSON.stringify({ tag: "latest", push: false }),
         }
       );
       if (!res.ok || !res.body) {

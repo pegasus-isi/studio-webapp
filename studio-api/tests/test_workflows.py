@@ -354,3 +354,75 @@ def test_run_reuses_planned_dir_only_if_unsubmitted(tmp_path, monkeypatch):
     asyncio.run(ws.run_planned_workflow(str(tmp_path), run_dir=str(planned)))
     assert ran.get("fresh_plan_submit") is True
     assert "target" not in ran
+
+
+# --- removing a run from the Condor queue (without deleting it) ---
+
+
+def test_cancel_run_leaves_the_directory_and_its_logs(client, monkeypatch):
+    """Removing a run from the queue must not destroy the evidence.
+
+    The reason someone pulls a run out of the queue is in its logs, so this is
+    deliberately not DELETE: the queue entry goes, the run directory stays.
+    """
+    import asyncio
+
+    from main import db
+    from services import workflow_submitter as ws
+
+    home = os.environ.get("HOME", "/tmp")
+    run_dir = os.path.join(home, "work", "workflows", "quickstart", "run0009")
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "braindump.yml"), "w") as f:
+        f.write("pegasus_wf_name: quickstart\nwf_uuid: cancel-uuid-1\n")
+    asyncio.run(db.upsert_workflow_run(
+        run_id="cancel-uuid-1", name="quickstart", run_dir=run_dir, status="running"
+    ))
+
+    called = {}
+
+    async def _fake_cancel(d):
+        called["run_dir"] = d
+        return {"status": "cancelled", "output": "Removed 12 jobs"}
+
+    monkeypatch.setattr(ws, "cancel_workflow", _fake_cancel)
+
+    resp = client.post("/api/workflows/cancel-uuid-1/cancel")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+    assert called["run_dir"] == run_dir
+    # Still on disk, and still listed — this is not a delete.
+    assert os.path.isdir(run_dir)
+    assert any(
+        r["run_id"] == "cancel-uuid-1" for r in asyncio.run(db.list_workflow_runs())
+    )
+
+
+def test_cancel_run_reports_a_refusal_verbatim(client, monkeypatch):
+    """A run that already finished is not a server fault — say what happened."""
+    import asyncio
+
+    from main import db
+    from services import workflow_submitter as ws
+
+    home = os.environ.get("HOME", "/tmp")
+    run_dir = os.path.join(home, "work", "workflows", "quickstart", "run0010")
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "braindump.yml"), "w") as f:
+        f.write("pegasus_wf_name: quickstart\nwf_uuid: cancel-uuid-2\n")
+    asyncio.run(db.upsert_workflow_run(
+        run_id="cancel-uuid-2", name="quickstart", run_dir=run_dir, status="succeeded"
+    ))
+
+    async def _fake_cancel(d):
+        return {"status": "error", "output": "pegasus-remove: no such workflow"}
+
+    monkeypatch.setattr(ws, "cancel_workflow", _fake_cancel)
+
+    resp = client.post("/api/workflows/cancel-uuid-2/cancel")
+    assert resp.status_code == 409
+    assert "no such workflow" in resp.json()["detail"]
+
+
+def test_cancel_run_not_found(client):
+    assert client.post("/api/workflows/nope-run-id/cancel").status_code == 404

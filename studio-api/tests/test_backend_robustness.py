@@ -79,7 +79,7 @@ def test_derive_workflow_status():
 
 
 def test_settings_put_rejects_keyless_required_provider(client):
-    r = client.put("/api/settings", json={"provider": "fabric"})
+    r = client.put("/api/settings", json={"provider": "anthropic"})
     assert r.status_code == 400
     assert "API key" in r.json()["detail"]
     # Nothing saved — still the gateway default.

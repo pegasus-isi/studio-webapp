@@ -457,13 +457,17 @@ function ProviderCard({
         {/* Model */}
         <div>
           <label className="block text-xs font-medium text-fgmuted">
-            Model
+            Model <span className="font-normal text-fgsubtle">(optional)</span>
           </label>
+          {/* Optional on purpose: the chat's model picker lists everything the
+              provider offers, so this only sets which one it starts on. */}
           <input
             type="text"
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder={preset?.default_model || "model name (or Test to list models)"}
+            placeholder={
+              preset?.default_model || "leave blank — pick a model in chat"
+            }
             className="mt-1 block w-full rounded-md border border-line px-3 py-1.5 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
           />
           {/* Discovered models as clickable chips (after Test Connectivity). */}

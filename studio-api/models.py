@@ -45,8 +45,6 @@ class LLMProvider(str, enum.Enum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     GOOGLE = "google"
-    FABRIC = "fabric"
-    NRP = "nrp"
     CUSTOM = "custom"
     OLLAMA = "ollama"
 
