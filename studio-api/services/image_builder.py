@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import time
 from typing import Any, AsyncGenerator
 
@@ -121,6 +122,49 @@ def _unprivileged_build() -> bool:
     return os.geteuid() != 0
 
 
+# The SIF assembly step — everything after "Creating SIF file..." — has its own
+# failure mode, unrelated to the definition, and two of Apptainer's defaults for
+# it are wrong inside a pod.
+#
+# 1. proot. On an unprivileged build Apptainer does not run mksquashfs directly:
+#    it wraps it in the bundled /usr/libexec/apptainer/bin/proot ("-S /") so that
+#    ownership umoci recorded in rootlesscontainers xattrs survives into the
+#    image (apptainer/apptainer#2830). proot ptraces every syscall mksquashfs
+#    makes. When its tracee dies without a normal exit, proot returns the -1 its
+#    exit status is initialised to, which is reported as 255 — and Apptainer,
+#    which formats the error with the mksquashfs path regardless of which process
+#    it actually ran, prints:
+#
+#        while creating squashfs: /usr/libexec/apptainer/bin/mksquashfs command
+#        failed: exit status 255:
+#
+#    Empty stderr, no cause, and it names a program that does not exit 255. That
+#    is the entire error message. APPTAINER_IGNORE_PROOT removes the wrapper;
+#    Apptainer then passes mksquashfs -all-root instead, which is what these
+#    images want anyway — a workflow container built from a Debian base owns
+#    everything as root. What is given up is non-root ownership carried by the
+#    base image; what is gained is that mksquashfs's own stderr becomes the error
+#    message when something goes wrong.
+#
+# 2. Memory and processor count. mksquashfs sizes its cache at 25% of physical
+#    RAM and runs one thread per CPU, both read from the *host* rather than from
+#    the pod's cgroup. On a large node it asks for far more of both than the pod
+#    will ever get, and gets killed for it — which is precisely the death proot
+#    cannot report. Capping them makes a build behave the same on every node it
+#    happens to land on, at the cost of some wall time.
+_MKSQUASHFS_MEM = os.environ.get("STUDIO_BUILD_MKSQUASHFS_MEM", "2G")
+_MKSQUASHFS_PROCS = os.environ.get("STUDIO_BUILD_MKSQUASHFS_PROCS", "4")
+
+
+def _flag_enabled(name: str, default: bool = True) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    if value in ("1", "true", "yes"):
+        return True
+    if value in ("0", "false", "no"):
+        return False
+    return default
+
+
 def build_command(builder: str, sif: str, definition: str) -> list[str]:
     """Build argv for turning a definition file into a ``.sif``.
 
@@ -129,8 +173,58 @@ def build_command(builder: str, sif: str, definition: str) -> list[str]:
     the host's libfakeroot.so out of the container; ``--fakeroot`` is left off
     because it silently produces an empty image. See the note above — the two
     flags look like a pair and are not one.
+
+    ``--mksquashfs-args`` bounds the packing step to something a pod can
+    actually supply (see the note above); Apptainer passes them straight through
+    to mksquashfs.
     """
-    return [builder, "build", "--force", "--ignore-fakeroot-command", sif, definition]
+    cmd = [builder, "build", "--force", "--ignore-fakeroot-command"]
+    extra = []
+    if _MKSQUASHFS_MEM:
+        extra += ["-mem", _MKSQUASHFS_MEM]
+    if _MKSQUASHFS_PROCS:
+        extra += ["-processors", _MKSQUASHFS_PROCS]
+    if extra:
+        cmd += ["--mksquashfs-args", " ".join(extra)]
+    return cmd + [sif, definition]
+
+
+def build_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Environment for the build subprocess.
+
+    ``APPTAINER_IGNORE_PROOT`` is the one that matters — see the note above.
+    Apptainer treats any non-empty value as set, so the variable is added or
+    left out rather than set to "0".
+    """
+    env = dict(os.environ if base is None else base)
+    if _flag_enabled("STUDIO_BUILD_IGNORE_PROOT", True):
+        env["APPTAINER_IGNORE_PROOT"] = "1"
+    tmpdir = os.environ.get("STUDIO_BUILD_TMPDIR")
+    if tmpdir:
+        # Apptainer holds the extracted rootfs *and* the squashfs it packs from
+        # it in one directory, so the build needs roughly twice the image size
+        # wherever this points.
+        env["APPTAINER_TMPDIR"] = tmpdir
+    return env
+
+
+def build_tmpdir(env: dict[str, str] | None = None) -> str:
+    """Directory Apptainer will build in, matching its own resolution order."""
+    env = os.environ if env is None else env
+    for key in ("APPTAINER_TMPDIR", "SINGULARITY_TMPDIR", "TMPDIR"):
+        value = env.get(key)
+        if value:
+            return value
+    return tempfile.gettempdir()
+
+
+def free_space_gb(path: str) -> float | None:
+    """Free space in GiB on the filesystem holding *path*, or None."""
+    try:
+        stat = os.statvfs(path)
+    except OSError:
+        return None
+    return stat.f_bavail * stat.f_frsize / (1 << 30)
 
 
 # A SIF's descriptor table is written before its filesystem payload, so a build
@@ -174,6 +268,31 @@ def verify_image(sif: str) -> str | None:
         "no squashfs payload). This image would fail on a worker node with "
         '"not a valid squashfs image"'
     )
+
+
+def squashfs_failure_hint(output: list[str], tmpdir: str) -> list[str]:
+    """Lines to append when a build died packing the image, else nothing.
+
+    A failure here means %post already ran to completion, so the definition is
+    not the suspect and telling someone to check it wastes their next twenty
+    minutes. The resources it consumed, and where, are the useful part.
+    """
+    if not any("squashfs" in line.lower() for line in output):
+        return []
+    free = free_space_gb(tmpdir)
+    space = "unknown" if free is None else f"{free:.1f} GiB free"
+    return [
+        "",
+        "This failed while packing the built root filesystem into the .sif, "
+        "after %post had finished — the definition file itself completed.",
+        f"That step works in {tmpdir} ({space}) and needs room for the root "
+        "filesystem and the squashfs together, so roughly twice the image size.",
+        "If space is not the problem, the packing step was most likely killed "
+        f"for memory; it is capped at -mem {_MKSQUASHFS_MEM} / -processors "
+        f"{_MKSQUASHFS_PROCS} (STUDIO_BUILD_MKSQUASHFS_MEM, "
+        "STUDIO_BUILD_MKSQUASHFS_PROCS), and STUDIO_BUILD_TMPDIR moves the work "
+        "somewhere with more space.",
+    ]
 
 
 def find_definition(project_dir: str) -> tuple[str, str] | None:
@@ -238,6 +357,7 @@ async def _run_streaming(
     *,
     cwd: str | None = None,
     stdin_data: bytes | None = None,
+    env: dict[str, str] | None = None,
     deadline: float,
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """Run a command, yielding ("line", text) as output arrives, ("ping",
@@ -248,6 +368,7 @@ async def _run_streaming(
         stderr=asyncio.subprocess.STDOUT,
         stdin=asyncio.subprocess.PIPE if stdin_data is not None else asyncio.subprocess.DEVNULL,
         cwd=cwd,
+        env=env,
     )
     if stdin_data is not None and proc.stdin is not None:
         # A builder that rejects the login and exits before reading stdin makes
@@ -351,7 +472,18 @@ async def stream_build(
             log.warning("apt_fix_skipped", definition=definition, error=str(e))
 
     cmd = build_command(builder, sif, build_def)
+    env = build_env()
     yield _sse({"phase": "build", "image": sif, "builder": builder})
+
+    # The packing step needs room for the extracted rootfs and the squashfs
+    # built from it, side by side in the same directory. Say where that is and
+    # how much is left, because when it runs out the error names squashfs and
+    # not the disk.
+    tmpdir = build_tmpdir(env)
+    free = free_space_gb(tmpdir)
+    if free is not None:
+        yield _sse({"line": f"build tmpdir: {tmpdir} ({free:.1f} GiB free)"})
+
     if temp_def:
         yield _sse({"line": (
             "note: this build runs unprivileged, where apt cannot drop "
@@ -362,10 +494,12 @@ async def stream_build(
     yield _sse({"line": f"$ {' '.join(cmd)}"})
 
     rc = 1
+    output: list[str] = []
     async for kind, value in _run_streaming(
-        cmd, cwd=project_dir, deadline=deadline,
+        cmd, cwd=project_dir, env=env, deadline=deadline,
     ):
         if kind == "line":
+            output.append(value)
             yield _sse({"line": value})
         elif kind == "ping":
             yield ": ping\n\n"
@@ -378,6 +512,8 @@ async def stream_build(
             pass
 
     if rc != 0:
+        for line in squashfs_failure_hint(output, tmpdir):
+            yield _sse({"line": line})
         yield _sse({"status": "error", "image": sif,
                     "error": f"Build failed (exit {rc})."})
         return

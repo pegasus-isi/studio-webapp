@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import tempfile
 
 import services.image_builder as ib
 
@@ -46,10 +47,8 @@ def test_build_command_ignores_the_fakeroot_command_but_never_uses_fakeroot():
     ubuntu:22.04 carries glibc 2.35 and this image is 24.04.
     """
     cmd = ib.build_command("apptainer", "img.sif", "img.def")
-    assert cmd == [
-        "apptainer", "build", "--force", "--ignore-fakeroot-command",
-        "img.sif", "img.def",
-    ]
+    assert cmd[:4] == ["apptainer", "build", "--force", "--ignore-fakeroot-command"]
+    assert cmd[-2:] == ["img.sif", "img.def"]
     assert "--fakeroot" not in cmd
 
 
@@ -57,6 +56,70 @@ def test_build_command_never_binds_an_apt_conf():
     """Apptainer will not create a bind destination absent from the container,
     so binding an apt.conf failed every build with "destination doesn't exist"."""
     assert "--bind" not in ib.build_command("apptainer", "i.sif", "i.def")
+
+
+def test_build_command_bounds_the_packing_step_to_the_pod():
+    """mksquashfs reads memory and CPU count from the host, not the cgroup.
+
+    Left alone it asks for a quarter of the node's RAM and one thread per node
+    CPU, gets killed for it, and the death is reported as "mksquashfs command
+    failed: exit status 255" with an empty stderr — because the process that
+    exits 255 is the proot wrapper, which cannot report a tracee that never
+    exited normally.
+    """
+    cmd = ib.build_command("apptainer", "i.sif", "i.def")
+    args = cmd[cmd.index("--mksquashfs-args") + 1]
+    assert "-mem" in args and "-processors" in args
+    # One string, not separate argv entries: Apptainer splits it itself.
+    assert cmd.count("--mksquashfs-args") == 1
+
+
+def test_build_env_takes_proot_out_of_the_packing_step():
+    """See build_env: proot's opaque 255 is the whole reason this exists.
+
+    Apptainer treats any non-empty value as "set", so the variable has to be
+    absent rather than "0" when the bypass is turned off.
+    """
+    env = ib.build_env({"PATH": "/usr/bin"})
+    assert env["APPTAINER_IGNORE_PROOT"] == "1"
+    assert env["PATH"] == "/usr/bin"
+
+    os.environ["STUDIO_BUILD_IGNORE_PROOT"] = "0"
+    try:
+        assert "APPTAINER_IGNORE_PROOT" not in ib.build_env({})
+    finally:
+        del os.environ["STUDIO_BUILD_IGNORE_PROOT"]
+
+
+def test_build_env_can_move_the_build_tmpdir():
+    os.environ["STUDIO_BUILD_TMPDIR"] = "/scratch/build"
+    try:
+        env = ib.build_env({})
+        assert env["APPTAINER_TMPDIR"] == "/scratch/build"
+        assert ib.build_tmpdir(env) == "/scratch/build"
+    finally:
+        del os.environ["STUDIO_BUILD_TMPDIR"]
+
+
+def test_build_tmpdir_follows_apptainers_own_order():
+    assert ib.build_tmpdir({"APPTAINER_TMPDIR": "/a", "TMPDIR": "/b"}) == "/a"
+    assert ib.build_tmpdir({"TMPDIR": "/b"}) == "/b"
+    assert ib.build_tmpdir({}) == tempfile.gettempdir()
+
+
+def test_squashfs_failure_hint_only_fires_for_the_packing_step():
+    assert ib.squashfs_failure_hint(["FATAL: %post failed"], "/tmp") == []
+
+    hint = ib.squashfs_failure_hint(
+        ["INFO:    Creating SIF file...",
+         "FATAL:   While performing build: while creating squashfs: "
+         "/usr/libexec/apptainer/bin/mksquashfs command failed: exit status 255:"],
+        "/tmp",
+    )
+    text = "\n".join(hint)
+    assert "%post had finished" in text
+    assert "/tmp" in text
+    assert "STUDIO_BUILD_TMPDIR" in text
 
 
 def _fake_sif(path, payload_mb=0):
