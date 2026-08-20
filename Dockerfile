@@ -232,7 +232,10 @@ RUN npm install -g opencode-ai@1.17.20 && opencode --version \
     # owned root:root 0755 — the earlier `chmod 777` only covered the top dir,
     # so an unprivileged notebook can't `npm install -g` Codex/Claude into it
     # (EACCES). Re-open the whole tree so any injected UID can install here.
-    && chmod -R a+rwX /opt/npm-global
+    && chmod -R a+rwX /opt/npm-global \
+    # npm keeps a content-addressed cache of everything it downloaded, which is
+    # of no use once the package is installed.
+    && npm cache clean --force
 
 # ---- interactive shell env for on-demand AI tools ----
 # JupyterLab terminals (spawned by jupyter-server, NOT studio-api) get their
@@ -263,7 +266,13 @@ RUN cd /opt/jupyter-pegasusai-chat \
     && EXTDIR="$(python3 -c 'import sys, os; print(os.path.join(sys.prefix, "share", "jupyter", "labextensions", "jupyter-pegasusai-chat"))')" \
     && mkdir -p "$EXTDIR" \
     && cp -r jupyter_pegasusai_chat/labextension/* "$EXTDIR/" \
-    && chmod -R a+rX "$EXTDIR"
+    && chmod -R a+rX "$EXTDIR" \
+    # $EXTDIR is the only thing read at runtime; node_modules and the yarn
+    # caches are scaffolding for the build above. Removed in THIS layer on
+    # purpose — a later `rm` would add a whiteout and leave the bytes in the
+    # layer that created them, so the image would not shrink at all.
+    && rm -rf node_modules .yarn /root/.yarn /root/.cache/yarn \
+              /usr/local/share/.cache/yarn
 
 # ---- PegasusAI Bot cell-toolbar client (optional, separate extension) ----
 # TauferLab's cell-toolbar assistant (@gclab/pegasus-ai-client / py
@@ -283,6 +292,12 @@ RUN if [ "$ENABLE_PEGASUS_BOT_CLIENT" = "1" ]; then \
       set -eux; \
       cd /opt/jupyter-pegasus-ai-client; \
       pip install --no-cache-dir .; \
+      # pip install runs the hatch/jlpm labextension build, so this tree ends
+      # up carrying a full node_modules. The wheel and its labextension are
+      # already installed into site-packages by now; --no-cache-dir covers
+      # pip's cache but nothing cleans jlpm's. Same-layer removal, per above.
+      rm -rf node_modules .yarn lib tsconfig.tsbuildinfo \
+             /root/.yarn /root/.cache/yarn /usr/local/share/.cache/yarn; \
     else \
       echo "[build] PegasusAI Bot client disabled (ENABLE_PEGASUS_BOT_CLIENT=0)"; \
     fi
