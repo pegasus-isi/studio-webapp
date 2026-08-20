@@ -46,6 +46,19 @@ export function useWorkflowEstimate(runId: string, enabled = true) {
   });
 }
 
+export function useCancelWorkflow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => api.cancelWorkflow(runId),
+    onSuccess: () => {
+      // The run stays in the list, with a new status — refresh both places it
+      // appears rather than removing it from either.
+      qc.invalidateQueries({ queryKey: ["workflows"] });
+      qc.invalidateQueries({ queryKey: ["workflow-projects"] });
+    },
+  });
+}
+
 export function useDeleteWorkflow() {
   const qc = useQueryClient();
   return useMutation({

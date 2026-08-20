@@ -38,30 +38,23 @@ _BUILDERS = ("apptainer", "singularity")
 _BUILD_TIMEOUT_S = int(os.environ.get("STUDIO_BUILD_TIMEOUT", "1800"))
 _PING_INTERVAL_S = 10.0
 
-# %post runs as root inside the build sandbox. When the studio process is not
-# root, that has to be emulated: --fakeroot uses subuid/subgid ranges where they
-# exist and falls back to Apptainer's rootless path otherwise. Default on for a
-# non-root euid, and overridable because a host with neither subuid ranges nor a
-# setuid installation may need it off (and a privileged container running as root
-# does not need it at all).
-_FAKEROOT = os.environ.get("STUDIO_BUILD_FAKEROOT", "").lower()
-
-# %post runs as root inside the build sandbox. When the studio process is not
-# root that has to be emulated: --fakeroot uses subuid/subgid ranges where they
-# exist and falls back to Apptainer's rootless path otherwise.
+# No --fakeroot, and no --ignore-fakeroot-command that used to accompany it.
 #
-# --ignore-fakeroot-command goes with it. Without it Apptainer LD_PRELOADs the
-# *host* libfakeroot.so into the container, which fails whenever their glibcs
-# differ — an ubuntu:22.04 base under this ubuntu:24.04 image dies with
-# "GLIBC_2.38 not found" before %post runs at all. The kernel user-namespace
-# root mapping needs no such library.
+# That pair produces an EMPTY container and still exits 0. Measured on the same
+# definition, in the same pod, four minutes apart:
 #
-# Note apt still cannot drop privileges to _apt under an emulated root
-# ("setgroups: Operation not permitted"). That is fixed in the definition file,
-# where /etc/apt/apt.conf.d exists — see the pegasus-apptainer skill. It cannot
-# be fixed with --bind: Apptainer will not create a bind destination that is
-# absent from the container, so binding an apt.conf failed every build with
-# "destination doesn't exist in container".
+#   with --fakeroot --ignore-fakeroot-command : 37,461 bytes, filesystem
+#                                              partition 40960-40960 (zero length)
+#   without                                  : 265 MB, partition
+#                                              40960-265379840
+#
+# Both printed "INFO: Build complete" and exited 0. A trivial definition (alpine,
+# no %post) survives the flags unharmed, so it only breaks once %post writes real
+# content — which is how it shipped and why it took a worker-node error to find.
+#
+# Apptainer's default path builds correctly here, unprivileged, so there is
+# nothing left to emulate. Any flag added back has to be checked against
+# verify_image() below rather than against the exit code.
 
 
 
@@ -104,10 +97,18 @@ def detect_builder() -> str | None:
     return None
 
 
-def _use_fakeroot() -> bool:
-    if _FAKEROOT in ("1", "true", "yes"):
+def _unprivileged_build() -> bool:
+    """Whether %post will run under an emulated root.
+
+    Decides only whether the apt setting is injected — dropping --fakeroot did
+    not fix apt, which still cannot drop privileges to _apt here (verified: the
+    265 MB build above logged the same setgroups errors and succeeded only
+    because its base image already carried python and pip).
+    """
+    override = os.environ.get("STUDIO_BUILD_APT_FIX", "").lower()
+    if override in ("1", "true", "yes"):
         return True
-    if _FAKEROOT in ("0", "false", "no"):
+    if override in ("0", "false", "no"):
         return False
     return os.geteuid() != 0
 
@@ -116,13 +117,53 @@ def build_command(builder: str, sif: str, definition: str) -> list[str]:
     """Build argv for turning a definition file into a ``.sif``.
 
     ``--force`` overwrites a previous build rather than prompting, since this
-    runs unattended behind an HTTP request.
+    runs unattended behind an HTTP request. No other flags — see the note above
+    on --fakeroot silently producing an empty image.
     """
-    cmd = [builder, "build", "--force"]
-    if _use_fakeroot():
-        cmd += ["--fakeroot", "--ignore-fakeroot-command"]
-    cmd += [sif, definition]
-    return cmd
+    return [builder, "build", "--force", sif, definition]
+
+
+# A SIF's descriptor table is written before its filesystem payload, so a build
+# that produced no filesystem still leaves a parseable file: `apptainer sif list`
+# reads it happily and `ls` shows a plausible size. The failure then surfaces one
+# staging hop and several minutes later, on a worker, as "not a valid squashfs
+# image" — naming the symptom in the last place anyone would look for the cause.
+_SQUASHFS_MAGIC = b"hsqs"
+
+
+def verify_image(sif: str) -> str | None:
+    """Return an error message if *sif* is not a usable image, else None.
+
+    ``apptainer build`` exiting 0 is not evidence that it built anything, so the
+    payload is checked rather than the exit code.
+    """
+    try:
+        size = os.path.getsize(sif)
+    except OSError as e:
+        return f"the build reported success but the image is unreadable: {e}"
+    if size < 1024:
+        return f"the build reported success but the image is only {size} bytes"
+
+    # Scan the descriptor area and the start of the payload for a squashfs
+    # superblock. Apptainer aligns the filesystem partition early (offset 40960
+    # in observed builds), so 2 MB is a generous window.
+    try:
+        with open(sif, "rb") as fh:
+            head = fh.read(2 << 20)
+    except OSError as e:
+        return f"the build reported success but the image is unreadable: {e}"
+
+    if _SQUASHFS_MAGIC in head:
+        return None
+    # An image of real size in another format (ext3, an encrypted payload) is not
+    # something to reject on the strength of one missing magic number.
+    if size > 5 * 1024 * 1024:
+        return None
+    return (
+        f"the build reported success but produced no filesystem ({size} bytes, "
+        "no squashfs payload). This image would fail on a worker node with "
+        '"not a valid squashfs image"'
+    )
 
 
 def find_definition(project_dir: str) -> tuple[str, str] | None:
@@ -282,7 +323,7 @@ async def stream_build(
     # Build from an augmented copy when apt would fail under an emulated root.
     # Written beside the original so relative %files paths still resolve.
     build_def, temp_def = definition, None
-    if _use_fakeroot():
+    if _unprivileged_build():
         try:
             with open(definition) as fh:
                 text = fh.read()
@@ -329,6 +370,16 @@ async def stream_build(
     if rc != 0:
         yield _sse({"status": "error", "image": sif,
                     "error": f"Build failed (exit {rc})."})
+        return
+
+    # Exit 0 is not enough. Apptainer has been observed reporting "Build
+    # complete" for an image with a zero-length filesystem, which then fails on a
+    # worker node minutes later with an error naming squashfs rather than the
+    # build. Fail here, where the build log is still on screen.
+    problem = verify_image(sif)
+    if problem:
+        yield _sse({"status": "error", "image": sif, "error": problem})
+        log.warning("image_build_produced_no_filesystem", sif=sif, detail=problem)
         return
 
     yield _sse({"line": (

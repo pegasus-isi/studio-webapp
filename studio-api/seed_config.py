@@ -29,7 +29,6 @@ def _load_env_file() -> dict[str, str]:
     _ENV_KEYS = [
         "LLM_PROVIDER", "LLM_MODEL",
         "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
-        "FABRIC_AI_API_KEY", "NRP_API_KEY",
         "CUSTOM_BASE_URL", "CUSTOM_API_KEY",
         "OLLAMA_HOST",
     ]
@@ -43,16 +42,12 @@ def _load_env_file() -> dict[str, str]:
 _PROVIDER_KEY_MAP = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
-    "fabric": "FABRIC_AI_API_KEY",
-    "nrp": "NRP_API_KEY",
     "custom": "CUSTOM_API_KEY",
 }
 
 _PROVIDER_DEFAULTS = {
     "anthropic": {"model": "claude-sonnet-4-5-20250929"},
     "openai": {"model": "gpt-4o"},
-    "fabric": {"model": "qwen3-coder-30b", "base_url": "https://ai.fabric-testbed.net/v1"},
-    "nrp": {"model": "qwen3-coder-30b", "base_url": "https://ellm.nrp-nautilus.io/v1"},
     "custom": {},
     "ollama": {"model": "qwen2.5-coder:7b"},
 }

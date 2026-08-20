@@ -58,7 +58,10 @@ class BuildRequest(BaseModel):
     """Options for the container image Build action."""
 
     tag: str = "latest"
-    push: bool = True
+    # Build only by default. A workflow references its .sif by absolute path with
+    # image_site="local" and Pegasus stages the file like any other input, so
+    # pushing is a separate, opt-in step rather than part of building.
+    push: bool = False
 
 log = structlog.get_logger()
 
@@ -746,6 +749,31 @@ async def analyze_workflow(run_id: str) -> dict:
     run_dir = await _resolve_run_dir(run_id)
     output = await run_pegasus_analyzer(run_dir)
     return {"run_id": run_id, "analysis": output}
+
+
+@router.post("/{run_id}/cancel")
+async def cancel_workflow_run(run_id: str) -> dict:
+    """Take a run out of the Condor queue, keeping its directory on disk.
+
+    Distinct from DELETE, which also removes the submit directory. A run that is
+    stuck, mis-planned, or simply not wanted any more has to leave the queue
+    before it consumes more slots — but its logs are the only record of why, so
+    removing the queue entry must not destroy them. ``condor_rm`` on the DAG by
+    hand orphans the Pegasus bookkeeping, so this goes through pegasus-remove.
+    """
+    from services.workflow_submitter import cancel_workflow
+
+    run_dir = await _resolve_run_dir(run_id)
+    result = await cancel_workflow(run_dir)
+    if result.get("status") == "error":
+        # Already finished or never queued is the common case, and is not a
+        # server fault — report it as a failed request the UI can show verbatim.
+        raise HTTPException(
+            status_code=409,
+            detail=result.get("output") or "Could not remove the run from the queue",
+        )
+    log.info("workflow_run_cancelled", run_id=run_id, run_dir=run_dir)
+    return {"run_id": run_id, **result}
 
 
 @router.delete("/{run_id}")

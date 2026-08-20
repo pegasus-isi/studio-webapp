@@ -310,10 +310,11 @@ export function ChatInput() {
             onChange={(e) => {
               const pid = e.target.value || null;
               setChatProvider(pid);
-              // Default provider → use the configured default model (no typing
-              // needed). A specific provider → auto-fill its default model.
-              const p = providers.find((p) => p.id === pid);
-              setChatModel(pid && p ? p.default_model : null);
+              // Clear the model rather than pinning the provider's default.
+              // Choosing a model is optional: null means "let the provider's
+              // configured default answer", and the picker beside this lists
+              // everything the provider actually offers if you want to change it.
+              setChatModel(null);
             }}
             className="rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
           >
@@ -326,30 +327,49 @@ export function ChatInput() {
           </select>
 
           <label className="ml-2 text-fgmuted">Model:</label>
-          {/* Default provider → the model is chosen for you (disabled
-              "default"). A specific provider → an editable chooser: the
-              datalist offers the provider's discovered models to pick, and you
-              can still type any model id. */}
-          <input
-            type="text"
-            list={chatProvider ? "chat-model-options" : undefined}
-            value={chatProvider ? chatModel || "" : "default"}
-            onChange={(e) => setChatModel(e.target.value || null)}
-            disabled={!chatProvider}
-            placeholder={chatProvider ? "choose or type a model" : undefined}
-            title={
-              chatProvider
-                ? "Pick from the provider's models or type a model id"
-                : "Uses your configured default — pick a provider to change it"
-            }
-            className="w-48 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:cursor-not-allowed disabled:bg-muted disabled:text-fgsubtle"
-          />
-          {chatProvider && modelOptions.length > 0 && (
-            <datalist id="chat-model-options">
+          {/* Every model the provider offers, listed. Choosing one is optional —
+              the first entry leaves it to the provider's configured default — so
+              picking a provider is enough to start chatting.
+
+              A dropdown only where there is something to drop down: an endpoint
+              that does not implement /models discovers nothing, and a select
+              listing one item would take away the ability to name a model that
+              exists. That case falls back to a text field. */}
+          {modelOptions.length > 0 ? (
+            <select
+              value={chatModel || ""}
+              onChange={(e) => setChatModel(e.target.value || null)}
+              disabled={!chatProvider}
+              title={`${modelOptions.length} model${
+                modelOptions.length === 1 ? "" : "s"
+              } available`}
+              className="max-w-[16rem] rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:cursor-not-allowed disabled:bg-muted disabled:text-fgsubtle"
+            >
+              <option value="">
+                {providerDefaultModel
+                  ? `Default (${providerDefaultModel})`
+                  : "Provider default"}
+              </option>
               {modelOptions.map((m) => (
-                <option key={m} value={m} />
+                <option key={m} value={m}>
+                  {m}
+                </option>
               ))}
-            </datalist>
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={chatProvider ? chatModel || "" : "default"}
+              onChange={(e) => setChatModel(e.target.value || null)}
+              disabled={!chatProvider}
+              placeholder={chatProvider ? "provider default" : undefined}
+              title={
+                chatProvider
+                  ? "This endpoint listed no models — type a model id, or leave blank for the default"
+                  : "Uses your configured default — pick a provider to change it"
+              }
+              className="w-48 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:cursor-not-allowed disabled:bg-muted disabled:text-fgsubtle"
+            />
           )}
         </div>
 

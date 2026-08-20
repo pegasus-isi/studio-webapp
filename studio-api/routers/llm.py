@@ -255,25 +255,24 @@ async def upsert_provider_config(req: ProviderConfigRequest) -> ProviderConfigRe
         if existing:
             api_key = existing.get("api_key") or ""
 
-    # A custom endpoint is created empty and configured afterwards, in the card
-    # that only renders once the row exists. Validating the create therefore
-    # deadlocked it: the field that supplies the base URL could not appear until
-    # a row was saved, and the row could not be saved without the base URL, so
-    # custom providers could not be added at all.
+    # Every provider is created empty and configured afterwards, in the card that
+    # only renders once the row exists. Validating the create therefore deadlocks
+    # it: the field that supplies the key cannot appear until a row is saved, and
+    # the row cannot be saved without the key.
     #
-    # The draft is allowed through instead. Activation still validates (see
-    # activate_provider below), so an unconfigured endpoint can be saved but
-    # never used.
-    draft = provider_type(req.provider_id) == "custom" and not (
-        req.base_url or ""
-    ).strip()
-
-    if not draft:
-        error = await check_api_key_requirement(
-            req.provider_id, api_key, req.base_url
-        )
-        if error:
-            raise HTTPException(status_code=400, detail=error)
+    # That was fixed for custom endpoints only, leaving Anthropic, OpenAI and
+    # Google impossible to add at all — the UI posts them with api_key="" and the
+    # 400 came back as "unable to add", with no way to supply a key first.
+    #
+    # So saving never fails on an incomplete config. Whatever would have been the
+    # error makes the row a draft instead: stored, visible, editable, and not
+    # eligible to be the active provider. Keyless providers (gateway, ollama)
+    # raise no error and so are usable immediately, and activation validates
+    # again (see activate_provider), so chat can never point at a provider that
+    # cannot answer.
+    draft = bool(
+        await check_api_key_requirement(req.provider_id, api_key, req.base_url)
+    )
 
     await db.upsert_provider_config(
         provider_id=req.provider_id,
