@@ -600,10 +600,15 @@ export async function getMarketplaceStatus() {
   return request<MarketplaceStatus>("/knowledge/marketplace");
 }
 
-/** Fast-forward the checkout. Declines (rather than discards) local changes. */
-export async function updateMarketplace() {
+/**
+ * Fast-forward the checkout. Declines (rather than discards) local changes.
+ * The body is required by the API: a bodyless POST is a CORS simple request,
+ * so without one any page could trigger the pull (PAS-SEC-01).
+ */
+export async function updateMarketplace(force = false) {
   return request<MarketplaceStatus>("/knowledge/marketplace/update", {
     method: "POST",
+    body: JSON.stringify({ force }),
   });
 }
 

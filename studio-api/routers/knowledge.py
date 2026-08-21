@@ -7,6 +7,7 @@ import os
 
 import structlog
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from knowledge import layout
 from models import AgentInfo, SkillMetadata, SkillResponse
@@ -140,13 +141,24 @@ async def marketplace_status() -> dict[str, object]:
     return checkout.status()
 
 
+class MarketplaceUpdateRequest(BaseModel):
+    """Body for POST /marketplace/update (required, so the browser preflights)."""
+
+    # Skips only the local-commit guard, never the dirty guard — see
+    # knowledge/checkout.py:update.
+    force: bool = False
+
+
 @router.post("/marketplace/update")
-async def marketplace_update(force: bool = False) -> dict[str, object]:
+async def marketplace_update(req: MarketplaceUpdateRequest) -> dict[str, object]:
     """Fast-forward the checkout to upstream.
 
     Declines rather than discards when the checkout is dirty or carries local
     commits; the reason comes back in the response so the UI can say why.
+    A required JSON body (rather than `?force=`) means a cross-site page cannot
+    run `git pull` — and the checkout's own repo-local hooks — on its own
+    schedule: a query-param POST needs no CORS preflight (PAS-SEC-01 / NEW-05).
     """
     from knowledge import checkout
 
-    return await asyncio.to_thread(checkout.update, force=force)
+    return await asyncio.to_thread(checkout.update, force=req.force)

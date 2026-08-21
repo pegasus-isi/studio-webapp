@@ -185,9 +185,58 @@ def test_marketplace_endpoints(client, monkeypatch, tmp_path):
     assert body["exists"] is True
     assert body["is_git"] is False
 
-    body = client.post("/api/knowledge/marketplace/update").json()
+    body = client.post("/api/knowledge/marketplace/update", json={}).json()
     assert body["updated"] is False
     assert body["reason"] == "not a git checkout"
+
+
+def _stub_update(monkeypatch) -> list[dict]:
+    """Replace the real `git pull` with a recorder, so a test can assert the
+    endpoint never reached it."""
+    from knowledge import checkout as co
+
+    calls: list[dict] = []
+
+    def fake(*, force: bool = False) -> dict:
+        calls.append({"force": force})
+        return {"updated": False, "reason": "stubbed"}
+
+    monkeypatch.setattr(co, "update", fake)
+    return calls
+
+
+def test_marketplace_update_requires_a_json_body(client, monkeypatch):
+    """Update takes a required JSON body, not `?force=`. A query-param or
+    bodyless POST is a CORS simple request, so any page the user visited could
+    run `git pull` in their checkout — and the repo-local hooks it honours —
+    without a preflight (PAS-SEC-01 / NEW-05)."""
+    calls = _stub_update(monkeypatch)
+
+    assert client.post("/api/knowledge/marketplace/update").status_code == 422
+    assert (
+        client.post("/api/knowledge/marketplace/update?force=true").status_code == 422
+    )
+    resp = client.post(
+        "/api/knowledge/marketplace/update",
+        content=b"{}",
+        headers={"Content-Type": "text/plain"},
+    )
+    assert resp.status_code == 422
+    assert calls == []
+
+
+def test_marketplace_update_forwards_force(client, monkeypatch):
+    """The flag still travels, now from the body."""
+    calls = _stub_update(monkeypatch)
+
+    assert (
+        client.post(
+            "/api/knowledge/marketplace/update", json={"force": True}
+        ).status_code
+        == 200
+    )
+    assert client.post("/api/knowledge/marketplace/update", json={}).status_code == 200
+    assert calls == [{"force": True}, {"force": False}]
 
 
 def test_tool_skill_dirs_are_symlinks_not_copies(monkeypatch, tmp_path):
