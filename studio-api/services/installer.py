@@ -79,6 +79,13 @@ def get_all_tools() -> list[dict[str, Any]]:
     return _load_registry()
 
 
+def _top_level_dirs(root: str) -> set[str]:
+    try:
+        return {n for n in os.listdir(root) if os.path.isdir(os.path.join(root, n))}
+    except OSError:
+        return set()
+
+
 class ToolInstaller:
     """Manages tool installation and uninstallation."""
 
@@ -143,13 +150,33 @@ class ToolInstaller:
         return "installed"
 
     async def uninstall(self, tool_id: str, db: Any) -> str:
-        """Uninstall a tool: call adapter.uninstall, remove from DB."""
+        """Uninstall a tool: call adapter.uninstall, remove from DB.
+
+        Unknown ids raise (the router maps that to 404). A tool that is not
+        installed is left alone on disk: the endpoint is a path-only POST with
+        no same-origin gate yet (PAS-SEC-01), so it has to be harmless when it
+        was not meant.
+        """
+        if get_tool_info(tool_id) is None:
+            raise ValueError(f"Unknown tool: {tool_id}")
+        if await db.get_tool(tool_id) is None:
+            log.info("tool_uninstall_skipped", tool_id=tool_id, reason="not_installed")
+            return "not_installed"
+
         adapter = get_adapter(tool_id)
         if adapter:
-            # Config lives at the config root now; also clear anything an older
-            # build left in the workspace so uninstall really removes it all.
+            # Adapters receive $HOME and remove only the individual files they
+            # generated. The tools' own directories (~/.claude, ~/.codex,
+            # ~/.agents, ~/.antigravity, ~/.config/opencode) hold credentials
+            # and history and are never removed. The before/after check is a
+            # tripwire: it cannot undo a deletion, but it makes one loud.
+            before = _top_level_dirs(config_root())
             adapter.uninstall(config_root())
+            # Also clear anything an older build left in the workspace.
             prune_legacy_workspace_copies(WORKSPACE_ROOT)
+            gone = sorted(before - _top_level_dirs(config_root()))
+            if gone:
+                log.error("tool_uninstall_removed_top_level_dirs", tool_id=tool_id, dirs=gone)
 
         await db.remove_tool(tool_id)
         log.info("tool_uninstalled", tool_id=tool_id)

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from typing import Any
 
 import structlog
@@ -17,7 +16,8 @@ from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import (
     build_knowledge_appendix,
     home_path,
-    remove_managed_block,
+    remove_generated_context_file,
+    rmdir_if_empty,
     unmerge_json_top,
     update_json,
     upsert_managed_block,
@@ -102,14 +102,21 @@ class AntigravityAdapter(KnowledgeAdapter):
         )
 
     def uninstall(self, workspace: str) -> None:
-        path = os.path.join(workspace, ".antigravity")
-        if os.path.isdir(path):
-            shutil.rmtree(path)
-
-        # Global cleanup — remove only what we added.
-        remove_managed_block(home_path(".antigravity", "context.md"))
-        unmerge_json_top(
+        # ``workspace`` is $HOME, so <workspace>/.antigravity *is* the tool's
+        # own ~/.antigravity. The two paths below coincide in production and
+        # differ only for a legacy ~/work workspace; dedupe and treat each the
+        # same way. Only our file and our keys go; the directory goes only if
+        # that emptied it.
+        for path in sorted({
+            os.path.join(workspace, ".antigravity", "context.md"),
+            home_path(".antigravity", "context.md"),
+        }):
+            remove_generated_context_file(path)
+        for path in sorted({
+            os.path.join(workspace, ".antigravity", "settings.json"),
             home_path(".antigravity", "settings.json"),
-            ["provider", "model", "base_url", "api_key_env"],
-        )
+        }):
+            unmerge_json_top(path, ["provider", "model", "base_url", "api_key_env"])
+        rmdir_if_empty(os.path.join(workspace, ".antigravity"))
+        rmdir_if_empty(home_path(".antigravity"))
         log.info("antigravity_uninstalled", workspace=workspace)

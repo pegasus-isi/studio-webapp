@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 from typing import Any
 
 import structlog
@@ -21,6 +20,10 @@ from knowledge.common import (
     build_knowledge_appendix,
     ensure_context_file,
     link_skills_to_dir,
+    remove_file_if,
+    remove_generated_context_file,
+    rmdir_if_empty,
+    unlink_if_links_into,
 )
 from llm.providers import PROVIDERS
 
@@ -32,6 +35,22 @@ MCP_SERVERS = {
     "pegasus-docs": "https://gitmcp.io/pegasus-isi/pegasus",
     "kiso-docs": "https://gitmcp.io/pegasus-isi/kiso",
 }
+
+# Written into every generated agent file by _seed_codex_agents(); uninstall
+# uses it to tell our file from one the user wrote under the same agent id.
+_AGENT_MARKER = "# MCP servers for documentation lookups"
+# Only _build_config_toml() writes this table. A config.toml without it is the
+# user's own (or Codex's) and stays.
+_CONFIG_MARKER = "[mcp_servers.pegasus-docs]"
+
+
+def _tree_agent_ids() -> list[str]:
+    """Agent ids the tree would have seeded — the only ``<id>.toml`` names
+    uninstall may consider removing."""
+    src = layout.agents_dir()
+    if not os.path.isdir(src):
+        return []
+    return sorted(f[:-3] for f in os.listdir(src) if f.endswith(".md"))
 
 
 def _build_config_toml(
@@ -290,34 +309,37 @@ class CodexCLIAdapter(KnowledgeAdapter):
                 os.environ[env_var] = api_key
 
     def uninstall(self, workspace: str) -> None:
-        # Remove AGENTS.md from workspace
-        agents_path = os.path.join(workspace, "AGENTS.md")
-        if os.path.isfile(agents_path):
-            os.remove(agents_path)
-            log.info("codex_file_removed", path=agents_path)
+        # ``workspace`` is $HOME: ~/.codex holds auth.json and every session,
+        # ~/.agents holds the user's own skills. Remove our entries, never the
+        # directories — they go only if removing our entries emptied them.
+        remove_generated_context_file(os.path.join(workspace, "AGENTS.md"))
 
-        # Remove .agents/skills/ from workspace
-        agents_skills = os.path.join(workspace, ".agents")
-        if os.path.isdir(agents_skills):
-            shutil.rmtree(agents_skills)
-            log.info("codex_dir_removed", path=agents_skills)
+        skills = os.path.join(workspace, ".agents", "skills")
+        if not unlink_if_links_into(skills) and os.path.exists(skills):
+            # A real directory: either the user's, or the copytree fallback
+            # from a host without symlinks. Indistinguishable, so it stays.
+            log.warning("codex_skills_dir_kept", path=skills)
+        rmdir_if_empty(os.path.join(workspace, ".agents"))
 
-        # Remove .codex/ from workspace (agents live here)
-        codex_workspace = os.path.join(workspace, ".codex")
-        if os.path.isdir(codex_workspace):
-            shutil.rmtree(codex_workspace)
-            log.info("codex_dir_removed", path=codex_workspace)
+        # Only ids the tree would have seeded, and only files carrying the
+        # generator's marker — a user's agent under the same id has neither.
+        agents_dir = os.path.join(workspace, ".codex", "agents")
+        for agent_id in _tree_agent_ids():
+            remove_file_if(
+                os.path.join(agents_dir, f"{agent_id}.toml"),
+                lambda text: _AGENT_MARKER in text,
+            )
+        rmdir_if_empty(agents_dir)
 
-        # Remove ~/.codex/config.toml
         home = os.environ.get("HOME", "")
-        if not home:
-            return
-        config_path = os.path.join(home, ".codex", "config.toml")
-        if os.path.isfile(config_path):
-            os.remove(config_path)
-            log.info("codex_file_removed", path=config_path)
-
-        # Remove old codex.json if it exists
-        old_json = os.path.join(workspace, "codex.json")
-        if os.path.isfile(old_json):
-            os.remove(old_json)
+        if home:
+            remove_file_if(
+                os.path.join(home, ".codex", "config.toml"),
+                lambda text: _CONFIG_MARKER in text,
+            )
+            rmdir_if_empty(os.path.join(home, ".codex"))
+        rmdir_if_empty(os.path.join(workspace, ".codex"))
+        # The legacy <workspace>/codex.json is no longer touched: it was only
+        # ever written under ~/work, and at $HOME a file by that name is the
+        # user's.
+        log.info("codex_uninstalled", workspace=workspace)
