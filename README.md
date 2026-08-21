@@ -23,6 +23,9 @@ nginx :8888
   `-- /jupyter/* -> JupyterLab  :8889
 ```
 
+studio-web, studio-api and JupyterLab all bind `127.0.0.1`; nginx on `:8888` is
+the only listener reachable from outside the container.
+
 Long-running services are managed by `supervisord`
 ([docker/supervisor/supervisord.conf](docker/supervisor/supervisord.conf)).
 JupyterLab is always on and opens in a separate browser tab.
