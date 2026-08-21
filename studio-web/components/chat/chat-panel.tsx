@@ -1,6 +1,11 @@
 "use client";
 
-import { useChatStore, genId, type ChatMsg } from "@/lib/stores/chat-store";
+import {
+  useChatStore,
+  genId,
+  type ChatMsg,
+  type PendingApproval,
+} from "@/lib/stores/chat-store";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 import { ChatMarkdown } from "@/components/chat/markdown";
 import * as api from "@/lib/api/client";
@@ -224,18 +229,34 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
   );
 }
 
-function ApprovalCard({
-  req,
-}: {
-  req: { id: string; name: string; summary: string };
-}) {
+// Heading label per permission kind. An unknown kind is shown verbatim rather
+// than folded into "shell command", so a new kind of ask from the engine is
+// never mislabelled as something the user already understands.
+const APPROVAL_LABEL: Record<string, string> = {
+  bash: "shell command",
+  run_command: "shell command",
+  edit: "file edit",
+  external_directory: "access outside the workspace",
+  doom_loop: "repeated tool call",
+  webfetch: "web fetch",
+  websearch: "web search",
+};
+
+function ApprovalCard({ req }: { req: PendingApproval }) {
   const requestId = useChatStore((s) => s.requestId);
   const clearPermissionRequest = useChatStore((s) => s.clearPermissionRequest);
   const [busy, setBusy] = useState<null | "approve" | "deny">(null);
   const [error, setError] = useState<string | null>(null);
 
+  const kind = req.kind || req.name || "";
+  const label = APPROVAL_LABEL[kind] ?? kind;
+  // No command text means we cannot show what would be approved. Deny stays
+  // available; Approve does not — a blind yes is the failure mode NEW-06 is
+  // about.
+  const blind = req.summary.trim() === "";
+
   const decide = async (decision: "approve" | "deny") => {
-    if (busy || !requestId) return;
+    if (busy || !requestId || (decision === "approve" && blind)) return;
     setBusy(decision);
     setError(null);
     try {
@@ -257,9 +278,13 @@ function ApprovalCard({
           <line x1="12" y1="9" x2="12" y2="13" />
           <line x1="12" y1="17" x2="12.01" y2="17" />
         </svg>
-        Approve shell command?
+        {label ? `Approve ${label}?` : "Approve this action?"}
       </div>
-      {req.summary && (
+      {blind ? (
+        <div className="mt-1.5 rounded bg-base px-2 py-1 italic text-fgmuted">
+          (no command text supplied — deny unless you know what this is)
+        </div>
+      ) : (
         <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-base px-2 py-1 font-mono text-fgmuted [overflow-wrap:anywhere]">
           {req.summary}
         </pre>
@@ -267,7 +292,10 @@ function ApprovalCard({
       <div className="mt-2 flex items-center gap-2">
         <button
           onClick={() => decide("approve")}
-          disabled={busy !== null || !requestId}
+          disabled={busy !== null || !requestId || blind}
+          title={
+            blind ? "Cannot approve an action with no command text" : undefined
+          }
           className="rounded-md bg-pegasus-600 px-3 py-1 font-medium text-white hover:bg-pegasus-700 disabled:opacity-50"
         >
           {busy === "approve" ? "Approving…" : "Approve"}

@@ -38,15 +38,31 @@ const safeLocalStorage = {
   },
 };
 
+/**
+ * A tool action waiting on the user's Approve/Deny (SEC-4).
+ *
+ * `kind` is the engine's permission key — "bash", "edit",
+ * "external_directory", … — which the card renders so a new kind of ask is
+ * never mislabelled as a shell command. `summary` is the exact command or path
+ * the tool will use, or "" when the engine supplied none; the card says so and
+ * disables Approve rather than offering a blind yes (NEW-06).
+ */
+export type PendingApproval = {
+  id: string;
+  name: string;
+  summary: string;
+  kind?: string;
+};
+
 export interface ChatMsg {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
   toolCalls?: { id: string; name: string; arguments: unknown }[];
   toolResults?: { id: string; name: string; result: string }[];
-  // Shell commands awaiting the user's Approve/Deny (SEC-4). Removed once the
+  // Tool actions awaiting the user's Approve/Deny (SEC-4). Removed once the
   // user decides; the tool_call/tool_result that follow render normally.
-  pendingApprovals?: { id: string; name: string; summary: string }[];
+  pendingApprovals?: PendingApproval[];
   // Transient error for this turn (connection/stream failure). Kept separate
   // from `content` so it's shown to the user but never re-sent to the model.
   error?: string;
@@ -95,10 +111,7 @@ interface ChatStore {
     result: { id: string; name: string; result: string },
     convId?: string
   ) => void;
-  addPermissionRequest: (
-    req: { id: string; name: string; summary: string },
-    convId?: string
-  ) => void;
+  addPermissionRequest: (req: PendingApproval, convId?: string) => void;
   clearPermissionRequest: (callId: string, convId?: string) => void;
   setLastMeta: (meta: NonNullable<ChatMsg["meta"]>, convId?: string) => void;
   setLastServerId: (serverId: number, convId?: string) => void;

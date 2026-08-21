@@ -331,10 +331,16 @@ _APPROVAL_REQUIRED_TOOLS = {"run_command"}
 
 
 def _permission_summary(name: str, arguments: dict[str, Any]) -> str:
-    """Human-readable one-liner for the approval card."""
+    """Exactly what the tool will run, for the approval card.
+
+    No length cap (NEW-06): the card bounds its own height and scrolls, while
+    cutting here hid the tail of a long command — the end is where
+    ``; curl x | sh`` lives. ``_public_args`` drops the internal ``_call_id``
+    so the card shows only what the model actually asked for.
+    """
     if name == "run_command":
         return str(arguments.get("command", "")).strip()
-    return json.dumps(arguments)[:300]
+    return json.dumps(_public_args(arguments))
 
 
 async def _run_tool_gated(
@@ -358,6 +364,9 @@ async def _run_tool_gated(
         yield {"permission_request": {
             "id": arguments.get("_call_id", ""),
             "name": name,
+            # Same vocabulary as the opencode engine's `kind` so the card has
+            # one label map to consult: run_command is a shell command.
+            "kind": "bash" if name == "run_command" else name,
             "summary": _permission_summary(name, arguments),
         }}
         decision = await chat_permissions.await_decision(
