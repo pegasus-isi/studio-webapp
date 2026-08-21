@@ -874,9 +874,10 @@ function ChatTab() {
             </h3>
             <p className="mt-1 text-xs leading-relaxed text-fgmuted">
               When on, chat pauses for your Approve/Deny before running any
-              shell command it wants to execute. Turn off to let commands run
-              automatically (the old behavior). File reads and writes inside
-              your workspace are never gated.
+              shell command, on either chat engine. Turn off to let commands run
+              automatically (the old behavior). File edits inside your workspace
+              are not gated; reading <code>.env</code> files or touching paths
+              outside the workspace still asks.
             </p>
           </div>
           <button

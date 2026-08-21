@@ -197,6 +197,32 @@ class OpenCodeAdapter(KnowledgeAdapter):
                     "enabled": True,
                 },
             },
+            # The command-approval gate for the opencode engine (NEW-02).
+            # opencode emits `permission.asked` only for rules set to "ask",
+            # and its 1.18.8 default ruleset is `"*": "allow"` with asks only
+            # for doom_loop, external directories and *.env reads — so without
+            # this key the engine's forwarder (services/opencode_engine.py)
+            # never fires and the Settings promise ("pauses before running any
+            # shell command") is false on the engine serving every session.
+            #
+            # Only `bash` is set. This config wins over every built-in and
+            # marketplace agent ruleset (opencode merges user config last and
+            # takes the last match), so it reaches subagents too. Deliberately
+            # NOT `"*": "ask"` — gating read/glob/grep/list makes the assistant
+            # unusable — and not `edit: "ask"`: the workspace is the user's own
+            # and a prompt per scaffolded file is the kind of friction that
+            # gets the toggle switched off. Everything else keeps opencode's
+            # defaults (edit allow, external_directory ask, doom_loop ask,
+            # *.env reads ask).
+            #
+            # Emitted regardless of the Studio toggle: opencode always asks and
+            # the engine answers automatically when approval is off. That keeps
+            # the toggle live without restarting serve, which reads this file
+            # only at startup. To tune later, `bash` also accepts a pattern
+            # map: {"*": "ask", "pegasus-status *": "allow"}.
+            "permission": {
+                "bash": "ask",
+            },
         }
 
         # Point the skill loader straight at the checkout. Declaring the path is

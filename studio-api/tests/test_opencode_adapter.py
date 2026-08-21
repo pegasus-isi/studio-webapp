@@ -104,3 +104,28 @@ def test_uninstall_still_removes_a_legacy_workspace_config(tmp_path, monkeypatch
     legacy.write_text(json.dumps({"theme": "x"}))
     OpenCodeAdapter().uninstall(str(workspace))
     assert json.loads(legacy.read_text()) == {"theme": "x"}
+
+def test_config_requires_approval_for_bash(tmp_path, monkeypatch):
+    """NEW-02: opencode only emits `permission.asked` for rules set to "ask",
+    and its 1.18.8 default ruleset is `"*": "allow"`. Without this key the
+    engine's forwarder never fires and the whole SEC-4 gate — plus the Settings
+    promise that chat "pauses before running any shell command" — is inert on
+    the engine that serves every real session."""
+    from knowledge.opencode import OpenCodeAdapter
+
+    home = tmp_path / "home"
+    workspace = home / "work"
+    workspace.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    OpenCodeAdapter().update_llm_config(
+        str(workspace), {"provider": "gateway", "model": "default", "base_url": "u"}
+    )
+
+    cfg = json.loads((home / ".config" / "opencode" / "opencode.json").read_text())
+    assert cfg["permission"]["bash"] == "ask"
+    # Not a blanket ask: gating read/glob/grep/list would make the assistant
+    # unusable, and a prompt per scaffolded file gets the toggle switched off.
+    assert "*" not in cfg["permission"]
+    assert cfg["permission"].get("edit", "allow") == "allow"
