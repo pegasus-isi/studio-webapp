@@ -2,5 +2,11 @@ node_modules/
 lib/
 jupyter_pegasusai_chat/
 .yarn/
-yarn.lock
 *.tsbuildinfo
+
+# yarn.lock is deliberately NOT ignored. The image installs this extension with
+# `jlpm install --immutable`, so the committed lockfile decides which bytes end
+# up in the labextension bundle; ignoring it is what made every build re-resolve
+# the whole dependency tree from the registry. Regenerate after changing
+# package.json with `uvx --from 'jupyterlab>=4.2' jlpm install --mode
+# update-lockfile` (README, "JupyterLab extension lockfile").

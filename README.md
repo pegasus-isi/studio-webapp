@@ -33,8 +33,20 @@ JupyterLab is always on and opens in a separate browser tab.
 ## Architecture Notes
 
 - Runtime image: `ubuntu:24.04`, system Python 3.12, Node.js 20.
-- Pegasus WMS and HTCondor are installed from DEB packages.
-- Apptainer 1.5 provides Singularity-compatible `docker://` workflow execution.
+- HTCondor 25.x comes from its `signed-by=` apt repo. Pegasus 6.0 is unreleased
+  (the signed stable repo carries 5.1.x), so the image installs a single 6.0
+  development `.deb` pinned by URL + sha256 (`PEGASUS_DEB_URL` /
+  `PEGASUS_DEB_SHA256` build args). The nightly repo publishes no signature, so
+  the build pins that one `.deb` rather than tracking the repo — bump procedure
+  is in the Dockerfile comment above the block.
+- Apptainer 1.5 provides Singularity-compatible `docker://` workflow execution;
+  installed from the GitHub release `.deb`, sha256-pinned (`APPTAINER_DEB_SHA256`).
+- JupyterLab extension lockfile: `jupyter-pegasusai-chat/yarn.lock` is committed
+  and installed with `jlpm install --immutable`. After changing that extension's
+  `package.json`, regenerate it with
+  `uvx --from 'jupyterlab>=4.2' jlpm install --mode update-lockfile` (yarn 3.5.0,
+  the version JupyterLab 4.x bundles) and commit the result, or the image build
+  fails on the immutability check.
 - JupyterLab runs in classic document mode. `jupyter-ai` and collaboration/RTC
   extensions are intentionally excluded because they break notebook loading
   behind the proxy.

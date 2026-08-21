@@ -174,8 +174,16 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   set shipped across PRs #57/#60/#62/#64/#66/#68/#126/#128/#130/#132/#134/#136,
   including the previously-open security items — `run_command` now has a
   per-turn approval gate (SEC-4, #68), LLM keys are write-only over the API
-  (SEC-3, #64) and encrypted at rest when `STUDIO_SECRET_KEY` is set (S7, #136),
-  and the Dockerfile installs are checksummed / from signed repos (INF-4, #66).
+  (SEC-3, #64) and encrypted at rest when `STUDIO_SECRET_KEY` is set (S7, #136).
+  Every root-level install in the Dockerfile is either from a `signed-by=` apt
+  repo or a sha256-pinned download: Pegasus 6.0 is a pinned development `.deb`
+  (`PEGASUS_DEB_URL`/`PEGASUS_DEB_SHA256` — its nightly repo publishes no
+  signature, so it is pinned, not tracked; bump procedure in the Dockerfile
+  comment), Apptainer's `.deb` is hash-pinned, and `jupyter-pegasusai-chat`
+  installs from a committed `yarn.lock` with `--immutable` (INF-4, #66; restored
+  after `c50c700` re-enabled the unsigned repo).
+  `studio-api/tests/test_dockerfile_guards.py` plus a grep step in CI fail if
+  any of that comes back.
   Check the doc's Status lines before assuming anything there is still open.
 
 ## Session usage logging

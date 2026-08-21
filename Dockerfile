@@ -9,8 +9,13 @@
 FROM node:20-alpine AS frontend-build
 
 WORKDIR /build
-COPY studio-web/package.json studio-web/package-lock.json* ./
-RUN npm ci --ignore-scripts 2>/dev/null || npm install
+# No glob on the lockfile and no `|| npm install` fallback: a missing or drifted
+# package-lock.json must fail the build here, not silently float every frontend
+# dependency to whatever npm resolves on the day of the build (which is also how
+# a failing `npm ci` stayed invisible — its stderr went to /dev/null). CI's test
+# job already proves `npm ci` works against this lockfile.
+COPY studio-web/package.json studio-web/package-lock.json ./
+RUN npm ci --ignore-scripts
 
 COPY studio-web/ ./
 RUN npm run build
@@ -144,12 +149,46 @@ RUN ARCH=$(dpkg --print-architecture) && \
 COPY docker/htcondor/90-studio.conf /etc/condor/config.d/90-studio.conf
 COPY docker/pegasus/pegasus.properties /etc/pegasus/pegasus.properties
 
-# ---- Pegasus ----
-RUN curl -fsSL https://download.pegasus.isi.edu/pegasus/gpg.txt \
-         -o /etc/apt/trusted.gpg.d/pegasus.asc && \
-    echo 'deb [arch=amd64, trusted=yes] https://download.pegasus.isi.edu/pegasus/development/6.0/ubuntu/ noble main' >/etc/apt/sources.list.d/pegasus.list && \
+# ---- Pegasus 6.0 (pinned development build) ----
+# Pegasus 6.0 is unreleased: the signed stable repo carries 5.1.x only, and the
+# integrated monitord/workflow-monitor this studio reads its event log from
+# exists only in the 6.0 development builds. That development apt repo publishes
+# an UNSIGNED Release — no InRelease, no Release.gpg (probed 2026-08-21) — so
+# apt cannot authenticate it, and the only way to consume it as a repo was with
+# verification switched off. That is what this block did until now, and it
+# silently un-did the checksums PR #66 added; the CI guard and
+# studio-api/tests/test_dockerfile_guards.py now reject that shape.
+#
+# So: one development .deb, pinned by URL + sha256. The hash below is the
+# integrity anchor — it is reviewed in the PR that bumps it — and apt resolves
+# the .deb's dependencies (default-jre, graphviz, python3-{cryptography,yaml,git})
+# from the signed Ubuntu archive. Its `Recommends: condor` is already satisfied
+# by the HTCondor repo above.
+#
+# The nightly pool keeps only ~4 days of builds, so a pinned URL into the pool
+# 404s within the week. The pinned .deb therefore wants a persistent home:
+#   H1  https://download.pegasus.isi.edu/pegasus-ai/<filename> — Pegasus-side
+#       copy, precedent exists (PR #66 pinned a .deb from there and it is still
+#       served); one `cp` on the download host by the nightly's maintainer.
+#   H2  a GitHub release asset on this repo (long-lived tag, not matching v*).
+# To bump:
+#   curl -s https://download.pegasus.isi.edu/pegasus/development/6.0/ubuntu/dists/noble/main/binary-amd64/Packages \
+#     | awk '/^Filename:/{f=$2} /^SHA256:/{s=$2} END{print f; print s}'
+#   download it, confirm sha256sum matches that index value, copy it to the
+#   persistent host, then update BOTH args below in one commit.
+# Long-term fix: ask Pegasus to sign the development repo's Release with the key
+# that already signs the stable one (keyid F4F1E34BAB1B8BCF) — then this goes
+# back to being a [signed-by=] apt source with the key vendored in docker/pegasus/.
+ARG PEGASUS_DEB_URL="https://download.pegasus.isi.edu/pegasus/development/6.0/ubuntu/dists/noble/main/binary-amd64/pegasus_6.0.0~-dev.0202608200518-1+ubuntu24_amd64.deb"
+ARG PEGASUS_DEB_SHA256="7f7d9901acfbe7ca9035397c6f5b2bf3543281a718e73ba78cf45fe93c121835"
+RUN { curl -fsSL -o /tmp/pegasus.deb "${PEGASUS_DEB_URL}" || \
+      { echo "[pegasus] download failed: ${PEGASUS_DEB_URL}" >&2; \
+        echo "[pegasus] if 404: the pinned nightly was pruned — bump PEGASUS_DEB_URL and PEGASUS_DEB_SHA256 together (see comment above)" >&2; \
+        exit 1; }; } && \
+    echo "${PEGASUS_DEB_SHA256}  /tmp/pegasus.deb" | sha256sum -c - && \
     apt-get update && \
-    apt-get install -y pegasus && \
+    apt-get install -y --no-install-recommends /tmp/pegasus.deb && \
+    rm -f /tmp/pegasus.deb && \
     rm -rf /var/lib/apt/lists/* && \
     pegasus-version
 
@@ -170,8 +209,15 @@ ENV PEGASUS_PYTHON=/usr/bin/python3
 # apt_pkg and breaks add-apt-repository. `apt-get install ./*.deb` resolves the
 # runtime deps (libseccomp, squashfs-tools, uidmap, fuse, …) from the repos.
 ARG APPTAINER_VERSION=1.5.0
+# sha256 of apptainer_${APPTAINER_VERSION}_amd64.deb. Apptainer publishes no
+# checksum file alongside the release and its tags are unsigned, so the hash
+# lives here — a replaced asset fails the build instead of installing as root.
+# On a version bump, recompute and change both args in the same commit:
+#   curl -fsSL https://github.com/apptainer/apptainer/releases/download/v<V>/apptainer_<V>_amd64.deb | sha256sum
+ARG APPTAINER_DEB_SHA256=fbc27204d0ec0440dfa0ae589089e4b2baf192315b4ac22dfae02b78b28981ea
 RUN curl -fsSL "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/apptainer_${APPTAINER_VERSION}_amd64.deb" \
         -o /tmp/apptainer.deb && \
+    echo "${APPTAINER_DEB_SHA256}  /tmp/apptainer.deb" | sha256sum -c - && \
     apt-get update && \
     apt-get install -y --no-install-recommends /tmp/apptainer.deb && \
     rm -f /tmp/apptainer.deb && \
@@ -256,11 +302,17 @@ RUN printf '%s\n' \
 # Docks the studio /chat panel inside JupyterLab (iframe; URL derived from the
 # per-user base path). Built with the bundled jlpm; --development True avoids
 # the license-webpack-plugin crash on Node 20. The extension dir ships a
-# .yarnrc.yml (nodeLinker: node-modules) so the federated build resolves.
+# .yarnrc.yml (nodeLinker: node-modules) so the federated build resolves, and a
+# committed yarn.lock (generated with the yarn 3.5.0 that jlpm bundles; see
+# README "JupyterLab extension lockfile" to regenerate). --immutable makes any
+# drift between package.json and the lockfile — or a future jupyterlab bump that
+# changes the bundled yarn's lockfile format — fail here, loudly, instead of
+# re-resolving the whole tree from the registry on every build, which is what
+# `touch yarn.lock && jlpm install` did. --immutable must be explicit: Yarn
+# Berry only turns it on by default when CI is set in the environment.
 COPY jupyter-pegasusai-chat/ /opt/jupyter-pegasusai-chat/
 RUN cd /opt/jupyter-pegasusai-chat \
-    && touch yarn.lock \
-    && jlpm install \
+    && jlpm install --immutable \
     && jlpm build:lib:prod \
     && jupyter labextension build --development True . \
     && EXTDIR="$(python3 -c 'import sys, os; print(os.path.join(sys.prefix, "share", "jupyter", "labextensions", "jupyter-pegasusai-chat"))')" \
