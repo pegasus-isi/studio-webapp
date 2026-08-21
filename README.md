@@ -159,7 +159,7 @@ to bypass the proxy if the server is directly browser-reachable.
 | `STUDIO_SCAN_DIR` | `$HOME` | Root scanned for `braindump.yml` runs (the run list + notification scan) |
 | `STUDIO_SECRET_KEY` / `STUDIO_SECRET_KEY_FILE` | unset | Master secret used to encrypt stored API keys + the registry password at rest. Unset → stored plaintext with a warning. Must come from a sealed secret, **not** the PVC |
 | `STUDIO_LLM_GATEWAY_URL` | internal | Base URL for the zero-config `gateway` provider |
-| `STUDIO_ALLOWED_ORIGINS` | (empty) | Extra CORS origins (same-origin is always allowed) |
+| `STUDIO_ALLOWED_ORIGINS` | (empty) | Extra origins admitted by CORS and by the same-origin gate on mutating requests (same-origin is always allowed; also the escape hatch if a proxy chain presents a `Host` the browser didn't send) |
 | `STUDIO_TRUST_AUTH_HEADER` | `0` | Trust `X-Auth-User` for the display identity (opt-in; prod identity comes from `JUPYTERHUB_USER`) |
 | `NPM_CONFIG_PREFIX` | `/opt/npm-global` | npm global install prefix |
 | `STUDIO_POOL_CACHE_TTL` | `15` | Seconds between HTCondor pool/queue snapshots (provisioning + dashboard) |

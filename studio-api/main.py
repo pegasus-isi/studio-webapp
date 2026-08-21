@@ -332,13 +332,27 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Same-origin gate for mutating HTTP requests (PAS-SEC-01), then CORS.
+#
+# Starlette applies add_middleware() calls inside-out (the last call is the
+# outermost layer), so CORS ends up outside the gate: preflights are answered by
+# CORSMiddleware without reaching it, and every response — including the gate's
+# 403 — passes through CORS's header logic, which adds nothing for an origin
+# that isn't allowlisted. The gate reads headers only and never touches the
+# response on the pass path (pure ASGI, see security.py), so SSE and the
+# WebSocket routes behave exactly as they did without it.
+#
 # CORS — the frontend, API and WS are same-origin (one container port behind the
 # gateway), so same-origin requests need no CORS at all. Never pair a wildcard
 # origin with credentials: the gateway's session cookie rides along automatically,
 # so reflecting an arbitrary Origin would let any site the user visits drive this
 # API in their browser. Extra origins (e.g. a `next dev` server) via
-# STUDIO_ALLOWED_ORIGINS.
+# STUDIO_ALLOWED_ORIGINS — the same list also admits those origins through the
+# same-origin gate.
+from security import SameOriginMiddleware  # noqa: E402
 from security import allowed_origins as _allowed_origins  # noqa: E402
+
+app.add_middleware(SameOriginMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

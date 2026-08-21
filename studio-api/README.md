@@ -7,10 +7,10 @@ monitoring [Pegasus WMS](https://pegasus.isi.edu/) workflows.
 
 ```
 studio-api/
-├── main.py                 # FastAPI app, lifespan, CORS, router registration
+├── main.py                 # FastAPI app, lifespan, same-origin gate + CORS, router registration
 ├── db.py                   # Async SQLite (aiosqlite) — hand-rolled migrations
 ├── models.py               # Pydantic v2 schemas + enums
-├── security.py             # CORS allowlist + WebSocket cross-origin guard
+├── security.py             # same-origin gate for mutating HTTP (403) + WebSocket cross-origin guard (4403) + CORS allowlist
 ├── logging_config.py       # structlog JSON processor chain
 ├── routers/                # 16 routers (see API Endpoints below)
 ├── llm/
@@ -124,7 +124,7 @@ stop it.
 | `STUDIO_KNOWLEDGE_GIT_TIMEOUT` | `20` | Seconds before a knowledge-base `git` call (status / fast-forward) is abandoned |
 | `KNOWLEDGE_OVERLAY` | `/opt/pegasus-ai/overlay` | Studio-specific context composed on top of the portable Pegasus guide |
 | `STUDIO_CHAT_ENGINE_DEFAULT` | `opencode` | default chat engine |
-| `STUDIO_ALLOWED_ORIGINS` | (empty) | extra CORS origins (same-origin always allowed) |
+| `STUDIO_ALLOWED_ORIGINS` | (empty) | extra origins admitted by CORS and by the same-origin gate on mutating requests (same-origin always allowed; also the escape hatch if a proxy chain presents a `Host` the browser didn't send) |
 | `STUDIO_TRUST_AUTH_HEADER` | `0` | trust `X-Auth-User` for display identity (opt-in) |
 | `STUDIO_LLM_GATEWAY_URL` | internal | base URL for the zero-config `gateway` provider |
 | `STUDIO_SECRET_KEY` / `STUDIO_SECRET_KEY_FILE` | (unset) | master secret used to encrypt stored API keys / registry password at rest (S7). Unset → stored plaintext with a warning. Must come from a sealed secret, **not** the PVC. |

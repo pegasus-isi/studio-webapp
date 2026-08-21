@@ -17,7 +17,10 @@ npm run dev
 ```
 
 Open `http://localhost:3000`. `/api/*` and `/ws/*` are proxied to `$API_URL`
-(default `http://localhost:8080`) via `next.config` rewrites.
+(default `http://localhost:8080`) via `next.config` rewrites. Mutating requests
+pass the API's same-origin gate through that proxy because Next forwards
+`X-Forwarded-Host`; if you point the browser at `:8080` directly, set
+`STUDIO_ALLOWED_ORIGINS=http://localhost:3000` on the API.
 
 ### Type-check gate (run before every PR)
 
