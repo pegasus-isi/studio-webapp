@@ -43,6 +43,22 @@ jobs:
           echo "knowledge/ carries only the Studio overlay:"
           find knowledge -type f | sort
 
+      # Cheap mirror of studio-api/tests/test_dockerfile_guards.py, so a
+      # supply-chain regression (the c50c700 shape: apt verification switched
+      # off, the lockfile thrown away, the frontend install floating) is named
+      # in the first seconds of the job rather than after a pip install.
+      # Comment lines are excluded so the Dockerfile's own prose may mention the
+      # patterns; the pytest test is the authoritative and broader check.
+      - name: Dockerfile supply-chain guard
+        run: |
+          if grep -nE 'trusted[[:space:]]*=[[:space:]]*yes|touch yarn\.lock|\|\| npm install|--allow-unauthenticated' Dockerfile \
+               | grep -vE '^[0-9]+:[[:space:]]*#'; then
+            echo "::error::Dockerfile reintroduces an unverified install (PAS-SEC-09)."
+            echo "::error::See studio-api/tests/test_dockerfile_guards.py for what is required."
+            exit 1
+          fi
+          echo "Dockerfile: no disabled-verification patterns"
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
