@@ -153,7 +153,7 @@ stop it.
 | `KNOWLEDGE_OVERLAY` | `/opt/pegasus-ai/overlay` | Studio-specific context composed on top of the portable Pegasus guide |
 | `STUDIO_CHAT_ENGINE_DEFAULT` | `opencode` | default chat engine |
 | `STUDIO_ALLOWED_ORIGINS` | (empty) | extra origins admitted by CORS and by the same-origin gate on mutating requests (same-origin always allowed; also the escape hatch if a proxy chain presents a `Host` the browser didn't send) |
-| `STUDIO_TRUST_AUTH_HEADER` | `0` | trust `X-Auth-User` for display identity (opt-in) |
+| `STUDIO_TRUST_AUTH_HEADER` | `0` | trust `X-Auth-User` for display identity (opt-in) — the bundled nginx strips `X-Auth-User` from every request, so this only applies when uvicorn is fronted by something else |
 | `STUDIO_LLM_GATEWAY_URL` | internal | base URL for the zero-config `gateway` provider |
 | `STUDIO_SECRET_KEY` / `STUDIO_SECRET_KEY_FILE` | (unset) | master secret used to encrypt stored API keys / registry password at rest (S7). Unset → stored plaintext with a warning. Must come from a sealed secret, **not** the PVC. |
 
