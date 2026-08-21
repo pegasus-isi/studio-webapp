@@ -20,7 +20,7 @@ def _seed_knowledge(root):
         f.write("# Pegasus AI\nKnowledge body.\n")
     with open(os.path.join(root, "mcp", "servers.json"), "w") as f:
         json.dump(
-            {"mcpServers": {"pegasus-docs": {"type": "http", "url": "u1"}}}, f
+            {"mcpServers": {"pegasus-docs": {"type": "http", "url": "https://gitmcp.io/pegasus-isi/pegasus"}}}, f
         )
 
 
