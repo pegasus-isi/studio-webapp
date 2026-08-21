@@ -112,9 +112,52 @@ def build_agents_appendix() -> str:
     return "\n".join(sections) + "\n"
 
 
+def build_paths_appendix() -> str:
+    """State where the knowledge tree actually is, as an absolute path.
+
+    Skills refer to their reference guide and templates by paths relative to the
+    plugin directory (``references/PEGASUS.md``, ``assets/templates/...``), which
+    is correct for the plugin layout but resolves against nothing useful at
+    runtime: the chat starts in the user's workspace, and the tree is under
+    ``~/.local/share/pegasus-ai/marketplace``. Nothing in the generated context
+    named that directory, so the model guessed — a pod log shows it reaching for
+    ``$HOME/references/PEGASUS.md``, which does not exist, and then scaffolding a
+    workflow with neither the guide nor any template.
+
+    The resolved root is known here, so it is stated here. One place computes it
+    and every skill refers to it, rather than each skill hardcoding a path that
+    is wrong for some other consumer of the same tree.
+    """
+    root = layout.knowledge_root()
+    if not os.path.isdir(root):
+        return ""
+
+    lines = [
+        "\n## Where the Pegasus knowledge base lives\n",
+        f"The skills, reference guide and templates are at `{root}`.\n",
+        "When a skill tells you to read a path like `references/PEGASUS.md` or "
+        "`assets/templates/workflow_generator_template.py`, that path is "
+        "relative to the directory above, **not** to your working directory. "
+        "Resolve it there.\n",
+    ]
+
+    # Name the two subdirectories explicitly. A model that has the root can
+    # derive these, but the whole failure being fixed here was a model deriving
+    # a path when it had no basis to, so they are spelled out.
+    for label, path in (
+        ("Reference guide", layout.reference_document()),
+        ("Templates", layout.templates_dir()),
+        ("Worked examples", layout.examples_dir()),
+    ):
+        if path:
+            lines.append(f"- {label}: `{path}`")
+
+    return "\n".join(lines) + "\n"
+
+
 def build_knowledge_appendix() -> str:
-    """Build a combined skills + agents appendix for context files."""
-    return build_skills_appendix() + build_agents_appendix()
+    """Build a combined paths + skills + agents appendix for context files."""
+    return build_paths_appendix() + build_skills_appendix() + build_agents_appendix()
 
 
 def context_body() -> str:
@@ -132,6 +175,7 @@ def context_body() -> str:
 _GENERATED_PHRASES = (
     "## Available Pegasus Skills",
     "## Available Agent Personas",
+    "## Where the Pegasus knowledge base lives",
     "Pegasus AI Studio — Environment",
 )
 

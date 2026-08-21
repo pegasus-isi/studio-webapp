@@ -654,3 +654,88 @@ def test_a_skill_without_deliverables_adds_nothing(monkeypatch, tmp_path):
     monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
 
     assert "must contain" not in build_skills_appendix()
+
+
+def test_paths_appendix_states_the_absolute_root(monkeypatch, tmp_path):
+    """The context must name the knowledge root, not leave it to be guessed.
+
+    Skills say "read references/PEGASUS.md", which is relative to the plugin
+    directory. Nothing resolved that at runtime: chat starts in the workspace and
+    the tree is under ~/.local/share, so a pod log shows the model reaching for
+    $HOME/references/PEGASUS.md and then scaffolding with no guide at all.
+    """
+    from knowledge.common import build_paths_appendix
+
+    root = tmp_path / "checkout" / "plugins" / "pegasus-ai"
+    (root / "references").mkdir(parents=True)
+    (root / "references" / "PEGASUS.md").write_text("# guide\n")
+    (root / "assets" / "templates").mkdir(parents=True)
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+
+    out = build_paths_appendix()
+
+    assert str(root) in out
+    assert str(root / "references" / "PEGASUS.md") in out
+    assert str(root / "assets" / "templates") in out
+    # The point is not just the path but that a relative one must be resolved
+    # against it; a bare path with no instruction is what already failed.
+    assert "not** to your working directory" in out
+
+
+def test_paths_appendix_empty_when_no_tree(monkeypatch, tmp_path):
+    """No tree, no section. Naming a directory that is not there would send the
+    model after a path guaranteed to fail, which is worse than saying nothing."""
+    from knowledge.common import build_paths_appendix
+
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(tmp_path / "absent"))
+    assert build_paths_appendix() == ""
+
+
+def test_paths_appendix_omits_subdirs_it_cannot_find(monkeypatch, tmp_path):
+    """A tree without examples/ still gets a root and a guide, minus that line."""
+    from knowledge.common import build_paths_appendix
+
+    root = tmp_path / "pegasus-ai"
+    (root / "references").mkdir(parents=True)
+    (root / "references" / "PEGASUS.md").write_text("# guide\n")
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+
+    out = build_paths_appendix()
+
+    assert "Reference guide" in out
+    assert "Worked examples" not in out
+
+
+def test_knowledge_appendix_includes_the_paths_section(monkeypatch, tmp_path):
+    """Wired into the combined appendix, so it reaches every generated context
+    file (CLAUDE.md, AGENTS.md, .opencode) through one path."""
+    from knowledge.common import build_knowledge_appendix
+
+    root = tmp_path / "pegasus-ai"
+    (root / "skills" / "pegasus-scaffold").mkdir(parents=True)
+    (root / "skills" / "pegasus-scaffold" / "SKILL.md").write_text(
+        "---\nname: pegasus-scaffold\ndescription: Scaffold a workflow\n---\n"
+    )
+    (root / "references").mkdir()
+    (root / "references" / "PEGASUS.md").write_text("# guide\n")
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+
+    out = build_knowledge_appendix()
+
+    assert "## Where the Pegasus knowledge base lives" in out
+    assert "## Available Pegasus Skills" in out
+    # Paths first: the skill list tells the model what it can invoke, and every
+    # one of those skills opens by reading a relative path.
+    assert out.index("knowledge base lives") < out.index("Available Pegasus Skills")
+
+
+def test_generated_context_with_paths_section_is_replaceable(monkeypatch, tmp_path):
+    """A context file carrying only the paths heading is still recognised as ours.
+
+    ensure_context_file refuses to overwrite a file it did not write. A build
+    that emitted the paths section and nothing else would otherwise become
+    permanently stale.
+    """
+    from knowledge.common import _looks_generated
+
+    assert _looks_generated("## Where the Pegasus knowledge base lives\n")
