@@ -67,7 +67,12 @@ studio's slide-in panel.
   `<base href>` from `x-forwarded-prefix`, and **all** URLs are built relative to
   `document.baseURI` via `lib/urls.ts`. Never hardcode absolute app paths
   (`fetch("/api…")`, `href="/…"`, absolute `new WebSocket`, `router.push("/…")`) —
-  always go through `lib/urls.ts`.
+  always go through `lib/urls.ts`. `<base href>` is only ever `/` or
+  `/user/<name>/`: it is the origin every relative URL on the page resolves
+  against, so `normalizeBasePath` rejects anything else (protocol-relative,
+  schemes, `\`, whitespace) and falls back to `/`. `NEXT_PUBLIC_BASE_PATH`
+  (build-time, operator-set) may name a prefix outside `/user/<name>` but must
+  still be an absolute path starting with `/`.
 
 ## Build for production
 

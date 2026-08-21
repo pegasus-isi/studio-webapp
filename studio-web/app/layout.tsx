@@ -18,12 +18,16 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const requestHeaders = await headers();
-  const basePath = normalizeBasePath(
-    requestHeaders.get("x-forwarded-prefix") ||
-      requestHeaders.get("x-script-name") ||
-      process.env.NEXT_PUBLIC_BASE_PATH
-  );
-  const baseHref = `${basePath || ""}/`;
+  // Validate each source on its own so a rejected header falls through to the
+  // next one instead of poisoning it. The header is nginx-owned (default.conf
+  // sets X-Forwarded-Prefix on every proxied location, empty outside the
+  // /user/<name> blocks); the env fallback is operator-set at build time and
+  // may name a prefix outside the /user/<name> shape. x-script-name is gone:
+  // nothing in the stack sets it and nginx now strips it.
+  const basePath =
+    normalizeBasePath(requestHeaders.get("x-forwarded-prefix")) ||
+    normalizeBasePath(process.env.NEXT_PUBLIC_BASE_PATH, { trusted: true });
+  const baseHref = `${basePath}/`;
 
   return (
     <html lang="en" suppressHydrationWarning>
