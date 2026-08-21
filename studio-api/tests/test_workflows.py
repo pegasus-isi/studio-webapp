@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 
 def test_list_workflows_empty(client):
     resp = client.get("/api/workflows")
@@ -175,8 +177,93 @@ def test_get_workflow_not_found(client):
 
 def test_submit_workflow_forbidden(client):
     """Submitting outside workspace should be rejected."""
-    resp = client.post("/api/workflows/submit?workflow_dir=/etc/passwd")
+    resp = client.post("/api/workflows/submit", json={"workflow_dir": "/etc/passwd"})
     assert resp.status_code == 403
+    # The old query-string form carried no body, so a browser could send it
+    # cross-site without a preflight. It is a 422 now: the body is required.
+    resp = client.post("/api/workflows/submit?workflow_dir=/etc/passwd")
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("action", ["generate", "build", "plan", "submit"])
+def test_project_actions_require_a_json_body(client, action):
+    """Every project action takes a *required* JSON body, so a browser has to
+    preflight before it can send one cross-site (PAS-SEC-01 / NEW-05). A bare
+    POST, a text/plain body and a body with no Content-Type are all CORS
+    "simple requests"; each must be refused before the handler runs (422, not
+    the handler's 404 for the unknown project)."""
+    path = f"/api/workflows/projects/p/{action}"
+    assert client.post(path).status_code == 422
+    resp = client.post(path, content=b"{}", headers={"Content-Type": "text/plain"})
+    assert resp.status_code == 422
+    assert client.post(path, content=b"{}").status_code == 422
+
+
+def test_submit_project_json_body_still_accepted(client, monkeypatch):
+    """The shapes the UI sends — `{}` for defaults, or run_dir + site — reach
+    run_planned_workflow unchanged."""
+    import routers.workflows as wf
+
+    async def _projects(ws=None):
+        return [{
+            "project_id": "p",
+            "project_dir": "/work/p",
+            "has_generator": True,
+            "generator_file": "workflow_generator.py",
+        }]
+
+    captured: dict = {}
+
+    async def fake_run(workflow_dir, **kw):
+        captured.clear()
+        captured.update(kw, workflow_dir=workflow_dir)
+        return {"status": "submitted", "run_dir": "", "output": ""}
+
+    monkeypatch.setattr(wf, "discover_projects_async", _projects)
+    monkeypatch.setattr(wf, "run_planned_workflow", fake_run)
+
+    resp = client.post(
+        "/api/workflows/projects/p/submit", json={"run_dir": "/x", "site": "local"}
+    )
+    assert resp.status_code == 200
+    assert captured["workflow_dir"] == "/work/p"
+    assert captured["run_dir"] == "/x"
+    assert captured["site"] == "local"
+
+    resp = client.post("/api/workflows/projects/p/submit", json={})
+    assert resp.status_code == 200
+    assert captured["run_dir"] is None
+    assert captured["site"] == "condorpool"
+    assert captured["output_site"] == "local"
+
+
+def test_submit_endpoint_accepts_json_body_inside_workspace(client, monkeypatch):
+    """POST /submit takes its arguments as a JSON body; a dir inside the
+    workspace is resolved and handed to submit_workflow."""
+    import routers.workflows as wf
+
+    root = os.path.join(os.environ["HOME"], "work")
+    proj = os.path.join(root, "proj")
+    os.makedirs(proj, exist_ok=True)
+    monkeypatch.setattr(wf, "WORKSPACE_ROOT", root)
+
+    captured: dict = {}
+
+    async def fake_submit(workflow_dir, **kw):
+        captured["workflow_dir"] = workflow_dir
+        captured.update(kw)
+        return {"status": "submitted", "run_dir": "", "output": ""}
+
+    monkeypatch.setattr(wf, "submit_workflow", fake_submit)
+
+    resp = client.post(
+        "/api/workflows/submit", json={"workflow_dir": proj, "site": "local"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "submitted"
+    assert captured["workflow_dir"] == os.path.realpath(proj)
+    assert captured["site"] == "local"
+    assert captured["output_site"] == "local"
 
 
 def test_workflow_jobs_not_found(client):

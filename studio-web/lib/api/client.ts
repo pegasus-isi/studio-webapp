@@ -301,19 +301,26 @@ export async function deleteWorkflow(id: string) {
   });
 }
 
+/**
+ * Plan and submit an arbitrary workspace directory. The arguments go in a JSON
+ * body, not the query string — a query-param POST is a CORS simple request, so
+ * any page the user visits could have submitted workflows (PAS-SEC-01).
+ */
 export async function submitWorkflow(
   workflowDir: string,
   site = "condorpool",
   outputSite = "local"
 ) {
-  const qs = new URLSearchParams({
-    workflow_dir: workflowDir,
-    site,
-    output_site: outputSite,
-  });
   return request<{ status: string; run_dir?: string; output?: string }>(
-    `/workflows/submit?${qs}`,
-    { method: "POST" }
+    "/workflows/submit",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        workflow_dir: workflowDir,
+        site,
+        output_site: outputSite,
+      }),
+    }
   );
 }
 

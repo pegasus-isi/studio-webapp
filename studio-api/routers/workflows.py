@@ -9,7 +9,7 @@ import os
 import re
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -38,6 +38,13 @@ from services.workflow_submitter import (
 )
 
 
+# Every mutating action below takes a *required* JSON body. With a default
+# (`req: PlanRequest = PlanRequest()`) FastAPI accepts a bare POST, which a
+# browser sends cross-site without a CORS preflight; a required body is parsed
+# only from `Content-Type: application/json`, so the browser must preflight and
+# main.py's CORS allowlist decides (PAS-SEC-01 / NEW-05). Every field keeps its
+# default, so `{}` is a valid body and the UI is unaffected — it already sends
+# one (lib/api/client.ts generateWorkflow/planWorkflow/submitWorkflowProject).
 class GenerateRequest(BaseModel):
     """CLI args (already flag-formatted) to pass to workflow_generator.py."""
 
@@ -62,6 +69,14 @@ class BuildRequest(BaseModel):
     # image_site="local" and Pegasus stages the file like any other input, so
     # pushing is a separate, opt-in step rather than part of building.
     push: bool = False
+
+
+class SubmitRequest(BaseModel):
+    """Plan+submit an arbitrary workspace directory (POST /submit)."""
+
+    workflow_dir: str
+    site: str = "condorpool"
+    output_site: str = "local"
 
 log = structlog.get_logger()
 
@@ -174,9 +189,7 @@ async def get_project_params(project_id: str) -> dict:
 
 
 @router.post("/projects/{project_id}/generate")
-async def generate_workflow(
-    project_id: str, req: GenerateRequest = GenerateRequest()
-) -> dict:
+async def generate_workflow(project_id: str, req: GenerateRequest) -> dict:
     """Run workflow_generator.py in a project directory with the given args."""
     projects = await discover_projects_async()
     proj = next((p for p in projects if p["project_id"] == project_id), None)
@@ -222,7 +235,7 @@ async def generate_workflow(
 
 @router.post("/projects/{project_id}/build")
 async def build_project_image(
-    project_id: str, req: BuildRequest = BuildRequest()
+    project_id: str, req: BuildRequest
 ) -> StreamingResponse:
     """Build (and optionally push) the project's container, streaming the log.
 
@@ -285,9 +298,7 @@ async def build_project_image(
 
 
 @router.post("/projects/{project_id}/plan")
-async def plan_workflow(
-    project_id: str, req: PlanRequest = PlanRequest()
-) -> dict:
+async def plan_workflow(project_id: str, req: PlanRequest) -> dict:
     """Run pegasus-plan (without --submit) on a project."""
     projects = await discover_projects_async()
     proj = next((p for p in projects if p["project_id"] == project_id), None)
@@ -399,9 +410,7 @@ async def _notify_run_started(result: dict) -> None:
 
 
 @router.post("/projects/{project_id}/submit")
-async def submit_project(
-    project_id: str, req: PlanRequest = PlanRequest()
-) -> dict:
+async def submit_project(project_id: str, req: PlanRequest) -> dict:
     """Run a planned workflow via pegasus-run (the "Run" action).
 
     Submits the dir a prior Plan produced instead of re-planning. Falls back to
@@ -423,14 +432,15 @@ async def submit_project(
 
 
 @router.post("/submit")
-async def submit(
-    workflow_dir: str = Query(..., description="Path to workflow directory"),
-    site: str = Query("condorpool", description="Execution site"),
-    output_site: str = Query("local", description="Output site"),
-) -> dict:
-    """Plan and submit a Pegasus workflow."""
+async def submit(req: SubmitRequest) -> dict:
+    """Plan and submit a Pegasus workflow.
+
+    The arguments arrive as a JSON body, not a query string: a query-param POST
+    is a CORS simple request, so a page the user merely visits could plan and
+    submit any directory it can name (PAS-SEC-01 / NEW-05).
+    """
     # Validate path is in workspace
-    resolved = os.path.realpath(os.path.expanduser(workflow_dir))
+    resolved = os.path.realpath(os.path.expanduser(req.workflow_dir))
     root = os.path.realpath(WORKSPACE_ROOT)
     if not resolved.startswith(root + os.sep) and resolved != root:
         raise HTTPException(
@@ -438,7 +448,9 @@ async def submit(
             detail=f"Workflow dir must be inside {WORKSPACE_ROOT}",
         )
 
-    result = await submit_workflow(resolved, site=site, output_site=output_site)
+    result = await submit_workflow(
+        resolved, site=req.site, output_site=req.output_site
+    )
     await _notify_run_started(result)
     return result
 
