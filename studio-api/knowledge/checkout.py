@@ -33,6 +33,45 @@ GIT_TIMEOUT_S = int(os.environ.get("STUDIO_KNOWLEDGE_GIT_TIMEOUT", "20"))
 DEFAULT_REFRESH_PLUGINS = ["pegasus-ai@scitech", "pegasus-dev@scitech"]
 
 
+# Repo-local and global git config are user-writable and live on the
+# persistent home. These override any value from .git/config, ~/.gitconfig or
+# the environment, so a hook, a credential helper or an fsmonitor command
+# planted there is never what this process runs. Env form (GIT_CONFIG_COUNT,
+# git >= 2.31) so the same list can be mirrored by the entrypoint.
+_GIT_CONFIG: tuple[tuple[str, str], ...] = (
+    ("core.hooksPath", "/dev/null"),
+    ("core.fsmonitor", "false"),
+    ("credential.helper", ""),  # empty value resets the helper list
+)
+
+
+def _git_env() -> dict[str, str]:
+    env = {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        # Overrides core.askPass; /bin/true answers with nothing, so an auth
+        # challenge from a repointed origin fails instead of hanging or
+        # running whatever askpass the repo config names.
+        "GIT_ASKPASS": "/bin/true",
+        "GIT_SSH_COMMAND": "/bin/false",
+        # ext:: runs commands; ssh would use the user's keys. `file` stays
+        # allowed because the entrypoint's fallback leaves origin pointing at
+        # the image seed under /opt when the remote set-url fails.
+        "GIT_ALLOW_PROTOCOL": "http:https:file",
+        "GIT_CONFIG_COUNT": str(len(_GIT_CONFIG)),
+    }
+    for i, (key, value) in enumerate(_GIT_CONFIG):
+        env[f"GIT_CONFIG_KEY_{i}"] = key
+        env[f"GIT_CONFIG_VALUE_{i}"] = value
+    return env
+
+
+def _trusted_upstream(url: str) -> bool:
+    # Absolute local paths cover the image seed (/opt/pegasus-ai/marketplace)
+    # that origin falls back to when the entrypoint's set-url fails.
+    return url.startswith(("https://", "http://")) or os.path.isabs(url)
+
+
 def _git(root: str, *args: str, timeout: int | None = None) -> tuple[int, str]:
     try:
         proc = subprocess.run(
@@ -40,6 +79,7 @@ def _git(root: str, *args: str, timeout: int | None = None) -> tuple[int, str]:
             capture_output=True,
             text=True,
             timeout=timeout or GIT_TIMEOUT_S,
+            env=_git_env(),
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
         return 1, str(exc)
@@ -63,6 +103,7 @@ def status() -> dict[str, Any]:
         "committed_at": None,
         "dirty": False,
         "ahead": 0,
+        "upstream": None,
         "skills": len(layout.skill_names()),
     }
     if not info["is_git"]:
@@ -81,6 +122,12 @@ def status() -> dict[str, Any]:
     rc, out = _git(root, "rev-list", "--count", "@{u}..HEAD")
     if rc == 0 and out.isdigit():
         info["ahead"] = int(out)
+
+    # Where a pull would fetch from. Reported so a repointed origin is visible
+    # in the UI and the startup log, not only as a refused update.
+    rc, out = _git(root, "remote", "get-url", "origin")
+    if rc == 0 and out:
+        info["upstream"] = out
 
     return info
 
@@ -131,6 +178,14 @@ def update(*, force: bool = False) -> dict[str, Any]:
     if before["ahead"] and not force:
         return {**before, "updated": False, "reason": "local commits"}
 
+    upstream = before.get("upstream") or ""
+    if not _trusted_upstream(upstream):
+        # A repointed remote is the persistence vector: ssh:// would use the
+        # user's keys, ext:: runs a command. Refusing here gives the UI a
+        # reason; GIT_ALLOW_PROTOCOL is the backstop if this is bypassed.
+        log.warning("knowledge_update_refused_upstream", path=root, upstream=upstream)
+        return {**before, "updated": False, "reason": "origin is not an http(s) remote"}
+
     rc, out = _git(root, "pull", "--ff-only", "--quiet")
     if rc != 0:
         # Offline, no upstream, or a diverged branch. Expected often enough that
@@ -148,4 +203,9 @@ def update(*, force: bool = False) -> dict[str, Any]:
             was=before["short_sha"],
             now=after["short_sha"],
         )
-    return {**after, "updated": changed, "reason": None}
+    return {
+        **after,
+        "updated": changed,
+        "reason": None,
+        "previous_sha": before["short_sha"],
+    }

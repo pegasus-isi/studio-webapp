@@ -45,12 +45,26 @@ PYTHON="$(which python3 2>/dev/null || which python 2>/dev/null || echo python3)
 # the obvious thing. Non-fatal throughout: layout.py falls back to the seed.
 IMAGE_MARKETPLACE="/opt/pegasus-ai/marketplace"
 USER_MARKETPLACE="${XDG_DATA_HOME:-${HOME:-/tmp}/.local/share}/pegasus-ai/marketplace"
+
+# Same hardening as studio-api/knowledge/checkout.py: never prompt, and ignore
+# any hooksPath / fsmonitor / credential helper in the user's persistent
+# ~/.gitconfig. `git clone` runs post-checkout hooks, so this matters on the
+# one first-launch clone too. A function, not exports — the shells this
+# entrypoint execs must not inherit it.
+hardened_git() {
+    env GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/true \
+        GIT_CONFIG_COUNT=3 \
+        GIT_CONFIG_KEY_0=core.hooksPath   GIT_CONFIG_VALUE_0=/dev/null \
+        GIT_CONFIG_KEY_1=core.fsmonitor   GIT_CONFIG_VALUE_1=false \
+        GIT_CONFIG_KEY_2=credential.helper GIT_CONFIG_VALUE_2= \
+        git "$@"
+}
 if [ ! -d "${USER_MARKETPLACE}/.claude-plugin" ] \
    && [ -d "${IMAGE_MARKETPLACE}/.claude-plugin" ]; then
     CLONE_ERR=""
     if mkdir -p "$(dirname "${USER_MARKETPLACE}")" \
-       && CLONE_ERR="$(git clone --quiet "${IMAGE_MARKETPLACE}" "${USER_MARKETPLACE}" 2>&1)"; then
-        git -C "${USER_MARKETPLACE}" remote set-url origin \
+       && CLONE_ERR="$(hardened_git clone --quiet "${IMAGE_MARKETPLACE}" "${USER_MARKETPLACE}" 2>&1)"; then
+        hardened_git -C "${USER_MARKETPLACE}" remote set-url origin \
             "${KNOWLEDGE_REPO_URL:-https://github.com/pegasus-isi/claude-plugin-marketplace.git}" \
             2>/dev/null || true
         echo "[studio] Marketplace checked out to ${USER_MARKETPLACE}"

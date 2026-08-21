@@ -238,7 +238,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
             return
 
-        log.info("knowledge_checkout_updated", sha=result.get("short_sha"))
+        # Warning, not info: a tree change is a change to what every assistant
+        # in this pod will do next, pulled from a branch nobody here reviewed.
+        log.warning(
+            "knowledge_checkout_updated",
+            was=result.get("previous_sha"),
+            now=result.get("short_sha"),
+            upstream=result.get("upstream"),
+            path=result.get("path"),
+        )
 
         # Re-run the adapters so generated context/links follow the new tree,
         # then restart opencode so it re-reads them.

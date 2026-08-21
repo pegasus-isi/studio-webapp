@@ -98,6 +98,23 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   those generated files are product output, not repo config.
   For local backend dev, point `KNOWLEDGE_ROOT` at a clone's
   `plugins/pegasus-ai`, otherwise the tree resolves empty.
+  **Trust model.** Tracking `main` means a commit on the marketplace repo
+  reaches every pod at its next start, so what the tree may do is bounded on
+  this side: skills and agents are prompt text the assistants follow; the
+  tree's `.mcp.json` is filtered by `knowledge/claude_code.py:filter_mcp_servers`
+  to `https://` remotes with no `command`, `headers` or `${VAR}` expansion
+  before it is written to `~/.mcp.json` or merged into `~/.claude.json`; `git`
+  in `knowledge/checkout.py` and the entrypoint runs with hooks, fsmonitor,
+  credential helpers and prompts disabled and refuses an origin that is not
+  http(s) or the image seed. The plugin Claude Code enables from the checkout
+  (`pegasus-ai@scitech`) still loads the plugin's own `.mcp.json` through
+  Claude Code's plugin cache, unfiltered — the control for that, and for the
+  prose itself, is branch protection with required reviews (and signed
+  commits) on the marketplace repo, not code here. A tree update is logged at
+  `warning` (`knowledge_checkout_updated`, before/after SHA, upstream).
+  Pinning `KNOWLEDGE_REF` to a tag or verifying commit signatures before
+  adapters run are the documented alternatives if that control proves
+  insufficient.
 - **jupyter-pegasus-ai-client/** — vendored copy of TauferLab's private client (see its
   `VENDORED.md`); local mods are limited to three files (`src/configPlugin.tsx`,
   `src/api.ts`, `src/toolbarPlugin.ts`). Disable with `--build-arg

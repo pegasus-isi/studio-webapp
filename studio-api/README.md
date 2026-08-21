@@ -34,6 +34,34 @@ The SQLite DB (`~/.studio/studio.db`; an existing one is moved out of `~/work/.s
 `llm_config`, `provider_configs`, `tool_installations`, `workflow_runs`,
 `chat_messages`, `notifications`, `notification_log`.
 
+### Knowledge checkout trust model
+
+The knowledge tree (`~/.local/share/pegasus-ai/marketplace`, seeded from
+`/opt/pegasus-ai/marketplace`) tracks `main` of
+`pegasus-isi/claude-plugin-marketplace` and is fast-forwarded by
+`knowledge/checkout.update()` at every API start and on
+`POST /api/knowledge/marketplace/update`. What it can do is limited to:
+
+- **Prose.** Skills, agents, templates and references are read as text by
+  Claude Code, opencode and Codex.
+- **MCP servers.** `knowledge/claude_code.py:filter_mcp_servers` accepts only
+  `{"type": "http"|"sse"|"streamable-http", "url": "https://…"}`; entries with
+  `command`/`args`/`env`, non-https URLs, `${VAR}` expansions, or extra keys
+  such as `headers` are dropped and logged (`mcp_server_dropped`). The filtered
+  set is what lands in `~/.mcp.json` and `~/.claude.json`. opencode and Codex
+  MCP servers are hardcoded in their adapters and never read from the tree.
+- **git.** Every invocation runs with `GIT_TERMINAL_PROMPT=0`,
+  `core.hooksPath=/dev/null`, `core.fsmonitor=false`, an empty
+  `credential.helper`, `GIT_ALLOW_PROTOCOL=http:https:file`, and `update()`
+  refuses when `origin` is not an http(s) URL or an absolute local path
+  (`reason: "origin is not an http(s) remote"`).
+
+Not covered here: Claude Code loads the enabled plugin's own `.mcp.json` from
+its plugin cache directly. The control for that and for the prose is review on
+the marketplace repository (branch protection, required reviews, signed
+commits). Build against a fixed commit with `--build-arg KNOWLEDGE_REF=<sha>`
+when you need one.
+
 ## Development Setup
 
 ### Prerequisites

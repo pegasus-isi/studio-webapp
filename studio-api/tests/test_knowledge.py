@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import types
 
 import structlog
 
@@ -873,3 +875,114 @@ def test_claude_code_empty_filter_result_still_overwrites_project_file(monkeypat
     _install_claude_code(monkeypatch, tmp_path, {"evil": {"command": "sh"}})
     assert json.loads((home / ".mcp.json").read_text()) == {"mcpServers": {}}
     assert not (home / ".claude.json").exists()
+
+
+# --- NEW-07: git runs with hooks, prompts and helpers disabled ----------------
+
+
+def _init_repo(path):
+    # Mirrors tests/test_seed.py::_init_repo; copied rather than imported so
+    # neither module depends on the other's layout.
+    for args in (
+        ["init", "-q", "-b", "main"],
+        ["config", "user.email", "t@example.com"],
+        ["config", "user.name", "t"],
+        # The developer's global config may set commit.gpgsign; signing here
+        # would depend on an agent holding a passphrase.
+        ["config", "commit.gpgsign", "false"],
+        ["add", "-A"],
+        ["commit", "-q", "-m", "seed"],
+    ):
+        subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True)
+
+
+def test_git_runs_with_hardening_env(monkeypatch):
+    from knowledge import checkout
+
+    seen: dict = {}
+
+    def fake_run(argv, **kw):
+        seen.update(kw)
+        seen["argv"] = argv
+        return types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(checkout.subprocess, "run", fake_run)
+    assert checkout._git("/x", "status", "--porcelain") == (0, "ok")
+    env = seen["env"]
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GIT_ASKPASS"] == "/bin/true"
+    assert env["GIT_SSH_COMMAND"] == "/bin/false"
+    assert env["GIT_ALLOW_PROTOCOL"] == "http:https:file"
+    n = int(env["GIT_CONFIG_COUNT"])
+    cfg = {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(n)}
+    assert cfg["core.hooksPath"] == "/dev/null"
+    assert cfg["core.fsmonitor"] == "false"
+    assert cfg["credential.helper"] == ""
+    assert seen["argv"][:3] == ["git", "-C", "/x"]
+
+
+def test_update_does_not_run_repo_hooks(monkeypatch, tmp_path):
+    """NEW-07: a post-merge hook planted in the checkout must not fire on pull.
+
+    The hook is wired through repo-local ``core.hooksPath``, which is exactly
+    what a line written into ``.git/config`` on the persistent home would do.
+    Verified load-bearing: without ``env=_git_env()`` the sentinel appears.
+    """
+    upstream = tmp_path / "upstream"
+    (upstream / ".claude-plugin").mkdir(parents=True)
+    (upstream / ".claude-plugin" / "marketplace.json").write_text('{"name":"scitech","plugins":[]}')
+    _init_repo(upstream)
+    co = tmp_path / "checkout"
+    subprocess.run(["git", "clone", "-q", str(upstream), str(co)], check=True, capture_output=True)
+    hooks = co / ".git" / "hooks"
+    hooks.mkdir(exist_ok=True)
+    sentinel = tmp_path / "pwned"
+    hook = hooks / "post-merge"
+    hook.write_text(f"#!/bin/sh\ntouch {sentinel}\n")
+    hook.chmod(0o755)
+    subprocess.run(["git", "-C", str(co), "config", "core.hooksPath", str(hooks)], check=True)
+    (upstream / "NEW").write_text("x")
+    subprocess.run(["git", "-C", str(upstream), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(upstream), "commit", "-q", "-m", "more"], check=True)
+    monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", str(co))
+    monkeypatch.setattr("knowledge.checkout.refresh_installed_plugins", lambda *a, **k: None)
+    from knowledge import checkout
+
+    result = checkout.update()
+    assert result["updated"] is True
+    assert result["previous_sha"] and result["previous_sha"] != result["short_sha"]
+    assert result["upstream"] == str(upstream)
+    assert (co / "NEW").exists()
+    assert not sentinel.exists()
+
+
+def test_update_refuses_a_non_http_origin(monkeypatch, tmp_path):
+    co = tmp_path / "checkout"
+    (co / ".claude-plugin").mkdir(parents=True)
+    (co / ".claude-plugin" / "marketplace.json").write_text('{"name":"scitech","plugins":[]}')
+    _init_repo(co)
+    subprocess.run(
+        ["git", "-C", str(co), "remote", "add", "origin", "ssh://git@evil.example/x.git"],
+        check=True,
+    )
+    monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", str(co))
+    from knowledge import checkout
+
+    r = checkout.update()
+    assert r["updated"] is False
+    assert r["reason"] == "origin is not an http(s) remote"
+    assert r["upstream"] == "ssh://git@evil.example/x.git"
+
+
+def test_status_reports_upstream(monkeypatch, tmp_path):
+    co = tmp_path / "checkout"
+    (co / ".claude-plugin").mkdir(parents=True)
+    (co / ".claude-plugin" / "marketplace.json").write_text('{"name":"scitech","plugins":[]}')
+    _init_repo(co)
+    monkeypatch.setenv("KNOWLEDGE_MARKETPLACE", str(co))
+    from knowledge import checkout
+
+    assert checkout.status()["upstream"] is None
+    url = "https://github.com/pegasus-isi/claude-plugin-marketplace.git"
+    subprocess.run(["git", "-C", str(co), "remote", "add", "origin", url], check=True)
+    assert checkout.status()["upstream"] == url
