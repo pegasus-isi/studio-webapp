@@ -41,7 +41,7 @@ The container entrypoint initializes the workspace and then execs
 
 | Program | Command | Purpose |
 |---------|---------|---------|
-| `studio-api` | `uvicorn main:app --host 0.0.0.0 --port 8080` | FastAPI backend |
+| `studio-api` | `uvicorn main:app --host 127.0.0.1 --port 8080` | FastAPI backend |
 | `studio-web` | `node server.js` | Next.js standalone server |
 | `jupyter` | `/etc/supervisor/scripts/jupyter.sh` | Always-on JupyterLab |
 | `nginx` | `nginx -g "daemon off;"` | Public reverse proxy |

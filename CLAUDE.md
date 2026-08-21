@@ -36,7 +36,7 @@ npm run build
 
 ```sh
 # Backend (from repo root; assumes the studio-api venv is active with deps installed)
-(cd studio-api && pytest -q)                          # ~242 tests; no Pegasus/Condor/keys needed
+(cd studio-api && pytest -q)                          # ~500 tests; no Pegasus/Condor/keys needed
 
 # Frontend (needs `npm ci` first so node_modules/.bin/tsc exists)
 (cd studio-web && npm ci && node_modules/.bin/tsc --noEmit)   # strict mode
