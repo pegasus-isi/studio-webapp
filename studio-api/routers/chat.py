@@ -958,6 +958,32 @@ _ENGINE_SETTING_KEY = "chat_engine"
 _VALID_ENGINES = ("builtin", "opencode")
 
 
+async def _require_json(request: Request) -> dict[str, Any]:
+    """Parse a JSON object body, refusing anything not declared as JSON.
+
+    ``request.json()`` ignores Content-Type, so a cross-site form post or a
+    ``fetch`` with a text/plain body — neither of which needs a CORS preflight
+    — would be accepted as if the UI had sent it (PAS-SEC-01 / NEW-05: start a
+    turn with attacker text, stop every turn, answer someone else's approval
+    prompt). Requiring ``Content-Type: application/json`` forces the browser to
+    preflight, and main.py's CORS allowlist then decides. The UI always sends it
+    (lib/api/client.ts ``request()`` and components/chat/chat-input.tsx).
+    """
+    media = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if media != "application/json":
+        raise HTTPException(
+            status_code=415, detail="Content-Type must be application/json"
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    # A bare list or string would otherwise reach `.get(...)` and 500.
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON body must be an object")
+    return body
+
+
 def default_engine() -> str:
     """Engine used when the user hasn't chosen one. OpenCode ships in the
     image and is the richer agent, so it is the default; the builtin loop
@@ -986,10 +1012,7 @@ async def set_engine(request: Request) -> dict:
     from main import db
     from services.opencode_engine import engine as oc_engine
 
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    body = await _require_json(request)
     engine_id = body.get("engine", "")
     if engine_id not in _VALID_ENGINES:
         raise HTTPException(
@@ -1097,10 +1120,9 @@ async def _opencode_stream(
 @router.post("/stream")
 async def chat_stream(request: Request) -> StreamingResponse:
     """SSE-streaming chat with tool-calling loop."""
-    try:
-        body = await request.json()
-    except Exception:
-        return _error_sse("Invalid JSON body")
+    # A malformed body is an HTTP error, not an SSE error frame: the request
+    # never became a turn. chat-input.tsx already handles a non-OK response.
+    body = await _require_json(request)
 
     messages = body.get("messages", [])
     model_override = body.get("model", "")
@@ -1460,10 +1482,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
 @router.post("/stop")
 async def stop_chat(request: Request) -> dict:
     """Cancel an active streaming request."""
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await _require_json(request)
 
     request_id = body.get("request_id", "")
     if request_id and request_id in _active_clients:
@@ -1502,10 +1521,7 @@ async def chat_permission(request: Request) -> dict:
     """
     from services import chat_permissions
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await _require_json(request)
 
     request_id = str(body.get("request_id", ""))
     call_id = str(body.get("call_id", ""))
@@ -1534,10 +1550,7 @@ async def set_command_approval(request: Request) -> dict:
     from main import db
     from services import chat_permissions
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await _require_json(request)
     value = bool(body.get("require_approval", True))
     await chat_permissions.set_require_approval(db, value)
     return {"require_approval": value}
@@ -1552,10 +1565,7 @@ async def chat_feedback(request: Request) -> dict:
     """
     from main import db
 
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    body = await _require_json(request)
 
     message_id = body.get("message_id")
     value = body.get("value")
