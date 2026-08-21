@@ -20,8 +20,12 @@ from knowledge.common import (
     ensure_context_file,
     home_path,
     merge_json_mapping,
+    remove_generated_context_file,
+    remove_json_if_empty,
     remove_managed_block,
+    rmdir_if_empty,
     unmerge_json_mapping,
+    unmerge_json_top,
     upsert_managed_block,
 )
 from llm.providers import PROVIDERS, provider_type
@@ -187,28 +191,77 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
                 plugins=DEFAULT_PLUGINS,
             )
 
-    def uninstall(self, workspace: str) -> None:
-        for target in ("CLAUDE.md", ".mcp.json", ".claude"):
-            path = os.path.join(workspace, target)
-            if os.path.isfile(path):
-                os.remove(path)
-                log.info("claude_code_file_removed", path=path)
-            elif os.path.isdir(path):
-                shutil.rmtree(path)
-                log.info("claude_code_dir_removed", path=path)
+    @staticmethod
+    def _mcp_server_names() -> list[str]:
+        """Servers we merged into ~/.claude.json / .mcp.json.
 
-        # Global cleanup — remove only what we added, leaving any user-owned
-        # global config intact.
-        remove_managed_block(home_path(".claude", "CLAUDE.md"))
-        server_names = ["pegasus-docs", "kiso-docs"]
+        The defaults are unioned in, not replaced: a tree that dropped a server
+        must still have the entry an older install added taken back out.
+        """
+        names = {"pegasus-docs", "kiso-docs"}
         mcp_src = layout.mcp_servers_path()
         if mcp_src and os.path.isfile(mcp_src):
             try:
                 with open(mcp_src) as f:
-                    server_names = list((json.load(f) or {}).get("mcpServers", {}))
+                    names |= set((json.load(f) or {}).get("mcpServers", {}))
             except (json.JSONDecodeError, OSError):
                 pass
-        unmerge_json_mapping(home_path(".claude.json"), "mcpServers", server_names)
-        global_settings = home_path(".claude", "settings.json")
-        unmerge_json_mapping(global_settings, "extraKnownMarketplaces", ["scitech"])
-        unmerge_json_mapping(global_settings, "enabledPlugins", DEFAULT_PLUGINS)
+        return sorted(names)
+
+    def _remove_project_mcp_json(self, path: str) -> None:
+        """``.mcp.json`` was a copy of the tree file. Remove it if it still is;
+        otherwise take out only our servers, and the file only if nothing
+        remains — at $HOME the user may have added their own servers to it."""
+        if os.path.islink(path) or not os.path.isfile(path):
+            return
+        try:
+            with open(path) as f:
+                current = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return  # not something we can reason about — leave it
+        mcp_src = layout.mcp_servers_path()
+        if mcp_src and os.path.isfile(mcp_src):
+            try:
+                with open(mcp_src) as f:
+                    if json.load(f) == current:
+                        os.remove(path)
+                        log.info("claude_code_file_removed", path=path)
+                        return
+            except (json.JSONDecodeError, OSError):
+                pass
+        unmerge_json_mapping(path, "mcpServers", self._mcp_server_names())
+        remove_json_if_empty(path)
+
+    def uninstall(self, workspace: str) -> None:
+        # ``workspace`` is $HOME, so ``.claude`` here is the user's real Claude
+        # Code state — credentials, transcripts, their settings. Everything
+        # below removes exactly what install() wrote, one file or key at a
+        # time; the directory is removed only if that left it empty.
+        remove_generated_context_file(os.path.join(workspace, "CLAUDE.md"))
+        self._remove_project_mcp_json(os.path.join(workspace, ".mcp.json"))
+
+        remove_managed_block(home_path(".claude", "CLAUDE.md"))
+
+        claude_json = home_path(".claude.json")
+        unmerge_json_mapping(claude_json, "mcpServers", self._mcp_server_names())
+        remove_json_if_empty(claude_json)
+
+        # Keys are derived the same way update_llm_config() derives them, plus
+        # the legacy literal, so a marketplace renamed since install is still
+        # unregistered.
+        market_name, _ = _marketplace_source()
+        market_names = sorted({market_name, "scitech"})
+        plugin_keys = sorted(
+            f"{p.split('@', 1)[0]}@{m}" for p in DEFAULT_PLUGINS for m in market_names
+        )
+        for settings_path in sorted({
+            os.path.join(workspace, ".claude", "settings.json"),
+            home_path(".claude", "settings.json"),
+        }):
+            unmerge_json_mapping(settings_path, "extraKnownMarketplaces", market_names)
+            unmerge_json_mapping(settings_path, "enabledPlugins", plugin_keys)
+            unmerge_json_top(settings_path, ["provider", "model", "base_url", "api_key_env"])
+
+        rmdir_if_empty(os.path.join(workspace, ".claude"))
+        rmdir_if_empty(home_path(".claude"))
+        log.info("claude_code_uninstalled", workspace=workspace)

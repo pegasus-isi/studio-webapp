@@ -118,10 +118,13 @@ async def install_tool(tool_id: str) -> InstallResponse:
 async def uninstall_tool(tool_id: str) -> InstallResponse:
     from main import db
 
-    # Stop first if running
+    # Stop first if running; harmless for a non-running or unknown id.
     process_manager.stop_tool(tool_id)
 
-    status = await installer.uninstall(tool_id, db)
+    try:
+        status = await installer.uninstall(tool_id, db)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return InstallResponse(tool_id=tool_id, status=status)
 
 
