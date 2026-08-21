@@ -342,6 +342,10 @@ def test_run_reuses_planned_dir_only_if_unsubmitted(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ws.asyncio, "create_subprocess_exec", fake_pegasus_run)
     monkeypatch.setattr(ws, "submit_workflow", fake_submit)
+    # Run refuses any run_dir outside the workspace (PAS-SEC-05). WORKSPACE_ROOT
+    # was frozen at import to the first test's HOME, so point it at this test's
+    # tree or the reuse logic under test is never reached.
+    monkeypatch.setattr(ws, "WORKSPACE_ROOT", str(tmp_path))
 
     # Unsubmitted planned dir -> reused via pegasus-run.
     asyncio.run(ws.run_planned_workflow(str(tmp_path), run_dir=str(planned)))
@@ -354,6 +358,126 @@ def test_run_reuses_planned_dir_only_if_unsubmitted(tmp_path, monkeypatch):
     asyncio.run(ws.run_planned_workflow(str(tmp_path), run_dir=str(planned)))
     assert ran.get("fresh_plan_submit") is True
     assert "target" not in ran
+
+
+# --- run_dir confinement (PAS-SEC-05) ---
+
+
+def _record_pegasus_calls(ws, monkeypatch, calls: list[str]):
+    """Stub both ways Run can mutate — pegasus-run and plan+submit — so a test
+    can assert neither happened."""
+
+    async def fake_exec(*cmd, **kw):
+        calls.append(f"exec:{cmd[0]}")
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return (b"", b"")
+
+        return P()
+
+    async def fake_submit(workflow_dir, **kw):
+        calls.append("submit")
+        return {"status": "submitted", "run_dir": "fresh", "output": ""}
+
+    monkeypatch.setattr(ws.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(ws, "submit_workflow", fake_submit)
+
+
+def test_run_refuses_run_dir_outside_workspace(tmp_path, monkeypatch):
+    """A run_dir outside the workspace is refused outright. It must not be
+    pegasus-run, and it must not quietly fall back to a fresh plan+submit
+    either — that fallback is itself the mutation a crafted request wants."""
+    import asyncio
+    import services.workflow_submitter as ws
+
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.setattr(ws, "WORKSPACE_ROOT", str(work))
+
+    # A perfectly valid-looking planned dir, just in the wrong place.
+    outside = tmp_path / "elsewhere" / "run0001"
+    outside.mkdir(parents=True)
+    (outside / "braindump.yml").write_text("x: 1\n")
+
+    calls: list[str] = []
+    _record_pegasus_calls(ws, monkeypatch, calls)
+
+    result = asyncio.run(
+        ws.run_planned_workflow(str(work / "proj"), run_dir=str(outside))
+    )
+    assert result["status"] == "error"
+    assert "inside" in result["output"]
+    assert calls == []
+
+
+def test_run_refuses_symlink_escaping_workspace(tmp_path, monkeypatch):
+    """The check is on the resolved path: a symlink that lives inside the
+    workspace but points out of it is still outside."""
+    import asyncio
+    import services.workflow_submitter as ws
+
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.setattr(ws, "WORKSPACE_ROOT", str(work))
+
+    outside = tmp_path / "elsewhere" / "run0001"
+    outside.mkdir(parents=True)
+    (outside / "braindump.yml").write_text("x: 1\n")
+    link = work / "link"
+    link.symlink_to(outside, target_is_directory=True)
+
+    calls: list[str] = []
+    _record_pegasus_calls(ws, monkeypatch, calls)
+
+    result = asyncio.run(
+        ws.run_planned_workflow(str(work / "proj"), run_dir=str(link))
+    )
+    assert result["status"] == "error"
+    assert calls == []
+
+
+def test_submit_project_endpoint_reports_out_of_tree_run_dir(
+    client, monkeypatch, tmp_path
+):
+    """The Run endpoint reports the refusal as an error result (the UI shows
+    ``output``), not a 500, and pegasus-run is never reached."""
+    import routers.workflows as wf
+    import services.workflow_submitter as ws
+
+    work = tmp_path / "work"
+    (work / "proj").mkdir(parents=True)
+    monkeypatch.setattr(ws, "WORKSPACE_ROOT", str(work))
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "braindump.yml").write_text("x: 1\n")
+
+    async def _projects(ws=None):
+        return [{
+            "project_id": "p",
+            "project_dir": str(work / "proj"),
+            "has_generator": True,
+            "generator_file": "workflow_generator.py",
+        }]
+
+    monkeypatch.setattr(wf, "discover_projects_async", _projects)
+
+    async def must_not_run(*cmd, **kw):
+        raise AssertionError(f"must not run: {cmd}")
+
+    monkeypatch.setattr(ws.asyncio, "create_subprocess_exec", must_not_run)
+
+    resp = client.post(
+        "/api/workflows/projects/p/submit", json={"run_dir": str(outside)}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["project_id"] == "p"
+    assert body["status"] == "error"
+    assert body["output"].startswith("Run dir must be inside")
 
 
 # --- removing a run from the Condor queue (without deleting it) ---

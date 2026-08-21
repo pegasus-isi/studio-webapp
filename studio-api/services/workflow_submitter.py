@@ -121,13 +121,31 @@ async def run_planned_workflow(
     produced, instead of re-planning. ``run_dir`` is the dir returned by Plan;
     if it's missing or invalid (e.g. the page was refreshed), fall back to the
     most recent planned dir under ``workflow_dir``. If no planned dir exists at
-    all, fall back to a full plan+submit so Run still works standalone.
+    all, fall back to a full plan+submit so Run still works standalone. A dir
+    outside the workspace is refused, not substituted.
 
     Returns dict with status, run_dir (if successful), and output.
     """
     target: str | None = None
     if run_dir:
         candidate = os.path.realpath(os.path.expanduser(run_dir))
+        root = os.path.realpath(WORKSPACE_ROOT)
+        if candidate != root and not candidate.startswith(root + os.sep):
+            # The UI only ever hands back the run_dir that Plan returned, which
+            # sits under the project dir inside the workspace. Anything else is
+            # a crafted request (PAS-SEC-05): refuse outright rather than
+            # silently falling back to a fresh plan+submit, which is itself the
+            # mutation an attacker is after. Same rule as POST /api/workflows/submit.
+            log.warning(
+                "run_dir_outside_workspace",
+                run_dir=run_dir,
+                resolved=candidate,
+                workspace_root=root,
+            )
+            return {
+                "status": "error",
+                "output": f"Run dir must be inside {WORKSPACE_ROOT}",
+            }
         # Reuse the freshly-planned dir from Plan only if it hasn't already
         # been submitted — pegasus-run on an already-running/submitted dir
         # fails with "workflow already running (remove monitord.pid)".
