@@ -124,9 +124,11 @@ def test_claude_code_global_is_non_destructive(tmp_path, monkeypatch):
     _seed_knowledge(str(kroot))
     monkeypatch.setenv("KNOWLEDGE_ROOT", str(kroot))
 
+    # The production shape: the workspace handed to the adapter *is* HOME, so
+    # <workspace>/.claude is the user's real Claude Code state.
     home = tmp_path / "home"
-    ws = home / "work"
-    ws.mkdir(parents=True)
+    home.mkdir()
+    ws = home
     monkeypatch.setenv("HOME", str(home))
 
     # Pre-existing user global config that must survive.
@@ -136,6 +138,9 @@ def test_claude_code_global_is_non_destructive(tmp_path, monkeypatch):
     (home / ".claude.json").write_text(
         json.dumps({"projects": {"a": 1}, "mcpServers": {"mine": {}}})
     )
+    (home / ".claude" / ".credentials.json").write_text('{"token": "secret"}')
+    (home / ".claude" / "projects" / "x").mkdir(parents=True)
+    (home / ".claude" / "projects" / "x" / "transcript.jsonl").write_text("{}\n")
 
     adapter = claude_code.ClaudeCodeAdapter()
     adapter.install(str(ws), {"provider": "anthropic", "model": "m"})
@@ -150,11 +155,17 @@ def test_claude_code_global_is_non_destructive(tmp_path, monkeypatch):
 
     # Uninstall removes only what we added.
     adapter.uninstall(str(ws))
+    assert (home / ".claude").is_dir()
+    assert _read(str(home / ".claude" / ".credentials.json")) == '{"token": "secret"}'
+    assert _read(str(home / ".claude" / "projects" / "x" / "transcript.jsonl")) == "{}\n"
     assert "user memory" in _read(str(home / ".claude" / "CLAUDE.md"))
+    assert not (home / "CLAUDE.md").exists()
+    assert not (home / ".mcp.json").exists()
     claude_json = json.loads(_read(str(home / ".claude.json")))
     assert set(claude_json["mcpServers"]) == {"mine"}
     settings = json.loads(_read(str(home / ".claude" / "settings.json")))
     assert settings["theme"] == "dark"
+    assert "provider" not in settings
     assert "scitech" not in settings.get("extraKnownMarketplaces", {})
 
 

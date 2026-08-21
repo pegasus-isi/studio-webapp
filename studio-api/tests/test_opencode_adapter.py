@@ -244,10 +244,28 @@ def test_uninstall_still_removes_a_legacy_workspace_config(tmp_path, monkeypatch
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
 
     legacy = workspace / "opencode.json"
-    legacy.write_text("{}")
+    legacy.write_text(
+        json.dumps(
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "mcp": {
+                    "pegasus-docs": {
+                        "type": "remote",
+                        "url": "https://gitmcp.io/pegasus-isi/pegasus",
+                        "enabled": True,
+                    }
+                },
+            }
+        )
+    )
 
     OpenCodeAdapter().uninstall(str(workspace))
     assert not legacy.exists()
+
+    # A file under the same name without the Studio fingerprint is the user's.
+    legacy.write_text(json.dumps({"theme": "x"}))
+    OpenCodeAdapter().uninstall(str(workspace))
+    assert json.loads(legacy.read_text()) == {"theme": "x"}
 
 
 def test_permission_defaults_to_asking_for_bash(tmp_path, monkeypatch):
