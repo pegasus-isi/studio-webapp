@@ -21,10 +21,11 @@ if [ -n "${JUPYTERHUB_SERVICE_PREFIX:-}" ]; then
     BASE_URL="${JUPYTERHUB_SERVICE_PREFIX%/}/jupyter/"
 fi
 
+# Everything that is not environment-derived (bind address, port, auth, XSRF,
+# origin policy) lives in /etc/jupyter/jupyter_server_config.py — the single
+# source of truth; studio-api/tests/test_jupyter_config.py checks that no
+# security flag creeps back onto this command line. Only the two per-user
+# paths are passed here.
 exec jupyter lab \
-    --no-browser \
-    --ip=127.0.0.1 \
-    --port=8889 \
     --ServerApp.base_url="${BASE_URL}" \
-    --ServerApp.root_dir="${ROOT}" \
-    --ServerApp.token=""
+    --ServerApp.root_dir="${ROOT}"

@@ -38,6 +38,10 @@ JupyterLab is always on and opens in a separate browser tab.
 - JupyterLab runs in classic document mode. `jupyter-ai` and collaboration/RTC
   extensions are intentionally excluded because they break notebook loading
   behind the proxy.
+- JupyterLab has no token/password (the gateway authenticates) but keeps XSRF,
+  same-origin and `frame-ancestors 'self'` on; all static Jupyter settings live
+  in `docker/jupyter/jupyter_server_config.py`, guarded by
+  `tests/test_jupyter_config.py`.
 - Workflow status comes from `workflow-monitor --serve` JSONL events, started
   automatically on submit.
 - The workspace defaults to `$HOME/work` and holds workflow projects; Studio's
@@ -178,6 +182,8 @@ to bypass the proxy if the server is directly browser-reachable.
 | `PEGASUS_BOT_SERVER_URL` | `http://server.ai-bot:8000` | Upstream PegasusAI Bot server the in-pod proxy (`/api/pegasus-bot`) forwards to |
 | `PEGASUS_BOT_CLIENT_URL` | `<prefix>/api/pegasus-bot` | Server URL injected into the extension; defaults to the same-origin proxy path. Override to point the browser at a directly-reachable server |
 | `STUDIO_ENABLE_PEGASUS_BOT` | `1` | Inject the PegasusAI Bot config (server + env user) into JupyterLab (`0` leaves the bundled extension inert / manual) |
+| `STUDIO_JUPYTER_ALLOW_ORIGIN` | (empty) | One extra exact origin (`scheme://host[:port]`) admitted by JupyterLab's origin check; same-origin is always allowed, `*` is refused and logged |
+| `STUDIO_JUPYTER_DISABLE_XSRF` | `0` | Emergency rollback only — turns JupyterLab's CSRF protection off, reopening PAS-SEC-03 |
 
 ### HTCondor connection
 
