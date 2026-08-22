@@ -82,6 +82,21 @@ def _build_config_toml(
             )
         lines.append("")
 
+    # Profiles are what make non-active providers reachable from inside
+    # Codex: the model picker only lists the active model_provider, so a
+    # [model_providers.<id>] section alone leaves a saved endpoint invisible
+    # (#205). A [profiles.<id>] per provider lets the user switch with
+    # `codex --profile <id>` (or the profile setting) without re-activating
+    # it in Studio.
+    for prov in providers:
+        pid = _toml_key(prov.get("provider_id", prov.get("provider", "custom")))
+        p_model = prov.get("default_model") or active_model
+        lines.append(f"[profiles.{pid}]")
+        lines.append(f'model_provider = "{pid}"')
+        lines.append(f'model = "{_toml_escape(p_model)}"')
+        lines.append('model_reasoning_effort = "medium"')
+        lines.append("")
+
     # MCP server sections
     for server_name, url in MCP_SERVERS.items():
         lines.append(f"[mcp_servers.{server_name}]")
@@ -256,6 +271,7 @@ class CodexCLIAdapter(KnowledgeAdapter):
                 "name": preset.get("name", provider),
                 "api_key": api_key,
                 "base_url": base_url or preset.get("base_url", "") or "",
+                "default_model": model,
             })
 
         # Write to ~/.codex/config.toml (skip if HOME is not set)
