@@ -94,6 +94,76 @@ def test_all_saved_providers_are_written(tmp_path, monkeypatch):
     assert cfg["model"] == "gateway/default"
 
 
+def test_fetched_model_list_is_declared_in_full(tmp_path, monkeypatch):
+    """When the propagator attached a live /models list, every model is
+    declared — opencode's picker lists only what the config declares, so
+    default_model alone meant one selectable model per endpoint (#207)."""
+    from knowledge.opencode import OpenCodeAdapter
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    ws = tmp_path / "work"
+    ws.mkdir()
+
+    OpenCodeAdapter().update_llm_config(
+        str(ws),
+        {
+            "provider": "gateway",
+            "model": "default",
+            "base_url": "http://gateway.llm:8080/v1",
+            "all_providers": [
+                {
+                    "provider_id": "gateway",
+                    "name": "LLM Gateway",
+                    "base_url": "http://gateway.llm:8080/v1",
+                    "default_model": "default",
+                },
+                {
+                    "provider_id": "custom-renci",
+                    "name": "RENCI Gateway",
+                    "api_key": "sk-renci",
+                    "base_url": "https://ai.example.org/v1",
+                    "default_model": "gpt-5.6-sol",
+                    "models": ["gpt-5.6-luna", "gpt-5.6-sol", "kimi-k2.6"],
+                },
+            ],
+        },
+    )
+
+    cfg = json.loads(
+        (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
+    )
+    renci = cfg["provider"]["custom-renci"]
+    assert set(renci["models"]) == {"gpt-5.6-luna", "gpt-5.6-sol", "kimi-k2.6"}
+    # A default_model missing from the fetched list is still declared.
+    OpenCodeAdapter().update_llm_config(
+        str(ws),
+        {
+            "provider": "custom-renci",
+            "model": "hand-picked",
+            "api_key": "sk-renci",
+            "base_url": "https://ai.example.org/v1",
+            "all_providers": [
+                {
+                    "provider_id": "custom-renci",
+                    "name": "RENCI Gateway",
+                    "api_key": "sk-renci",
+                    "base_url": "https://ai.example.org/v1",
+                    "default_model": "hand-picked",
+                    "models": ["gpt-5.6-sol"],
+                },
+            ],
+        },
+    )
+    cfg = json.loads(
+        (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
+    )
+    assert list(cfg["provider"]["custom-renci"]["models"]) == [
+        "hand-picked",
+        "gpt-5.6-sol",
+    ]
+
+
 def test_active_provider_synthesized_without_saved_row(tmp_path, monkeypatch):
     """A legacy config with no provider_configs row still yields a working
     entry for the active provider alongside the saved ones."""
