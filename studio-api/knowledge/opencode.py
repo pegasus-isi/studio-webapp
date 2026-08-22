@@ -193,13 +193,22 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 or p_preset.get("default_model")
                 or ""
             ).rsplit("/", 1)[-1]
+            # Declare the endpoint's full model list when the propagator
+            # fetched one (opencode's picker lists only what is declared, so
+            # default_model alone meant one selectable model per endpoint,
+            # #207). No list — endpoint down, keyless probe rejected — falls
+            # back to default_model; a draft with neither still shows up
+            # (empty model list) rather than silently vanishing.
+            model_ids = [
+                str(m).rsplit("/", 1)[-1] for m in prov.get("models") or []
+            ]
+            if p_model and p_model not in model_ids:
+                model_ids.insert(0, p_model)
             providers_cfg[pid] = {
                 "npm": p_preset.get("npm", "@ai-sdk/openai-compatible"),
                 "name": prov.get("name") or p_preset.get("name", pid),
                 "options": _provider_options(p_type, p_key, p_base),
-                # A draft saved without a model still shows up (with an empty
-                # model list) rather than silently vanishing from the picker.
-                "models": {p_model: {"name": p_model}} if p_model else {},
+                "models": {m: {"name": m} for m in model_ids},
             }
 
         config = {
