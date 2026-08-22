@@ -18,10 +18,34 @@ from knowledge.common import (
     build_knowledge_appendix,
     ensure_context_file,
 )
-from llm.providers import PROVIDERS, _resolve_api_key, _resolve_base_url, provider_type
+from llm.providers import PROVIDERS, provider_type
 
 log = structlog.get_logger()
 
+
+
+def _provider_options(ptype: str, api_key: str, base_url: str) -> dict[str, str]:
+    """Build one provider's ``options`` block.
+
+    Native SDK providers (anthropic, openai) take only an apiKey — a baseURL
+    would point the SDK away from the vendor API. Ollama is keyless but its
+    SDK still requires *some* apiKey value. Everything else is treated as
+    OpenAI-compatible: baseURL required, key optional (self-hosted endpoints
+    are often keyless).
+    """
+    options: dict[str, str] = {}
+    if ptype in ("anthropic", "openai"):
+        if api_key:
+            options["apiKey"] = api_key
+    elif ptype == "ollama":
+        options["baseURL"] = base_url or "http://localhost:11434/v1"
+        options["apiKey"] = "ollama"
+    else:
+        if base_url:
+            options["baseURL"] = base_url
+        if api_key:
+            options["apiKey"] = api_key
+    return options
 
 
 def _global_config_dir() -> str:
@@ -136,33 +160,51 @@ class OpenCodeAdapter(KnowledgeAdapter):
         # clean id (e.g. "default"), not "custom-x/default" doubled up.
         model_id = str(model).rsplit("/", 1)[-1]
 
-        # Build provider config
-        options: dict[str, str] = {}
-        if ptype == "anthropic":
-            if api_key:
-                options["apiKey"] = api_key
-        elif ptype == "openai":
-            if api_key:
-                options["apiKey"] = api_key
-        elif ptype == "ollama":
-            options["baseURL"] = base_url or "http://localhost:11434/v1"
-            options["apiKey"] = "ollama"
-        else:
-            if base_url:
-                options["baseURL"] = base_url
-            if api_key:
-                options["apiKey"] = api_key
+        # Every saved provider goes into the config, not just the active one:
+        # opencode's provider/model picker lists exactly what this map declares,
+        # so a custom endpoint that was saved but never activated used to be
+        # invisible in the TUI (#205). The active provider may not have a saved
+        # row (legacy configs written straight to llm_config), so synthesize it.
+        saved = list(llm_config.get("all_providers") or [])
+        if not any(p.get("provider_id") == provider for p in saved):
+            saved.insert(0, {
+                "provider_id": provider,
+                "name": preset.get("name", provider),
+                "api_key": api_key,
+                "base_url": base_url,
+                "default_model": model_id,
+            })
+
+        providers_cfg: dict[str, Any] = {}
+        for prov in saved:
+            pid = prov.get("provider_id") or provider
+            p_type = provider_type(pid)
+            p_preset = PROVIDERS.get(p_type, PROVIDERS["custom"])
+            p_key = prov.get("api_key") or ""
+            p_base = prov.get("base_url") or p_preset.get("base_url") or ""
+            if pid == provider:
+                # The live llm_config wins over the saved row for the active
+                # provider, so a key/URL edited via PUT /config isn't shadowed
+                # by a stale provider_configs row.
+                p_key, p_base = api_key or p_key, base_url or p_base
+            p_model = str(
+                prov.get("default_model")
+                or (model_id if pid == provider else "")
+                or p_preset.get("default_model")
+                or ""
+            ).rsplit("/", 1)[-1]
+            providers_cfg[pid] = {
+                "npm": p_preset.get("npm", "@ai-sdk/openai-compatible"),
+                "name": prov.get("name") or p_preset.get("name", pid),
+                "options": _provider_options(p_type, p_key, p_base),
+                # A draft saved without a model still shows up (with an empty
+                # model list) rather than silently vanishing from the picker.
+                "models": {p_model: {"name": p_model}} if p_model else {},
+            }
 
         config = {
             "$schema": "https://opencode.ai/config.json",
-            "provider": {
-                provider: {
-                    "npm": preset.get("npm", "@ai-sdk/openai-compatible"),
-                    "name": preset.get("name", provider),
-                    "options": options,
-                    "models": {model_id: {"name": model_id}},
-                },
-            },
+            "provider": providers_cfg,
             "model": f"{provider}/{model_id}",
             # Absolute, not "AGENTS.md": a bare name is resolved against the
             # project opencode walks up to, which is whatever directory the
