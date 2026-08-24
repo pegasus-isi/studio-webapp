@@ -148,7 +148,10 @@ Supervised by supervisord. `docker/entrypoint.sh` is a thin wrapper around
 
 1. On **first launch only** (marker on the PVC), runs `timeout 60 init_db.py`
    and seeds `AGENTS.md`.
-2. Writes `~/.pegasus/pegasus.conf` (agent URL) if absent.
+2. Writes `~/.pegasus/pegasus.conf` (agent URL) and the AMQP telemetry
+   properties if absent — both opt-in: only when `STUDIO_PEGASUS_AGENT_URL`
+   is set / `STUDIO_TELEMETRY=on` (the image ENVs both; the native dist
+   sets neither).
 3. Backgrounds `propagate_llm.py` (hard-timeout'd) to sync tool configs.
 4. Renders the supervisord/nginx configs from `launcher/templates/` and
    `exec supervisord` — which starts nginx, studio-api (uvicorn), and

@@ -45,15 +45,26 @@
 #   STUDIO_RUNTIME_DIR     rendered configs, pids, sockets  (/tmp/studio-runtime-<uid>)
 #   STUDIO_KNOWLEDGE_SEED  marketplace clone source         (/opt/pegasus-ai/marketplace)
 #   STUDIO_OVERLAY         Studio env overlay for AGENTS.md (/opt/pegasus-ai/overlay/STUDIO_ENV.md)
-#   STUDIO_PEGASUS_AGENT_URL  pegasus.agent.url value       (https://api.pegasus-ai.org)
+#   STUDIO_PEGASUS_AGENT_URL  pegasus.agent.url written to ~/.pegasus/ when
+#                          set; unset (default) writes nothing. The image
+#                          ENVs the hosted default.
+#   STUDIO_TELEMETRY       "on" writes the Pegasus AMQP workflow-event
+#                          properties into ~/.pegasus/pegasus.properties;
+#                          anything else (default) writes nothing. The image
+#                          ENVs on; the native dist does not.
+#   STUDIO_TELEMETRY_AMQP_URL  overrides the AMQP endpoint when telemetry is on
 # Everything the services read themselves (STUDIO_LLM_GATEWAY_URL,
 # STUDIO_SECRET_KEY[_FILE], STUDIO_OPENCODE_*, _CONDOR_*, JUPYTERHUB_*) is
 # plain pass-through: supervisord children inherit this process's environment.
 #
-# Usage: studio-launch [--render-only]
-#   --render-only  render configs into STUDIO_RUNTIME_DIR and exit; no $HOME
-#                  writes, no DB init, no exec. Lets tests verify the rendered
-#                  output on any machine without Docker or the app dirs.
+# Usage: studio-launch [--render-only | --prepare-only]
+#   --render-only   render configs into STUDIO_RUNTIME_DIR and exit; no $HOME
+#                   writes, no DB init, no exec. Lets tests verify the rendered
+#                   output on any machine without Docker or the app dirs.
+#   --prepare-only  full prepare + render but no exec — a preflight: run it as
+#                   the user to provision $HOME and check the session would
+#                   start, without starting it. Also how tests exercise the
+#                   prepare phase.
 #
 # Runs as whatever UID invoked it — no root assumed (KubeSpawner injects an
 # arbitrary uid; OOD runs it as the login user).
@@ -68,6 +79,20 @@ STUDIO_API_DIR="${STUDIO_API_DIR:-/opt/studio-api}"
 STUDIO_WEB_DIR="${STUDIO_WEB_DIR:-/opt/studio-web}"
 
 PYTHON="$(which python3 2>/dev/null || which python 2>/dev/null || echo python3)"
+
+# GNU timeout ships in the image and on any real Linux host, but not
+# everywhere the launcher may run (macOS dev boxes, minimal hosts). The
+# timeouts guard against NFS/SQLite stalls; missing the guard is better than
+# refusing to start at all.
+run_with_timeout() {
+    local secs="$1"
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "${secs}" "$@"
+    else
+        "$@"
+    fi
+}
 
 # ---- Internal listener ports ----
 # Fixed defaults reproduce the container, where the pod network namespace made
@@ -166,9 +191,11 @@ STUDIO_KNOWLEDGE_SEED="${STUDIO_KNOWLEDGE_SEED:-/opt/pegasus-ai/marketplace}"
 STUDIO_OVERLAY="${STUDIO_OVERLAY:-/opt/pegasus-ai/overlay/STUDIO_ENV.md}"
 
 RENDER_ONLY=0
-if [ "${1:-}" = "--render-only" ]; then
-    RENDER_ONLY=1
-fi
+PREPARE_ONLY=0
+case "${1:-}" in
+    --render-only) RENDER_ONLY=1 ;;
+    --prepare-only) PREPARE_ONLY=1 ;;
+esac
 
 # ---------------------------------------------------------------------------
 # render — templates + env → $STUDIO_RUNTIME_DIR
@@ -352,7 +379,7 @@ if [ ! -f "${MARKER}" ]; then
     # at 30s, and every retry hits the same lock. Same rationale as the timeout
     # on propagate_llm.py below, but init is a hard prerequisite, so fail loud
     # instead of backgrounding. (timeout exits 124 on timeout.)
-    if ! timeout 60 "${PYTHON}" init_db.py; then
+    if ! run_with_timeout 60 "${PYTHON}" init_db.py; then
         echo "[studio-launch] FATAL: init_db.py failed or timed out (>60s) —" \
              "check for a stale SQLite lock on ${STUDIO_DIR}/studio.db" >&2
         exit 1
@@ -392,16 +419,40 @@ elif [ ! -f "${CONFIG_ROOT}/AGENTS.md" ]; then
 fi
 
 # Pegasus agent endpoint — without it pegasus-analyzer probes the default
-# agent URL and stalls badly. HOME is per-user persistent state, so this must
-# be written at runtime (an image-baked copy under /home would be shadowed by
-# the mount). Runs on every start, not just first launch, so existing sessions
-# pick it up; appends only when the key is absent, preserving user edits.
+# agent URL and stalls badly. api.pegasus-ai.org is OUR hosted service, so it
+# is only a sensible default where we choose it: the image ENVs it, the
+# native dist sets nothing, and a lab's session must not phone an external
+# endpoint nobody picked — unset means nothing is written. HOME is per-user
+# persistent state, so this is written at runtime, on every start (so
+# existing sessions pick up a newly configured URL), appending only when the
+# key is absent so user edits win.
 PEGASUS_CONF="${HOME:-/tmp}/.pegasus/pegasus.conf"
-PEGASUS_AGENT_URL="${STUDIO_PEGASUS_AGENT_URL:-https://api.pegasus-ai.org}"
-if ! grep -qs '^pegasus\.agent\.url' "${PEGASUS_CONF}"; then
+if [ -n "${STUDIO_PEGASUS_AGENT_URL:-}" ] \
+   && ! grep -qs '^pegasus\.agent\.url' "${PEGASUS_CONF}"; then
     mkdir -p "$(dirname "${PEGASUS_CONF}")"
-    echo "pegasus.agent.url = ${PEGASUS_AGENT_URL}" >> "${PEGASUS_CONF}"
+    echo "pegasus.agent.url = ${STUDIO_PEGASUS_AGENT_URL}" >> "${PEGASUS_CONF}"
     echo "[studio-launch] Wrote pegasus.agent.url to ${PEGASUS_CONF}"
+fi
+
+# Workflow-event telemetry (AMQP to the Pegasus project) — strictly opt-in.
+# The image used to bake this into /etc/pegasus/pegasus.properties, which a
+# lab running the image (or the native dist) could neither see nor turn off.
+# The launcher owns it now, in the USER-level properties file, and only when
+# the packaging or site opted in: the image sets STUDIO_TELEMETRY=on to keep
+# the hosted default; the native dist sets nothing, so labs report nothing
+# unless they choose to. Append-if-absent per key: a user's own
+# pegasus.properties edits always win.
+PEGASUS_PROPS="${HOME:-/tmp}/.pegasus/pegasus.properties"
+if [ "${STUDIO_TELEMETRY:-off}" = "on" ]; then
+    mkdir -p "$(dirname "${PEGASUS_PROPS}")"
+    if ! grep -qs '^pegasus\.monitord\.encoding' "${PEGASUS_PROPS}"; then
+        echo "pegasus.monitord.encoding = json" >> "${PEGASUS_PROPS}"
+    fi
+    if ! grep -qs '^pegasus\.catalog\.workflow\.amqp\.url' "${PEGASUS_PROPS}"; then
+        echo "pegasus.catalog.workflow.amqp.url = ${STUDIO_TELEMETRY_AMQP_URL:-amqp://friend:donatedata@msgs.pegasus.isi.edu:5672/prod/workflows}" \
+            >> "${PEGASUS_PROPS}"
+        echo "[studio-launch] Workflow telemetry enabled in ${PEGASUS_PROPS}"
+    fi
 fi
 
 # Propagate saved LLM config to installed tool adapters. Run in the background
@@ -409,12 +460,18 @@ fi
 # (possibly NFS-backed) SQLite DB, and a blocked write here would otherwise
 # stall the notebook server past JupyterHub's 30s spawn timeout. Non-fatal;
 # logged for inspection rather than discarded.
-( cd "${STUDIO_API_DIR}" && timeout 20 "${PYTHON}" propagate_llm.py \
+( cd "${STUDIO_API_DIR}" && run_with_timeout 20 "${PYTHON}" propagate_llm.py \
     >"${STUDIO_DIR}/propagate_llm.log" 2>&1 || true ) &
 
 # ---------------------------------------------------------------------------
 # render + exec
 # ---------------------------------------------------------------------------
 render
+
+if [ "${PREPARE_ONLY}" = "1" ]; then
+    echo "[studio-launch] --prepare-only: \$HOME prepared and configs" \
+         "rendered; not starting services."
+    exit 0
+fi
 
 exec supervisord -c "${STUDIO_RUNTIME_DIR}/supervisord.conf"
