@@ -27,6 +27,10 @@
 #                          four internal listeners not set explicitly —
 #                          required on shared native hosts where fixed ports
 #                          are host-global and collide between users
+#   STUDIO_URL_PREFIX      literal URL prefix the app is served under, e.g.
+#                          OOD's /node/<host>/<port>. Empty (default) = root.
+#                          K8s' /user/<name> needs no setting here — it stays
+#                          regex-matched in the proxy template (per-user).
 #   STUDIO_API_DIR         FastAPI app dir                  (/opt/studio-api)
 #   STUDIO_WEB_DIR         Next.js standalone dir           (/opt/studio-web)
 #   STUDIO_RUNTIME_DIR     rendered configs, pids, sockets  (/tmp/studio-runtime-<uid>)
@@ -88,6 +92,29 @@ STUDIO_OPENCODE_PORT="${STUDIO_OPENCODE_PORT:-4747}"
 # (STUDIO_JUPYTER_PORT), services/opencode_engine.py (STUDIO_OPENCODE_PORT) —
 # so they must reach supervisord's children.
 export STUDIO_JUPYTER_PORT STUDIO_OPENCODE_PORT
+
+# ---- URL prefix ----
+# Under OOD the app is served at a literal prefix (/node/<host>/<port>);
+# under K8s at /user/<name>, which stays regex-matched in the proxy template
+# because it is per-user and cannot be a literal. Empty (the default) renders
+# no prefix locations at all. Normalized: no trailing slash — "/" collapses
+# to empty, i.e. "serve at root", which is already the default behavior.
+STUDIO_URL_PREFIX="${STUDIO_URL_PREFIX:-}"
+STUDIO_URL_PREFIX="${STUDIO_URL_PREFIX%/}"
+if [ -n "${STUDIO_URL_PREFIX}" ]; then
+    case "${STUDIO_URL_PREFIX}" in
+        /*) : ;;
+        *)
+            echo "[studio-launch] FATAL: STUDIO_URL_PREFIX must start with" \
+                 "'/' (got '${STUDIO_URL_PREFIX}')" >&2
+            exit 1
+            ;;
+    esac
+    # JupyterLab serves AT the prefix; jupyter.sh reads this. KubeSpawner's
+    # JUPYTERHUB_SERVICE_PREFIX still supersedes it there, so the K8s path is
+    # untouched even if both are somehow set.
+    export STUDIO_JUPYTER_BASE_URL="${STUDIO_JUPYTER_BASE_URL:-${STUDIO_URL_PREFIX}/jupyter/}"
+fi
 # Deliberately NOT under $HOME: in K8s the home is NFS-backed, and unix domain
 # sockets (supervisor.sock) cannot live on NFS. /tmp is local in both models;
 # the uid suffix keeps two users on one native host out of each other's dir.
@@ -135,7 +162,19 @@ render() {
     local tmpl out
     for tmpl in "${TEMPLATES}"/*.tmpl; do
         out="${STUDIO_RUNTIME_DIR}/$(basename "${tmpl%.tmpl}")"
+        # The prefix-locations template is all literal-prefix blocks; with no
+        # prefix configured, substituting an empty string would produce
+        # syntactically broken locations ("location = { ... }"), so render a
+        # comment-only file instead — the include in studio-proxy.conf always
+        # has something to load.
+        if [ "$(basename "${tmpl}")" = "prefix-locations.conf.tmpl" ] \
+           && [ -z "${STUDIO_URL_PREFIX}" ]; then
+            printf '# No STUDIO_URL_PREFIX configured — no prefix locations.\n' \
+                > "${out}"
+            continue
+        fi
         sed -e "s|@STUDIO_PORT@|${STUDIO_PORT}|g" \
+            -e "s|@STUDIO_URL_PREFIX@|${STUDIO_URL_PREFIX}|g" \
             -e "s|@STUDIO_API_PORT@|${STUDIO_API_PORT}|g" \
             -e "s|@STUDIO_WEB_PORT@|${STUDIO_WEB_PORT}|g" \
             -e "s|@STUDIO_JUPYTER_PORT@|${STUDIO_JUPYTER_PORT}|g" \
@@ -154,7 +193,7 @@ render() {
         fi
     done
     echo "[studio-launch] Rendered configs to ${STUDIO_RUNTIME_DIR}" \
-         "(port ${STUDIO_PORT})"
+         "(port ${STUDIO_PORT}, prefix '${STUDIO_URL_PREFIX:-<none>}')"
 }
 
 if [ "${RENDER_ONLY}" = "1" ]; then

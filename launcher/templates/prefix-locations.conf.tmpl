@@ -1,0 +1,78 @@
+# Rendered by launcher/studio-launch — generic URL-prefix locations for
+# STUDIO_URL_PREFIX (e.g. /node/<host>/<port> under Open OnDemand). Rendered
+# empty when no prefix is configured; the /user/<name> locations in
+# studio-proxy.conf are K8s/JupyterHub-shaped (per-user, so necessarily a
+# regex) and remain alongside these.
+#
+# Unlike the /user blocks, these are plain prefix locations with a URI part in
+# proxy_pass: the prefix is a known literal here, so nginx substitutes the
+# matched prefix itself — no regex, no captures, and the rewrite/proxy_pass
+# truncation bug documented in studio-proxy.conf cannot occur by construction.
+
+# Bare prefix → trailing slash (mirrors the /user/<name> 308).
+location = @STUDIO_URL_PREFIX@ {
+    return 308 $uri/$is_args$args;
+}
+
+location @STUDIO_URL_PREFIX@/api/ {
+    proxy_pass http://studio_api/api/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # SSE support
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 300s;
+}
+
+location @STUDIO_URL_PREFIX@/ws/ {
+    proxy_pass http://studio_api/ws/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+
+# JupyterLab serves AT the prefix (the launcher exports
+# STUDIO_JUPYTER_BASE_URL=@STUDIO_URL_PREFIX@/jupyter/), so pass the full
+# path — no URI part. Upgrade headers on the main location so ALL Jupyter
+# websockets work, same rationale as the /jupyter/ block in studio-proxy.conf.
+location @STUDIO_URL_PREFIX@/jupyter/ {
+    proxy_pass http://127.0.0.1:@STUDIO_JUPYTER_PORT@;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 86400s;
+    proxy_send_timeout 86400s;
+}
+
+# Everything else under the prefix → Next.js, prefix stripped, prefix
+# announced via X-Forwarded-Prefix (app/layout.tsx builds <base href> from
+# that header; lib/urls.ts builds every client URL from document.baseURI).
+location @STUDIO_URL_PREFIX@/ {
+    proxy_pass http://studio_web/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix @STUDIO_URL_PREFIX@;
+
+    proxy_set_header Accept-Encoding "";
+    sub_filter_once off;
+    sub_filter_types text/html;
+    sub_filter 'href="/_next/' 'href="@STUDIO_URL_PREFIX@/_next/';
+    sub_filter 'src="/_next/' 'src="@STUDIO_URL_PREFIX@/_next/';
+    sub_filter 'href="./_next/' 'href="@STUDIO_URL_PREFIX@/_next/';
+    sub_filter 'src="./_next/' 'src="@STUDIO_URL_PREFIX@/_next/';
+}
