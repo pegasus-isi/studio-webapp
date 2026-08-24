@@ -1,7 +1,7 @@
 """JupyterLab status endpoint.
 
 JupyterLab runs as an always-on service under supervisord
-(docker/supervisor/scripts/jupyter.sh), started with the container. The studio
+(launcher/scripts/jupyter.sh), started with the container. The studio
 does NOT launch or manage the process; this endpoint only reports status, and
 the frontend opens the running instance at /jupyter/lab in a new browser tab.
 """

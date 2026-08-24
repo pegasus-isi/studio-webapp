@@ -1,0 +1,45 @@
+# Rendered by launcher/studio-launch — do not edit the rendered copy; change
+# the template and restart (docs/OOD-DEPLOYMENT-DESIGN.md §1).
+#
+# Non-root operation:
+# - No 'user' directive: nginx runs workers as the process owner.
+# - pid and all temp paths live in the per-uid runtime dir (default paths under
+#   /var/lib/nginx are not writable by a non-root uid, and a shared /tmp path
+#   would collide between users on a native multi-user host).
+# - Logs go to stdout/stderr for Docker/supervisord log capture.
+
+worker_processes auto;
+pid @STUDIO_RUNTIME_DIR@/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    # mime.types ships with nginx itself at this path on both Debian (image)
+    # and typical lab hosts; the native Phase-2 dist replaces nginx with a
+    # bundled proxy, so this stays a fixed path rather than another knob.
+    include      /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent"';
+
+    access_log /dev/stdout main;
+
+    sendfile    on;
+    tcp_nopush  on;
+    keepalive_timeout 65;
+
+    client_body_temp_path @STUDIO_RUNTIME_DIR@/nginx-client-body;
+    proxy_temp_path       @STUDIO_RUNTIME_DIR@/nginx-proxy;
+    fastcgi_temp_path     @STUDIO_RUNTIME_DIR@/nginx-fastcgi;
+    uwsgi_temp_path       @STUDIO_RUNTIME_DIR@/nginx-uwsgi;
+    scgi_temp_path        @STUDIO_RUNTIME_DIR@/nginx-scgi;
+
+    # Only the rendered server block — never the distro's conf.d/sites-enabled,
+    # which on a lab host could route who-knows-what into this session.
+    include @STUDIO_RUNTIME_DIR@/studio-proxy.conf;
+}

@@ -23,8 +23,11 @@ nginx :8888
   `-- /jupyter/* -> JupyterLab  :8889
 ```
 
-Long-running services are managed by `supervisord`
-([docker/supervisor/supervisord.conf](docker/supervisor/supervisord.conf)).
+Long-running services are managed by `supervisord`; its config is rendered at
+session start by [launcher/studio-launch](launcher/studio-launch) from
+[launcher/templates/](launcher/templates/) (one env-driven start path shared
+with the native Open OnDemand packaging — see
+[docs/OOD-DEPLOYMENT-DESIGN.md](docs/OOD-DEPLOYMENT-DESIGN.md)).
 JupyterLab is always on and opens in a separate browser tab.
 
 ## Architecture Notes

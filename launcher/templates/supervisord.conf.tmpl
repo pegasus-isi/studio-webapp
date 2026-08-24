@@ -1,24 +1,31 @@
+; Rendered by launcher/studio-launch — do not edit the rendered copy; change
+; the template and restart. Placeholders are substituted from env at session
+; start (docs/OOD-DEPLOYMENT-DESIGN.md §1).
+
 [supervisord]
 nodaemon=true
 logfile=/dev/stderr
 logfile_maxbytes=0
-pidfile=/tmp/supervisord.pid
+pidfile=@STUDIO_RUNTIME_DIR@/supervisord.pid
 loglevel=info
 
+; Socket lives in the runtime dir, not /tmp directly: the runtime dir is
+; per-uid, so two users on one native host don't fight over one socket path
+; (and it must not be under $HOME — unix sockets can't live on NFS).
 [unix_http_server]
-file=/tmp/supervisor.sock
+file=@STUDIO_RUNTIME_DIR@/supervisor.sock
 chmod=0700
 
 [rpcinterface:supervisor]
 supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
 
 [supervisorctl]
-serverurl=unix:///tmp/supervisor.sock
+serverurl=unix://@STUDIO_RUNTIME_DIR@/supervisor.sock
 
 ; ---- Studio API (FastAPI/uvicorn) ----
 [program:studio-api]
 command=uvicorn main:app --host 0.0.0.0 --port 8080
-directory=/opt/studio-api
+directory=@STUDIO_API_DIR@
 autostart=true
 autorestart=true
 stdout_logfile=/dev/stdout
@@ -30,7 +37,7 @@ priority=10
 ; ---- Studio Web (Next.js standalone) ----
 [program:studio-web]
 command=node server.js
-directory=/opt/studio-web
+directory=@STUDIO_WEB_DIR@
 environment=HOSTNAME="0.0.0.0"
 autostart=true
 autorestart=true
@@ -42,7 +49,7 @@ priority=10
 
 ; ---- JupyterLab ----
 [program:jupyter]
-command=/etc/supervisor/scripts/jupyter.sh
+command=@LAUNCHER_SCRIPTS@/jupyter.sh
 autostart=true
 autorestart=true
 stdout_logfile=/dev/stdout
@@ -52,8 +59,10 @@ stderr_logfile_maxbytes=0
 priority=10
 
 ; ---- Nginx (reverse proxy, starts last so backends are up first) ----
+; -c points at the rendered nginx.conf: the distro's /etc/nginx/nginx.conf is
+; ignored, so the image no longer bakes one and a host nginx needs no setup.
 [program:nginx]
-command=nginx -g "daemon off;"
+command=nginx -c @STUDIO_RUNTIME_DIR@/nginx.conf -g "daemon off;"
 autostart=true
 autorestart=true
 stdout_logfile=/dev/stdout
