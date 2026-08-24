@@ -177,6 +177,71 @@ def test_supervisord_runs_the_launcher_jupyter_script(tmp_path: Path):
     assert f"command={jupyter_sh}" in supervisor
 
 
+def test_no_prefix_renders_empty_prefix_locations(tmp_path: Path):
+    """Default (K8s/container) path: the include target must exist but carry
+    no location blocks — the /user regexes in studio-proxy.conf do that job."""
+    runtime = _render(tmp_path)
+    prefix_conf = (runtime / "prefix-locations.conf").read_text()
+    assert not re.findall(r"^\s*location\b", prefix_conf, re.M), prefix_conf
+    assert f"{tmp_path}/runtime/prefix-locations.conf" in (
+        runtime / "studio-proxy.conf"
+    ).read_text()
+
+
+def test_url_prefix_renders_literal_locations(tmp_path: Path):
+    runtime = _render(
+        tmp_path,
+        {"STUDIO_URL_PREFIX": "/node/host1/23456", "STUDIO_JUPYTER_PORT": "9889"},
+    )
+    conf = (runtime / "prefix-locations.conf").read_text()
+    # Bare prefix redirects to trailing slash, like /user/<name> does.
+    assert "location = /node/host1/23456 {" in conf
+    # Strip-at-proxy via prefix location + URI proxy_pass — by construction
+    # immune to the regex/rewrite truncation bug the /user blocks document.
+    assert "location /node/host1/23456/api/ {" in conf
+    assert "proxy_pass http://studio_api/api/;" in conf
+    assert "location /node/host1/23456/ws/ {" in conf
+    # Jupyter serves AT the prefix on its per-session port: full path, no URI.
+    assert "location /node/host1/23456/jupyter/ {" in conf
+    assert "proxy_pass http://127.0.0.1:9889;" in conf
+    # The app learns its prefix from this header (app/layout.tsx base href).
+    assert "proxy_set_header X-Forwarded-Prefix /node/host1/23456;" in conf
+    assert "sub_filter 'href=\"/_next/' 'href=\"/node/host1/23456/_next/';" in conf
+    # And nothing regex-shaped: these are literal prefix locations only.
+    assert "location ~" not in conf
+
+
+def test_url_prefix_trailing_slash_is_normalized(tmp_path: Path):
+    a = _render(tmp_path / "a", {"STUDIO_URL_PREFIX": "/node/h/1"})
+    b = _render(tmp_path / "b", {"STUDIO_URL_PREFIX": "/node/h/1/"})
+    assert (a / "prefix-locations.conf").read_text() == (
+        b / "prefix-locations.conf"
+    ).read_text()
+
+
+def test_url_prefix_must_be_absolute(tmp_path: Path):
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path / "home")
+    env["STUDIO_RUNTIME_DIR"] = str(tmp_path / "runtime")
+    env["STUDIO_URL_PREFIX"] = "node/h/1"
+    proc = subprocess.run(
+        ["bash", str(LAUNCH), "--render-only"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode != 0
+    assert "must start with" in proc.stderr
+
+
+def test_user_prefix_regexes_survive_alongside_url_prefix(tmp_path: Path):
+    """The K8s /user/<name> path and an OOD prefix are not either/or: the
+    regex locations must remain whatever STUDIO_URL_PREFIX says."""
+    runtime = _render(tmp_path, {"STUDIO_URL_PREFIX": "/node/h/1"})
+    proxy = (runtime / "studio-proxy.conf").read_text()
+    assert "location ~ ^/user/[^/]+(?<studio_api_path>/api(?:/.*)?)$" in proxy
+
+
 def test_refuses_to_wipe_a_dir_it_did_not_create(tmp_path: Path):
     """STUDIO_RUNTIME_DIR is rm -rf'd on every start; a mis-set value
     (someone's $HOME, say) must fail loudly instead of being deleted."""

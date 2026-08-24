@@ -21,6 +21,10 @@ server {
 
     client_max_body_size 100M;
 
+    # Generic URL-prefix locations (STUDIO_URL_PREFIX, e.g. OOD's
+    # /node/<host>/<port>) — rendered empty when no prefix is configured.
+    include @STUDIO_RUNTIME_DIR@/prefix-locations.conf;
+
     # KubeSpawner/JupyterHub exposes the server below /user/<name>. The browser
     # must keep that prefix, but the internal Studio services route from /.
     location ~ ^/user/[^/]+$ {
