@@ -1,3 +1,6 @@
+# Rendered by launcher/studio-launch — do not edit the rendered copy; change
+# the template and restart (docs/OOD-DEPLOYMENT-DESIGN.md §1).
+
 upstream studio_api {
     server 127.0.0.1:8080;
 }
@@ -13,7 +16,7 @@ map $http_upgrade $connection_upgrade {
 }
 
 server {
-    listen 8888;
+    listen @STUDIO_PORT@;
     server_name _;
 
     client_max_body_size 100M;

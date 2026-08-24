@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+# studio-launch — the single "how Studio starts" entry point.
+#
+# Both packagings call this: the container entrypoint (docker/entrypoint.sh) is
+# a thin wrapper around it, and the native Open OnDemand packaging invokes it
+# directly from a batch-connect job script. Keeping one start path is the whole
+# point — a copied entrypoint would drift, the same failure mode the knowledge
+# base had when two copies gave different advice per tool.
+# Design: docs/OOD-DEPLOYMENT-DESIGN.md (§1, §8.1).
+#
+# Three phases:
+#   prepare — per-user $HOME state (~/.studio, ~/work, marketplace clone,
+#             init_db, AGENTS.md, pegasus.conf). First launch IS provisioning.
+#   render  — supervisord + proxy configs from launcher/templates into a
+#             session runtime dir, substituting @VAR@ placeholders from env.
+#   exec    — supervisord (proxy, Next.js, FastAPI, JupyterLab). opencode serve
+#             is NOT supervised: studio-api spawns and owns it
+#             (services/opencode_engine.py, STUDIO_OPENCODE_BIN/_PORT).
+#
+# Environment contract (defaults reproduce the container exactly):
+#   STUDIO_PORT            front proxy listen port          (8888)
+#   STUDIO_API_DIR         FastAPI app dir                  (/opt/studio-api)
+#   STUDIO_WEB_DIR         Next.js standalone dir           (/opt/studio-web)
+#   STUDIO_RUNTIME_DIR     rendered configs, pids, sockets  (/tmp/studio-runtime-<uid>)
+#   STUDIO_KNOWLEDGE_SEED  marketplace clone source         (/opt/pegasus-ai/marketplace)
+#   STUDIO_OVERLAY         Studio env overlay for AGENTS.md (/opt/pegasus-ai/overlay/STUDIO_ENV.md)
+#   STUDIO_PEGASUS_AGENT_URL  pegasus.agent.url value       (https://api.pegasus-ai.org)
+# Everything the services read themselves (STUDIO_LLM_GATEWAY_URL,
+# STUDIO_SECRET_KEY[_FILE], STUDIO_OPENCODE_*, _CONDOR_*, JUPYTERHUB_*) is
+# plain pass-through: supervisord children inherit this process's environment.
+#
+# Usage: studio-launch [--render-only]
+#   --render-only  render configs into STUDIO_RUNTIME_DIR and exit; no $HOME
+#                  writes, no DB init, no exec. Lets tests verify the rendered
+#                  output on any machine without Docker or the app dirs.
+#
+# Runs as whatever UID invoked it — no root assumed (KubeSpawner injects an
+# arbitrary uid; OOD runs it as the login user).
+
+set -euo pipefail
+
+LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEMPLATES="${LAUNCHER_DIR}/templates"
+
+STUDIO_PORT="${STUDIO_PORT:-8888}"
+STUDIO_API_DIR="${STUDIO_API_DIR:-/opt/studio-api}"
+STUDIO_WEB_DIR="${STUDIO_WEB_DIR:-/opt/studio-web}"
+# Deliberately NOT under $HOME: in K8s the home is NFS-backed, and unix domain
+# sockets (supervisor.sock) cannot live on NFS. /tmp is local in both models;
+# the uid suffix keeps two users on one native host out of each other's dir.
+# (Per-SESSION isolation — two sessions, one user — is issue #216's lockfile.)
+STUDIO_RUNTIME_DIR="${STUDIO_RUNTIME_DIR:-/tmp/studio-runtime-$(id -u)}"
+STUDIO_KNOWLEDGE_SEED="${STUDIO_KNOWLEDGE_SEED:-/opt/pegasus-ai/marketplace}"
+STUDIO_OVERLAY="${STUDIO_OVERLAY:-/opt/pegasus-ai/overlay/STUDIO_ENV.md}"
+
+RENDER_ONLY=0
+if [ "${1:-}" = "--render-only" ]; then
+    RENDER_ONLY=1
+fi
+
+# ---------------------------------------------------------------------------
+# render — templates + env → $STUDIO_RUNTIME_DIR
+# ---------------------------------------------------------------------------
+render() {
+    # Wiped and re-rendered on every start: stale configs from a previous
+    # session (older template version, different port) must never win.
+    # But refuse to wipe a directory this launcher didn't create — the dir is
+    # rm -rf'd, so a mis-set STUDIO_RUNTIME_DIR ($HOME, say) must fail here,
+    # not silently delete it. The marker is written right after mkdir.
+    if [ -d "${STUDIO_RUNTIME_DIR}" ] \
+       && [ ! -f "${STUDIO_RUNTIME_DIR}/.studio-launch" ] \
+       && [ -n "$(ls -A "${STUDIO_RUNTIME_DIR}" 2>/dev/null)" ]; then
+        echo "[studio-launch] FATAL: ${STUDIO_RUNTIME_DIR} exists, is not" \
+             "empty, and was not created by studio-launch — refusing to wipe" \
+             "it. Point STUDIO_RUNTIME_DIR at a disposable directory." >&2
+        exit 1
+    fi
+    rm -rf "${STUDIO_RUNTIME_DIR}"
+    mkdir -p "${STUDIO_RUNTIME_DIR}"
+    touch "${STUDIO_RUNTIME_DIR}/.studio-launch"
+    # Nginx temp dirs must exist before nginx starts (non-root can't create
+    # them under /var/lib/nginx; the rendered nginx.conf points here).
+    mkdir -p "${STUDIO_RUNTIME_DIR}/nginx-client-body" \
+             "${STUDIO_RUNTIME_DIR}/nginx-proxy" \
+             "${STUDIO_RUNTIME_DIR}/nginx-fastcgi" \
+             "${STUDIO_RUNTIME_DIR}/nginx-uwsgi" \
+             "${STUDIO_RUNTIME_DIR}/nginx-scgi"
+
+    # sed with | as delimiter: substituted values are ports and absolute paths,
+    # which never contain |. If that assumption breaks, the leftover-@VAR@
+    # check below fails loudly rather than shipping a half-rendered config.
+    local tmpl out
+    for tmpl in "${TEMPLATES}"/*.tmpl; do
+        out="${STUDIO_RUNTIME_DIR}/$(basename "${tmpl%.tmpl}")"
+        sed -e "s|@STUDIO_PORT@|${STUDIO_PORT}|g" \
+            -e "s|@STUDIO_API_DIR@|${STUDIO_API_DIR}|g" \
+            -e "s|@STUDIO_WEB_DIR@|${STUDIO_WEB_DIR}|g" \
+            -e "s|@STUDIO_RUNTIME_DIR@|${STUDIO_RUNTIME_DIR}|g" \
+            -e "s|@LAUNCHER_SCRIPTS@|${LAUNCHER_DIR}/scripts|g" \
+            "${tmpl}" > "${out}"
+        # A placeholder that survives rendering means the template gained a
+        # variable this script doesn't know — fail at start, not at 3am when
+        # nginx rejects "@STUDIO_...@" as a listen directive.
+        if grep -q '@[A-Z_][A-Z_]*@' "${out}"; then
+            echo "[studio-launch] FATAL: unrendered placeholder in ${out}:" >&2
+            grep -n '@[A-Z_][A-Z_]*@' "${out}" >&2
+            exit 1
+        fi
+    done
+    echo "[studio-launch] Rendered configs to ${STUDIO_RUNTIME_DIR}" \
+         "(port ${STUDIO_PORT})"
+}
+
+if [ "${RENDER_ONLY}" = "1" ]; then
+    render
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# prepare — per-user $HOME state (previously docker/entrypoint.sh)
+# ---------------------------------------------------------------------------
+
+WORK="${HOME:-/tmp}/work"
+# Studio's own state lives beside the user's other config, not inside the
+# directory they keep workflows in: a `rm -rf` in the workspace should not be
+# able to take the settings database with it. init_db.py migrates an existing
+# database from the old location on first start.
+STUDIO_DIR="${HOME:-/tmp}/.studio"
+MARKER="${STUDIO_DIR}/.initialized"
+
+# workflows/ is where the Marketplace "Add" clones into and where the scaffold
+# skills are told to put projects, so it should exist before anyone looks.
+mkdir -p "${WORK}" "${STUDIO_DIR}" "${WORK}/workflows"
+
+PYTHON="$(which python3 2>/dev/null || which python 2>/dev/null || echo python3)"
+
+# ---- Marketplace checkout (skills, agents, templates) ----
+# The packaging ships a pinned copy (image: /opt/pegasus-ai/marketplace; native
+# dist: seed/marketplace — either way $STUDIO_KNOWLEDGE_SEED). It is a template
+# to copy from, not the tree tools read: it may be root-owned and is replaced
+# wholesale on every image rebuild / dist upgrade.
+#
+# (Not to be confused with the Claude Code *plugin seed directory* written by
+# knowledge/seed.py — that one points Claude Code at whichever checkout wins.)
+#
+# Clone it into the user's own $HOME on first launch: there it is writable, so
+# skills can be updated with `git pull` or rolled back with `git checkout` —
+# no root, no rebuild — and it persists across pod restarts, which a change
+# under /opt would not.
+#
+# Cloning from the local seed rather than GitHub keeps first launch fast and
+# working with no egress. origin is then repointed upstream so `git pull` does
+# the obvious thing. Non-fatal throughout: layout.py falls back to the seed.
+USER_MARKETPLACE="${XDG_DATA_HOME:-${HOME:-/tmp}/.local/share}/pegasus-ai/marketplace"
+if [ ! -d "${USER_MARKETPLACE}/.claude-plugin" ] \
+   && [ -d "${STUDIO_KNOWLEDGE_SEED}/.claude-plugin" ]; then
+    CLONE_ERR=""
+    if mkdir -p "$(dirname "${USER_MARKETPLACE}")" \
+       && CLONE_ERR="$(git clone --quiet "${STUDIO_KNOWLEDGE_SEED}" "${USER_MARKETPLACE}" 2>&1)"; then
+        git -C "${USER_MARKETPLACE}" remote set-url origin \
+            "${KNOWLEDGE_REPO_URL:-https://github.com/pegasus-isi/claude-plugin-marketplace.git}" \
+            2>/dev/null || true
+        echo "[studio-launch] Marketplace checked out to ${USER_MARKETPLACE}"
+    else
+        # Print git's own message: a bare "could not create" sent one
+        # investigation looking at NFS permissions when the cause was git
+        # refusing the source repository's ownership.
+        echo "[studio-launch] WARNING: could not create ${USER_MARKETPLACE} —" \
+             "falling back to the read-only ${STUDIO_KNOWLEDGE_SEED}: ${CLONE_ERR}" >&2
+    fi
+fi
+
+# The checkout is kept current by studio-api at startup, not here. Pulling from
+# the launcher raced the tools that read the result: opencode loads skills once
+# when it starts and never reloads, so whether the assistant got today's skills
+# came down to which background job finished first, with nothing in any log to
+# say which way it went. studio-api owns it now and restarts opencode when the
+# checkout actually moves.
+
+# What the tools will actually read, for the AGENTS.md seed below and the log.
+if [ -d "${USER_MARKETPLACE}/plugins/pegasus-ai" ]; then
+    RESOLVED_KNOWLEDGE="${USER_MARKETPLACE}/plugins/pegasus-ai"
+else
+    RESOLVED_KNOWLEDGE="${STUDIO_KNOWLEDGE_SEED}/plugins/pegasus-ai"
+fi
+
+if [ ! -f "${MARKER}" ]; then
+    echo "[studio-launch] First launch — initializing..."
+
+    cd "${STUDIO_API_DIR}"
+    # Hard timeout: this touches the (possibly NFS-backed) SQLite DB, and a
+    # stale lock from a crashed prior session (or an NFS stall) would otherwise
+    # block here forever — supervisord never starts, JupyterHub kills the spawn
+    # at 30s, and every retry hits the same lock. Same rationale as the timeout
+    # on propagate_llm.py below, but init is a hard prerequisite, so fail loud
+    # instead of backgrounding. (timeout exits 124 on timeout.)
+    if ! timeout 60 "${PYTHON}" init_db.py; then
+        echo "[studio-launch] FATAL: init_db.py failed or timed out (>60s) —" \
+             "check for a stale SQLite lock on ${STUDIO_DIR}/studio.db" >&2
+        exit 1
+    fi
+
+    touch "${MARKER}"
+    echo "[studio-launch] Initialization complete."
+fi
+
+# AGENTS.md: the Studio environment overlay followed by the portable Pegasus
+# guide, matching what the knowledge adapters generate.
+#
+# Written on every start when absent, not only on first launch. The adapters
+# only create it during install(), and startup runs update_llm_config(), so a
+# workspace that lost the file — a user clearing it out, say — otherwise never
+# got it back and the tools ran with no Pegasus context at all.
+# Written at $HOME, not $HOME/work: every tool looks in the directory it starts
+# in and then upwards, and terminals start at $HOME, so a copy one directory
+# down existed without being found.
+CONFIG_ROOT="${HOME:-/tmp}"
+GUIDE="${KNOWLEDGE_ROOT:-${RESOLVED_KNOWLEDGE}}/references/PEGASUS.md"
+if [ ! -f "${CONFIG_ROOT}/AGENTS.md" ] && { [ -f "${STUDIO_OVERLAY}" ] || [ -f "${GUIDE}" ]; }; then
+    # Written with explicit ifs, not `[ -f x ] && cat x`: under `set -e` a
+    # failing test makes the whole && chain the script's last status and
+    # kills the launcher before supervisord ever starts.
+    : > "${CONFIG_ROOT}/AGENTS.md"
+    if [ -f "${STUDIO_OVERLAY}" ]; then
+        cat "${STUDIO_OVERLAY}" >> "${CONFIG_ROOT}/AGENTS.md"
+        printf '\n' >> "${CONFIG_ROOT}/AGENTS.md"
+    fi
+    if [ -f "${GUIDE}" ]; then
+        cat "${GUIDE}" >> "${CONFIG_ROOT}/AGENTS.md"
+    fi
+    echo "[studio-launch] Wrote ${CONFIG_ROOT}/AGENTS.md"
+elif [ ! -f "${CONFIG_ROOT}/AGENTS.md" ]; then
+    echo "[studio-launch] WARNING: no knowledge tree found — AGENTS.md not written" >&2
+fi
+
+# Pegasus agent endpoint — without it pegasus-analyzer probes the default
+# agent URL and stalls badly. HOME is per-user persistent state, so this must
+# be written at runtime (an image-baked copy under /home would be shadowed by
+# the mount). Runs on every start, not just first launch, so existing sessions
+# pick it up; appends only when the key is absent, preserving user edits.
+PEGASUS_CONF="${HOME:-/tmp}/.pegasus/pegasus.conf"
+PEGASUS_AGENT_URL="${STUDIO_PEGASUS_AGENT_URL:-https://api.pegasus-ai.org}"
+if ! grep -qs '^pegasus\.agent\.url' "${PEGASUS_CONF}"; then
+    mkdir -p "$(dirname "${PEGASUS_CONF}")"
+    echo "pegasus.agent.url = ${PEGASUS_AGENT_URL}" >> "${PEGASUS_CONF}"
+    echo "[studio-launch] Wrote pegasus.agent.url to ${PEGASUS_CONF}"
+fi
+
+# Propagate saved LLM config to installed tool adapters. Run in the background
+# with a hard timeout so it can NEVER gate supervisord startup: this touches the
+# (possibly NFS-backed) SQLite DB, and a blocked write here would otherwise
+# stall the notebook server past JupyterHub's 30s spawn timeout. Non-fatal;
+# logged for inspection rather than discarded.
+( cd "${STUDIO_API_DIR}" && timeout 20 "${PYTHON}" propagate_llm.py \
+    >"${STUDIO_DIR}/propagate_llm.log" 2>&1 || true ) &
+
+# ---------------------------------------------------------------------------
+# render + exec
+# ---------------------------------------------------------------------------
+render
+
+exec supervisord -c "${STUDIO_RUNTIME_DIR}/supervisord.conf"

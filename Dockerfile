@@ -313,15 +313,15 @@ COPY --from=frontend-build /build/.next/standalone /opt/studio-web/
 COPY --from=frontend-build /build/.next/static /opt/studio-web/.next/static
 COPY --from=frontend-build /build/public /opt/studio-web/public
 
-# ---- Nginx config ----
-COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
-COPY docker/nginx/default.conf /etc/nginx/sites-available/default
-
-# ---- supervisord config and service scripts ----
-RUN mkdir -p /etc/supervisor/scripts
-COPY docker/supervisor/supervisord.conf /etc/supervisor/supervisord.conf
-COPY docker/supervisor/scripts/ /etc/supervisor/scripts/
-RUN chmod +x /etc/supervisor/scripts/*.sh
+# ---- Studio launcher (shared start contract: prepare / render / exec) ----
+# Proxy and supervisor configs are no longer baked under /etc: studio-launch
+# renders them from launcher/templates at session start, so the container and
+# the native OOD packaging share one start path and cannot drift
+# (docs/OOD-DEPLOYMENT-DESIGN.md §1). The distro's /etc/nginx/nginx.conf is
+# ignored (supervisord runs nginx with -c pointing at the rendered copy).
+COPY launcher/ /opt/pegasus-ai/launcher/
+RUN chmod +x /opt/pegasus-ai/launcher/studio-launch \
+             /opt/pegasus-ai/launcher/scripts/*.sh
 
 # ---- Knowledge assets (skills, agents, MCP, templates, examples) ----
 # Authored once in pegasus-isi/claude-plugin-marketplace and checked out here.

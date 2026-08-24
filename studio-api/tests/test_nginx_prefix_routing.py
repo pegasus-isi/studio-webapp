@@ -1,4 +1,4 @@
-"""Guard the KubeSpawner prefix routing in docker/nginx/default.conf.
+"""Guard the KubeSpawner prefix routing in the launcher's proxy template.
 
 Every browser API call 404'd behind `/user/<name>/` for two months. The cause
 was `rewrite ... break` paired with a URI-less `proxy_pass`: nginx sent the
@@ -19,7 +19,7 @@ import re
 
 CONF = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "docker", "nginx", "default.conf",
+    "launcher", "templates", "studio-proxy.conf.tmpl",
 )
 
 

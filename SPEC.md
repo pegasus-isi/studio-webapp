@@ -35,16 +35,17 @@ nginx :8888
   `-- /jupyter/* -> JupyterLab  :8889
 ```
 
-The container entrypoint initializes the workspace and then execs
-`supervisord`. Process definitions live in
-`docker/supervisor/supervisord.conf`.
+The container entrypoint is a thin wrapper around `launcher/studio-launch`,
+which initializes the workspace, renders the supervisord/nginx configs from
+`launcher/templates/` (env-driven; defaults reproduce the container), and
+execs `supervisord`.
 
 | Program | Command | Purpose |
 |---------|---------|---------|
 | `studio-api` | `uvicorn main:app --host 0.0.0.0 --port 8080` | FastAPI backend |
 | `studio-web` | `node server.js` | Next.js standalone server |
-| `jupyter` | `/etc/supervisor/scripts/jupyter.sh` | Always-on JupyterLab |
-| `nginx` | `nginx -g "daemon off;"` | Public reverse proxy |
+| `jupyter` | `launcher/scripts/jupyter.sh` | Always-on JupyterLab |
+| `nginx` | `nginx -c <rendered nginx.conf> -g "daemon off;"` | Public reverse proxy |
 
 `supervisord` restarts crashed services and keeps logs on stdout/stderr for the
 container runtime.

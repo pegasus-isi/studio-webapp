@@ -53,8 +53,11 @@ npm run build
 
 nginx on **:8888** is the only exposed port, routing `/` → studio-web (Next.js
 standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**),
-`/jupyter/*` → JupyterLab (**:8889**). Supervised by supervisord (`docker/supervisor/`);
-`docker/entrypoint.sh` runs `init_db.py` (first launch only) then `exec supervisord`.
+`/jupyter/*` → JupyterLab (**:8889**). Supervised by supervisord; all start logic
+lives in `launcher/studio-launch` (prepare `$HOME` → render configs from
+`launcher/templates/` per env → `exec supervisord`), shared with the native OOD
+packaging (`docs/OOD-DEPLOYMENT-DESIGN.md`); `docker/entrypoint.sh` is a thin
+wrapper around it — never add container-only start steps there.
 `opencode serve` runs on localhost:**4747** for the chat engine.
 
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
