@@ -146,7 +146,7 @@ async def _reconcile_installed_tools() -> None:
     try:
         uid = os.getuid()
         gid = os.getgid()
-        for dirname in (".codex", ".claude", ".antigravity", ".opencode"):
+        for dirname in (".codex", ".claude", ".antigravity", ".opencode", ".pi"):
             if not home:
                 continue
             dirpath = os.path.join(home, dirname)

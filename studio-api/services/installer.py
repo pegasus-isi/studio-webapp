@@ -224,6 +224,28 @@ _INLINE_REGISTRY: list[dict[str, Any]] = [
         "homepage": "https://github.com/openai/codex",
     },
     {
+        "id": "pi",
+        "name": "Pi",
+        "vendor": "Earendil Works",
+        "description": "Minimal, extensible AI coding agent with skills and custom OpenAI-compatible providers",
+        "version_command": "pi --version",
+        "install_method": "npm",
+        # --ignore-scripts is the vendor-documented install (skips postinstall
+        # hooks), which also fits Studio's unprivileged pods.
+        "install_command": "npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
+        "binary": "pi",
+        "type": "terminal",
+        "supports_mcp": False,
+        "supports_web": False,
+        # Keyless-capable: the built-in LLM Gateway is written to models.json,
+        # so pi works with no user API key (hence no "Paid" badge).
+        "required_env": [],
+        "paid": False,
+        "knowledge_adapter": "pi",
+        "icon": "pi.svg",
+        "homepage": "https://pi.dev",
+    },
+    {
         "id": "claude-code",
         "name": "Claude Code",
         "vendor": "Anthropic",
