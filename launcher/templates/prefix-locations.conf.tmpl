@@ -16,6 +16,7 @@ location = @STUDIO_URL_PREFIX@ {
 
 location @STUDIO_URL_PREFIX@/api/ {
     proxy_pass http://studio_api/api/;
+    include @STUDIO_RUNTIME_DIR@/gate-api-headers.conf;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -30,6 +31,7 @@ location @STUDIO_URL_PREFIX@/api/ {
 
 location @STUDIO_URL_PREFIX@/ws/ {
     proxy_pass http://studio_api/ws/;
+    include @STUDIO_RUNTIME_DIR@/gate-api-headers.conf;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
@@ -45,6 +47,7 @@ location @STUDIO_URL_PREFIX@/ws/ {
 # websockets work, same rationale as the /jupyter/ block in studio-proxy.conf.
 location @STUDIO_URL_PREFIX@/jupyter/ {
     proxy_pass http://127.0.0.1:@STUDIO_JUPYTER_PORT@;
+    include @STUDIO_RUNTIME_DIR@/gate-jupyter-headers.conf;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;

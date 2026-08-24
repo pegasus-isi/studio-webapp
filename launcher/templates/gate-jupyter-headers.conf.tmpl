@@ -1,0 +1,9 @@
+# Rendered by launcher/studio-launch — included in every location that
+# proxies to JupyterLab. Rendered comment-only when STUDIO_AUTH_TOKEN is
+# unset (K8s/container path, where Jupyter keeps its empty token).
+#
+# The launcher starts Jupyter with a real token on gated sessions (an empty
+# token means any local user at the Jupyter port gets terminals as the
+# session owner). Injecting it here means the browser flow is unchanged —
+# the cookie gate already decided this request is the session owner's.
+proxy_set_header Authorization "token @STUDIO_JUPYTER_TOKEN@";

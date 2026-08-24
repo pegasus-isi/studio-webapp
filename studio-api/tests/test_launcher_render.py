@@ -214,9 +214,11 @@ def test_url_prefix_renders_literal_locations(tmp_path: Path):
 def test_url_prefix_trailing_slash_is_normalized(tmp_path: Path):
     a = _render(tmp_path / "a", {"STUDIO_URL_PREFIX": "/node/h/1"})
     b = _render(tmp_path / "b", {"STUDIO_URL_PREFIX": "/node/h/1/"})
-    assert (a / "prefix-locations.conf").read_text() == (
-        b / "prefix-locations.conf"
-    ).read_text()
+    # The rendered include lines embed each render's own runtime dir — mask
+    # that; everything else (in particular every prefix occurrence) must match.
+    text_a = (a / "prefix-locations.conf").read_text().replace(str(a), "<rt>")
+    text_b = (b / "prefix-locations.conf").read_text().replace(str(b), "<rt>")
+    assert text_a == text_b
 
 
 def test_url_prefix_must_be_absolute(tmp_path: Path):
@@ -240,6 +242,116 @@ def test_user_prefix_regexes_survive_alongside_url_prefix(tmp_path: Path):
     runtime = _render(tmp_path, {"STUDIO_URL_PREFIX": "/node/h/1"})
     proxy = (runtime / "studio-proxy.conf").read_text()
     assert "location ~ ^/user/[^/]+(?<studio_api_path>/api(?:/.*)?)$" in proxy
+
+
+def test_gate_off_renders_inert_fragments(tmp_path: Path):
+    """Default (K8s/container): every gate fragment must exist (the includes
+    are unconditional) but carry no directives, binds stay 0.0.0.0, and no
+    gate variable leaks anywhere in the rendered output."""
+    runtime = _render(tmp_path)
+    for name in (
+        "gate-map.conf",
+        "gate-server.conf",
+        "gate-api-headers.conf",
+        "gate-jupyter-headers.conf",
+    ):
+        content = (runtime / name).read_text()
+        directives = [
+            ln
+            for ln in content.splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
+        assert not directives, (name, directives)
+    supervisor = (runtime / "supervisord.conf").read_text()
+    assert "--host 0.0.0.0" in supervisor
+    assert 'HOSTNAME="0.0.0.0"' in supervisor
+    for conf in runtime.iterdir():
+        if conf.is_file():
+            assert "studio_session" not in conf.read_text() or conf.name in (
+                "gate-map.conf",
+                "gate-server.conf",
+            )
+
+
+def test_gate_on_renders_cookie_gate_and_hardened_backends(tmp_path: Path):
+    runtime = _render(tmp_path, {"STUDIO_AUTH_TOKEN": "tok_ABC-123"})
+    gate_map = (runtime / "gate-map.conf").read_text()
+    assert 'map $cookie_studio_session $studio_auth_ok' in gate_map
+    assert '"tok_ABC-123" 1;' in gate_map
+    gate_server = (runtime / "gate-server.conf").read_text()
+    assert "if ($studio_deny) { return 403; }" in gate_server
+    # No prefix: the optional group renders empty and /auth still matches.
+    assert 'if ($uri ~ "^()?/auth$")' in gate_server
+    assert 'if ($arg_token != "tok_ABC-123") { return 403; }' in gate_server
+    assert "Set-Cookie" in gate_server and "HttpOnly" in gate_server
+    # Backends hardened: loopback binds + proxy-only secrets.
+    supervisor = (runtime / "supervisord.conf").read_text()
+    assert "--host 127.0.0.1" in supervisor
+    assert 'HOSTNAME="127.0.0.1"' in supervisor
+    api_hdr = (runtime / "gate-api-headers.conf").read_text()
+    m = re.search(r'proxy_set_header X-Studio-Internal "([^"]+)";', api_hdr)
+    assert m and len(m.group(1)) >= 32
+    jup_hdr = (runtime / "gate-jupyter-headers.conf").read_text()
+    m = re.search(r'proxy_set_header Authorization "token ([^"]+)";', jup_hdr)
+    assert m and len(m.group(1)) >= 32
+    # The gate fragments are wired into the proxy: every api/ws/jupyter
+    # location carries its include (3 api-ish + 1 jupyter-ish per shape).
+    proxy = (runtime / "studio-proxy.conf").read_text()
+    assert proxy.count("gate-api-headers.conf") == 4  # /user api+ws, /api/, /ws/
+    assert proxy.count("gate-jupyter-headers.conf") == 2  # /user jupyter, /jupyter/
+    assert "gate-server.conf" in proxy
+    assert "gate-map.conf" in (runtime / "nginx.conf").read_text()
+
+
+def test_gate_on_with_prefix_scopes_auth_and_cookie(tmp_path: Path):
+    runtime = _render(
+        tmp_path,
+        {"STUDIO_AUTH_TOKEN": "tok1", "STUDIO_URL_PREFIX": "/node/h1/4242"},
+    )
+    gate_server = (runtime / "gate-server.conf").read_text()
+    assert 'if ($uri ~ "^(/node/h1/4242)?/auth$")' in gate_server
+    assert (
+        "location ~ ^(?<studio_auth_prefix>/node/h1/4242)?/auth$" in gate_server
+    )
+    # Cookie is prefix-scoped so two users behind one OOD origin don't
+    # overwrite each other's session cookie.
+    assert "Path=$studio_auth_prefix/;" in gate_server
+    # The prefixed api/ws/jupyter locations carry the header includes too.
+    prefix_conf = (runtime / "prefix-locations.conf").read_text()
+    assert prefix_conf.count("gate-api-headers.conf") == 2
+    assert prefix_conf.count("gate-jupyter-headers.conf") == 1
+
+
+def test_gate_rejects_hostile_token(tmp_path: Path):
+    """The token lands in a sed replacement, an nginx regex and a cookie —
+    anything outside [A-Za-z0-9_-] must be refused, not escaped ad hoc."""
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path / "home")
+    env["STUDIO_RUNTIME_DIR"] = str(tmp_path / "runtime")
+    env["STUDIO_AUTH_TOKEN"] = 'tok"; return 200; #'
+    proc = subprocess.run(
+        ["bash", str(LAUNCH), "--render-only"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode != 0
+    assert "A-Za-z0-9_-" in proc.stderr
+
+
+def test_gate_bind_addr_explicit_override_wins(tmp_path: Path):
+    runtime = _render(
+        tmp_path,
+        {"STUDIO_AUTH_TOKEN": "tok1", "STUDIO_BIND_ADDR": "0.0.0.0"},
+    )
+    supervisor = (runtime / "supervisord.conf").read_text()
+    assert "--host 0.0.0.0" in supervisor
+
+
+def test_runtime_dir_is_private(tmp_path: Path):
+    """Rendered gate fragments carry session secrets — 0700 or bust."""
+    runtime = _render(tmp_path, {"STUDIO_AUTH_TOKEN": "tok1"})
+    assert (runtime.stat().st_mode & 0o777) == 0o700
 
 
 def test_refuses_to_wipe_a_dir_it_did_not_create(tmp_path: Path):

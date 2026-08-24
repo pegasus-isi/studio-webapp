@@ -24,10 +24,15 @@ fi
 # Port comes from the launcher (allocated per session on shared native hosts
 # where a fixed 8889 is host-global and collides between users — issue #216);
 # routers/jupyter.py reads the same env var to probe the right listener.
+# Empty token in the container (the pod network namespace is the boundary);
+# a real launcher-generated token on gated native sessions — an empty token
+# on a shared host hands terminals to any local user who can reach the port.
+# The rendered proxy injects it as an Authorization header, so the browser
+# flow is unchanged either way.
 exec jupyter lab \
     --no-browser \
     --ip=127.0.0.1 \
     --port="${STUDIO_JUPYTER_PORT:-8889}" \
     --ServerApp.base_url="${BASE_URL}" \
     --ServerApp.root_dir="${ROOT}" \
-    --ServerApp.token=""
+    --ServerApp.token="${STUDIO_JUPYTER_TOKEN:-}"

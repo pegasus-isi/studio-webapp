@@ -1,0 +1,10 @@
+# Rendered by launcher/studio-launch — session token gate, http-level part.
+# Rendered comment-only when STUDIO_AUTH_TOKEN is unset (K8s/container path).
+#
+# The browser proves it owns this session by carrying the studio_session
+# cookie, set by the /auth redirect (see gate-server.conf). A map (not an if)
+# so the check is a single hash lookup evaluated lazily per request.
+map $cookie_studio_session $studio_auth_ok {
+    default 0;
+    "@STUDIO_AUTH_TOKEN@" 1;
+}

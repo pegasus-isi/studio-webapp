@@ -338,6 +338,7 @@ app = FastAPI(
 # so reflecting an arbitrary Origin would let any site the user visits drive this
 # API in their browser. Extra origins (e.g. a `next dev` server) via
 # STUDIO_ALLOWED_ORIGINS.
+from security import InternalSecretMiddleware  # noqa: E402
 from security import allowed_origins as _allowed_origins  # noqa: E402
 
 app.add_middleware(
@@ -347,6 +348,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Added AFTER CORS so it wraps it (Starlette middleware is outermost-last):
+# on a gated native session, a request that bypassed the front proxy must be
+# rejected before anything else runs — including websocket handshakes, which
+# is why this is raw ASGI and not @app.middleware("http"). No-op when
+# STUDIO_INTERNAL_SECRET is unset (K8s/container).
+app.add_middleware(InternalSecretMiddleware)
 
 # Register routers
 app.include_router(health.router)
