@@ -142,7 +142,16 @@ RUN ARCH=$(dpkg --print-architecture) && \
     apt-get install -y --no-install-recommends condor && \
     rm -rf /var/lib/apt/lists/*
 COPY docker/htcondor/90-studio.conf /etc/condor/config.d/90-studio.conf
-COPY docker/pegasus/pegasus.properties /etc/pegasus/pegasus.properties
+
+# Hosted-deployment defaults, consumed by launcher/studio-launch: workflow
+# telemetry (AMQP to the Pegasus project) and the hosted Pegasus agent
+# endpoint. Both were previously baked at /etc/pegasus/pegasus.properties /
+# hardcoded in the entrypoint, invisible and un-turn-off-able for a lab
+# running this image; the launcher now writes them per-user, only when these
+# are set, so a site unsets them and reports nothing
+# (docs/OOD-DEPLOYMENT-DESIGN.md §4).
+ENV STUDIO_TELEMETRY=on \
+    STUDIO_PEGASUS_AGENT_URL=https://api.pegasus-ai.org
 
 # ---- Pegasus ----
 RUN curl -fsSL https://download.pegasus.isi.edu/pegasus/gpg.txt \

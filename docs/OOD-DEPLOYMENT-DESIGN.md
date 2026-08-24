@@ -157,19 +157,20 @@ authoring/monitoring UI with `pegasus-plan` only.
 
 ### Telemetry
 
-Two phone-home defaults to handle, not one:
+Two phone-home defaults to handle, not one. Both are launcher-written,
+per-user, opt-in (implemented in #219; the image ENVs both to keep hosted
+behavior, the native dist sets neither):
 
-- **AMQP workflow events**: the image bakes
-  `docker/pegasus/pegasus.properties` (reporting to `msgs.pegasus.isi.edu`)
-  at `/etc/pegasus/pegasus.properties`. The native dist simply must not
-  install it unless the site opts in (`STUDIO_DISABLE_TELEMETRY=1` semantics
-  inverted for native: absent by default), stated plainly in the admin docs.
-- **Pegasus agent endpoint**: the entrypoint writes
-  `pegasus.agent.url = https://api.pegasus-ai.org` into
-  `~/.pegasus/pegasus.conf` on every start (`STUDIO_PEGASUS_AGENT_URL`
-  overrides). The launcher must make this a site.env choice and skip the
-  write entirely when unset, rather than defaulting a lab's users to an
-  external endpoint.
+- **AMQP workflow events**: previously baked at
+  `/etc/pegasus/pegasus.properties` (reporting to `msgs.pegasus.isi.edu`),
+  invisible and un-turn-off-able for labs. Now written into the user's
+  `~/.pegasus/pegasus.properties` only when `STUDIO_TELEMETRY=on`
+  (endpoint overridable via `STUDIO_TELEMETRY_AMQP_URL`), append-if-absent
+  so user edits win. Stated plainly in the admin docs.
+- **Pegasus agent endpoint**: `pegasus.agent.url` is written into
+  `~/.pegasus/pegasus.conf` only when `STUDIO_PEGASUS_AGENT_URL` is set —
+  unset writes nothing, so a lab's users are never defaulted to an external
+  endpoint nobody chose.
 
 ## 5. Security design
 
