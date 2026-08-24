@@ -24,7 +24,7 @@ serverurl=unix://@STUDIO_RUNTIME_DIR@/supervisor.sock
 
 ; ---- Studio API (FastAPI/uvicorn) ----
 [program:studio-api]
-command=uvicorn main:app --host 0.0.0.0 --port 8080
+command=uvicorn main:app --host 0.0.0.0 --port @STUDIO_API_PORT@
 directory=@STUDIO_API_DIR@
 autostart=true
 autorestart=true
@@ -35,10 +35,11 @@ stderr_logfile_maxbytes=0
 priority=10
 
 ; ---- Studio Web (Next.js standalone) ----
+; Next.js standalone reads its listener from the PORT env var.
 [program:studio-web]
 command=node server.js
 directory=@STUDIO_WEB_DIR@
-environment=HOSTNAME="0.0.0.0"
+environment=HOSTNAME="0.0.0.0",PORT="@STUDIO_WEB_PORT@"
 autostart=true
 autorestart=true
 stdout_logfile=/dev/stdout

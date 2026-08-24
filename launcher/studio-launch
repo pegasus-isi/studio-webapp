@@ -19,6 +19,14 @@
 #
 # Environment contract (defaults reproduce the container exactly):
 #   STUDIO_PORT            front proxy listen port          (8888)
+#   STUDIO_API_PORT        uvicorn listener                 (8080)
+#   STUDIO_WEB_PORT        Next.js standalone listener      (3000)
+#   STUDIO_JUPYTER_PORT    JupyterLab listener              (8889)
+#   STUDIO_OPENCODE_PORT   opencode serve listener          (4747)
+#   STUDIO_ALLOC_PORTS     =1: pick free ports per session for any of the
+#                          four internal listeners not set explicitly —
+#                          required on shared native hosts where fixed ports
+#                          are host-global and collide between users
 #   STUDIO_API_DIR         FastAPI app dir                  (/opt/studio-api)
 #   STUDIO_WEB_DIR         Next.js standalone dir           (/opt/studio-web)
 #   STUDIO_RUNTIME_DIR     rendered configs, pids, sockets  (/tmp/studio-runtime-<uid>)
@@ -45,6 +53,41 @@ TEMPLATES="${LAUNCHER_DIR}/templates"
 STUDIO_PORT="${STUDIO_PORT:-8888}"
 STUDIO_API_DIR="${STUDIO_API_DIR:-/opt/studio-api}"
 STUDIO_WEB_DIR="${STUDIO_WEB_DIR:-/opt/studio-web}"
+
+PYTHON="$(which python3 2>/dev/null || which python 2>/dev/null || echo python3)"
+
+# ---- Internal listener ports ----
+# Fixed defaults reproduce the container, where the pod network namespace made
+# collisions impossible. On a shared native host they are host-global: two
+# users' sessions would fight over 8080/3000/8889/4747 at the very first bind.
+# A native site sets STUDIO_ALLOC_PORTS=1 (or explicit values — explicit env
+# always wins) and the launcher picks free ports per session instead.
+#
+# All four are allocated in ONE python process holding the sockets open
+# together: allocating one at a time lets the kernel hand the same ephemeral
+# port back after each close.
+if [ "${STUDIO_ALLOC_PORTS:-0}" = "1" ]; then
+    read -r ALLOC1 ALLOC2 ALLOC3 ALLOC4 <<EOF_PORTS
+$("${PYTHON}" -c 'import socket
+socks = [socket.socket() for _ in range(4)]
+for s in socks: s.bind(("127.0.0.1", 0))
+print(" ".join(str(s.getsockname()[1]) for s in socks))
+for s in socks: s.close()')
+EOF_PORTS
+    STUDIO_API_PORT="${STUDIO_API_PORT:-${ALLOC1}}"
+    STUDIO_WEB_PORT="${STUDIO_WEB_PORT:-${ALLOC2}}"
+    STUDIO_JUPYTER_PORT="${STUDIO_JUPYTER_PORT:-${ALLOC3}}"
+    STUDIO_OPENCODE_PORT="${STUDIO_OPENCODE_PORT:-${ALLOC4}}"
+fi
+STUDIO_API_PORT="${STUDIO_API_PORT:-8080}"
+STUDIO_WEB_PORT="${STUDIO_WEB_PORT:-3000}"
+STUDIO_JUPYTER_PORT="${STUDIO_JUPYTER_PORT:-8889}"
+STUDIO_OPENCODE_PORT="${STUDIO_OPENCODE_PORT:-4747}"
+# API and web ports are baked into the rendered configs; these two are read
+# from env at runtime instead — jupyter.sh and routers/jupyter.py
+# (STUDIO_JUPYTER_PORT), services/opencode_engine.py (STUDIO_OPENCODE_PORT) —
+# so they must reach supervisord's children.
+export STUDIO_JUPYTER_PORT STUDIO_OPENCODE_PORT
 # Deliberately NOT under $HOME: in K8s the home is NFS-backed, and unix domain
 # sockets (supervisor.sock) cannot live on NFS. /tmp is local in both models;
 # the uid suffix keeps two users on one native host out of each other's dir.
@@ -93,6 +136,9 @@ render() {
     for tmpl in "${TEMPLATES}"/*.tmpl; do
         out="${STUDIO_RUNTIME_DIR}/$(basename "${tmpl%.tmpl}")"
         sed -e "s|@STUDIO_PORT@|${STUDIO_PORT}|g" \
+            -e "s|@STUDIO_API_PORT@|${STUDIO_API_PORT}|g" \
+            -e "s|@STUDIO_WEB_PORT@|${STUDIO_WEB_PORT}|g" \
+            -e "s|@STUDIO_JUPYTER_PORT@|${STUDIO_JUPYTER_PORT}|g" \
             -e "s|@STUDIO_API_DIR@|${STUDIO_API_DIR}|g" \
             -e "s|@STUDIO_WEB_DIR@|${STUDIO_WEB_DIR}|g" \
             -e "s|@STUDIO_RUNTIME_DIR@|${STUDIO_RUNTIME_DIR}|g" \
@@ -131,8 +177,6 @@ MARKER="${STUDIO_DIR}/.initialized"
 # workflows/ is where the Marketplace "Add" clones into and where the scaffold
 # skills are told to put projects, so it should exist before anyone looks.
 mkdir -p "${WORK}" "${STUDIO_DIR}" "${WORK}/workflows"
-
-PYTHON="$(which python3 2>/dev/null || which python 2>/dev/null || echo python3)"
 
 # ---- Marketplace checkout (skills, agents, templates) ----
 # The packaging ships a pinned copy (image: /opt/pegasus-ai/marketplace; native

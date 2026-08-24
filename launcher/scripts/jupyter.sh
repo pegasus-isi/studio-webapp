@@ -21,10 +21,13 @@ if [ -n "${JUPYTERHUB_SERVICE_PREFIX:-}" ]; then
     BASE_URL="${JUPYTERHUB_SERVICE_PREFIX%/}/jupyter/"
 fi
 
+# Port comes from the launcher (allocated per session on shared native hosts
+# where a fixed 8889 is host-global and collides between users — issue #216);
+# routers/jupyter.py reads the same env var to probe the right listener.
 exec jupyter lab \
     --no-browser \
     --ip=127.0.0.1 \
-    --port=8889 \
+    --port="${STUDIO_JUPYTER_PORT:-8889}" \
     --ServerApp.base_url="${BASE_URL}" \
     --ServerApp.root_dir="${ROOT}" \
     --ServerApp.token=""
