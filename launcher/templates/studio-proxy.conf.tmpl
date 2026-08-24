@@ -21,6 +21,10 @@ server {
 
     client_max_body_size 100M;
 
+    # Session token gate, server-level part (deny-by-default + /auth) —
+    # comment-only when STUDIO_AUTH_TOKEN is unset.
+    include @STUDIO_RUNTIME_DIR@/gate-server.conf;
+
     # Generic URL-prefix locations (STUDIO_URL_PREFIX, e.g. OOD's
     # /node/<host>/<port>) — rendered empty when no prefix is configured.
     include @STUDIO_RUNTIME_DIR@/prefix-locations.conf;
@@ -38,6 +42,7 @@ server {
     # behind KubeSpawner while working fine on a direct port.
     location ~ ^/user/[^/]+(?<studio_api_path>/api(?:/.*)?)$ {
         proxy_pass http://studio_api$studio_api_path$is_args$args;
+        include @STUDIO_RUNTIME_DIR@/gate-api-headers.conf;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -53,6 +58,7 @@ server {
     # Same shape as /api above, same bug, same fix.
     location ~ ^/user/[^/]+(?<studio_ws_path>/ws(?:/.*)?)$ {
         proxy_pass http://studio_api$studio_ws_path$is_args$args;
+        include @STUDIO_RUNTIME_DIR@/gate-api-headers.conf;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -66,6 +72,7 @@ server {
     # ${JUPYTERHUB_SERVICE_PREFIX}/jupyter/ when KubeSpawner provides that env.
     location ~ ^/user/[^/]+/jupyter(?:/.*)?$ {
         proxy_pass http://127.0.0.1:@STUDIO_JUPYTER_PORT@;
+        include @STUDIO_RUNTIME_DIR@/gate-jupyter-headers.conf;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -120,6 +127,7 @@ server {
     # --- Backend API ---
     location /api/ {
         proxy_pass http://studio_api/api/;
+        include @STUDIO_RUNTIME_DIR@/gate-api-headers.conf;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -135,6 +143,7 @@ server {
     # --- WebSocket terminals ---
     location /ws/ {
         proxy_pass http://studio_api/ws/;
+        include @STUDIO_RUNTIME_DIR@/gate-api-headers.conf;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -154,6 +163,7 @@ server {
     # "Unable to reconnect to the server".
     location /jupyter/ {
         proxy_pass http://127.0.0.1:@STUDIO_JUPYTER_PORT@/jupyter/;
+        include @STUDIO_RUNTIME_DIR@/gate-jupyter-headers.conf;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;

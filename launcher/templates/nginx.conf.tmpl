@@ -39,6 +39,9 @@ http {
     uwsgi_temp_path       @STUDIO_RUNTIME_DIR@/nginx-uwsgi;
     scgi_temp_path        @STUDIO_RUNTIME_DIR@/nginx-scgi;
 
+    # Session token gate, http-level part (map) — comment-only when off.
+    include @STUDIO_RUNTIME_DIR@/gate-map.conf;
+
     # Only the rendered server block — never the distro's conf.d/sites-enabled,
     # which on a lab host could route who-knows-what into this session.
     include @STUDIO_RUNTIME_DIR@/studio-proxy.conf;

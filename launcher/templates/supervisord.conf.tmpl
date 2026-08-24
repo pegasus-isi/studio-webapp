@@ -23,8 +23,11 @@ supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
 serverurl=unix://@STUDIO_RUNTIME_DIR@/supervisor.sock
 
 ; ---- Studio API (FastAPI/uvicorn) ----
+; Bind address: 0.0.0.0 in the container (the pod network namespace is the
+; boundary), 127.0.0.1 on gated native sessions (the host is shared and the
+; proxy is the only intended way in).
 [program:studio-api]
-command=uvicorn main:app --host 0.0.0.0 --port @STUDIO_API_PORT@
+command=uvicorn main:app --host @STUDIO_BIND_ADDR@ --port @STUDIO_API_PORT@
 directory=@STUDIO_API_DIR@
 autostart=true
 autorestart=true
@@ -39,7 +42,7 @@ priority=10
 [program:studio-web]
 command=node server.js
 directory=@STUDIO_WEB_DIR@
-environment=HOSTNAME="0.0.0.0",PORT="@STUDIO_WEB_PORT@"
+environment=HOSTNAME="@STUDIO_BIND_ADDR@",PORT="@STUDIO_WEB_PORT@"
 autostart=true
 autorestart=true
 stdout_logfile=/dev/stdout

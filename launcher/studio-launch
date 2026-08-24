@@ -31,6 +31,15 @@
 #                          OOD's /node/<host>/<port>. Empty (default) = root.
 #                          K8s' /user/<name> needs no setting here — it stays
 #                          regex-matched in the proxy template (per-user).
+#   STUDIO_AUTH_TOKEN      session token gate. Unset (default): no gate, the
+#                          K8s/container behavior. Set: the proxy 403s all
+#                          requests without the session cookie (GET
+#                          /auth?token=... sets it), internal services bind
+#                          127.0.0.1, JupyterLab gets a real token, and
+#                          studio-api requires the proxy-stamped
+#                          X-Studio-Internal secret. [A-Za-z0-9_-] only.
+#   STUDIO_BIND_ADDR       internal bind address; defaults 0.0.0.0 without
+#                          the gate, 127.0.0.1 with it
 #   STUDIO_API_DIR         FastAPI app dir                  (/opt/studio-api)
 #   STUDIO_WEB_DIR         Next.js standalone dir           (/opt/studio-web)
 #   STUDIO_RUNTIME_DIR     rendered configs, pids, sockets  (/tmp/studio-runtime-<uid>)
@@ -115,6 +124,39 @@ if [ -n "${STUDIO_URL_PREFIX}" ]; then
     # untouched even if both are somehow set.
     export STUDIO_JUPYTER_BASE_URL="${STUDIO_JUPYTER_BASE_URL:-${STUDIO_URL_PREFIX}/jupyter/}"
 fi
+
+# ---- Session token gate ----
+# Unset (the K8s/container default): no gate — the pod network namespace is
+# the security boundary there. Set (OOD's before.sh generates it): the proxy
+# 403s everything without the session cookie, only GET /auth?token=... sets
+# it, and the backends behind the proxy are hardened too, because on a shared
+# host any local user can reach them directly:
+#   - every internal service binds 127.0.0.1 (STUDIO_BIND_ADDR),
+#   - JupyterLab gets a real token (empty token = terminals for any local
+#     user), injected by the proxy so the browser flow is unchanged,
+#   - studio-api requires the proxy-stamped X-Studio-Internal secret.
+STUDIO_AUTH_TOKEN="${STUDIO_AUTH_TOKEN:-}"
+if [ -n "${STUDIO_AUTH_TOKEN}" ]; then
+    # The token lands in a sed replacement, an nginx regex and a cookie —
+    # constrain the charset so it cannot break out of any of them.
+    case "${STUDIO_AUTH_TOKEN}" in
+        *[!A-Za-z0-9_-]*)
+            echo "[studio-launch] FATAL: STUDIO_AUTH_TOKEN may only contain" \
+                 "[A-Za-z0-9_-]" >&2
+            exit 1
+            ;;
+    esac
+    STUDIO_BIND_ADDR="${STUDIO_BIND_ADDR:-127.0.0.1}"
+    STUDIO_JUPYTER_TOKEN="${STUDIO_JUPYTER_TOKEN:-$("${PYTHON}" -c 'import secrets; print(secrets.token_urlsafe(32))')}"
+    STUDIO_INTERNAL_SECRET="${STUDIO_INTERNAL_SECRET:-$("${PYTHON}" -c 'import secrets; print(secrets.token_urlsafe(32))')}"
+    # jupyter.sh reads the token; studio-api's InternalSecretMiddleware reads
+    # the secret — both are supervisord children, so export is the channel.
+    export STUDIO_JUPYTER_TOKEN STUDIO_INTERNAL_SECRET
+else
+    STUDIO_BIND_ADDR="${STUDIO_BIND_ADDR:-0.0.0.0}"
+    STUDIO_JUPYTER_TOKEN="${STUDIO_JUPYTER_TOKEN:-}"
+    STUDIO_INTERNAL_SECRET="${STUDIO_INTERNAL_SECRET:-}"
+fi
 # Deliberately NOT under $HOME: in K8s the home is NFS-backed, and unix domain
 # sockets (supervisor.sock) cannot live on NFS. /tmp is local in both models;
 # the uid suffix keeps two users on one native host out of each other's dir.
@@ -147,6 +189,8 @@ render() {
     fi
     rm -rf "${STUDIO_RUNTIME_DIR}"
     mkdir -p "${STUDIO_RUNTIME_DIR}"
+    # Rendered gate fragments carry session secrets; nobody else's business.
+    chmod 700 "${STUDIO_RUNTIME_DIR}"
     touch "${STUDIO_RUNTIME_DIR}/.studio-launch"
     # Nginx temp dirs must exist before nginx starts (non-root can't create
     # them under /var/lib/nginx; the rendered nginx.conf points here).
@@ -173,8 +217,23 @@ render() {
                 > "${out}"
             continue
         fi
+        # Gate fragments are directives only when the gate is on; the includes
+        # that load them are unconditional, so they must always exist.
+        case "$(basename "${tmpl}")" in
+            gate-*.conf.tmpl)
+                if [ -z "${STUDIO_AUTH_TOKEN}" ]; then
+                    printf '# STUDIO_AUTH_TOKEN unset — token gate off.\n' \
+                        > "${out}"
+                    continue
+                fi
+                ;;
+        esac
         sed -e "s|@STUDIO_PORT@|${STUDIO_PORT}|g" \
             -e "s|@STUDIO_URL_PREFIX@|${STUDIO_URL_PREFIX}|g" \
+            -e "s|@STUDIO_AUTH_TOKEN@|${STUDIO_AUTH_TOKEN}|g" \
+            -e "s|@STUDIO_JUPYTER_TOKEN@|${STUDIO_JUPYTER_TOKEN}|g" \
+            -e "s|@STUDIO_INTERNAL_SECRET@|${STUDIO_INTERNAL_SECRET}|g" \
+            -e "s|@STUDIO_BIND_ADDR@|${STUDIO_BIND_ADDR}|g" \
             -e "s|@STUDIO_API_PORT@|${STUDIO_API_PORT}|g" \
             -e "s|@STUDIO_WEB_PORT@|${STUDIO_WEB_PORT}|g" \
             -e "s|@STUDIO_JUPYTER_PORT@|${STUDIO_JUPYTER_PORT}|g" \
@@ -216,6 +275,22 @@ MARKER="${STUDIO_DIR}/.initialized"
 # workflows/ is where the Marketplace "Add" clones into and where the scaffold
 # skills are told to put projects, so it should exist before anyone looks.
 mkdir -p "${WORK}" "${STUDIO_DIR}" "${WORK}/workflows"
+
+# ---- LLM keys at rest ----
+# secretbox.py encrypts stored API keys when a master secret is available
+# (STUDIO_SECRET_KEY or STUDIO_SECRET_KEY_FILE — the S7 remediation). K8s
+# injects STUDIO_SECRET_KEY; a lab deployment shouldn't have to manage
+# secrets, so generate a per-user key file once and point the API at it.
+# Before init_db.py, which may already touch encrypted values.
+if [ -z "${STUDIO_SECRET_KEY:-}" ] && [ -z "${STUDIO_SECRET_KEY_FILE:-}" ]; then
+    STUDIO_KEYFILE="${STUDIO_DIR}/secret.key"
+    if [ ! -f "${STUDIO_KEYFILE}" ]; then
+        (umask 077 && "${PYTHON}" -c 'import secrets; print(secrets.token_urlsafe(48))' \
+            > "${STUDIO_KEYFILE}")
+        echo "[studio-launch] Generated ${STUDIO_KEYFILE} (LLM keys at rest)"
+    fi
+    export STUDIO_SECRET_KEY_FILE="${STUDIO_KEYFILE}"
+fi
 
 # ---- Marketplace checkout (skills, agents, templates) ----
 # The packaging ships a pinned copy (image: /opt/pegasus-ai/marketplace; native

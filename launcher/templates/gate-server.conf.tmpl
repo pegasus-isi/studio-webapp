@@ -1,0 +1,30 @@
+# Rendered by launcher/studio-launch — session token gate, server-level part.
+# Rendered comment-only when STUDIO_AUTH_TOKEN is unset (K8s/container path).
+#
+# Deny-by-default for every request without the session cookie, with exactly
+# one way in: GET /auth?token=<token> (the OOD Connect button URL), which sets
+# the cookie and redirects to the app root. WS and SSE inherit the cookie
+# automatically. The set/if chain runs in the server rewrite phase, i.e.
+# before any location is entered.
+#
+# NOTE: this gates the PROXY port only. The backends behind it are protected
+# separately — loopback binds, the Jupyter token, and the X-Studio-Internal
+# secret studio-api enforces (all rendered by the same launcher run).
+
+set $studio_deny 0;
+if ($studio_auth_ok = 0) { set $studio_deny 1; }
+# The /auth endpoint itself must be reachable without the cookie — with an
+# optional URL prefix in front (OOD serves at /node/<host>/<port>/auth).
+if ($uri ~ "^(@STUDIO_URL_PREFIX@)?/auth$") { set $studio_deny 0; }
+if ($studio_deny) { return 403; }
+
+# One regex location handles both the bare and the prefixed /auth (the group
+# is empty when the request has no prefix, so the redirect and the cookie
+# Path degrade to "/"). The cookie is scoped to the prefix so two users'
+# sessions proxied under one origin (an OOD host) don't overwrite each
+# other's cookie.
+location ~ ^(?<studio_auth_prefix>@STUDIO_URL_PREFIX@)?/auth$ {
+    if ($arg_token != "@STUDIO_AUTH_TOKEN@") { return 403; }
+    add_header Set-Cookie "studio_session=@STUDIO_AUTH_TOKEN@; Path=$studio_auth_prefix/; HttpOnly; SameSite=Lax";
+    return 302 $studio_auth_prefix/;
+}

@@ -1,0 +1,9 @@
+# Rendered by launcher/studio-launch — included in every location that
+# proxies to studio-api. Rendered comment-only when STUDIO_AUTH_TOKEN is
+# unset (K8s/container path).
+#
+# The cookie gate protects only the proxy port; uvicorn itself is still
+# reachable by any local user on a shared host. This secret is known only to
+# this rendered config, so studio-api (security.InternalSecretMiddleware) can
+# reject anything that didn't come through the proxy.
+proxy_set_header X-Studio-Internal "@STUDIO_INTERNAL_SECRET@";
