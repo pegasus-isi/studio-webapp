@@ -39,6 +39,7 @@ def _build_registry() -> dict[str, type[KnowledgeAdapter]]:
     from knowledge.antigravity import AntigravityAdapter
     from knowledge.claude_code import ClaudeCodeAdapter
     from knowledge.codex_cli import CodexCLIAdapter
+    from knowledge.crush import CrushAdapter
     from knowledge.jupyterlab import JupyterLabAdapter
     from knowledge.opencode import OpenCodeAdapter
     from knowledge.web_chat import WebChatAdapter
@@ -48,6 +49,7 @@ def _build_registry() -> dict[str, type[KnowledgeAdapter]]:
         "codex-cli": CodexCLIAdapter,
         "opencode": OpenCodeAdapter,
         "antigravity": AntigravityAdapter,
+        "crush": CrushAdapter,
         "pegasus-ai-chat": WebChatAdapter,
         "jupyterlab": JupyterLabAdapter,
     }
