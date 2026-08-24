@@ -77,6 +77,12 @@ def test_container_defaults_are_the_k8s_contract(tmp_path: Path):
     assert "location ~ ^/user/[^/]+(?<studio_api_path>/api(?:/.*)?)$" in proxy
     assert "directory=/opt/studio-api" in supervisor
     assert "directory=/opt/studio-web" in supervisor
+    # Internal listener defaults — the pod network namespace depends on these.
+    assert "--port 8080" in supervisor
+    assert 'PORT="3000"' in supervisor
+    assert "server 127.0.0.1:8080;" in proxy
+    assert "server 127.0.0.1:3000;" in proxy
+    assert "proxy_pass http://127.0.0.1:8889/jupyter/;" in proxy
     assert f"pid {tmp_path}/runtime/nginx.pid;" in nginx
     # The rendered nginx.conf must include only our server block, never the
     # host's conf.d/sites-enabled (a lab host's own vhosts must not leak in).
@@ -90,14 +96,67 @@ def test_env_overrides_reach_the_rendered_configs(tmp_path: Path):
         tmp_path,
         {
             "STUDIO_PORT": "9999",
+            "STUDIO_API_PORT": "9080",
+            "STUDIO_WEB_PORT": "9300",
+            "STUDIO_JUPYTER_PORT": "9889",
             "STUDIO_API_DIR": "/srv/dist/studio-api",
             "STUDIO_WEB_DIR": "/srv/dist/studio-web",
         },
     )
-    assert "listen 9999;" in (runtime / "studio-proxy.conf").read_text()
+    proxy = (runtime / "studio-proxy.conf").read_text()
+    assert "listen 9999;" in proxy
+    assert "server 127.0.0.1:9080;" in proxy
+    assert "server 127.0.0.1:9300;" in proxy
+    assert "proxy_pass http://127.0.0.1:9889/jupyter/;" in proxy
     supervisor = (runtime / "supervisord.conf").read_text()
     assert "directory=/srv/dist/studio-api" in supervisor
     assert "directory=/srv/dist/studio-web" in supervisor
+    assert "--port 9080" in supervisor
+    assert 'PORT="9300"' in supervisor
+
+
+def _rendered_ports(runtime: Path) -> dict[str, int]:
+    """Ports as they landed in the rendered configs, keyed by role."""
+    proxy = (runtime / "studio-proxy.conf").read_text()
+    supervisor = (runtime / "supervisord.conf").read_text()
+    api_up, web_up = re.findall(r"server 127\.0\.0\.1:(\d+);", proxy)
+    (jupyter,) = set(re.findall(r"proxy_pass http://127\.0\.0\.1:(\d+)", proxy))
+    (api_cmd,) = re.findall(r"--port (\d+)", supervisor)
+    (web_env,) = re.findall(r'PORT="(\d+)"', supervisor)
+    return {
+        "api_upstream": int(api_up),
+        "web_upstream": int(web_up),
+        "jupyter": int(jupyter),
+        "api_command": int(api_cmd),
+        "web_env": int(web_env),
+    }
+
+
+def test_alloc_ports_picks_free_consistent_ports(tmp_path: Path):
+    """STUDIO_ALLOC_PORTS=1 is how a shared native host avoids two users
+    colliding on 8080/3000/8889: every internal listener gets a free port,
+    and the proxy upstreams must agree with what the services were told."""
+    runtime = _render(tmp_path, {"STUDIO_ALLOC_PORTS": "1"})
+    ports = _rendered_ports(runtime)
+    # Proxy and supervisord must have received the SAME allocation.
+    assert ports["api_upstream"] == ports["api_command"]
+    assert ports["web_upstream"] == ports["web_env"]
+    # All listeners distinct — one python process holds the sockets together
+    # during allocation precisely so the kernel can't hand a port out twice.
+    listener_ports = {ports["api_upstream"], ports["web_upstream"], ports["jupyter"]}
+    assert len(listener_ports) == 3, ports
+
+
+def test_alloc_ports_respects_explicit_values(tmp_path: Path):
+    """Explicit env always beats allocation — a site pinning one port must
+    not have it silently replaced."""
+    runtime = _render(
+        tmp_path, {"STUDIO_ALLOC_PORTS": "1", "STUDIO_API_PORT": "18080"}
+    )
+    ports = _rendered_ports(runtime)
+    assert ports["api_upstream"] == 18080
+    assert ports["api_command"] == 18080
+    assert ports["web_upstream"] != 3000  # still allocated
 
 
 def test_render_only_writes_nothing_outside_runtime_dir(tmp_path: Path):
