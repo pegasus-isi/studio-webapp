@@ -157,6 +157,64 @@ RUN curl -fsSL https://download.pegasus.isi.edu/pegasus/gpg.txt \
 # system Python 3.12 — the interpreter that carries Pegasus's DEB deps.
 ENV PEGASUS_PYTHON=/usr/bin/python3
 
+# ---- workflow event log (monitord wfevents adapter) ----
+# The monitord plugin system is already in the development/6.0 DEB (merged to
+# pegasus main); what the DEB does not carry is the wfevents adapter that
+# plugin discovery finds through the pegasus.monitord.plugins entry point.
+# Install it pinned to the same commit the pegasus-htcondor FABRIC slice
+# resolved (adapter_resolved in its .monitord-plugin-manifest.json). Emission
+# is still gated by monitord's enabled-plugins configuration at run time; when
+# the plugin is not enabled (or no JSONL exists yet) the studio reads the
+# stampede DB directly (services/stampede_reader.py).
+# Side benefit: the adapter's deps (rich, pyyaml) are exactly what the
+# pegasus-monitor CLI installed below needs.
+ARG WORKFLOW_MONITOR_REF=3ae923351023178cf7bcc2c52eaf1c3ab3946745
+RUN pip install --no-cache-dir \
+        "git+https://github.com/pegasus-isi/workflow-monitor.git@${WORKFLOW_MONITOR_REF}" && \
+    python3 -c "import importlib.metadata as m; \
+eps = m.entry_points(group='pegasus.monitord.plugins'); \
+assert any(e.name == 'wfmonitor' for e in eps), 'wfmonitor entry point missing'; \
+print('wfmonitor entry point OK')"
+
+# ---- pegasus-monitor (feature/pegasus-monitor-wp9b overlay) ----
+# The native monitor CLI is not on pegasus main yet: it lives on the
+# pegasus-isi/pegasus branch feature/pegasus-monitor-wp9b (= main + the
+# self-contained pure-Python Pegasus/monitor package + one CLI shim; from the
+# rest of the tree it imports only Pegasus.braindump and
+# Pegasus.tools.properties, so overlaying it onto the DEB is the whole
+# install). The pegasus-htcondor FABRIC slice runs the same overlay — keep
+# PEGASUS_MONITOR_REF equal to the pegasus_monitor_ref in the slice's
+# /usr/lib/pegasus/python/Pegasus/monitor/.pegasus-monitor-manifest.json
+# (applied there by fabric-deployments deploy/pegasus-htcondor/
+# overlay_pegasus_monitor.sh). Sparse blob:none clone so only the two overlay
+# paths are downloaded; the assertions fail the build loudly if the DEB
+# layout ever moves.
+ARG PEGASUS_MONITOR_REF=29464e9a375f797a42c086837e724baafde0637d
+RUN set -e && \
+    PEG_TREE=/usr/lib/pegasus/python/Pegasus && \
+    test -d "$PEG_TREE/cli" && \
+    grep -q '%%BASE_NAME%%' /usr/bin/pegasus-python-wrapper && \
+    git clone --quiet --filter=blob:none --no-checkout \
+        https://github.com/pegasus-isi/pegasus.git /tmp/pegsrc && \
+    git -C /tmp/pegsrc sparse-checkout set --no-cone \
+        packages/pegasus-python/src/Pegasus/monitor \
+        packages/pegasus-python/src/Pegasus/cli/pegasus-monitor.py && \
+    git -C /tmp/pegsrc checkout --quiet "${PEGASUS_MONITOR_REF}" && \
+    SRC=/tmp/pegsrc/packages/pegasus-python/src/Pegasus && \
+    python3 -m py_compile "$SRC"/monitor/*.py "$SRC/cli/pegasus-monitor.py" && \
+    install -d -m 0755 "$PEG_TREE/monitor" && \
+    install -m 0644 "$SRC"/monitor/*.py "$PEG_TREE/monitor/" && \
+    install -m 0644 "$SRC/cli/pegasus-monitor.py" "$PEG_TREE/cli/pegasus-monitor.py" && \
+    sed 's/%%BASE_NAME%%/pegasus-monitor/' /usr/bin/pegasus-python-wrapper \
+        > /usr/bin/pegasus-monitor && \
+    chmod 0755 /usr/bin/pegasus-monitor && \
+    printf '{"applied_at": "%s", "pegasus_monitor_ref": "%s", "source": "image-build"}\n' \
+        "$(date -u +%FT%TZ)" "${PEGASUS_MONITOR_REF}" \
+        > "$PEG_TREE/monitor/.pegasus-monitor-manifest.json" && \
+    rm -rf /tmp/pegsrc && \
+    pegasus-monitor --version && \
+    pegasus-monitor --help >/dev/null
+
 # ---- Apptainer (Singularity) container runtime ----
 # Pegasus workflows run jobs in Singularity containers (e.g. container_type
 # SINGULARITY, image "docker://python:3.11-slim"), so the studio needs a
@@ -191,14 +249,6 @@ RUN curl -fsSL "https://github.com/apptainer/apptainer/releases/download/v${APPT
 # Apptainer will not create a bind destination that is absent from the
 # container, so it failed every build. The setting now belongs in the definition
 # file's %post, where /etc/apt/apt.conf.d exists.
-
-# ---- workflow event log ----
-# The studio drives workflow status/job/stats views from the JSONL event log
-# (workflow-events.jsonl). That log is now produced by the integrated
-# pegasus-monitord build (workflow-monitor is bundled with monitord), so the
-# standalone workflow-monitor package is no longer installed explicitly here.
-# As a safety net, the studio also reads the stampede DB directly when no JSONL
-# is present (see services/stampede_reader.py).
 
 # ---- Node.js runtime (for Next.js standalone server) ----
 # Keyring'd apt repo instead of `curl | bash` of NodeSource's setup script as
