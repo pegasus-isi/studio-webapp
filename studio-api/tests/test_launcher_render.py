@@ -16,8 +16,6 @@ import re
 import subprocess
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LAUNCH = REPO_ROOT / "launcher" / "studio-launch"
 
@@ -384,11 +382,25 @@ def test_rerender_replaces_stale_state(tmp_path: Path):
     assert not stale.exists()
 
 
-@pytest.mark.parametrize("missing_ok", [True])
-def test_launcher_is_executable_bash(missing_ok: bool):
-    """chmod +x is applied in the Dockerfile, but the repo copy should carry
-    the bit too so a native checkout can run it directly."""
-    assert LAUNCH.exists()
-    assert os.access(LAUNCH, os.X_OK), "launcher/studio-launch lost its +x bit"
-    first = LAUNCH.read_text().splitlines()[0]
-    assert first.startswith("#!"), first
+def _launcher_executables() -> list[Path]:
+    """Everything the launcher execs: itself, plus every supervised script."""
+    return [LAUNCH, *sorted((REPO_ROOT / "launcher" / "scripts").glob("*.sh"))]
+
+
+def test_launcher_executables_carry_the_exec_bit():
+    """The Dockerfile chmods these at build time, which is exactly why the bit
+    can go missing in git and nobody notices: the container works and only the
+    native path breaks. It broke — jupyter.sh shipped 100644, supervisord
+    reported "is not executable", and JupyterLab never started on a real host
+    (#228). Assert on every script the launcher execs, not just the launcher.
+    """
+    files = _launcher_executables()
+    assert len(files) >= 2, files  # launcher + at least jupyter.sh
+    for path in files:
+        rel = path.relative_to(REPO_ROOT)
+        assert os.access(path, os.X_OK), (
+            f"{rel} lost its +x bit — supervisord cannot spawn it in native "
+            f"mode. Fix with: git update-index --chmod=+x {rel}"
+        )
+        first = path.read_text().splitlines()[0]
+        assert first.startswith("#!"), (rel, first)
