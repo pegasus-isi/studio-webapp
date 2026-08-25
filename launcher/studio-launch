@@ -358,19 +358,19 @@ if [ ! -d "${USER_MARKETPLACE}/.claude-plugin" ] \
     if mkdir -p "$(dirname "${USER_MARKETPLACE}")"; then
         if CLONE_ERR="$(git clone --quiet "${STUDIO_KNOWLEDGE_SEED}" \
                         "${USER_MARKETPLACE}" 2>&1)"; then
-            MARKETPLACE_METHOD="clone"
+            MARKETPLACE_METHOD="cloned"
         elif COPY_ERR="$(cp -a "${STUDIO_KNOWLEDGE_SEED}" "${USER_MARKETPLACE}" 2>&1)"; then
-            MARKETPLACE_METHOD="copy"
+            MARKETPLACE_METHOD="copied"
         fi
     fi
     if [ -n "${MARKETPLACE_METHOD}" ]; then
         git -C "${USER_MARKETPLACE}" remote set-url origin \
             "${KNOWLEDGE_REPO_URL:-https://github.com/pegasus-isi/claude-plugin-marketplace.git}" \
             2>/dev/null || true
-        # Say which path was taken: "clone" and "copy" fail in different ways
+        # Say which path was taken: a clone and a copy fail in different ways
         # later (a copy carries the seed's reflog and any local branches), and
         # a reader should not have to infer it from file timestamps.
-        echo "[studio-launch] Marketplace ${MARKETPLACE_METHOD}d to ${USER_MARKETPLACE}"
+        echo "[studio-launch] Marketplace ${MARKETPLACE_METHOD} to ${USER_MARKETPLACE}"
     else
         # Print git's own message: a bare "could not create" sent one
         # investigation looking at NFS permissions when the cause was git
