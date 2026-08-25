@@ -337,30 +337,47 @@ fi
 # working with no egress. origin is then repointed upstream so `git pull` does
 # the obvious thing. Non-fatal throughout: layout.py falls back to the seed.
 #
-# safe.directory is required, not belt-and-braces: on a shared native host the
-# dist (and its seed) is owned by whoever installed it, and git refuses to read
-# a repository owned by another user. Without this, every user except that one
-# silently got no checkout — skills still *read* via the fallback, so the only
-# visible symptom was that `git pull` to update them, `git checkout` to roll
-# back, and studio-api's startup refresh all quietly did nothing (#231). An
-# admin-installed seed is trusted by definition; that is what makes it a seed.
+# On a shared native host the seed is owned by whoever installed the dist, and
+# git refuses to read a repository owned by another user, so `clone` fails for
+# everyone else (#231). That cannot be fixed with `-c safe.directory=...`:
+# git honours that setting only from system/global config, precisely so an
+# untrusted repository cannot declare itself trusted — the command-line and
+# GIT_CONFIG_* env forms are silently ignored (#235). Editing the user's global
+# gitconfig would work and is none of the launcher's business.
+#
+# So: clone when we can, copy when we cannot. The copy is made BY the user, so
+# they own it, and it is a perfectly ordinary git repository — `git pull`,
+# `git checkout` and studio-api's startup refresh all work, which is the entire
+# point of having a per-user checkout rather than reading the seed directly.
 USER_MARKETPLACE="${XDG_DATA_HOME:-${HOME:-/tmp}/.local/share}/pegasus-ai/marketplace"
 if [ ! -d "${USER_MARKETPLACE}/.claude-plugin" ] \
    && [ -d "${STUDIO_KNOWLEDGE_SEED}/.claude-plugin" ]; then
     CLONE_ERR=""
-    if mkdir -p "$(dirname "${USER_MARKETPLACE}")" \
-       && CLONE_ERR="$(git -c safe.directory="${STUDIO_KNOWLEDGE_SEED}" \
-              clone --quiet "${STUDIO_KNOWLEDGE_SEED}" "${USER_MARKETPLACE}" 2>&1)"; then
+    COPY_ERR=""
+    MARKETPLACE_METHOD=""
+    if mkdir -p "$(dirname "${USER_MARKETPLACE}")"; then
+        if CLONE_ERR="$(git clone --quiet "${STUDIO_KNOWLEDGE_SEED}" \
+                        "${USER_MARKETPLACE}" 2>&1)"; then
+            MARKETPLACE_METHOD="clone"
+        elif COPY_ERR="$(cp -a "${STUDIO_KNOWLEDGE_SEED}" "${USER_MARKETPLACE}" 2>&1)"; then
+            MARKETPLACE_METHOD="copy"
+        fi
+    fi
+    if [ -n "${MARKETPLACE_METHOD}" ]; then
         git -C "${USER_MARKETPLACE}" remote set-url origin \
             "${KNOWLEDGE_REPO_URL:-https://github.com/pegasus-isi/claude-plugin-marketplace.git}" \
             2>/dev/null || true
-        echo "[studio-launch] Marketplace checked out to ${USER_MARKETPLACE}"
+        # Say which path was taken: "clone" and "copy" fail in different ways
+        # later (a copy carries the seed's reflog and any local branches), and
+        # a reader should not have to infer it from file timestamps.
+        echo "[studio-launch] Marketplace ${MARKETPLACE_METHOD}d to ${USER_MARKETPLACE}"
     else
         # Print git's own message: a bare "could not create" sent one
         # investigation looking at NFS permissions when the cause was git
         # refusing the source repository's ownership.
         echo "[studio-launch] WARNING: could not create ${USER_MARKETPLACE} —" \
-             "falling back to the read-only ${STUDIO_KNOWLEDGE_SEED}: ${CLONE_ERR}" >&2
+             "falling back to the read-only ${STUDIO_KNOWLEDGE_SEED}." \
+             "clone: ${CLONE_ERR} | copy: ${COPY_ERR}" >&2
     fi
 fi
 
