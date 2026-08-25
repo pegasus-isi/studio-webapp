@@ -7,6 +7,8 @@ import { apiUrl, websocketUrl } from "@/lib/urls";
 interface Props {
   tabId: string;
   toolId: string | null; // null = bash terminal
+  // Open the shell on the remote compute backend's submit host.
+  remote?: boolean;
 }
 
 /**
@@ -19,7 +21,7 @@ interface Props {
  * URLs go through apiUrl()/websocketUrl() so they resolve under the per-user
  * base path. Unmounting only detaches; the shell keeps running.
  */
-export function TerminalView({ tabId, toolId }: Props) {
+export function TerminalView({ tabId, toolId, remote }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const initialized = useRef(false);
 
@@ -54,7 +56,9 @@ export function TerminalView({ tabId, toolId }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          toolId ? { type: "tool", tool_id: toolId } : { type: "bash" }
+          toolId
+            ? { type: "tool", tool_id: toolId }
+            : { type: "bash", remote: !!remote }
         ),
       });
       if (!res.ok) throw new Error(`create failed: ${res.status}`);

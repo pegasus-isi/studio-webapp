@@ -76,6 +76,7 @@ export function TerminalTabs() {
             <TerminalView
               tabId={tab.id}
               toolId={tab.toolId}
+              remote={tab.remote}
             />
           </div>
         ))}

@@ -6,6 +6,7 @@ import { useToolStore } from "@/lib/stores/tool-store";
 import { useTools, useStartTool } from "@/lib/hooks/use-tools";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { TerminalTabs } from "@/components/terminal/terminal-tabs";
+import * as api from "@/lib/api/client";
 
 export function GlobalTerminalPanel() {
   const terminalOpen = usePanelStore((s) => s.terminalOpen);
@@ -18,6 +19,20 @@ export function GlobalTerminalPanel() {
   const runAction = useActionToast();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // The remote-shell item appears only when a remote compute backend is
+  // active; a plain local setup keeps the dropdown exactly as it was.
+  const [remoteBackend, setRemoteBackend] =
+    useState<api.ExecutionBackendInfo | null>(null);
+  useEffect(() => {
+    api
+      .getExecutionBackend()
+      .then((s) => {
+        const active = s.backends.find((b) => b.id === s.backend);
+        setRemoteBackend(active && active.id !== "local" ? active : null);
+      })
+      .catch(() => setRemoteBackend(null));
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -92,6 +107,18 @@ export function GlobalTerminalPanel() {
                 >
                   Bash
                 </button>
+
+                {remoteBackend && (
+                  <button
+                    onClick={() => {
+                      setDropdownOpen(false);
+                      addTab(null, `${remoteBackend.label} (remote)`, true);
+                    }}
+                    className="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700"
+                  >
+                    Remote shell — {remoteBackend.label}
+                  </button>
+                )}
 
                 {terminalTools.length > 0 && (
                   <div className="my-1 border-t border-gray-700" />

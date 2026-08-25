@@ -16,6 +16,9 @@ export interface TerminalTab {
   label: string;
   active: boolean;
   sessionId?: string; // backend terminal session (server-held PTY)
+  // Shell opens on the remote compute backend's submit host (ssh) instead of
+  // locally. Only meaningful for bash tabs; ignored when the backend is local.
+  remote?: boolean;
 }
 
 interface ToolStore {
@@ -23,7 +26,7 @@ interface ToolStore {
   tabs: TerminalTab[];
   activeTabId: string | null;
 
-  addTab: (toolId: string | null, label: string) => string;
+  addTab: (toolId: string | null, label: string, remote?: boolean) => string;
   removeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   setTabSession: (id: string, sessionId: string | undefined) => void;
@@ -44,12 +47,12 @@ export const useToolStore = create<ToolStore>()(
       activeTabId: null,
       installingTools: new Set<string>(),
 
-      addTab: (toolId, label) => {
+      addTab: (toolId, label, remote) => {
         const id = newTabId();
         set((state) => ({
           tabs: [
             ...state.tabs.map((t) => ({ ...t, active: false })),
-            { id, toolId, label, active: true },
+            { id, toolId, label, active: true, remote },
           ],
           activeTabId: id,
         }));
