@@ -29,10 +29,28 @@ fi
 # on a shared host hands terminals to any local user who can reach the port.
 # The rendered proxy injects it as an Authorization header, so the browser
 # flow is unchanged either way.
+# allow_remote_access: Jupyter refuses any request whose Host header it does
+# not consider local. Behind Open OnDemand the session is proxied at
+# /node/<host>/<port>/ and arrives with the node name as Host ("c1"), so
+# JupyterLab returned a bare "403 : Forbidden" in the browser while its own
+# API reported it healthy — the give-away is in Jupyter's log, not ours:
+# "Blocking request with non-local 'Host' c1". Same request with
+# Host: localhost returned 200 (#233).
+#
+# Turning the check off costs nothing here, and the reason matters: it guards
+# a Jupyter that is directly reachable. Ours never is — it binds 127.0.0.1,
+# its only client is this session's own proxy, and on a gated session that
+# proxy must present a real token. The boundary is the loopback bind plus the
+# session gate, not the Host string.
+#
+# Not fixed by rewriting Host to localhost in the proxy instead: Jupyter
+# builds redirects from the Host it is given, which would trade the 403 for
+# redirects pointing somewhere the browser cannot follow.
 exec jupyter lab \
     --no-browser \
     --ip=127.0.0.1 \
     --port="${STUDIO_JUPYTER_PORT:-8889}" \
     --ServerApp.base_url="${BASE_URL}" \
     --ServerApp.root_dir="${ROOT}" \
+    --ServerApp.allow_remote_access=True \
     --ServerApp.token="${STUDIO_JUPYTER_TOKEN:-}"
