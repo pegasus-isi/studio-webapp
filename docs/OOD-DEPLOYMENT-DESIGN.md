@@ -1,9 +1,13 @@
 # PegasusAI Studio as an Open OnDemand App — Design
 
-Status: DRAFT v3 (2026-08-24, reviewed against the code). Target: deploy `studio-webapp` on any lab server
-that runs Open OnDemand, has multiple POSIX user accounts, has Pegasus
-installed on the host, and may or may not be an HTCondor submit host (possibly
-pointing at a remote condor cluster).
+Status: **Phase 1 implemented and validated end to end** (2026-08-25).
+Target: deploy `studio-webapp` on any lab server that runs Open OnDemand, has
+multiple POSIX user accounts, has Pegasus installed on the host, and may or may
+not be an HTCondor submit host (possibly pointing at a remote condor cluster).
+
+Sections below have been corrected where running the design disproved it;
+those corrections are marked **[validated]** and are worth trusting over the
+surrounding prose, which was written before anything ran. See §11.
 
 **Two deployment models, one codebase.** The existing container/K8s deployment
 (JupyterHub/KubeSpawner on studio-system) stays as-is. The OOD deployment runs
@@ -53,7 +57,7 @@ port; OOD reverse-proxies the browser to `/node/<host>/<port>/`.
 browser ── lab IdP ──> OOD portal (per-user NGINX)
                           │  batch-connect job (as $USER)
                           ▼
-        [linux_host | slurm | condor adapter]
+     [linux_systemd | slurm | condor adapter]
                           │
                           ▼
    studio-launch   (native processes, $HOME state,
@@ -66,8 +70,8 @@ Adapter is a site choice, not a design fork:
 
 | Site has | Adapter | Notes |
 |---|---|---|
-| Just the one server | `linux_host` | Session on the web/login host itself. |
-| Slurm | `slurm` | Session on an interactive partition; Slurm enforces walltime/memory from the form. Compute nodes need the dist path mounted and outbound egress for AI-CLI installs (or pre-baked tools). |
+| Just the one server | `linux_systemd` | Session on the web/login host itself. **[validated]** NOT `linux_host`: that adapter wraps every job in `singularity exec` with no way to opt out — the very thing native mode exists to avoid — and with no image configured it fails as `no implicit conversion of nil into String`. `linux_systemd` needs `loginctl enable-linger` per user. |
+| Slurm | `slurm` | Session on an interactive partition; Slurm enforces walltime/memory from the form. Compute nodes need the dist path mounted. **[validated]** Do not set a `cluster:` key in the cluster config unless slurmdbd is running — it makes the adapter pass `sbatch -M`, and the resulting submit failure surfaces in the browser as an unrelated Ruby `TypeError`. |
 | HTCondor | `condor` | Session is itself a condor job. |
 
 Why native is the right default for labs (and what it buys over the container):
@@ -137,6 +141,23 @@ The deciding question: **does the AP share a filesystem with this server**
 - **Shared FS**: remote-schedd submission works as-is; DAGMan on the AP sees
   the same submit dirs. This mirrors the K8s deployment (pods mount
   `ap:/home/<user>`), a proven path.
+
+  **[validated]** Three things this glosses over, each of which blocks
+  submission outright:
+  - Use the **fully qualified** AP name in `_CONDOR_SCHEDD_HOST`. `pegasus-run`
+    calls plain `condor_submit`, which looks for a *local* schedd; a short name
+    fails with the identical `Can't find address of local schedd`, so it reads
+    as the setting being ignored rather than wrong.
+  - On a multi-homed AP, pin condor to the cluster network
+    (`NETWORK_INTERFACE`). Otherwise the schedd advertises an address the
+    session hosts cannot route to, while `condor_status` keeps working and
+    hides it.
+  - Give the schedd a stable name (`NETWORK_HOSTNAME`) if the host's FQDN is
+    cloud-generated, or `-name` lookups never match.
+
+  Keeping DAGMan on the AP rather than in the session is deliberate: a
+  workflow submitted from a Slurm session then outlives that session's
+  walltime instead of dying with it.
 - **No shared FS**: Pegasus breaks on remote schedd (DAGMan can't read the
   submit dir). The answer is a **personal condor in the session**
   (`STUDIO_MINICONDOR=1`: launcher starts master+schedd under supervisord,
@@ -231,6 +252,9 @@ studio-dist-<version>.tar.gz
 │   ├── node/                          # pinned node binary (or use host node ≥20; site choice)
 │   └── proxy/                         # see below
 ├── seed/marketplace/                  # knowledge checkout seed (clone source)
+├── seed/overlay/STUDIO_ENV.md         # [validated] Studio env context for AGENTS.md;
+│                                      #   the launcher otherwise resolves it to an
+│                                      #   image-only path and degrades silently (#238)
 └── install.sh                         # creates the venv against host python3.11+,
                                        # verifies host deps, prints a report
 ```
@@ -244,13 +268,13 @@ symlink flip.
 
 | Dependency | Native source | Notes |
 |---|---|---|
-| Python ≥3.11 | host | venv created at install time (not relocatable — fine, path is fixed) |
+| Python ≥3.11 | host | venv created at install time (not relocatable — fine, path is fixed). **[validated]** Must be created with `--system-site-packages`, or the host's Pegasus API is invisible to the interpreter Studio actually runs and every workflow generator dies with `ModuleNotFoundError: No module named 'Pegasus'` (#237). |
 | Node ≥20 | host or bundled | Next standalone needs a node binary; bundling one removes the flakiest host dep |
 | Pegasus | **host** | tested version range pinned in dist; loud warning outside it |
 | HTCondor client | host | Case A/B; absent ⇒ Case C or authoring-only |
 | Apptainer | host | image builder + containerized workflow jobs |
 | JupyterLab | dist venv | same pinned version as the image |
-| AI CLIs | per-user npm (`~/.npm-global`) | unchanged — same mechanism as today |
+| AI CLIs | **dist or site install** | **[validated]** NOT per-user npm: nothing ships them, and compute nodes may have no egress. With `opencode` absent the chat panel hangs on "loading…" indefinitely and nothing in the session log says why. Install once, globally, pinned to the version the image uses. |
 | Front proxy | see below | |
 
 **The proxy question** (the only awkward native dependency): the stack fronts
@@ -280,7 +304,9 @@ studio-ood/
 ├── submit.yml.erb          # per-adapter submit params
 ├── template/
 │   ├── before.sh.erb       # free port; generate STUDIO_AUTH_TOKEN
-│   ├── script.sh.erb       # single-session lock; source site.env;
+│   ├── script.sh.erb       # single-session lock; [validated] BAKE IN site.env
+│   │                       #   at ERB render time, do not source it at run time:
+│   │                       #   session hosts have no /etc/ood (see §11);
 │   │                       # export STUDIO_PORT/URL_PREFIX/AUTH_TOKEN + _CONDOR_*;
 │   │                       # exec $STUDIO_DIST/bin/studio-launch   (native)
 │   │                       # — or apptainer run $SIF (site runtime choice)
@@ -381,3 +407,49 @@ All are backward-compatible with the K8s deployment.
 - **Phase 4**: hardening (token-gate audit, telemetry default-off
   verification), versioned dist release channel alongside the `:main` image,
   optional proxy convergence (one template, both models).
+
+## 11. Validation record (2026-08-25)
+
+Phase 1 (#215–#219) was exercised on a purpose-built 3-node cluster — Slurm for
+session placement, HTCondor for workflow execution, NFS-shared homes, Open
+OnDemand 4.0 — on FABRIC. Harness: `kthare10/fabric-slurm-test`. The OOD app
+lives in `kthare10/studio-ood`.
+
+**Proven.** Log in at the portal → launch → Studio runs natively as the POSIX
+user on a Slurm compute node → build a Pegasus workflow → submit to the
+HTCondor access point → 12/12 jobs completed, 0 failures. Sessions on different
+nodes per launch work because all per-user state is on the shared home.
+
+Checked against a real second unprivileged user on the same node, not by
+inspection: the session token gate (no cookie → 403, `/auth?token=` → 302,
+cookie → 200), studio-api's internal-secret middleware (direct hit on the API
+port → 403), the 0700 runtime dir, the 0600 key file, per-session port
+allocation, the OOD URL prefix, and no-phone-home defaults (`~/.pegasus`
+carried nothing).
+
+**Defects found that review had not.** `jupyter.sh` shipped without its exec
+bit so JupyterLab never started natively (#228); the dist venv hid the host
+Pegasus API (#237); the marketplace clone was refused for every user but the
+dist owner, and the first fix was ineffective because git honours
+`safe.directory` only from system/global config (#231, #235); Jupyter 403'd
+behind the OOD proxy on the node-name `Host` (#233); the dist ships no
+`STUDIO_ENV.md` overlay (#238); the Next.js upstream is reachable by other
+local users (#229).
+
+The common thread is worth stating: **every one of these is invisible in the
+container and silent when it fails.** Skills still read from the fallback, a
+missing overlay just yields a shorter file, an unset `_CONDOR_SCHEDD_HOST`
+only surfaces when someone finally submits a workflow. Container tests cannot
+find this class of bug, which is the argument for keeping a native test
+deployment alive rather than treating this validation as one-time.
+
+**Not proven, and needed before `ood` → `main`:**
+
+- The container regression. Nothing here has been booted as an amd64 image;
+  the case for safety is that every change is default-off or
+  default-preserving, plus 357 passing tests. That is an argument, not
+  evidence.
+- Any OIDC/CILogon portal — the test portal used htpasswd.
+- Case A (session on the access point) end to end; only Case B was driven to a
+  completed workflow.
+- Case C (Slurm-only, no HTCondor) remains untouched, as designed.

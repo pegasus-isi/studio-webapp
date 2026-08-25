@@ -13,6 +13,17 @@ runs per-user. The image is consumed by `studio-system` (separate repo): a merge
 `main` publishes `ghcr.io/pegasus-isi/studio-webapp:main`, which production pulls with
 `imagePullPolicy: Always`, so **a merge here redeploys to live user pods**.
 
+**Two deployment models share this code.** Besides the container, Studio runs
+**natively** on a lab's own multi-user host under Open OnDemand — the user's
+processes, the host's Pegasus/Condor/Apptainer, no container
+(`docs/OOD-DEPLOYMENT-DESIGN.md`; the OOD app itself is a separate repo). Both
+go through `launcher/studio-launch`, so **anything you change under `launcher/`
+has a second consumer that CI does not exercise.** That deployment is where the
+interesting failures live: a shared host has other users on it, `$HOME` is NFS,
+ports are host-global, the seed is owned by somebody else, and nothing is
+`localhost`. Most of those failures are *silent* — read the validation record
+in §11 of the design before assuming a launcher change is container-only.
+
 ## Commands
 
 ```sh
@@ -59,6 +70,16 @@ lives in `launcher/studio-launch` (prepare `$HOME` → render configs from
 packaging (`docs/OOD-DEPLOYMENT-DESIGN.md`); `docker/entrypoint.sh` is a thin
 wrapper around it — never add container-only start steps there.
 `opencode serve` runs on localhost:**4747** for the chat engine.
+
+  Those ports are **defaults, not constants**. The launcher renders every
+  listener from env (`STUDIO_PORT`, `STUDIO_API_PORT`, `STUDIO_WEB_PORT`,
+  `STUDIO_JUPYTER_PORT`, `STUDIO_OPENCODE_PORT`), and `STUDIO_ALLOC_PORTS=1`
+  makes it allocate free ones per session, because on a shared host fixed ports
+  collide between users. Anything that needs to know a port must read the env
+  (as `routers/jupyter.py` does) rather than hardcode one. `STUDIO_AUTH_TOKEN`
+  turns on the session gate — cookie check at the proxy, loopback binds, a real
+  Jupyter token, and a proxy-stamped secret studio-api requires; unset (the K8s
+  path) compiles all of it away.
 
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
   migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 15 services
@@ -150,6 +171,11 @@ wrapper around it — never add container-only start steps there.
 
 ## Status & review docs
 
+- `docs/OOD-DEPLOYMENT-DESIGN.md` — the native/Open OnDemand deployment.
+  Phase 1 is implemented and validated on a real multi-user cluster; §11 records
+  what was proven, what was **not** (notably the container regression), and the
+  defects that validation found. Corrections marked **[validated]** override the
+  surrounding prose, which predates anything running.
 - `SPEC.md` — design spec + V2 direction (refreshed to current code in PR #138).
 - `README.md`, `studio-web/README.md`, `studio-api/README.md` — current
   (rewritten in PRs #134 / #138); prefer them and the code.
