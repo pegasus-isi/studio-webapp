@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from typing import Any, AsyncGenerator
 
 import structlog
 
 from services.backends import active_backend
+from services.event_reader import find_events_file
 from services.event_reader import jobs as event_jobs
 from services.event_reader import read_events
 from services.event_reader import workflow_detail as event_detail
@@ -75,12 +75,22 @@ async def tail_workflow_events(
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Tail workflow event files and yield events as dicts.
 
-    Looks for workflow-events.jsonl (from workflow-monitor --server)
-    or polls the stampede DB for state changes.
+    Order: a live stream from the active backend (a remote backend tails the
+    JSONL where monitord writes it, skipping mirror-sync latency), then any
+    accepted local JSONL, then polling the stampede DB. Tailing a *mirrored*
+    JSONL directly would be wrong anyway: rsync replaces the file by rename,
+    so a held-open tail keeps reading the dead inode.
     """
-    events_file = os.path.join(run_dir, "workflow-events.jsonl")
+    from services.backends import active_backend
 
-    if os.path.isfile(events_file):
+    stream = await active_backend().stream_events(run_dir)
+    if stream is not None:
+        async for event in stream:
+            yield event
+        return
+
+    events_file = find_events_file(run_dir)
+    if events_file:
         # Tail the JSONL file
         async for event in _tail_jsonl(events_file):
             yield event

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import structlog
 from fastapi import APIRouter
 
@@ -52,16 +50,18 @@ async def detailed_health() -> DetailedHealthResponse:
 
 
 async def _run_version_cmd(cmd: str) -> str | None:
-    """Run a version command and return first line of output, or None."""
+    """First line of a version command's output, or None.
+
+    Runs through the active compute backend so the dashboard reports the
+    stack workflows actually execute on — a remote backend answers with the
+    remote host's versions.
+    """
     try:
-        proc = await asyncio.create_subprocess_exec(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        if proc.returncode == 0 and stdout:
-            return stdout.decode().strip().split("\n")[0]
+        from services.backends import active_backend
+
+        result = await active_backend().exec([cmd], timeout=10)
+        if result.returncode == 0 and result.stdout:
+            return result.stdout.decode().strip().split("\n")[0]
     except Exception:
         pass
     return None

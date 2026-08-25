@@ -172,6 +172,8 @@ class WorkflowRunResponse(BaseModel):
     completed_jobs: int = 0
     failed_jobs: int = 0
     exec_site: str | None = None
+    # Compute backend the run belongs to ("local" or a configured remote id).
+    backend: str | None = None
     created_at: str
     updated_at: str
 

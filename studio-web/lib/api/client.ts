@@ -291,6 +291,9 @@ export interface WorkflowRun {
   completed_jobs: number;
   failed_jobs: number;
   exec_site: string | null;
+  // Compute backend the run belongs to ("local" or a configured remote id);
+  // absent from older backends.
+  backend?: string | null;
   created_at: string;
   updated_at: string;
 }

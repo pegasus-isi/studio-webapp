@@ -78,6 +78,7 @@ async def list_workflows() -> WorkflowListResponse:
     # discover_runs scans the backend's scan root and excludes cloned-repo /
     # test-fixture braindumps, so only genuine runs are listed.
     runs = await discover_runs_async()
+    backend_id = active_backend().id
     workflows = []
 
     for run in runs:
@@ -99,6 +100,7 @@ async def list_workflows() -> WorkflowListResponse:
             completed_jobs=detail.get("completed_jobs", 0),
             failed_jobs=detail.get("failed_jobs", 0),
             exec_site=detail.get("exec_site"),
+            backend=backend_id,
             created_at=run.get("timestamp") or "",
             updated_at="",
         )

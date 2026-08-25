@@ -27,6 +27,8 @@ channel (SIGHUP) rather than running unsupervised.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import os
 import shlex
 import subprocess
@@ -71,6 +73,8 @@ class SshBackendConfig:
 
 
 class SshBackend(ComputeBackend):
+    is_remote = True
+
     def __init__(self, cfg: SshBackendConfig) -> None:
         self.id = cfg.id
         self.label = cfg.label or cfg.id
@@ -183,15 +187,97 @@ class SshBackend(ComputeBackend):
     # -- command transport ----------------------------------------------
 
     def _remote_command(
-        self, argv: list[str] | tuple[str, ...], cwd: str | None
+        self,
+        argv: list[str] | tuple[str, ...],
+        cwd: str | None,
+        env: dict[str, str] | None = None,
     ) -> str:
         rcwd = self.to_remote(cwd) if cwd else self.remote_home()
         if not rcwd.startswith(self.remote_home()):
             # A cwd outside the mirror has no remote counterpart; run from
             # the remote home rather than failing (matches the shim).
             rcwd = self.remote_home()
+        prefix = ""
+        if env:
+            pairs = " ".join(
+                f"{k}={shlex.quote(str(v))}" for k, v in sorted(env.items())
+            )
+            prefix = f"env {pairs} "
         quoted = " ".join(shlex.quote(self.to_remote(a)) for a in argv)
-        return f"cd {shlex.quote(rcwd)} && {quoted}"
+        return f"cd {shlex.quote(rcwd)} && {prefix}{quoted}"
+
+    def wrap_command(
+        self,
+        argv: list[str] | tuple[str, ...],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> tuple[list[str], str | None, dict[str, str] | None]:
+        # One ssh argv carrying cwd, env overrides and path translation; the
+        # caller's subprocess then needs no cwd/env of its own.
+        return (
+            [*self._ssh_argv(), self._remote_command(argv, cwd, env)],
+            None,
+            None,
+        )
+
+    async def stream_events(self, run_dir: str):
+        """Tail the run's JSONL on the remote host — no mirror-sync latency.
+
+        Probes the accepted filenames in the remote run dir; None when the
+        run isn't under this backend's mirror or no JSONL exists (the caller
+        then polls the mirrored stampede DB as usual). The stream ends with
+        the workflow (or when the ssh channel drops — the client's SSE
+        reconnect gets a fresh probe).
+        """
+        remote_dir = self.to_remote(run_dir)
+        if remote_dir == run_dir:
+            return None
+        probe = (
+            "for f in workflow-events.jsonl wfevents.jsonl "
+            "monitord-events.jsonl; do "
+            f"if [ -f {shlex.quote(remote_dir)}/$f ]; "
+            "then echo $f; break; fi; done"
+        )
+        try:
+            result = await self.exec(["sh", "-c", probe], timeout=20)
+        except (OSError, asyncio.TimeoutError):
+            return None
+        name = result.stdout.decode("utf-8", errors="replace").strip()
+        if result.returncode != 0 or not name:
+            return None
+        remote_file = f"{remote_dir}/{name}"
+
+        async def _gen():
+            proc = await asyncio.create_subprocess_exec(
+                *self._ssh_argv(),
+                f"tail -n 0 -F {shlex.quote(remote_file)}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                assert proc.stdout is not None
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="replace").strip()
+                    if not text:
+                        continue
+                    try:
+                        event = json.loads(text)
+                    except json.JSONDecodeError:
+                        continue
+                    yield event
+                    if event.get("event_type") == "workflow_end":
+                        break
+            finally:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                with contextlib.suppress(Exception):
+                    await proc.wait()
+
+        return _gen()
 
     def _translate_stdout(self, data: bytes) -> bytes:
         return data.replace(self.remote_home().encode(), self.mirror_root().encode())
@@ -246,12 +332,15 @@ class SshBackend(ComputeBackend):
     def _rsync_ssh(self) -> str:
         return f"ssh -F {self.ensure_ssh_config()} -o BatchMode=yes"
 
-    async def _run_rsync(self, src: str, dst: str) -> str:
+    async def _run_rsync(
+        self, src: str, dst: str, extra: list[str] | None = None
+    ) -> str:
         """One rsync; returns "" on success, an error string otherwise."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 "rsync",
                 "-az",
+                *(extra or []),
                 "-e",
                 self._rsync_ssh(),
                 src,
@@ -273,8 +362,12 @@ class SshBackend(ComputeBackend):
         """Pull the remote workspace into the mirror. Returns error or ""."""
         ws = self.workspace_root()
         os.makedirs(ws, exist_ok=True)
+        # Built .sif images can be gigabytes and only need to exist where
+        # jobs run — keep them out of the laptop-side mirror.
         err = await self._run_rsync(
-            f"{self.id}:{self.cfg.workspace_subdir}/", ws + os.sep
+            f"{self.id}:{self.cfg.workspace_subdir}/",
+            ws + os.sep,
+            extra=["--exclude", "*.sif"],
         )
         if err:
             self._last_error = err

@@ -46,6 +46,9 @@ class CreateTerminalBody(BaseModel):
     tool_id: str | None = None
     label: str | None = None
     cwd: str | None = None
+    # Open the shell on the active remote compute backend's submit host
+    # instead of locally. Ignored when the active backend is local.
+    remote: bool = False
 
 
 def _contained_cwd(cwd: str | None) -> str:
@@ -140,10 +143,29 @@ async def create_terminal(body: CreateTerminalBody) -> dict:
     """Create a server-held terminal session and return its metadata."""
     cwd = _contained_cwd(body.cwd)
     if body.type == "bash":
+        command: list[str] = ["/bin/bash"]
+        label = body.label or "Terminal"
+        session_type = "bash"
+        if body.remote:
+            from services.backends import active_backend
+
+            backend = active_backend()
+            if backend.is_remote:
+                # A shell on the backend's submit host over the same
+                # multiplexed channel the backend uses; -t forces a PTY.
+                command = [
+                    "ssh",
+                    "-t",
+                    "-F",
+                    backend.ensure_ssh_config(),
+                    backend.id,
+                ]
+                label = body.label or f"{backend.label} (remote)"
+                session_type = "remote"
         session = ts.create(
-            type="bash",
-            command=["/bin/bash"],
-            label=body.label or "Terminal",
+            type=session_type,
+            command=command,
+            label=label,
             cwd=cwd,
             env=await _opencode_attach_env(),
         )

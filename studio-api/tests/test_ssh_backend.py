@@ -260,3 +260,125 @@ def test_execution_backend_endpoints(client, tmp_backends, monkeypatch):
     resp = client.put("/api/settings/execution-backend", json={"backend": "local"})
     assert resp.status_code == 200
     assert resp.json()["backend"] == "local"
+
+
+def test_wrap_command_translates_and_embeds_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    b = _make_backend(tmp_path)
+    proj = os.path.join(str(tmp_path / "mirror"), "work", "workflows", "p")
+    argv, cwd, env = b.wrap_command(
+        ["apptainer", "build", os.path.join(proj, "x.sif")],
+        cwd=proj,
+        env={"APPTAINER_IGNORE_PROOT": "1"},
+    )
+    assert argv[0] == "ssh" and cwd is None and env is None
+    remote = argv[-1]
+    assert "cd /home/ubuntu/work/workflows/p &&" in remote
+    assert "env APPTAINER_IGNORE_PROOT=1" in remote
+    assert "/home/ubuntu/work/workflows/p/x.sif" in remote
+
+
+def test_stream_events_none_outside_mirror_or_when_absent(
+    tmp_path, monkeypatch
+):
+    from services.backends import ssh as ssh_mod
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    b = _make_backend(tmp_path)
+    # Not under the mirror: no remote counterpart — use local logic.
+    assert asyncio.run(b.stream_events("/somewhere/else")) is None
+
+    # Under the mirror but no JSONL on the remote: the probe finds nothing.
+    async def fake_exec(*argv, **kw):
+        return _FakeProc(rc=0, out=b"")
+
+    monkeypatch.setattr(ssh_mod.asyncio, "create_subprocess_exec", fake_exec)
+    run_dir = os.path.join(str(tmp_path / "mirror"), "work", "r", "run0001")
+    assert asyncio.run(b.stream_events(run_dir)) is None
+
+
+def test_stream_events_tails_until_workflow_end(tmp_path, monkeypatch):
+    from services.backends import ssh as ssh_mod
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    b = _make_backend(tmp_path)
+    run_dir = os.path.join(str(tmp_path / "mirror"), "work", "r", "run0001")
+
+    lines = [
+        b'{"event_type": "job_state", "job_id": 1}\n',
+        b"not-json\n",
+        b'{"event_type": "workflow_end", "wf_status": 0}\n',
+        b'{"event_type": "never_seen"}\n',
+    ]
+
+    class _TailProc:
+        def __init__(self):
+            self.returncode = None
+            self.killed = False
+            self._lines = list(lines)
+            self.stdout = self
+
+        async def readline(self):
+            return self._lines.pop(0) if self._lines else b""
+
+        def kill(self):
+            self.killed = True
+
+        async def wait(self):
+            return 0
+
+    tail = _TailProc()
+    calls = {"n": 0}
+
+    async def fake_exec(*argv, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:  # the filename probe (routed through exec)
+            return _FakeProc(rc=0, out=b"monitord-events.jsonl\n")
+        return tail
+
+    monkeypatch.setattr(ssh_mod.asyncio, "create_subprocess_exec", fake_exec)
+
+    async def collect():
+        stream = await b.stream_events(run_dir)
+        assert stream is not None
+        return [e async for e in stream]
+
+    events = asyncio.run(collect())
+    # Bad lines are skipped; the stream ends at workflow_end; ssh is killed.
+    assert [e["event_type"] for e in events] == ["job_state", "workflow_end"]
+    assert tail.killed
+
+
+def test_remote_terminal_session_type(client, tmp_backends):
+    """remote=True opens the shell over ssh when the backend is remote, and
+    stays a plain local bash when it is not."""
+    resp = client.post("/api/terminals", json={"type": "bash", "remote": True})
+    assert resp.status_code == 200
+    local_meta = resp.json()
+    assert local_meta["type"] == "bash"  # local backend: flag is ignored
+    client.delete(f"/api/terminals/{local_meta['id']}")
+
+    tmp_backends.set_active_backend_id("fabric-test")
+    try:
+        resp = client.post(
+            "/api/terminals", json={"type": "bash", "remote": True}
+        )
+        assert resp.status_code == 200
+        meta = resp.json()
+        assert meta["type"] == "remote"
+        assert "fabric-test" in meta["label"]
+        client.delete(f"/api/terminals/{meta['id']}")
+    finally:
+        tmp_backends.set_active_backend_id(None)
+
+
+def test_workflow_list_stamps_backend_id(client, monkeypatch):
+    home = os.environ["HOME"]
+    run_dir = os.path.join(home, "work", "workflows", "p", "run0001")
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "braindump.yml"), "w") as f:
+        f.write("wf_uuid: badge-1\npegasus_wf_name: p\n")
+    monkeypatch.setenv("STUDIO_SCAN_DIR", os.path.join(home, "work"))
+    data = client.get("/api/workflows").json()
+    wf = next(w for w in data["workflows"] if w["run_id"] == "badge-1")
+    assert wf["backend"] == "local"

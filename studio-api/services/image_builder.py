@@ -24,6 +24,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import shutil
 import tempfile
 import time
@@ -104,6 +105,22 @@ def detect_builder() -> str | None:
         if shutil.which(binary):
             return binary
     return None
+
+
+async def detect_builder_for(backend) -> str | None:
+    """First available builder where the backend executes commands."""
+    if not backend.is_remote:
+        return detect_builder()
+    probe = (
+        "command -v apptainer >/dev/null 2>&1 && echo apptainer || "
+        "{ command -v singularity >/dev/null 2>&1 && echo singularity; }"
+    )
+    try:
+        result = await backend.exec(["sh", "-c", probe], timeout=20)
+    except Exception:
+        return None
+    name = result.stdout.decode("utf-8", errors="replace").strip()
+    return name if name in _BUILDERS else None
 
 
 def _unprivileged_build() -> bool:
@@ -189,14 +206,16 @@ def build_command(builder: str, sif: str, definition: str) -> list[str]:
     return cmd + [sif, definition]
 
 
-def build_env(base: dict[str, str] | None = None) -> dict[str, str]:
-    """Environment for the build subprocess.
+def build_env_overrides() -> dict[str, str]:
+    """The build-specific environment additions.
 
     ``APPTAINER_IGNORE_PROOT`` is the one that matters — see the note above.
     Apptainer treats any non-empty value as set, so the variable is added or
-    left out rather than set to "0".
+    left out rather than set to "0". Kept separate from the full environment
+    so a remote backend carries just these across the ssh boundary instead
+    of exporting this host's entire environ onto another machine.
     """
-    env = dict(os.environ if base is None else base)
+    env: dict[str, str] = {}
     if _flag_enabled("STUDIO_BUILD_IGNORE_PROOT", True):
         env["APPTAINER_IGNORE_PROOT"] = "1"
     tmpdir = os.environ.get("STUDIO_BUILD_TMPDIR")
@@ -205,6 +224,13 @@ def build_env(base: dict[str, str] | None = None) -> dict[str, str]:
         # it in one directory, so the build needs roughly twice the image size
         # wherever this points.
         env["APPTAINER_TMPDIR"] = tmpdir
+    return env
+
+
+def build_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Full environment for a local build subprocess."""
+    env = dict(os.environ if base is None else base)
+    env.update(build_env_overrides())
     return env
 
 
@@ -268,6 +294,32 @@ def verify_image(sif: str) -> str | None:
         "no squashfs payload). This image would fail on a worker node with "
         '"not a valid squashfs image"'
     )
+
+
+async def _verify_image_for(backend, sif: str) -> str | None:
+    """Backend-aware wrapper for verify_image.
+
+    A remote build's .sif lives (deliberately) only on the remote host — the
+    mirror pull excludes *.sif — so the local superblock scan can't run.
+    Check existence and non-trivial size there instead: weaker, but the
+    failure it guards (an "image" with no payload reported as built) shows
+    up exactly as a zero/near-zero size.
+    """
+    if not backend.is_remote:
+        return verify_image(sif)
+    remote_sif = backend.to_remote(sif)
+    try:
+        result = await backend.exec(
+            ["sh", "-c", f"test -s {shlex.quote(remote_sif)}"], timeout=20
+        )
+    except Exception as e:
+        return f"could not verify the built image on the remote host: {e}"
+    if result.returncode != 0:
+        return (
+            "the build reported success but no image exists at "
+            f"{remote_sif} on the remote host"
+        )
+    return None
 
 
 def squashfs_failure_hint(output: list[str], tmpdir: str) -> list[str]:
@@ -426,7 +478,10 @@ async def stream_build(
     ``"ref"`` carrying the registry reference when a push happened.
     The caller appends the ``[DONE]`` terminator.
     """
-    builder = detect_builder()
+    from services.backends import active_backend
+
+    backend = active_backend()
+    builder = await detect_builder_for(backend)
     if builder is None:
         yield _sse({
             "status": "error",
@@ -471,18 +526,33 @@ async def stream_build(
         except OSError as e:
             log.warning("apt_fix_skipped", definition=definition, error=str(e))
 
+    if backend.is_remote:
+        # The definition (and the apt-fix temp copy above) must exist where
+        # the build runs; prior pulls make this a cheap delta. The .sif also
+        # lands there — which is where the Transformation Catalog needs it.
+        try:
+            await backend.push_project(project_dir)
+        except Exception as e:
+            yield _sse({"status": "error", "error": f"Project push failed: {e}"})
+            return
+
     cmd = build_command(builder, sif, build_def)
-    env = build_env()
+    run_argv, run_cwd, run_env = backend.wrap_command(
+        cmd, cwd=project_dir, env=build_env_overrides()
+    )
+    stream_env = {**os.environ, **run_env} if run_env else None
     yield _sse({"phase": "build", "image": sif, "builder": builder})
 
     # The packing step needs room for the extracted rootfs and the squashfs
     # built from it, side by side in the same directory. Say where that is and
     # how much is left, because when it runs out the error names squashfs and
-    # not the disk.
-    tmpdir = build_tmpdir(env)
-    free = free_space_gb(tmpdir)
-    if free is not None:
-        yield _sse({"line": f"build tmpdir: {tmpdir} ({free:.1f} GiB free)"})
+    # not the disk. (Local builds only — these numbers describe this host's
+    # disk, which is meaningless for a remote build.)
+    tmpdir = build_tmpdir(build_env())
+    if not backend.is_remote:
+        free = free_space_gb(tmpdir)
+        if free is not None:
+            yield _sse({"line": f"build tmpdir: {tmpdir} ({free:.1f} GiB free)"})
 
     if temp_def:
         yield _sse({"line": (
@@ -496,7 +566,7 @@ async def stream_build(
     rc = 1
     output: list[str] = []
     async for kind, value in _run_streaming(
-        cmd, cwd=project_dir, env=env, deadline=deadline,
+        run_argv, cwd=run_cwd, env=stream_env, deadline=deadline,
     ):
         if kind == "line":
             output.append(value)
@@ -522,7 +592,7 @@ async def stream_build(
     # complete" for an image with a zero-length filesystem, which then fails on a
     # worker node minutes later with an error naming squashfs rather than the
     # build. Fail here, where the build log is still on screen.
-    problem = verify_image(sif)
+    problem = await _verify_image_for(backend, sif)
     if problem:
         yield _sse({"status": "error", "image": sif, "error": problem})
         log.warning("image_build_produced_no_filesystem", sif=sif, detail=problem)
@@ -530,7 +600,7 @@ async def stream_build(
 
     yield _sse({"line": (
         f"Reference it from the Transformation Catalog as "
-        f'image="file://{sif}" with image_site="local".'
+        f'image="file://{backend.to_remote(sif)}" with image_site="local".'
     )})
 
     if not push:
@@ -556,10 +626,12 @@ async def stream_build(
             "line": f"$ {builder} registry login oras://{registry_host}",
         })
         rc = 1
-        async for kind, value in _run_streaming(
+        login_argv, _, _ = backend.wrap_command(
             [builder, "registry", "login", "--username", username,
-             "--password-stdin", f"oras://{registry_host}"],
-            stdin_data=password.encode(), deadline=deadline,
+             "--password-stdin", f"oras://{registry_host}"]
+        )
+        async for kind, value in _run_streaming(
+            login_argv, stdin_data=password.encode(), deadline=deadline,
         ):
             if kind == "line":
                 yield _sse({"line": value})
@@ -575,8 +647,9 @@ async def stream_build(
     yield _sse({"phase": "push"})
     yield _sse({"line": f"$ {builder} push {sif} oras://{ref}"})
     rc = 1
+    push_argv, _, _ = backend.wrap_command([builder, "push", sif, f"oras://{ref}"])
     async for kind, value in _run_streaming(
-        [builder, "push", sif, f"oras://{ref}"], deadline=deadline,
+        push_argv, deadline=deadline,
     ):
         if kind == "line":
             yield _sse({"line": value})

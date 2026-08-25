@@ -143,9 +143,14 @@ export function WorkflowList({ projects, workflows }: Props) {
                       </div>
                     )}
 
-                    {wf.exec_site && (
-                      <div className="mt-1 text-xs text-fgsubtle">
-                        Site: {wf.exec_site}
+                    {(wf.exec_site || (wf.backend && wf.backend !== "local")) && (
+                      <div className="mt-1 flex items-center gap-2 text-xs text-fgsubtle">
+                        {wf.exec_site && <span>Site: {wf.exec_site}</span>}
+                        {wf.backend && wf.backend !== "local" && (
+                          <span className="rounded-full border border-line px-1.5 py-px">
+                            {wf.backend}
+                          </span>
+                        )}
                       </div>
                     )}
                   </button>

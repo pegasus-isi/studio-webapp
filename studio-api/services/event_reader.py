@@ -33,11 +33,18 @@ import structlog
 
 log = structlog.get_logger()
 
-# Event-log filenames, in priority order. Both share the same schema:
-#   workflow-events.jsonl — from `workflow-monitor --serve`
-#   wfevents.jsonl        — from the pegasus-monitord `wfevents` plugin (emitted
-#                           automatically for every run; see studio-system VM)
-EVENTS_FILENAMES = ("workflow-events.jsonl", "wfevents.jsonl")
+# Event-log filenames, in priority order. All share the same schema:
+#   workflow-events.jsonl  — from `workflow-monitor --serve`
+#   wfevents.jsonl         — from the pegasus-monitord `wfevents` plugin
+#                            (the studio-system VM's monitord build)
+#   monitord-events.jsonl  — from the wfmonitor monitord plugin, enabled via
+#                            pegasus.monitord.plugins.wfmonitor.enabled=true;
+#                            written into the submit dir by default
+EVENTS_FILENAMES = (
+    "workflow-events.jsonl",
+    "wfevents.jsonl",
+    "monitord-events.jsonl",
+)
 EVENTS_FILENAME = EVENTS_FILENAMES[0]
 
 

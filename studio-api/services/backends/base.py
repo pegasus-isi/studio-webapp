@@ -39,6 +39,10 @@ class ComputeBackend(ABC):
 
     id: str = ""
     label: str = ""
+    # True when commands execute somewhere other than this host — call sites
+    # that touch the local filesystem around a command (verify a built image,
+    # report free disk) branch on this.
+    is_remote: bool = False
 
     # -- primitive 1: command transport ---------------------------------
 
@@ -70,6 +74,34 @@ class ComputeBackend(ABC):
         Raises ``FileNotFoundError``, ``subprocess.TimeoutExpired`` or
         ``OSError`` — the set ``_pegasus_status`` has always handled.
         """
+
+    def wrap_command(
+        self,
+        argv: list[str] | tuple[str, ...],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> tuple[list[str], str | None, dict[str, str] | None]:
+        """Rewrite (argv, cwd, env-overrides) for a caller-owned subprocess.
+
+        For call sites that need line-by-line streaming (the image builder)
+        and therefore spawn their own subprocess instead of using ``exec``.
+        Local: identity — the caller merges the overrides over os.environ.
+        Remote: a single ssh argv embedding cwd, env and path translation,
+        with ``(cwd=None, env=None)`` since the wrapping already carries
+        them.
+        """
+        return list(argv), cwd, dict(env) if env else None
+
+    async def stream_events(self, run_dir: str):
+        """Live event stream for a run, or ``None`` to use local file logic.
+
+        A remote backend can tail the run's JSONL where monitord writes it,
+        skipping mirror-sync latency. ``None`` means "no live source here —
+        tail/poll the local (mirror) files as always"; otherwise an async
+        generator of event dicts that ends when the workflow does.
+        """
+        return None
 
     # -- primitive 2: run-tree provider ---------------------------------
 
