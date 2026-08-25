@@ -188,6 +188,8 @@ class WorkflowProjectRunResponse(BaseModel):
     name: str
     run_dir: str
     status: str
+    # Compute backend the run belongs to ("local" or a configured remote id).
+    backend: str | None = None
 
 
 class WorkflowProjectResponse(BaseModel):

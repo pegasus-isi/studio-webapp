@@ -65,6 +65,8 @@ class SshBackendConfig:
     workspace_subdir: str = "work"
     sync_interval: float = 5.0
     connect_timeout: int = 20
+    default_site: str = "condorpool"
+    default_output_site: str = "local"
 
     @classmethod
     def from_dict(cls, data: dict) -> SshBackendConfig:
@@ -94,6 +96,12 @@ class SshBackend(ComputeBackend):
 
     def scan_root(self) -> str:
         return self.mirror_root()
+
+    def plan_defaults(self) -> dict[str, str]:
+        return {
+            "site": self.cfg.default_site,
+            "output_site": self.cfg.default_output_site,
+        }
 
     def workspace_root(self) -> str:
         return os.path.join(self.mirror_root(), self.cfg.workspace_subdir)

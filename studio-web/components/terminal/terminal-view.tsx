@@ -71,6 +71,15 @@ export function TerminalView({ tabId, toolId, remote }: Props) {
       const { Terminal } = await import("@xterm/xterm");
       const { FitAddon } = await import("@xterm/addon-fit");
 
+      // The cleanup may have already run while those imports were in flight
+      // (StrictMode's dev mount/unmount does this on every mount): `term` was
+      // still null then, so its dispose() had nothing to kill — continuing
+      // here would append an orphan xterm the cleanup can never reach. That
+      // zombie stacked above the remount's live terminal, pushing the real
+      // prompt to the container's bottom edge and leaving a dead cursor in
+      // the top-left (FE-8).
+      if (disposed || !containerRef.current) return;
+
       const t = new Terminal({
         fontSize: 13,
         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
@@ -131,6 +140,14 @@ export function TerminalView({ tabId, toolId, remote }: Props) {
       });
 
       observer = new ResizeObserver(() => {
+        // A hidden tab (display:none) reports a zero-size container. Fitting
+        // then shrinks the PTY to a couple of columns and the shell's
+        // SIGWINCH redraw rewraps the current line at that width — leaving
+        // permanently truncated prompt fragments ("ubuntu@su…") in the
+        // scrollback after every tab switch. Only refit while visible; the
+        // observer fires again with real dimensions when the tab reappears.
+        const el = containerRef.current;
+        if (!el || el.clientWidth === 0 || el.clientHeight === 0) return;
         fitAddon.fit();
         sendResize();
       });

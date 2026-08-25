@@ -128,6 +128,7 @@ async def list_workflows() -> WorkflowListResponse:
 async def list_projects() -> WorkflowProjectListResponse:
     """List workflow projects from ~/work/workflows/."""
     raw = await discover_projects_async()
+    backend_id = active_backend().id
     projects = [
         WorkflowProjectResponse(
             project_id=p["project_id"],
@@ -138,7 +139,8 @@ async def list_projects() -> WorkflowProjectListResponse:
             has_workflow_yml=p["has_workflow_yml"],
             has_container_def=p["has_container_def"],
             runs=[
-                WorkflowProjectRunResponse(**r) for r in p["submitted_runs"]
+                WorkflowProjectRunResponse(**r, backend=backend_id)
+                for r in p["submitted_runs"]
             ],
         )
         for p in raw
@@ -163,10 +165,19 @@ async def get_project_params(project_id: str) -> dict:
     if proj["has_generator"]:
         generator = await introspect_generator(proj["project_dir"])
 
+    # The plan form's starting values come from the active backend, so a
+    # remote pool with differently-named sites doesn't make every Plan
+    # start out wrong.
+    defaults = active_backend().plan_defaults()
+    plan_params = [
+        {**p, "default": defaults.get(str(p["dest"]), p["default"])}
+        for p in PLAN_PARAMS
+    ]
+
     return {
         "project_id": project_id,
         "generator": generator,
-        "plan": {"params": PLAN_PARAMS},
+        "plan": {"params": plan_params},
     }
 
 

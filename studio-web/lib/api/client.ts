@@ -357,6 +357,8 @@ export interface WorkflowProjectRun {
   name: string;
   run_dir: string;
   status: string;
+  // Compute backend the run belongs to ("local" or a configured remote id).
+  backend?: string | null;
 }
 
 export interface WorkflowProject {

@@ -495,6 +495,11 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                       {run.run_name || `${run.run_id.slice(0, 12)}...`}
                     </button>
                     <span className="flex items-center gap-2">
+                      {run.backend && run.backend !== "local" && (
+                        <span className="rounded-full border border-line px-1.5 py-px text-xs text-fgsubtle">
+                          {run.backend}
+                        </span>
+                      )}
                       <button
                         type="button"
                         onClick={() =>

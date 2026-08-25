@@ -87,7 +87,12 @@ async def get_execution_backend() -> dict:
     return {
         "backend": active.id,
         "backends": [
-            {"id": b.id, "label": b.label, **b.status()}
+            {
+                "id": b.id,
+                "label": b.label,
+                "plan_defaults": b.plan_defaults(),
+                **b.status(),
+            }
             for b in compute.all_backends()
         ],
     }

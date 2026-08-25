@@ -174,6 +174,8 @@ def tmp_backends(tmp_path, monkeypatch):
                         "type": "ssh",
                         "host": "2001:db8::1",
                         "mirror_root": str(tmp_path / "mirror"),
+                        "default_site": "slicepool",
+                        "default_output_site": "stage",
                     },
                     {"id": "local", "type": "ssh", "host": "x"},  # reserved
                     {"id": "weird", "type": "slurm", "host": "y"},  # unknown
@@ -382,3 +384,69 @@ def test_workflow_list_stamps_backend_id(client, monkeypatch):
     data = client.get("/api/workflows").json()
     wf = next(w for w in data["workflows"] if w["run_id"] == "badge-1")
     assert wf["backend"] == "local"
+
+
+def test_plan_defaults_per_backend(tmp_path):
+    from services.backends.local import LocalBackend
+
+    assert LocalBackend().plan_defaults() == {
+        "site": "condorpool",
+        "output_site": "local",
+    }
+    b = _make_backend(
+        tmp_path, default_site="slicepool", default_output_site="stage"
+    )
+    assert b.plan_defaults() == {"site": "slicepool", "output_site": "stage"}
+
+
+def test_project_params_use_backend_plan_defaults(
+    client, tmp_backends, monkeypatch
+):
+    """The Plan form's starting site values come from the active backend."""
+    home = os.environ["HOME"]
+    proj = os.path.join(home, "work", "workflows", "defproj")
+    os.makedirs(proj, exist_ok=True)
+    with open(os.path.join(proj, "workflow_generator.py"), "w") as f:
+        f.write("# gen\n")
+
+    data = client.get("/api/workflows/projects/defproj/params").json()
+    by_dest = {p["dest"]: p["default"] for p in data["plan"]["params"]}
+    assert by_dest == {"site": "condorpool", "output_site": "local"}
+
+    # Switch to an ssh backend with custom defaults: the form follows. The
+    # project must exist under THAT backend's workspace to be discovered.
+    ws_proj = os.path.join(
+        str(tmp_path_of(tmp_backends)), "mirror", "work", "workflows", "defproj"
+    )
+    os.makedirs(ws_proj, exist_ok=True)
+    with open(os.path.join(ws_proj, "workflow_generator.py"), "w") as f:
+        f.write("# gen\n")
+    tmp_backends.set_active_backend_id("fabric-test")
+    try:
+        data = client.get("/api/workflows/projects/defproj/params").json()
+        by_dest = {p["dest"]: p["default"] for p in data["plan"]["params"]}
+        assert by_dest == {"site": "slicepool", "output_site": "stage"}
+    finally:
+        tmp_backends.set_active_backend_id(None)
+
+
+def tmp_path_of(backends_mod):
+    """The tmp dir the tmp_backends fixture built its file in."""
+    import os as _os
+
+    return _os.path.dirname(_os.environ["STUDIO_BACKENDS_FILE"])
+
+
+def test_project_runs_carry_backend_id(client, monkeypatch):
+    home = os.environ["HOME"]
+    run_dir = os.path.join(home, "work", "workflows", "bproj", "run0001")
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "braindump.yml"), "w") as f:
+        f.write("wf_uuid: projrun-1\npegasus_wf_name: bproj\n")
+    with open(
+        os.path.join(home, "work", "workflows", "bproj", "workflow.yml"), "w"
+    ) as f:
+        f.write("pegasus: '5.0'\njobs: []\n")
+    data = client.get("/api/workflows/projects").json()
+    proj = next(p for p in data["projects"] if p["project_id"] == "bproj")
+    assert proj["runs"][0]["backend"] == "local"

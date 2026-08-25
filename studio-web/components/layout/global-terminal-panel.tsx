@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { usePanelStore } from "@/lib/stores/panel-store";
+import {
+  usePanelStore,
+  TERMINAL_HEIGHT_DEFAULT,
+  TERMINAL_HEIGHT_MIN,
+} from "@/lib/stores/panel-store";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { useTools, useStartTool } from "@/lib/hooks/use-tools";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
@@ -11,6 +15,57 @@ import * as api from "@/lib/api/client";
 export function GlobalTerminalPanel() {
   const terminalOpen = usePanelStore((s) => s.terminalOpen);
   const setTerminalOpen = usePanelStore((s) => s.setTerminalOpen);
+  const terminalHeight = usePanelStore((s) => s.terminalHeight);
+  const setTerminalHeight = usePanelStore((s) => s.setTerminalHeight);
+
+  // Drag-to-resize state. The height itself lives in the (persisted) panel
+  // store; xterm reflow needs no wiring here — TerminalView's ResizeObserver
+  // refits and sends the PTY resize whenever the container changes, so a
+  // remote TUI gets its SIGWINCH live while dragging.
+  const dragState = useRef<{ startY: number; startHeight: number } | null>(
+    null
+  );
+  const dragRaf = useRef<number | null>(null);
+  const preMaxHeight = useRef<number | null>(null);
+
+  // Keep ~120px of window for the main content + status bar; mirrors the
+  // CSS maxHeight clamp on the wrapper.
+  const maxPanelHeight = () => window.innerHeight - 120;
+
+  const onHandlePointerDown = (e: React.PointerEvent) => {
+    dragState.current = { startY: e.clientY, startHeight: terminalHeight };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onHandlePointerMove = (e: React.PointerEvent) => {
+    const drag = dragState.current;
+    if (!drag) return;
+    const next = Math.min(
+      maxPanelHeight(),
+      Math.max(
+        TERMINAL_HEIGHT_MIN,
+        drag.startHeight + (drag.startY - e.clientY)
+      )
+    );
+    // One store write per frame: every write reflows xterm and resizes the
+    // PTY over the websocket, so unthrottled mousemove would spam both.
+    if (dragRaf.current !== null) cancelAnimationFrame(dragRaf.current);
+    dragRaf.current = requestAnimationFrame(() => setTerminalHeight(next));
+  };
+  const onHandlePointerUp = (e: React.PointerEvent) => {
+    dragState.current = null;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  };
+
+  const toggleMaximize = () => {
+    const max = maxPanelHeight();
+    if (terminalHeight >= max - 10 && preMaxHeight.current !== null) {
+      setTerminalHeight(preMaxHeight.current);
+      preMaxHeight.current = null;
+    } else {
+      preMaxHeight.current = terminalHeight;
+      setTerminalHeight(max);
+    }
+  };
   const tabs = useToolStore((s) => s.tabs);
   const addTab = useToolStore((s) => s.addTab);
 
@@ -66,9 +121,26 @@ export function GlobalTerminalPanel() {
 
   return (
     <div
-      className="flex flex-col border-t border-line"
-      style={{ height: "300px" }}
+      className="relative flex shrink-0 flex-col border-t border-line"
+      style={{
+        height: terminalHeight,
+        minHeight: TERMINAL_HEIGHT_MIN,
+        maxHeight: "calc(100dvh - 120px)",
+      }}
     >
+      {/* Drag handle: straddles the top border (absolute, so it adds no
+          layout height). Double-click restores the default height. */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize terminal panel"
+        onPointerDown={onHandlePointerDown}
+        onPointerMove={onHandlePointerMove}
+        onPointerUp={onHandlePointerUp}
+        onDoubleClick={() => setTerminalHeight(TERMINAL_HEIGHT_DEFAULT)}
+        className="absolute -top-1 left-0 z-30 h-2 w-full cursor-row-resize touch-none hover:bg-pegasus-500/40"
+      />
+
       {/* Toolbar */}
       <div className="flex items-center justify-between bg-gray-800 px-3 py-1">
         <div className="flex items-center gap-2">
@@ -141,6 +213,28 @@ export function GlobalTerminalPanel() {
           </div>
         </div>
 
+        <span className="flex items-center gap-3">
+        <button
+          onClick={toggleMaximize}
+          className="text-fgsubtle hover:text-white"
+          aria-label="Maximize or restore terminal panel"
+          title="Maximize / restore (drag the top edge to resize)"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="7 9 12 4 17 9" />
+            <polyline points="7 15 12 20 17 15" />
+          </svg>
+        </button>
         <button
           onClick={() => setTerminalOpen(false)}
           className="text-fgsubtle hover:text-white"
@@ -161,6 +255,7 @@ export function GlobalTerminalPanel() {
             <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
+        </span>
       </div>
 
       {/* Terminal content */}

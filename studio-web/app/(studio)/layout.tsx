@@ -19,7 +19,11 @@ export default function StudioLayout({
     <>
       <UserMenu />
       <ToastContainer />
-      <div className="flex h-screen overflow-hidden">
+      {/* h-dvh (not h-screen/100vh): the dynamic viewport height matches what
+          is actually visible, so the terminal panel and status bar can never
+          render below the fold on short windows — with overflow-hidden here
+          there is no scrollbar to reach clipped content. */}
+      <div className="flex h-dvh overflow-hidden">
         <Sidebar />
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex flex-1 overflow-hidden">

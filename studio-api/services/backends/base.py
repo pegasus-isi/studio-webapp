@@ -93,6 +93,15 @@ class ComputeBackend(ABC):
         """
         return list(argv), cwd, dict(env) if env else None
 
+    def plan_defaults(self) -> dict[str, str]:
+        """Default pegasus-plan sites for this backend's Plan/Run forms.
+
+        Which sites exist is the project's site catalog's business; these are
+        just the form's starting values, so a backend whose pool uses a
+        differently-named site doesn't make every Plan start out wrong.
+        """
+        return {"site": "condorpool", "output_site": "local"}
+
     async def stream_events(self, run_dir: str):
         """Live event stream for a run, or ``None`` to use local file logic.
 
