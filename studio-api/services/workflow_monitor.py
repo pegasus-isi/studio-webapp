@@ -12,10 +12,10 @@ from typing import Any, AsyncGenerator
 
 import structlog
 
+from services.backends import active_backend
 from services.event_reader import jobs as event_jobs
 from services.event_reader import read_events
 from services.event_reader import workflow_detail as event_detail
-from services.procutil import communicate_or_kill
 from services.workflow_scanner import get_run_status_async
 
 log = structlog.get_logger()
@@ -148,15 +148,12 @@ async def _poll_stampede(run_dir: str) -> AsyncGenerator[dict[str, Any], None]:
 async def run_pegasus_analyzer(run_dir: str) -> str:
     """Run pegasus-analyzer on a workflow run directory."""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "pegasus-analyzer", run_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        result = await active_backend().exec(
+            ["pegasus-analyzer", run_dir], timeout=60
         )
-        stdout, stderr = await communicate_or_kill(proc, 60)
-        output = stdout.decode("utf-8", errors="replace")
-        if stderr:
-            output += "\n" + stderr.decode("utf-8", errors="replace")
+        output = result.stdout.decode("utf-8", errors="replace")
+        if result.stderr:
+            output += "\n" + result.stderr.decode("utf-8", errors="replace")
         return output
     except FileNotFoundError:
         return "pegasus-analyzer not found"

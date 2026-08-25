@@ -13,7 +13,7 @@ def test_list_workflows_empty(client):
     assert isinstance(data["workflows"], list)
 
 
-def test_list_workflows_with_braindump(client):
+def test_list_workflows_with_braindump(client, monkeypatch):
     """A run dir under ~/work/workflows is discovered; a cloned-repo/test
     fixture braindump elsewhere in the tree is excluded."""
     home = os.environ.get("HOME", "/tmp")
@@ -35,23 +35,17 @@ def test_list_workflows_with_braindump(client):
         f.write("pegasus_wf_name: fixture-should-be-hidden\n")
         f.write("wf_uuid: fixture-uuid\n")
 
-    # discover_runs() walks SCAN_ROOT; point it at our temp workflows tree.
-    import services.workflow_scanner as scanner
+    # discover_runs() walks the backend's scan root; point it at our tree.
+    monkeypatch.setenv("STUDIO_SCAN_DIR", workflows_dir)
 
-    old_root = scanner.SCAN_ROOT
-    scanner.SCAN_ROOT = workflows_dir
-
-    try:
-        resp = client.get("/api/workflows")
-        assert resp.status_code == 200
-        data = resp.json()
-        names = [w["name"] for w in data["workflows"]]
-        assert "test-workflow" in names
-        assert "fixture-should-be-hidden" not in names
-        wf = next(w for w in data["workflows"] if w["name"] == "test-workflow")
-        assert wf["run_id"] == "test-uuid-001"
-    finally:
-        scanner.SCAN_ROOT = old_root
+    resp = client.get("/api/workflows")
+    assert resp.status_code == 200
+    data = resp.json()
+    names = [w["name"] for w in data["workflows"]]
+    assert "test-workflow" in names
+    assert "fixture-should-be-hidden" not in names
+    wf = next(w for w in data["workflows"] if w["name"] == "test-workflow")
+    assert wf["run_id"] == "test-uuid-001"
 
 
 def test_find_generator_resolves_name_variants(tmp_path):
@@ -193,7 +187,6 @@ def test_delete_run_removes_dir_and_db_row(client, monkeypatch):
     the persisted run list."""
     import asyncio
 
-    import services.workflow_scanner as scanner
     from main import db
 
     home = os.environ.get("HOME", "/tmp")
@@ -203,7 +196,7 @@ def test_delete_run_removes_dir_and_db_row(client, monkeypatch):
         f.write("pegasus_wf_name: quickstart\nwf_uuid: del-uuid-1\n")
 
     # Confine the scan root to our temp home so realpath validation passes.
-    monkeypatch.setattr(scanner, "SCAN_ROOT", os.path.join(home, "work"))
+    monkeypatch.setenv("STUDIO_SCAN_DIR", os.path.join(home, "work"))
     asyncio.run(db.upsert_workflow_run(
         run_id="del-uuid-1", name="quickstart", run_dir=run_dir, status="succeeded"
     ))
@@ -219,7 +212,6 @@ def test_delete_run_rejects_path_outside_scan_root(client, monkeypatch, tmp_path
     """A run dir resolving outside the scan root is refused (never rm'd)."""
     import asyncio
 
-    import services.workflow_scanner as scanner
     from main import db
 
     outside = tmp_path / "outside-run"
@@ -227,7 +219,7 @@ def test_delete_run_rejects_path_outside_scan_root(client, monkeypatch, tmp_path
     (outside / "keep.txt").write_text("do not delete\n")
 
     # Scan root is elsewhere, so `outside` is out of bounds.
-    monkeypatch.setattr(scanner, "SCAN_ROOT", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("STUDIO_SCAN_DIR", str(tmp_path / "sandbox"))
     asyncio.run(db.upsert_workflow_run(
         run_id="evil-1", name="x", run_dir=str(outside), status="succeeded"
     ))

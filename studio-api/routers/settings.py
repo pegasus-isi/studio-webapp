@@ -69,6 +69,74 @@ async def get_settings() -> SettingsResponse:
     return SettingsResponse(llm=llm_resp, installed_tools=tool_ids)
 
 
+# --- Execution backend (compute target for workflow actions) ---
+
+
+class ExecutionBackendRequest(BaseModel):
+    """Selection for PUT /api/settings/execution-backend."""
+
+    backend: str
+
+
+@router.get("/execution-backend")
+async def get_execution_backend() -> dict:
+    """The active compute backend plus everything configured."""
+    from services import backends as compute
+
+    active = compute.active_backend()
+    return {
+        "backend": active.id,
+        "backends": [
+            {"id": b.id, "label": b.label, **b.status()}
+            for b in compute.all_backends()
+        ],
+    }
+
+
+@router.put("/execution-backend")
+async def put_execution_backend(req: ExecutionBackendRequest) -> dict:
+    """Switch the compute backend for workflow actions.
+
+    The chat-engine pattern: refuse to switch onto a target that fails its
+    reachability probe, so a typo'd host can't silently break every
+    workflow action."""
+    from fastapi import HTTPException
+
+    from main import db
+    from services import backends as compute
+
+    target = compute.get_backend(req.backend)
+    if target is None:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown backend: {req.backend}"
+        )
+    err = await target.probe()
+    if err:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Backend {req.backend} is unreachable: {err}",
+        )
+
+    previous = compute.active_backend()
+    await db.set_setting("execution_backend", req.backend)
+    compute.set_active_backend_id(req.backend)
+    if previous.id != target.id:
+        try:
+            await previous.stop()
+        except Exception as e:
+            log.warning(
+                "backend_stop_failed", backend=previous.id, error=str(e)
+            )
+        try:
+            await target.start()
+        except Exception as e:
+            log.warning(
+                "backend_start_failed", backend=target.id, error=str(e)
+            )
+    log.info("execution_backend_switched", backend=req.backend)
+    return await get_execution_backend()
+
+
 @router.put("", response_model=SettingsResponse)
 async def update_settings(req: LLMConfigRequest) -> SettingsResponse:
     """Legacy LLM-config save. Routes through the same guarded path as

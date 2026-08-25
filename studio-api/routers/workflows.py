@@ -20,8 +20,8 @@ from models import (
     WorkflowProjectRunResponse,
     WorkflowRunResponse,
 )
+from services.backends import RunRef, active_backend
 from services.generator_introspect import PLAN_PARAMS, introspect_generator
-from services.procutil import communicate_or_kill
 from services.workflow_monitor import (
     get_workflow_detail,
     get_workflow_jobs,
@@ -67,11 +67,6 @@ log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
-
 _CMD_TIMEOUT = 300  # 5 minutes
 
 
@@ -80,8 +75,8 @@ async def list_workflows() -> WorkflowListResponse:
     """List discovered workflow runs from the workspace."""
     from main import db
 
-    # discover_runs scans SCAN_ROOT and excludes cloned-repo / test-fixture
-    # braindumps, so only genuine runs are listed.
+    # discover_runs scans the backend's scan root and excludes cloned-repo /
+    # test-fixture braindumps, so only genuine runs are listed.
     runs = await discover_runs_async()
     workflows = []
 
@@ -193,20 +188,19 @@ async def generate_workflow(
     cmd = ["python3", generator_file, *req.args]
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=project_dir,
+        # A remote backend needs the project's local edits on the submit
+        # host before running its generator there (no-op for local).
+        await active_backend().push_project(project_dir)
+        result = await active_backend().exec(
+            cmd, cwd=project_dir, timeout=_CMD_TIMEOUT
         )
-        stdout, stderr = await communicate_or_kill(proc, _CMD_TIMEOUT)
-        out = stdout.decode("utf-8", errors="replace")
-        err = stderr.decode("utf-8", errors="replace")
+        out = result.stdout.decode("utf-8", errors="replace")
+        err = result.stderr.decode("utf-8", errors="replace")
         output = out
         if err:
             output += f"\nstderr:\n{err}"
 
-        if proc.returncode == 0:
+        if result.returncode == 0:
             log.info("workflow_generated", project_id=project_id)
             return {"status": "generated", "output": output}
         else:
@@ -314,20 +308,19 @@ async def plan_workflow(
     ]
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=project_dir,
+        # Ship local project edits to the backend before planning there
+        # (no-op for local).
+        await active_backend().push_project(project_dir)
+        result = await active_backend().exec(
+            cmd, cwd=project_dir, timeout=_CMD_TIMEOUT
         )
-        stdout, stderr = await communicate_or_kill(proc, _CMD_TIMEOUT)
-        out = stdout.decode("utf-8", errors="replace")
-        err = stderr.decode("utf-8", errors="replace")
+        out = result.stdout.decode("utf-8", errors="replace")
+        err = result.stderr.decode("utf-8", errors="replace")
         output = out
         if err:
             output += f"\nstderr:\n{err}"
 
-        if proc.returncode == 0:
+        if result.returncode == 0:
             # Capture the planned run dir so the Run action can submit it via
             # pegasus-run without re-planning.
             from services.workflow_submitter import (
@@ -412,6 +405,15 @@ async def submit_project(
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
 
+    try:
+        await active_backend().push_project(proj["project_dir"])
+    except Exception as e:
+        return {
+            "project_id": project_id,
+            "status": "error",
+            "output": f"Project push failed: {e}",
+        }
+
     result = await run_planned_workflow(
         proj["project_dir"],
         run_dir=req.run_dir,
@@ -429,14 +431,20 @@ async def submit(
     output_site: str = Query("local", description="Output site"),
 ) -> dict:
     """Plan and submit a Pegasus workflow."""
-    # Validate path is in workspace
+    # Validate path is in the active backend's workspace
+    workspace_root = active_backend().workspace_root()
     resolved = os.path.realpath(os.path.expanduser(workflow_dir))
-    root = os.path.realpath(WORKSPACE_ROOT)
+    root = os.path.realpath(workspace_root)
     if not resolved.startswith(root + os.sep) and resolved != root:
         raise HTTPException(
             status_code=403,
-            detail=f"Workflow dir must be inside {WORKSPACE_ROOT}",
+            detail=f"Workflow dir must be inside {workspace_root}",
         )
+
+    try:
+        await active_backend().push_project(resolved)
+    except Exception as e:
+        return {"status": "error", "output": f"Project push failed: {e}"}
 
     result = await submit_workflow(resolved, site=site, output_site=output_site)
     await _notify_run_started(result)
@@ -584,7 +592,7 @@ def _find_run_workflow_file(run_dir: str) -> str | None:
         if wf:
             return wf
         parent = os.path.dirname(d)
-        if parent == d or not parent.startswith(WORKSPACE_ROOT):
+        if parent == d or not parent.startswith(active_backend().workspace_root()):
             break
         d = parent
     return None
@@ -613,24 +621,21 @@ async def run_graph_json(run_id: str, include_pegasus: bool = False) -> dict:
     By default returns the abstract workflow (user jobs only). With
     `include_pegasus=true` returns the executable DAG, which also includes the
     Pegasus auxiliary jobs (stage-in/out, create-dir, cleanup, register)."""
-    runs = await discover_runs_async()
-    run = next((r for r in runs if r["run_id"] == run_id), None)
-    if not run or not os.path.isdir(run["run_dir"]):
-        raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
+    run_dir = (await _resolve_run(run_id)).run_dir
 
-    dag = _find_dag_file(run["run_dir"]) if include_pegasus else None
+    dag = _find_dag_file(run_dir) if include_pegasus else None
     if dag:
         graph = _parse_executable_dag(dag)
         graph["name"] = os.path.basename(os.path.dirname(dag)) or run_id
     else:
-        wf = _find_run_workflow_file(run["run_dir"])
+        wf = _find_run_workflow_file(run_dir)
         if not wf:
             raise HTTPException(
                 status_code=404, detail="No workflow file for this run"
             )
         graph = _parse_workflow_graph(wf)
 
-    jobs = await get_workflow_jobs(run["run_dir"])
+    jobs = await get_workflow_jobs(run_dir)
     by_node: dict[str, dict] = {n["id"]: n for n in graph["nodes"]}
     for j in jobs:
         exec_id = str(j.get("job_id") or "")
@@ -666,36 +671,36 @@ def _derive_workflow_status(nodes: list[dict]) -> str | None:
     return None
 
 
-async def _resolve_run_dir(run_id: str) -> str:
-    """Resolve a run's submit dir from the DB, falling back to a filesystem
-    scan (BE-7).
+async def _lookup_run_dir(run_id: str) -> str | None:
+    """Locate a run's submit dir: the DB first, then a filesystem scan (BE-7).
 
     Several endpoints looked up ``run_dir`` in the DB only, so they 404'd for
     any run not yet upserted by ``GET /api/workflows`` — a fresh DB after a
-    restart, a pruned row, or a direct deep link. This mirrors the fallback
-    ``get_workflow``/``estimate`` already had. Raises 404 if the run is unknown
-    or its directory is gone from disk."""
+    restart, a pruned row, or a direct deep link. Every run-addressed endpoint
+    (delete and graph.json included) resolves through here so none can drift
+    back to a DB-only lookup."""
     from main import db
 
-    run_dir = None
     for r in await db.list_workflow_runs():
         if r["run_id"] == run_id:
-            run_dir = r["run_dir"]
-            break
-    if not run_dir:
-        scanned = await discover_runs_async()
-        run_dir = next(
-            (r["run_dir"] for r in scanned if r["run_id"] == run_id), None
-        )
+            return r["run_dir"]
+    scanned = await discover_runs_async()
+    return next((r["run_dir"] for r in scanned if r["run_id"] == run_id), None)
+
+
+async def _resolve_run(run_id: str) -> RunRef:
+    """Resolve a run id to its backend + on-disk run dir. Raises 404 if the
+    run is unknown or its directory is gone from disk."""
+    run_dir = await _lookup_run_dir(run_id)
     if not run_dir or not os.path.isdir(run_dir):
         raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
-    return run_dir
+    return RunRef(backend=active_backend(), run_dir=run_dir)
 
 
 @router.get("/{run_id}")
 async def get_workflow(run_id: str) -> dict:
     """Get detailed workflow info by run ID."""
-    run_dir = await _resolve_run_dir(run_id)
+    run_dir = (await _resolve_run(run_id)).run_dir
     detail = await get_workflow_detail(run_dir)
     detail["run_id"] = run_id
     detail["run_dir"] = run_dir
@@ -705,7 +710,7 @@ async def get_workflow(run_id: str) -> dict:
 @router.get("/{run_id}/jobs")
 async def get_jobs(run_id: str) -> dict:
     """Get job-level status for a workflow."""
-    run_dir = await _resolve_run_dir(run_id)
+    run_dir = (await _resolve_run(run_id)).run_dir
     jobs = await get_workflow_jobs(run_dir)
     return {"run_id": run_id, "jobs": jobs}
 
@@ -713,7 +718,7 @@ async def get_jobs(run_id: str) -> dict:
 @router.get("/{run_id}/events")
 async def workflow_events(run_id: str) -> StreamingResponse:
     """SSE stream of real-time workflow monitoring events."""
-    run_dir = await _resolve_run_dir(run_id)
+    run_dir = (await _resolve_run(run_id)).run_dir
 
     async def event_stream():
         async for event in tail_workflow_events(run_dir):
@@ -734,7 +739,7 @@ async def workflow_events(run_id: str) -> StreamingResponse:
 @router.get("/{run_id}/estimate")
 async def estimate_workflow(run_id: str) -> dict:
     """Estimated remaining wall-clock for a run (historical-mean heuristic)."""
-    run_dir = await _resolve_run_dir(run_id)
+    run_dir = (await _resolve_run(run_id)).run_dir
 
     from services.runtime_estimate import estimate_remaining
 
@@ -746,7 +751,7 @@ async def estimate_workflow(run_id: str) -> dict:
 @router.post("/{run_id}/analyze")
 async def analyze_workflow(run_id: str) -> dict:
     """Run pegasus-analyzer on a workflow."""
-    run_dir = await _resolve_run_dir(run_id)
+    run_dir = (await _resolve_run(run_id)).run_dir
     output = await run_pegasus_analyzer(run_dir)
     return {"run_id": run_id, "analysis": output}
 
@@ -763,7 +768,7 @@ async def cancel_workflow_run(run_id: str) -> dict:
     """
     from services.workflow_submitter import cancel_workflow
 
-    run_dir = await _resolve_run_dir(run_id)
+    run_dir = (await _resolve_run(run_id)).run_dir
     result = await cancel_workflow(run_dir)
     if result.get("status") == "error":
         # Already finished or never queued is the common case, and is not a
@@ -785,28 +790,19 @@ async def delete_workflow(run_id: str) -> dict:
     the scan root (the user's home tree), never an arbitrary path.
     """
     from main import db
-    from services.workflow_scanner import SCAN_ROOT
+    from services.workflow_scanner import scan_root
     from services.workflow_submitter import delete_run
 
-    # Resolve the run dir from the DB, falling back to a fresh scan.
-    run_dir = None
-    for r in await db.list_workflow_runs():
-        if r["run_id"] == run_id:
-            run_dir = r["run_dir"]
-            break
-    if not run_dir:
-        for r in await discover_runs_async():
-            if r["run_id"] == run_id:
-                run_dir = r["run_dir"]
-                break
-
+    # Same lookup every run endpoint uses — but tolerate a missing directory:
+    # a half-deleted run must still be deletable.
+    run_dir = await _lookup_run_dir(run_id)
     if not run_dir:
         raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
 
     if os.path.isdir(run_dir):
         # Safety: confine deletion to the scan root.
         resolved = os.path.realpath(run_dir)
-        root = os.path.realpath(SCAN_ROOT)
+        root = os.path.realpath(scan_root())
         if resolved != root and not resolved.startswith(root + os.sep):
             raise HTTPException(
                 status_code=403, detail="Run directory is outside the workspace"

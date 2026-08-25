@@ -12,14 +12,9 @@ import time
 
 import structlog
 
-from services.procutil import communicate_or_kill
+from services.backends import active_backend
 
 log = structlog.get_logger()
-
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
 
 _CMD_TIMEOUT = 300  # 5 minutes
 
@@ -63,21 +58,17 @@ async def submit_workflow(
     ]
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=workflow_dir,
+        result = await active_backend().exec(
+            cmd, cwd=workflow_dir, timeout=_CMD_TIMEOUT
         )
-        stdout, stderr = await communicate_or_kill(proc, _CMD_TIMEOUT)
 
-        out = stdout.decode("utf-8", errors="replace")
-        err = stderr.decode("utf-8", errors="replace")
+        out = result.stdout.decode("utf-8", errors="replace")
+        err = result.stderr.decode("utf-8", errors="replace")
         output = out
         if err:
             output += f"\nstderr:\n{err}"
 
-        if proc.returncode == 0:
+        if result.returncode == 0:
             # Try to extract run directory from output
             run_dir = _extract_run_dir(out) or _newest_run_dir(workflow_dir)
             log.info(
@@ -97,7 +88,7 @@ async def submit_workflow(
             log.warning(
                 "workflow_submit_failed",
                 workflow_dir=workflow_dir,
-                returncode=proc.returncode,
+                returncode=result.returncode,
             )
             return {"status": "error", "output": output}
 
@@ -148,22 +139,19 @@ async def run_planned_workflow(
         )
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "pegasus-run", target,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        result = await active_backend().exec(
+            ["pegasus-run", target], timeout=_CMD_TIMEOUT
         )
-        stdout, stderr = await communicate_or_kill(proc, _CMD_TIMEOUT)
-        out = stdout.decode("utf-8", errors="replace")
-        err = stderr.decode("utf-8", errors="replace")
+        out = result.stdout.decode("utf-8", errors="replace")
+        err = result.stderr.decode("utf-8", errors="replace")
         output = out + (f"\nstderr:\n{err}" if err else "")
 
-        if proc.returncode == 0:
+        if result.returncode == 0:
             log.info("workflow_run_submitted", run_dir=target, site=site)
             return {"status": "submitted", "run_dir": target, "output": output}
 
         log.warning(
-            "workflow_run_failed", run_dir=target, returncode=proc.returncode
+            "workflow_run_failed", run_dir=target, returncode=result.returncode
         )
         return {"status": "error", "run_dir": target, "output": output}
 
@@ -178,17 +166,14 @@ async def run_planned_workflow(
 async def cancel_workflow(run_dir: str) -> dict[str, str]:
     """Cancel a running workflow using pegasus-remove."""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "pegasus-remove", run_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        result = await active_backend().exec(
+            ["pegasus-remove", run_dir], timeout=60
         )
-        stdout, stderr = await communicate_or_kill(proc, 60)
-        output = stdout.decode("utf-8", errors="replace")
-        if stderr:
-            output += "\n" + stderr.decode("utf-8", errors="replace")
+        output = result.stdout.decode("utf-8", errors="replace")
+        if result.stderr:
+            output += "\n" + result.stderr.decode("utf-8", errors="replace")
 
-        if proc.returncode == 0:
+        if result.returncode == 0:
             log.info("workflow_cancelled", run_dir=run_dir)
             return {"status": "cancelled", "output": output}
         return {"status": "error", "output": output}
@@ -238,12 +223,7 @@ async def delete_run(run_dir: str) -> dict[str, str]:
     """
     if _is_submitted(run_dir):
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "pegasus-remove", run_dir,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await communicate_or_kill(proc, 60)
+            await active_backend().exec(["pegasus-remove", run_dir], timeout=60)
         except (FileNotFoundError, asyncio.TimeoutError, OSError) as e:
             # A cancel failure shouldn't block deletion — log and proceed.
             log.warning("delete_run_cancel_failed", run_dir=run_dir, error=str(e))

@@ -83,6 +83,35 @@ export async function updateRegistrySettings(data: {
   });
 }
 
+// --- Execution backend (compute target for workflow actions) ---
+
+export interface ExecutionBackendInfo {
+  id: string;
+  label: string;
+  available: boolean;
+  error: string;
+  type?: string;
+  host?: string;
+  last_sync?: number | null;
+  sync_interval?: number;
+}
+
+export interface ExecutionBackendStatus {
+  backend: string;
+  backends: ExecutionBackendInfo[];
+}
+
+export async function getExecutionBackend() {
+  return request<ExecutionBackendStatus>("/settings/execution-backend");
+}
+
+export async function updateExecutionBackend(backend: string) {
+  return request<ExecutionBackendStatus>("/settings/execution-backend", {
+    method: "PUT",
+    body: JSON.stringify({ backend }),
+  });
+}
+
 // --- LLM ---
 
 export interface LLMConfig {

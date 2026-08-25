@@ -17,12 +17,24 @@ from services.event_reader import workflow_status as event_workflow_status
 
 log = structlog.get_logger()
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
 
-WORKFLOWS_DIR = os.path.join(WORKSPACE_ROOT, "workflows")
+def workspace_root() -> str:
+    """The active backend's workspace root, recomputed per call.
+
+    These used to be module constants frozen at import time — the bug class
+    that froze SCAN_ROOT under the test harness and that
+    knowledge/layout.py warns about. Always resolve through the backend at
+    call time.
+    """
+    from services.backends import active_backend
+
+    return active_backend().workspace_root()
+
+
+def workflows_dir() -> str:
+    from services.backends import active_backend
+
+    return active_backend().workflows_dir()
 
 # Known workflow-generator filenames. pegasus-isi repos are inconsistent: most
 # use the underscore form, but quickstart-workflow ships the hyphenated name,
@@ -75,13 +87,16 @@ def find_generator(project_dir: str) -> str | None:
     return None
 
 
-# Root under which discover_runs() looks for Pegasus run directories. Defaults
-# to the whole home dir so runs submitted outside $HOME/work are still found.
-# Override with STUDIO_SCAN_DIR.
-SCAN_ROOT = os.environ.get(
-    "STUDIO_SCAN_DIR",
-    os.environ.get("HOME", "/tmp"),
-)
+def scan_root() -> str:
+    """Root under which discover_runs() looks for Pegasus run directories.
+
+    The active backend's watched tree — the whole home dir by default so runs
+    submitted outside $HOME/work are still found; STUDIO_SCAN_DIR overrides
+    it for the local backend. Resolved per call, never frozen at import.
+    """
+    from services.backends import active_backend
+
+    return active_backend().scan_root()
 
 # Path fragments that mark a braindump.yml as NOT a real user run — e.g. the
 # Pegasus source tree's own analyzer/status test fixtures, dependency installs,
@@ -107,13 +122,13 @@ def discover_runs(workspace: str | None = None) -> list[dict[str, Any]]:
     """Find all Pegasus run directories under the scan root.
 
     Looks for braindump.yml files which Pegasus creates in every run directory
-    after pegasus-plan. Scans SCAN_ROOT (the home dir by default, overridable
-    via STUDIO_SCAN_DIR) and skips paths that belong to cloned repos or test
+    after pegasus-plan. Scans the backend's scan root (the home dir by
+    default, overridable via STUDIO_SCAN_DIR) and skips paths that belong to cloned repos or test
     fixtures, so unrelated braindumps don't show up as runs.
 
     Returns list of dicts with keys: run_id, name, run_dir, status.
     """
-    workspace = workspace or SCAN_ROOT
+    workspace = workspace or scan_root()
     runs: list[dict[str, Any]] = []
 
     # Pegasus creates braindump.yml in the submit directory
@@ -161,7 +176,7 @@ def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
     unsubmitted project metadata with any submitted runs found inside the
     project tree.
     """
-    workspace = workspace or WORKFLOWS_DIR
+    workspace = workspace or workflows_dir()
     projects: list[dict[str, Any]] = []
 
     if not os.path.isdir(workspace):
@@ -331,14 +346,15 @@ def _pegasus_status(run_dir: str) -> str | None:
     unavailable, times out, or reports no DAG (not yet submitted)."""
     import subprocess
 
+    from services.backends import active_backend
+
     try:
-        proc = subprocess.run(
-            ["pegasus-status", "-l", run_dir],
-            capture_output=True, text=True, timeout=15,
+        result = active_backend().exec_sync(
+            ["pegasus-status", "-l", run_dir], timeout=15
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
-    out = proc.stdout or ""
+    out = result.stdout.decode("utf-8", errors="replace")
     # Summary line, e.g. "Summary: 1 DAG total (Success:1)" / "(Failure:1)" /
     # "(Running:1)". Fall back to the per-DAG STATE column word.
     low = out.lower()

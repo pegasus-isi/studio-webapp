@@ -902,6 +902,103 @@ function ChatTab() {
   );
 }
 
+/* ─── Execution backend (compute target for workflow actions) ─── */
+
+function ExecutionBackendSection() {
+  const [status, setStatus] = useState<api.ExecutionBackendStatus | null>(
+    null
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [switching, setSwitching] = useState(false);
+
+  useEffect(() => {
+    api
+      .getExecutionBackend()
+      .then(setStatus)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  const select = async (id: string) => {
+    if (!status || status.backend === id || switching) return;
+    setSwitching(true);
+    setError(null);
+    try {
+      setStatus(await api.updateExecutionBackend(id));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  // Only the local backend exists (no backends file) — nothing to choose,
+  // so keep the tab exactly as it was.
+  if (!status || status.backends.length <= 1) return null;
+
+  return (
+    <div className="rounded-md border border-line p-4">
+      <label className="block text-sm font-medium text-fg">
+        Execution Backend
+      </label>
+      <p className="mt-1 text-xs text-fgsubtle">
+        Where workflow actions (Generate, Plan, Run) and pool queries execute.
+        Remote backends run them over SSH on the configured submit host and
+        mirror the run directories back for monitoring. Hosts are configured
+        in <code>~/.studio/backends.json</code>.
+      </p>
+      {error && (
+        <div className="mt-2 rounded-md bg-red-50 p-2 text-sm text-red-700 dark:bg-rose-500/10 dark:text-rose-400">
+          {error}
+        </div>
+      )}
+      <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+        {status.backends.map((b) => (
+          <button
+            key={b.id}
+            onClick={() => select(b.id)}
+            disabled={switching}
+            className={cn(
+              "flex-1 rounded-lg border p-4 text-left transition-colors",
+              status.backend === b.id
+                ? "border-pegasus-600 bg-pegasus-50 dark:bg-pegasus-400/10"
+                : "border-line bg-surface hover:border-pegasus-300"
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold text-fg">{b.label}</span>
+              <span className="flex items-center gap-2">
+                {status.backend === b.id && (
+                  <span className="rounded-full bg-pegasus-600 px-2 py-0.5 text-xs font-medium text-white">
+                    active
+                  </span>
+                )}
+                <span
+                  className={cn(
+                    "h-2 w-2 rounded-full",
+                    b.available ? "bg-emerald-500" : "bg-amber-500"
+                  )}
+                />
+              </span>
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+              {b.id === "local"
+                ? "Run Pegasus and HTCondor on this machine."
+                : `SSH to ${b.host ?? "the remote host"} — runs mirror back ${
+                    b.sync_interval
+                      ? `every ${b.sync_interval}s`
+                      : "continuously"
+                  }.`}
+            </p>
+            {!b.available && b.error && (
+              <p className="mt-1 text-xs text-fgsubtle">{b.error}</p>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Container registry (persisted; used by the Build Image action) ─── */
 
 function RegistrySection() {
@@ -1023,6 +1120,9 @@ function PegasusOptionsTab() {
         <strong>Run</strong> form, so they can differ per workflow. This tab
         holds the container registry used when building workflow images.
       </p>
+
+      {/* Execution backend — shown only when remote backends are configured */}
+      <ExecutionBackendSection />
 
       {/* Container registry — persisted; drives the Build Image action */}
       <RegistrySection />

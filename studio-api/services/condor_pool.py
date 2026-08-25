@@ -30,6 +30,8 @@ from typing import Any
 
 import structlog
 
+from services.backends import active_backend
+
 log = structlog.get_logger()
 
 _CMD_TIMEOUT = 20
@@ -84,16 +86,15 @@ def _lower_keys(ad: dict[str, Any]) -> dict[str, Any]:
 async def _run_json(
     cmd: list[str], timeout: float = _CMD_TIMEOUT
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
-    """Run a condor CLI command with -json output. Returns (ads, error)."""
+    """Run a condor CLI command with -json output. Returns (ads, error).
+
+    Routed through the active compute backend, so a remote backend makes the
+    pool panels report the remote pool. Side benefit: the old bare wait_for
+    left a timed-out condor_status running; backend.exec kills it
+    (procutil's guarantee).
+    """
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
+        result = await active_backend().exec(cmd, timeout=timeout)
     except FileNotFoundError:
         return None, f"{cmd[0]} not found"
     except asyncio.TimeoutError:
@@ -101,11 +102,11 @@ async def _run_json(
     except OSError as e:
         return None, f"{cmd[0]} failed: {e}"
 
-    if proc.returncode != 0:
-        err = stderr.decode("utf-8", errors="replace").strip()
+    if result.returncode != 0:
+        err = result.stderr.decode("utf-8", errors="replace").strip()
         return None, err.splitlines()[0][:200] if err else f"{cmd[0]} failed"
 
-    text = stdout.decode("utf-8", errors="replace").strip()
+    text = result.stdout.decode("utf-8", errors="replace").strip()
     if not text:
         # condor_status/condor_q print nothing at all for an empty result.
         return [], None

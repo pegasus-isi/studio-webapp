@@ -1,0 +1,137 @@
+"""Compute backend abstraction — where and how workflow commands execute.
+
+The studio's entire coupling to the execution environment reduces to two
+primitives (see docs/fabric-local-studio-plan.md):
+
+1. a command transport — how ``pegasus-*`` / ``condor_*`` argv runs, and
+2. a run-tree provider — where the watched file tree (braindump.yml, event
+   logs, stampede DBs, kickstart outputs) lives on the *local* filesystem.
+
+Everything else (event parsing, DAG rendering, status resolution) reads local
+files and stays backend-agnostic. A remote backend therefore does not
+reimplement monitoring: it executes commands elsewhere and mirrors the remote
+run tree into ``scan_root()``, and the existing readers work unchanged.
+
+Exception contract for ``exec``/``exec_sync``: callers keep their existing
+``except FileNotFoundError`` ("binary not found") and timeout handling, so
+implementations must surface those *same* exception types rather than
+inventing an error-result shape — a remote backend maps its own failure modes
+(exit 127, dropped connection) onto them.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+
+@dataclass
+class ExecResult:
+    """Outcome of a completed (not timed-out) backend command."""
+
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+
+
+class ComputeBackend(ABC):
+    """One place workflows can execute (this machine, an SSH submit host, …)."""
+
+    id: str = ""
+    label: str = ""
+
+    # -- primitive 1: command transport ---------------------------------
+
+    @abstractmethod
+    async def exec(
+        self,
+        argv: list[str] | tuple[str, ...],
+        *,
+        cwd: str | None = None,
+        timeout: float,
+    ) -> ExecResult:
+        """Run ``argv`` where this backend executes workflows.
+
+        Raises ``FileNotFoundError`` if the binary is absent and
+        ``asyncio.TimeoutError`` on timeout (with the work actually stopped,
+        per ``procutil.communicate_or_kill``'s guarantee).
+        """
+
+    @abstractmethod
+    def exec_sync(
+        self,
+        argv: list[str] | tuple[str, ...],
+        *,
+        cwd: str | None = None,
+        timeout: float,
+    ) -> ExecResult:
+        """Blocking variant for sync call paths (run in a thread executor).
+
+        Raises ``FileNotFoundError``, ``subprocess.TimeoutExpired`` or
+        ``OSError`` — the set ``_pegasus_status`` has always handled.
+        """
+
+    # -- primitive 2: run-tree provider ---------------------------------
+
+    @abstractmethod
+    def scan_root(self) -> str:
+        """Local directory under which this backend's run dirs appear.
+
+        Recomputed per call — never cache at import time (the frozen
+        ``SCAN_ROOT`` constant this replaces broke under the test harness;
+        see the note that used to live in main.py's lifespan).
+        """
+
+    @abstractmethod
+    def workspace_root(self) -> str:
+        """Local root of this backend's project workspace (…/workflows)."""
+
+    def workflows_dir(self) -> str:
+        import os
+
+        return os.path.join(self.workspace_root(), "workflows")
+
+    def to_remote(self, path: str) -> str:
+        """Translate a local (mirror) path to the backend's own path."""
+        return path
+
+    def to_local(self, path: str) -> str:
+        """Translate a backend path to its local (mirror) equivalent."""
+        return path
+
+    # -- sync + lifecycle (no-ops for a local backend) -------------------
+
+    async def push_project(self, project_dir: str) -> None:
+        """Make a local project directory available where commands run."""
+
+    async def start(self) -> None:
+        """Open transports / start sync loops."""
+
+    async def stop(self) -> None:
+        """Tear down whatever ``start`` opened."""
+
+    async def probe(self) -> str | None:
+        """Active reachability check used before switching to this backend.
+
+        ``None`` means healthy; a short error string otherwise. The local
+        backend is trivially healthy.
+        """
+        return None
+
+    def status(self) -> dict:
+        """Reachability in the same ``{available, error}`` shape
+        ``condor_pool`` summaries use, so the UI needs nothing new."""
+        return {"available": True, "error": ""}
+
+
+@dataclass
+class RunRef:
+    """A resolved run: which backend owns it and its local run directory.
+
+    Today every run belongs to the single active backend; carrying the
+    backend now means the run-addressed endpoints don't change shape again
+    when remote backends land.
+    """
+
+    backend: ComputeBackend
+    run_dir: str

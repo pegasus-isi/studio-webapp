@@ -297,20 +297,37 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # alerts via `engine.notify(...)`.
     from services.notification_engine import engine as notification_engine
 
-    # Watch the SAME root the run list scans (STUDIO_SCAN_DIR, else $HOME), not
-    # $HOME/work — otherwise a run submitted outside ~/work is listed but never
-    # produces a completed/failed notification (BE-8). Compute it here at
-    # startup (reading the env now) rather than importing workflow_scanner's
-    # SCAN_ROOT, which is frozen at import time: under the test harness that
-    # constant can freeze to the real $HOME before HOME is patched, which would
-    # point the scan at the developer's entire home directory.
-    scan_root = os.environ.get("STUDIO_SCAN_DIR") or os.environ.get("HOME", "/tmp")
-    notification_engine.start(db, scan_root)
+    # Watch the SAME root the run list scans, not $HOME/work — otherwise a run
+    # submitted outside ~/work is listed but never produces a completed/failed
+    # notification (BE-8). scan_root() resolves through the active compute
+    # backend at call time, so this no longer has to dodge an import-frozen
+    # constant (services/backends replaced workflow_scanner.SCAN_ROOT).
+    from services.workflow_scanner import scan_root
+
+    notification_engine.start(db, scan_root())
     await notification_engine.refresh_prefs()
+
+    # Apply the persisted compute-backend selection and start it (mirror
+    # sync loops for a remote backend; no-ops for local). Failures degrade —
+    # the backend reports unavailable instead of blocking startup.
+    from services import backends as compute_backends
+
+    stored_backend = await db.get_setting("execution_backend", "")
+    if stored_backend:
+        compute_backends.set_active_backend_id(stored_backend)
+    _backend = compute_backends.active_backend()
+    try:
+        await _backend.start()
+    except Exception as e:
+        log.warning("backend_start_failed", backend=_backend.id, error=str(e))
 
     yield
     # Cleanup terminal sessions and running tool processes
     await notification_engine.stop()
+    try:
+        await compute_backends.active_backend().stop()
+    except Exception as e:
+        log.warning("backend_stop_failed", error=str(e))
     from services.opencode_engine import engine as opencode_engine
 
     await opencode_engine.stop()
