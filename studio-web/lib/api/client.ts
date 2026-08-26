@@ -565,6 +565,27 @@ export function runOutputFileUrl(
   );
 }
 
+// --- Runtime failure diagnosis (#241, Phase 5) ---
+
+export interface DiagnosisCard {
+  kind: "job" | "held";
+  /** The step that failed, named as the workflow names it. "" for holds. */
+  step: string;
+  /** What went wrong, in plain language. */
+  cause: string;
+  /** What to do about it. Never empty — a cause without an action isn't help. */
+  action: string;
+  exitcode: number | string | null;
+  /** Raw stderr or hold reason. Kept, never led with. */
+  technical: string;
+}
+
+export async function getRunDiagnosis(runId: string) {
+  return request<{ run_id: string; cards: DiagnosisCard[]; total: number }>(
+    `/workflows/${encodeURIComponent(runId)}/diagnosis`
+  );
+}
+
 export interface RunEstimate {
   remaining_seconds: number;
   method: string;
