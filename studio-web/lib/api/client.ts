@@ -750,6 +750,83 @@ export async function getAgents() {
 
 // --- Files ---
 
+// --- Data upload (#241, Phase 2) ---
+
+export interface UploadLimit {
+  max_bytes: number;
+  free_bytes: number;
+  /** Absolute path of the default upload directory, for display. */
+  data_dir: string;
+}
+
+export interface UploadedFile {
+  path: string;
+  name: string;
+  size: number;
+  /** Workspace-relative — what to show, and what to paste into a run field. */
+  relative_path: string;
+}
+
+export async function getUploadLimit() {
+  return request<UploadLimit>("/files/upload-limit");
+}
+
+/**
+ * Upload one file, reporting progress.
+ *
+ * XMLHttpRequest rather than fetch: fetch cannot report *upload* progress, and
+ * a data file large enough to matter is exactly the case where a progress bar
+ * is the difference between waiting and assuming it hung.
+ */
+export function uploadFile(
+  file: File,
+  opts: {
+    dest?: string;
+    onProgress?: (fraction: number) => void;
+    signal?: AbortSignal;
+  } = {}
+): Promise<UploadedFile> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (opts.dest) form.append("dest", opts.dest);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", apiUrl("files/upload"));
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) opts.onProgress?.(e.loaded / e.total);
+    };
+
+    xhr.onload = () => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(xhr.responseText);
+      } catch {
+        parsed = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(parsed as UploadedFile);
+        return;
+      }
+      // Surface the backend's message (size limit, disk full, bad name) —
+      // those are written for the user and are the whole point of the errors.
+      const detail =
+        parsed && typeof (parsed as { detail?: unknown }).detail === "string"
+          ? (parsed as { detail: string }).detail
+          : `Upload failed (${xhr.status})`;
+      reject(new Error(detail));
+    };
+
+    xhr.onerror = () =>
+      reject(new Error("Upload failed — check your connection and try again."));
+    xhr.onabort = () => reject(new Error("Upload cancelled"));
+    opts.signal?.addEventListener("abort", () => xhr.abort());
+
+    xhr.send(form);
+  });
+}
+
 export interface FileEntry {
   name: string;
   type: string;
@@ -760,6 +837,13 @@ export interface FileEntry {
 export async function listFiles(path = "") {
   const q = path ? `?path=${encodeURIComponent(path)}` : "";
   return request<{ path: string; entries: FileEntry[] }>(`/files${q}`);
+}
+
+export async function deleteFile(path: string) {
+  return request<{ status: string }>(
+    `/files?path=${encodeURIComponent(path)}`,
+    { method: "DELETE" }
+  );
 }
 
 export async function readFile(path: string) {

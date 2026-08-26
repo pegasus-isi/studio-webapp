@@ -10,7 +10,7 @@ import shutil
 from datetime import datetime, timezone
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
 from models import (
     FileEntry,
@@ -31,6 +31,25 @@ WORKSPACE_ROOT = os.environ.get(
 
 _MAX_READ_BYTES = 100 * 1024  # 100 KB
 
+# Where uploads land by default. A single, predictable directory is the point:
+# a scientist should be able to answer "where did my file go?" without learning
+# the workspace layout (#241, Phase 2).
+DATA_DIR_NAME = "data"
+
+# Upload ceiling. nginx caps the request body at 100M (docker/nginx/default.conf),
+# and a multipart envelope adds boundary + headers on top of the file itself, so
+# the app limit sits below nginx's — otherwise the largest "allowed" file is
+# rejected by the proxy with a 413 the app never sees and cannot explain.
+MAX_UPLOAD_BYTES = int(
+    os.environ.get("STUDIO_UPLOAD_MAX_BYTES", str(95 * 1024 * 1024))
+)
+
+# Refuse an upload that would leave the workspace this close to full. Filling a
+# user's disk breaks Pegasus in ways that look nothing like "the disk is full".
+_MIN_FREE_BYTES = 256 * 1024 * 1024  # 256 MB
+
+_UPLOAD_CHUNK = 1024 * 1024  # 1 MB
+
 
 def _safe_path(path: str) -> str:
     """Resolve path and verify it's inside WORKSPACE_ROOT.
@@ -47,6 +66,138 @@ def _safe_path(path: str) -> str:
             detail=f"Access denied: path must be inside {WORKSPACE_ROOT}",
         )
     return resolved
+
+
+def safe_upload_name(filename: str) -> str:
+    """A filename safe to join onto a directory, or raise HTTPException.
+
+    Browsers mostly send a bare name, but the multipart filename is
+    client-controlled and some clients send a full path — including Windows
+    ones, whose separator `os.path.basename` ignores on Linux. Strip both, then
+    reject anything that isn't a plain name.
+    """
+    import ntpath
+
+    name = ntpath.basename(os.path.basename(filename or "")).strip()
+    # A leading dot is legal but hides the file from the very listing the user
+    # is about to look at, which reads as a failed upload.
+    if not name or name in (".", "..") or name.startswith("."):
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    if os.sep in name or "/" in name or "\\" in name:
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    return name
+
+
+def _unique_path(directory: str, name: str) -> str:
+    """A path in `directory` for `name` that doesn't already exist.
+
+    Uploads never overwrite. Someone re-uploading a corrected file expects to
+    replace it, but someone uploading `data.csv` from a second project expects
+    both to survive — and silently destroying the first is unrecoverable while
+    an extra file is merely untidy.
+    """
+    candidate = os.path.join(directory, name)
+    if not os.path.exists(candidate):
+        return candidate
+    stem, ext = os.path.splitext(name)
+    for n in range(2, 1000):
+        candidate = os.path.join(directory, f"{stem} ({n}){ext}")
+        if not os.path.exists(candidate):
+            return candidate
+    raise HTTPException(status_code=409, detail="Too many files with that name")
+
+
+@router.get("/upload-limit")
+async def upload_limit() -> dict[str, int | str]:
+    """Ceiling and free space, so the UI can warn *before* a long upload.
+
+    A size check that only happens after the bytes are sent is not a check; it
+    is a way to waste somebody's afternoon on a slow connection.
+    """
+    try:
+        free = shutil.disk_usage(WORKSPACE_ROOT).free
+    except OSError:
+        free = 0
+    return {
+        "max_bytes": MAX_UPLOAD_BYTES,
+        "free_bytes": free,
+        "data_dir": os.path.join(WORKSPACE_ROOT, DATA_DIR_NAME),
+    }
+
+
+@router.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    dest: str = Form(DATA_DIR_NAME),
+) -> dict[str, str | int]:
+    """Stream an uploaded file into the workspace (#241, Phase 2).
+
+    Studio had no way to get data in: a scientist's files are on their laptop,
+    and the only routes were JupyterLab's uploader or scp — the escape hatches
+    this redesign is trying not to require. Without this the Runner persona
+    cannot start their task at all.
+
+    Streamed in chunks rather than read whole: these are data files, and
+    buffering a 90 MB upload in memory per concurrent request is how a
+    single-container-per-user service falls over.
+    """
+    # `dest` is relative to the workspace; _safe_path rejects anything escaping.
+    target_dir = _safe_path(os.path.join(WORKSPACE_ROOT, dest or DATA_DIR_NAME))
+    name = safe_upload_name(file.filename or "")
+
+    try:
+        free = shutil.disk_usage(WORKSPACE_ROOT).free
+    except OSError:
+        free = None
+    if free is not None and free < _MIN_FREE_BYTES:
+        raise HTTPException(
+            status_code=507,
+            detail=(
+                "Not enough free space in your workspace. Delete some old runs "
+                "or files and try again."
+            ),
+        )
+
+    os.makedirs(target_dir, exist_ok=True)
+    path = _unique_path(target_dir, name)
+
+    written = 0
+    try:
+        with open(path, "wb") as out:
+            while chunk := await file.read(_UPLOAD_CHUNK):
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"File is larger than the "
+                            f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload "
+                            "limit."
+                        ),
+                    )
+                out.write(chunk)
+    except Exception:
+        # Never leave a partial file behind pretending to be data — a truncated
+        # CSV that looks uploaded is worse than a failed upload.
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+
+    log.info("file_uploaded", path=path, bytes=written)
+    return {
+        "path": path,
+        "name": os.path.basename(path),
+        "size": written,
+        # Relative to the workspace, for display and for pasting into a run
+        # parameter without exposing the absolute container path. Both sides
+        # are resolved first: `path` came back from _safe_path (already a
+        # realpath), so comparing it against an unresolved WORKSPACE_ROOT
+        # produces a "../.." escape hatch of a path whenever any component of
+        # the root is a symlink.
+        "relative_path": os.path.relpath(path, os.path.realpath(WORKSPACE_ROOT)),
+    }
 
 
 @router.get("", response_model=FileListResponse)

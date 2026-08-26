@@ -59,5 +59,17 @@ def client(tmp_db, monkeypatch):
     import main
     main.db = Database(db_path=tmp_db)
 
+    # routers/files.py freezes WORKSPACE_ROOT from $HOME at import time, which
+    # is before (or independent of) the HOME patch above — so anything writing
+    # through the files API lands in the developer's *real* ~/work. The upload
+    # endpoint made that visible by creating files there; repoint the constant
+    # so no test can write outside its tmpdir. Same hazard, and same fix, as
+    # STUDIO_SCAN_DIR at the top of this file.
+    import routers.files
+
+    workspace = tempfile.mkdtemp()
+    monkeypatch.setattr(routers.files, "WORKSPACE_ROOT", workspace)
+
     with TestClient(app) as tc:
+        tc.workspace_root = workspace  # type: ignore[attr-defined]
         yield tc
