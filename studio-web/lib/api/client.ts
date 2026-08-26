@@ -398,6 +398,88 @@ export async function submitWorkflowProject(
   );
 }
 
+// --- Unified Run flow (#241, Phase 1) ---
+//
+// One Run action replacing the Generate / Build / Plan / Run button row. The
+// flow runs server-side and outlives the request that starts it, so the three
+// calls here are start, reattach, and (via EventSource) follow.
+
+export type RunFlowStageStatus =
+  | "pending"
+  | "running"
+  | "done"
+  | "skipped"
+  | "failed";
+
+export interface RunFlowStage {
+  key: string;
+  /** Already in the user's terms — render as-is, don't re-map. */
+  label: string;
+  status: RunFlowStageStatus;
+  detail: string;
+}
+
+export interface RunFlowFailure {
+  stage: string;
+  /** What went wrong, in plain language. */
+  cause: string;
+  /** What to do about it. Never empty. */
+  action: string;
+  /** Raw log — collapsed by default, never discarded. */
+  technical: string;
+}
+
+export interface RunFlowSnapshot {
+  flow_id?: string;
+  project_id: string;
+  state: "running" | "succeeded" | "failed" | null;
+  stages?: RunFlowStage[];
+  failure?: RunFlowFailure | null;
+  run_dir?: string;
+  active: boolean;
+}
+
+export interface RunFlowOptions {
+  args?: string[];
+  site?: string;
+  output_site?: string;
+  force_build?: boolean;
+}
+
+export async function startRunFlow(
+  projectId: string,
+  opts: RunFlowOptions = {}
+) {
+  return request<RunFlowSnapshot>(
+    `/workflows/projects/${encodeURIComponent(projectId)}/run-flow`,
+    { method: "POST", body: JSON.stringify(opts) }
+  );
+}
+
+export async function getRunFlow(projectId: string) {
+  return request<RunFlowSnapshot>(
+    `/workflows/projects/${encodeURIComponent(projectId)}/run-flow`
+  );
+}
+
+// --- UI preferences (per-user rollout flag) ---
+
+export interface UIPreferences {
+  simple_run: boolean;
+  advanced_open: boolean;
+}
+
+export async function getUIPreferences() {
+  return request<UIPreferences>("/settings/ui");
+}
+
+export async function updateUIPreferences(prefs: UIPreferences) {
+  return request<UIPreferences>("/settings/ui", {
+    method: "PUT",
+    body: JSON.stringify(prefs),
+  });
+}
+
 export interface RunEstimate {
   remaining_seconds: number;
   method: string;

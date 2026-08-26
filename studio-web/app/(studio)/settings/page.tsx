@@ -11,6 +11,10 @@ import {
 } from "@/lib/hooks/use-llm";
 import { useTools } from "@/lib/hooks/use-tools";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
+import {
+  useUIPreferences,
+  useUpdateUIPreferences,
+} from "@/lib/hooks/use-ui-prefs";
 import { ToolCard } from "@/components/tools/tool-card";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
@@ -1024,8 +1028,53 @@ function PegasusOptionsTab() {
         holds the container registry used when building workflow images.
       </p>
 
+      {/* Simplified Run flow — the Phase 1 rollout flag (#241) */}
+      <SimpleRunSection />
+
       {/* Container registry — persisted; drives the Build Image action */}
       <RegistrySection />
+    </div>
+  );
+}
+
+/**
+ * Opt-in for the unified Run flow (#241, Phase 1).
+ *
+ * The flag lives here rather than being flipped for everyone because a merge
+ * deploys straight to live user pods, and the vocabulary and flow have not yet
+ * been through the terminology check or the Phase 8 task test. It stays a
+ * preference until those pass; the default flips in a separate, deliberate
+ * change.
+ */
+function SimpleRunSection() {
+  const { prefs } = useUIPreferences();
+  const update = useUpdateUIPreferences();
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <h2 className="text-sm font-semibold text-fg">Simplified Run</h2>
+      <p className="mt-1 text-xs text-fgmuted">
+        Replaces the separate Generate, Build Image, Plan and Run buttons with a
+        single <strong>Run</strong> that does all four in order and shows you
+        the progress. The individual steps stay available under
+        &ldquo;Advanced&rdquo; on each workflow.
+      </p>
+      <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-fg">
+        <input
+          type="checkbox"
+          checked={prefs.simple_run}
+          disabled={update.isPending}
+          onChange={(e) =>
+            update.mutate({ ...prefs, simple_run: e.target.checked })
+          }
+        />
+        Use the simplified Run flow
+      </label>
+      {update.isError && (
+        <p className="mt-2 text-xs text-red-600 dark:text-rose-400">
+          Couldn&apos;t save: {(update.error as Error).message}
+        </p>
+      )}
     </div>
   );
 }
