@@ -18,6 +18,29 @@ log = structlog.get_logger()
 
 _CMD_TIMEOUT = 300  # 5 minutes
 
+
+def _plan_property_flags() -> list[str]:
+    """-D overrides injected into every studio-issued pegasus-plan.
+
+    Pegasus properties files are NOT merged: the planner takes the FIRST of
+    (--conf, ./pegasus.properties, ~/.pegasusrc), so a project that ships
+    its own pegasus.properties silently shadows the user-level file — which
+    is how the wfmonitor monitord plugin ended up disabled for a
+    marketplace project despite ~/.pegasusrc enabling it. -D flags outrank
+    every file and land in the plan-time snapshot monitord reads, so the
+    event JSONL works for any studio-planned run. Where the wfmonitor
+    adapter isn't installed, monitord logs an unmatched-name warning and
+    carries on, so enabling it is safe everywhere.
+    STUDIO_WFMONITOR_EVENTS=0 turns the injection off.
+    """
+    if os.environ.get("STUDIO_WFMONITOR_EVENTS", "").strip().lower() in (
+        "0",
+        "false",
+        "no",
+    ):
+        return []
+    return ["-Dpegasus.monitord.plugins.wfmonitor.enabled=true"]
+
 # Deleting a run on NFS: a file a just-cancelled process still holds open
 # lingers as a `.nfsXXXX` silly-rename that can't be unlinked until the handle
 # closes ("Device or resource busy"). Retry a few times to let monitord/DAGMan
@@ -51,6 +74,7 @@ async def submit_workflow(
 
     cmd = [
         "pegasus-plan",
+        *_plan_property_flags(),
         "--submit",
         "-s", site,
         "-o", output_site,

@@ -304,7 +304,10 @@ async def plan_workflow(
     project_dir = proj["project_dir"]
 
     # Find workflow file
-    from services.workflow_submitter import _find_workflow_file
+    from services.workflow_submitter import (
+        _find_workflow_file,
+        _plan_property_flags,
+    )
 
     wf_file = _find_workflow_file(project_dir)
     if not wf_file:
@@ -315,6 +318,7 @@ async def plan_workflow(
 
     cmd = [
         "pegasus-plan",
+        *_plan_property_flags(),
         "-s", req.site,
         "-o", req.output_site,
         wf_file,

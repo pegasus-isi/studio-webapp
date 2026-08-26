@@ -418,3 +418,44 @@ def test_cancel_run_reports_a_refusal_verbatim(client, monkeypatch):
 
 def test_cancel_run_not_found(client):
     assert client.post("/api/workflows/nope-run-id/cancel").status_code == 404
+
+
+def test_submit_injects_wfmonitor_plan_property(tmp_path, monkeypatch):
+    """Studio-issued pegasus-plan enables the wfmonitor monitord plugin via
+    -D: pegasus properties files are first-found rather than merged, so a
+    project shipping its own pegasus.properties silently shadows
+    ~/.pegasusrc — the command line outranks them all."""
+    import asyncio
+
+    import services.workflow_submitter as ws
+
+    (tmp_path / "workflow.yml").write_text("pegasus: '5.0'\njobs: []\n")
+    captured = {}
+
+    async def fake_exec(*cmd, **kw):
+        captured["cmd"] = cmd
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return (b"", b"")
+
+        return P()
+
+    monkeypatch.setattr(ws.asyncio, "create_subprocess_exec", fake_exec)
+    asyncio.run(ws.submit_workflow(str(tmp_path)))
+    assert captured["cmd"][0] == "pegasus-plan"
+    assert (
+        "-Dpegasus.monitord.plugins.wfmonitor.enabled=true" in captured["cmd"]
+    )
+
+    # Kill switch for environments that must not enable the plugin.
+    monkeypatch.setenv("STUDIO_WFMONITOR_EVENTS", "0")
+    asyncio.run(ws.submit_workflow(str(tmp_path)))
+    # Check for the flag itself — tmp_path embeds the test name, so the
+    # workflow-file argument legitimately contains "wfmonitor".
+    assert (
+        "-Dpegasus.monitord.plugins.wfmonitor.enabled=true"
+        not in captured["cmd"]
+    )
