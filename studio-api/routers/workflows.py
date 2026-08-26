@@ -92,6 +92,24 @@ WORKSPACE_ROOT = os.environ.get(
 _CMD_TIMEOUT = 300  # 5 minutes
 
 
+def jupyter_path(abs_path: str) -> str:
+    """`abs_path` relative to $HOME, which is JupyterLab's root.
+
+    docker/supervisor/scripts/jupyter.sh roots the lab at $HOME, so a
+    `/lab/tree/<x>` URL needs `x` relative to it. The browser only ever sees
+    absolute container paths and cannot compute this, so it is served
+    alongside them. Returns "" for anything outside $HOME rather than a
+    `../..` path that would 404 in the lab.
+    """
+    home = os.path.realpath(os.environ.get("HOME", "/"))
+    resolved = os.path.realpath(abs_path)
+    if resolved == home:
+        return ""
+    if not resolved.startswith(home + os.sep):
+        return ""
+    return os.path.relpath(resolved, home)
+
+
 @router.get("", response_model=WorkflowListResponse)
 async def list_workflows() -> WorkflowListResponse:
     """List discovered workflow runs from the workspace."""
@@ -171,8 +189,12 @@ async def list_projects() -> WorkflowProjectListResponse:
             has_generator=p["has_generator"],
             has_workflow_yml=p["has_workflow_yml"],
             has_container_def=p["has_container_def"],
+            jupyter_path=jupyter_path(p["project_dir"]),
             runs=[
-                WorkflowProjectRunResponse(**r) for r in p["submitted_runs"]
+                WorkflowProjectRunResponse(
+                    **r, jupyter_path=jupyter_path(r["run_dir"])
+                )
+                for r in p["submitted_runs"]
             ],
         )
         for p in raw

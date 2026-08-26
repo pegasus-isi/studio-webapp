@@ -325,6 +325,8 @@ export interface WorkflowProjectRun {
   name: string;
   run_dir: string;
   status: string;
+  /** Path relative to $HOME (JupyterLab's root); "" when outside it. */
+  jupyter_path: string;
 }
 
 export interface WorkflowProject {
@@ -332,6 +334,8 @@ export interface WorkflowProject {
   name: string;
   project_dir: string;
   status: string;
+  /** Path relative to $HOME (JupyterLab's root); "" when outside it. */
+  jupyter_path: string;
   has_generator: boolean;
   has_workflow_yml: boolean;
   has_container_def: boolean;

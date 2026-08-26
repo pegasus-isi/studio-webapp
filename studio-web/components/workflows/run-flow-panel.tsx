@@ -74,14 +74,63 @@ export function RunFlowPanel({
   // terminal event doesn't refetch the runs list on a loop.
   const notifiedRef = useRef<string | null>(null);
 
-  const genParams = useMemo(
+  const allGenParams = useMemo(
     () => params?.generator.params ?? [],
     [params]
+  );
+
+  /**
+   * Generator parameters that name the execution site.
+   *
+   * Most generators expose their own `--execution-site`, which is the same
+   * decision as the "Where it runs" radio below — and the two could disagree.
+   * Picking "This machine" while the generator's field still said `condorpool`
+   * wrote a site catalog for the cluster and then planned against `local`, a
+   * contradiction whose failure names neither field.
+   *
+   * So: keep them in lockstep and show the choice once, as the radio. The raw
+   * field is still editable under Advanced for anyone who wants a site the
+   * radio doesn't offer.
+   */
+  const siteParams = useMemo(
+    () =>
+      allGenParams.filter((p) =>
+        /^(exec(ution)?[_-]?site|site)$/i.test(p.dest.replace(/-/g, "_"))
+      ),
+    [allGenParams]
+  );
+
+  const genParams = useMemo(
+    () => allGenParams.filter((p) => !siteParams.includes(p)),
+    [allGenParams, siteParams]
+  );
+
+  // Radio → every site-ish generator param, so what's submitted matches what
+  // the user picked regardless of which knob the generator reads.
+  const chooseSite = useCallback(
+    (site: string) => {
+      onChange("site", site);
+      for (const p of siteParams) onChange(p.dest, site);
+    },
+    [onChange, siteParams]
   );
   const missing = useMemo(
     () => missingRequired(genParams, values),
     [genParams, values]
   );
+  // Hidden site params are satisfied by the radio, which always has a value,
+  // so they can never be what's missing — seed them on first render for the
+  // case where the generator's default differs from the radio's.
+  useEffect(() => {
+    if (!siteParams.length) return;
+    const current = String(values["site"] ?? "condorpool");
+    for (const p of siteParams) {
+      if (String(values[p.dest] ?? "") !== current) onChange(p.dest, current);
+    }
+    // Only re-sync when the chosen site changes, not on every keystroke
+    // elsewhere in the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [values["site"], siteParams]);
   const running = flow?.state === "running";
 
   // ── attach to the server-side flow ──────────────────────────────────────
@@ -189,7 +238,7 @@ export function RunFlowPanel({
     notifiedRef.current = null;
     try {
       const snapshot = await api.startRunFlow(projectId, {
-        args: buildArgs(genParams, values),
+        args: buildArgs(allGenParams, values),
         site: String(values["site"] ?? "condorpool"),
         output_site: String(values["output_site"] ?? "local"),
       });
@@ -250,7 +299,7 @@ export function RunFlowPanel({
                     className="mt-0.5"
                     value={site.value}
                     checked={selected}
-                    onChange={() => onChange("site", site.value)}
+                    onChange={() => chooseSite(site.value)}
                   />
                   <span>
                     <span className="block text-sm font-medium text-fg">

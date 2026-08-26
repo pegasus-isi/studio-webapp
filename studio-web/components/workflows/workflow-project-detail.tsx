@@ -13,6 +13,7 @@ import {
 } from "@/lib/hooks/use-workflows";
 import { DagViewer } from "@/components/workflows/dag-viewer";
 import { RunFlowPanel } from "@/components/workflows/run-flow-panel";
+import { OutputsPanel } from "@/components/workflows/outputs-panel";
 import {
   ParamField,
   buildArgs,
@@ -21,7 +22,7 @@ import {
 import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { useUIPreferences, useUpdateUIPreferences } from "@/lib/hooks/use-ui-prefs";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { apiUrl } from "@/lib/urls";
+import { apiUrl, jupyterUrl } from "@/lib/urls";
 import { cn, statusColor } from "@/lib/utils";
 
 interface Props {
@@ -443,13 +444,30 @@ export function WorkflowProjectDetail({ projectId }: Props) {
             </h2>
             <p className="text-sm text-fgmuted">{project.project_dir}</p>
           </div>
-          <span
-            className={cn(
-              "rounded-full px-3 py-1 text-sm font-medium",
-              statusColor(project.status)
+          <span className="flex items-center gap-3">
+            {/* Every workflow gets a way into its own folder: the files are
+                what a user falls back to for anything the UI doesn't surface,
+                and hunting for the path in JupyterLab's tree is the friction
+                this removes. */}
+            {project.jupyter_path && (
+              <a
+                href={jupyterUrl(`/lab/tree/${project.jupyter_path}`)}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open this workflow's folder in JupyterLab"
+                className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
+              >
+                Open in JupyterLab ↗
+              </a>
             )}
-          >
-            {project.status}
+            <span
+              className={cn(
+                "rounded-full px-3 py-1 text-sm font-medium",
+                statusColor(project.status)
+              )}
+            >
+              {project.status}
+            </span>
           </span>
         </div>
       </div>
@@ -522,6 +540,17 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                       {run.run_name || `${run.run_id.slice(0, 12)}...`}
                     </button>
                     <span className="flex items-center gap-2">
+                      {run.jupyter_path && (
+                        <a
+                          href={jupyterUrl(`/lab/tree/${run.jupyter_path}`)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open this run's folder in JupyterLab"
+                          className="rounded border border-line px-2 py-0.5 text-xs text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
+                        >
+                          Files
+                        </a>
+                      )}
                       <button
                         type="button"
                         onClick={() =>
@@ -561,7 +590,10 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                     </span>
                   </div>
                   {selectedRunId === run.run_id && (
-                    <RunJobsPanel runId={run.run_id} />
+                    <RunJobsPanel
+                      runId={run.run_id}
+                      runStatus={run.status}
+                    />
                   )}
                 </li>
               ))}
@@ -607,11 +639,22 @@ function FileCheck({ label, exists }: { label: string; exists: boolean }) {
   );
 }
 
-function RunJobsPanel({ runId }: { runId: string }) {
+function RunJobsPanel({
+  runId,
+  runStatus,
+}: {
+  runId: string;
+  runStatus: string;
+}) {
   const { data, isLoading } = useWorkflowJobs(runId);
   const analyze = useAnalyzeWorkflow();
   const runAction = useActionToast();
   const [analysis, setAnalysis] = useState<string | null>(null);
+  // Results first, for the same reason as the standalone run page: it is what
+  // the user ran the analysis to get. Without this tab the outputs view was
+  // unreachable from the project page — i.e. from the primary flow — which
+  // made the whole of Phase 4 invisible to exactly the user it was for (#241).
+  const [tab, setTab] = useState<"results" | "steps">("results");
 
   const handleAnalyze = async () => {
     const result = await runAction("Analyze", () => analyze.mutateAsync(runId));
@@ -619,7 +662,31 @@ function RunJobsPanel({ runId }: { runId: string }) {
   };
 
   return (
-    <div className="border-t border-line px-4 py-3 bg-base">
+    <div className="border-t border-line bg-base">
+      <div className="flex gap-1 border-b border-line px-4" role="tablist">
+        {(["results", "steps"] as const).map((t) => (
+          <button
+            key={t}
+            role="tab"
+            aria-selected={tab === t}
+            onClick={() => setTab(t)}
+            className={cn(
+              "-mb-px border-b-2 px-3 py-2 text-xs font-medium transition-colors",
+              tab === t
+                ? "border-pegasus-500 text-pegasus-700 dark:text-pegasus-300"
+                : "border-transparent text-fgmuted hover:text-fg"
+            )}
+          >
+            {t === "results" ? "Results" : "Steps"}
+          </button>
+        ))}
+      </div>
+
+      {tab === "results" && (
+        <OutputsPanel runId={runId} runFinished={runStatus !== "running"} />
+      )}
+
+      <div className={cn("px-4 py-3", tab !== "steps" && "hidden")}>
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-medium text-fgmuted">Jobs</span>
         <button
@@ -678,6 +745,7 @@ function RunJobsPanel({ runId }: { runId: string }) {
           {analysis}
         </pre>
       )}
+      </div>
     </div>
   );
 }
