@@ -835,6 +835,87 @@ async def get_jobs(run_id: str) -> dict:
     return {"run_id": run_id, "jobs": jobs}
 
 
+@router.get("/{run_id}/outputs")
+async def get_run_outputs(
+    run_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    output_site: str = Query("local"),
+) -> dict:
+    """The files a run produced (#241, Phase 4).
+
+    Studio had no notion of a run's results until this: a scientist runs an
+    analysis to get files back, and finding them meant leaving for JupyterLab
+    and knowing where Pegasus stages outputs. Paginated because a run's storage
+    directory is unbounded.
+    """
+    from services import run_outputs
+    from services.workflow_scanner import WORKFLOWS_DIR
+
+    run_dir = await _resolve_run_dir(run_id)
+    loop = asyncio.get_event_loop()
+    # The walk touches the filesystem (NFS in production), so keep it off the
+    # event loop — every other request and WebSocket shares it.
+    result = await loop.run_in_executor(
+        None,
+        lambda: run_outputs.listing(
+            run_dir,
+            WORKFLOWS_DIR,
+            output_site=output_site,
+            offset=offset,
+            limit=limit,
+        ),
+    )
+    return {"run_id": run_id, **result}
+
+
+@router.get("/{run_id}/outputs/file")
+async def get_run_output_file(
+    run_id: str,
+    path: str = Query(..., description="Path relative to the output directory"),
+    download: bool = Query(False),
+    output_site: str = Query("local"),
+):
+    """Serve one output file, inline for preview or as an attachment.
+
+    `path` is caller-supplied, so it is resolved strictly inside the run's
+    output directory — see `run_outputs.safe_output_path`.
+    """
+    from fastapi.responses import FileResponse
+
+    from services import run_outputs
+    from services.workflow_scanner import WORKFLOWS_DIR
+
+    run_dir = await _resolve_run_dir(run_id)
+    output_dir, _ = run_outputs.resolve_output_dir(
+        run_dir, WORKFLOWS_DIR, output_site
+    )
+    if not output_dir:
+        raise HTTPException(status_code=404, detail="No output directory for this run")
+
+    try:
+        resolved = run_outputs.safe_output_path(output_dir, path)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied") from None
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    size = os.path.getsize(resolved)
+    if not download and size > run_outputs.PREVIEW_MAX_BYTES:
+        # Refuse to inline a file big enough to hang the tab; the client should
+        # be offering a download for these anyway (`previewable` says so).
+        raise HTTPException(
+            status_code=413,
+            detail="File is too large to preview — download it instead",
+        )
+
+    return FileResponse(
+        resolved,
+        filename=os.path.basename(resolved) if download else None,
+        content_disposition_type="attachment" if download else "inline",
+    )
+
+
 @router.get("/{run_id}/events")
 async def workflow_events(run_id: str) -> StreamingResponse:
     """SSE stream of real-time workflow monitoring events."""
