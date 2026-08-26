@@ -1,14 +1,19 @@
 """Tests for the per-user UI preferences endpoint (#241, Phase 1b).
 
-The property that matters most is the default: `simple_run` must be **off**
-until validation. A merge here deploys to live user pods, so a preferences
-regression that defaulted it on would flip every user into an unvalidated UI.
+The property that matters most is that the default is *deliberate*.
+`simple_run` is now on (#241) — the unified Run flow is the product and the
+four Pegasus verbs are the opt-out — and the frontend fallback has to agree
+with it, or every page renders one layout and then swaps to the other once the
+preference fetch lands.
 """
 
 from __future__ import annotations
 
 
-def test_defaults_are_off_before_anything_is_saved(client):
+def test_simple_run_is_on_by_default(client):
+    # Flipped in #241 after Phases 1-5 landed. Kept as an explicit assertion
+    # rather than dropped: the default is a product decision, and it should
+    # take an edit to this line to change it.
     res = client.get("/api/settings/ui")
     assert res.status_code == 200
     assert res.json() == {
@@ -73,9 +78,9 @@ def test_corrupt_stored_settings_fall_back_to_defaults(client, monkeypatch):
 
 
 def test_partial_payload_falls_back_to_defaults(client):
-    res = client.put("/api/settings/ui", json={"simple_run": True})
+    res = client.put("/api/settings/ui", json={"advanced_open": True})
     assert res.status_code == 200
     body = res.json()
-    assert body["simple_run"] is True
+    assert body["advanced_open"] is True
     # Omitted key takes the model default rather than erroring.
-    assert body["advanced_open"] is False
+    assert body["simple_run"] is True

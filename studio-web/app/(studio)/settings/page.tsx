@@ -1038,13 +1038,13 @@ function PegasusOptionsTab() {
 }
 
 /**
- * Opt-in for the unified Run flow (#241, Phase 1).
+ * Opt-*out* of the unified Run flow (#241, Phase 1).
  *
- * The flag lives here rather than being flipped for everyone because a merge
- * deploys straight to live user pods, and the vocabulary and flow have not yet
- * been through the terminology check or the Phase 8 task test. It stays a
- * preference until those pass; the default flips in a separate, deliberate
- * change.
+ * On by default: the single Run action is the product, and the four Pegasus
+ * verbs are what you turn it back to. This stays a per-user preference rather
+ * than disappearing because the flow's vocabulary has not yet been through the
+ * terminology check, so "turn it off" needs to remain a one-click answer for
+ * anyone it doesn't suit.
  */
 function SimpleRunSection() {
   const { prefs } = useUIPreferences();
@@ -1054,10 +1054,11 @@ function SimpleRunSection() {
     <div className="rounded-lg border border-line bg-surface p-4">
       <h2 className="text-sm font-semibold text-fg">Simplified Run</h2>
       <p className="mt-1 text-xs text-fgmuted">
-        Replaces the separate Generate, Build Image, Plan and Run buttons with a
-        single <strong>Run</strong> that does all four in order and shows you
-        the progress. The individual steps stay available under
-        &ldquo;Advanced&rdquo; on each workflow.
+        A single <strong>Run</strong> button prepares and starts your workflow,
+        doing the Generate, Build Image, Plan and Run steps in order and showing
+        you the progress. The individual steps stay available under
+        &ldquo;Advanced&rdquo; on each workflow. Turn this off to go back to
+        driving the four steps yourself.
       </p>
       <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-fg">
         <input

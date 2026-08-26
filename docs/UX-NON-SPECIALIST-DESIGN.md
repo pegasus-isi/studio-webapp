@@ -83,8 +83,19 @@ A merge to `main` deploys to live user pods on next restart, so this redesign
 must not land as a big-bang flip:
 
 - Phases 1, 2, and 7 (run flow, ingress, IA/vocabulary flip) ship behind a
-  per-user setting (default off initially, flipped to default on once Phase 8
-  validates), with the current view reachable throughout the transition.
+  per-user setting, with the current view reachable throughout the transition.
+
+**Deviation on record.** The Phase 1 flag was flipped to default-on after
+Phases 1–5 landed, *ahead of* the terminology check and the Phase 8 task test
+that this plan named as the gate. That was a deliberate product call, not an
+oversight, and the consequence should be stated plainly rather than quietly
+absorbed: the vocabulary every user now sees has not been validated with
+anyone outside the team. If wording draws complaints, the honest reading is
+"we haven't tested this yet" — not "users disagree with the research", because
+there is no research yet to disagree with. The per-user opt-out in Settings
+stays, and remains the first thing to offer anyone the flow doesn't suit.
+Running the terminology protocol is now *more* valuable, not less: it is
+measuring something live.
 - Purely additive phases (outputs view, failure cards, onboarding) can ship
   unflagged.
 - The Advanced disclosure state persists per user in the settings DB —
@@ -324,9 +335,11 @@ in the frontend**:
 | Chat vocabulary sync (`knowledge/overlay/STUDIO_ENV.md`) | ✅ landed |
 | Baseline telemetry (`services/onboarding_metrics.py` + hooks + endpoint) | ✅ landed |
 | Backend copy audit | ✅ Appendix A |
-| Terminology validation with 3–4 users | ⏳ protocol ready (`docs/ux-terminology-test.md`), **not yet run** |
+| Terminology validation with 3–4 users | ⏳ protocol ready (`docs/ux-terminology-test.md`), **not yet run** — and now overtaken by the default-on flip, see Rollout strategy |
 
 The terminology check is the one Phase 0 item that cannot be completed in
-code. Phase 1 may build against the current `vocabulary.ts` values, but the
-vocabulary flip must not ship default-on until the protocol has run and its
-results table is filled in.
+code. It was originally the gate on shipping the vocabulary default-on; that
+gate was passed over (see Rollout strategy), so the protocol now serves to
+validate wording already in front of users rather than to clear it beforehand.
+Its results table is still worth filling in — a term that tests badly is now a
+change to make rather than a decision to avoid.
