@@ -61,11 +61,16 @@ class UIPreferences(BaseModel):
     interpretable at all.
     """
 
-    # Phase 1 rollout flag. Off by default: a merge here deploys to live pods,
-    # so the unified Run flow is opt-in until the terminology check and the
-    # Phase 8 task test have run (docs/UX-NON-SPECIALIST-DESIGN.md, Rollout
-    # strategy). Flipping the default is a deliberate, separate change.
-    simple_run: bool = False
+    # Phase 1 rollout flag, now on by default (#241): the unified Run flow is
+    # the product, and the four Pegasus verbs are the opt-out.
+    #
+    # This was flipped ahead of the terminology check and the Phase 8 task
+    # test, which the plan named as the gate. The vocabulary the flow uses is
+    # therefore still unvalidated with real users, and the honest reading of a
+    # complaint about wording is "we haven't tested this yet", not "users
+    # disagree with the research". Turning it off per user in Settings remains
+    # the escape hatch, and remains the first thing to suggest.
+    simple_run: bool = True
     # Whether the Advanced disclosure (the individual Generate/Build/Plan/Run
     # verbs) starts open. Persisted so a Pegasus-literate user doesn't reopen
     # it on every visit.
