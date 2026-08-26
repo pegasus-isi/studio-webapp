@@ -426,3 +426,44 @@ def test_cancel_run_reports_a_refusal_verbatim(client, monkeypatch):
 
 def test_cancel_run_not_found(client):
     assert client.post("/api/workflows/nope-run-id/cancel").status_code == 404
+
+
+def test_jupyter_path_is_relative_to_home(monkeypatch, tmp_path):
+    """JupyterLab is rooted at $HOME, so /lab/tree/<x> needs x relative to it.
+
+    The browser only ever sees absolute container paths and cannot compute
+    this, which is why the API serves it alongside them.
+    """
+    from routers.workflows import jupyter_path
+
+    home = tmp_path / "home"
+    (home / "work" / "workflows" / "eeg").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    assert jupyter_path(str(home / "work" / "workflows" / "eeg")) == os.path.join(
+        "work", "workflows", "eeg"
+    )
+
+
+def test_jupyter_path_is_empty_outside_home(monkeypatch, tmp_path):
+    # A "../.." path would 404 in the lab; an empty string lets the UI omit the
+    # link instead of offering one that cannot work.
+    from routers.workflows import jupyter_path
+
+    home = tmp_path / "home"
+    home.mkdir()
+    outside = tmp_path / "elsewhere" / "run0001"
+    outside.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    assert jupyter_path(str(outside)) == ""
+
+
+def test_jupyter_path_is_empty_for_home_itself(monkeypatch, tmp_path):
+    from routers.workflows import jupyter_path
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    assert jupyter_path(str(home)) == ""
