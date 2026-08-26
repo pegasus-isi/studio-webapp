@@ -105,7 +105,7 @@ def test_add_clones_selected_repo(client, monkeypatch, tmp_path):
         return FakeProc()
 
     monkeypatch.setattr(mkt, "_fetch_registry", fake_registry)
-    monkeypatch.setattr(mkt, "WORKFLOWS_DIR", str(tmp_path / "workflows"))
+    monkeypatch.setenv("STUDIO_WORKSPACE_DIR", str(tmp_path))
     monkeypatch.setattr(mkt.asyncio, "create_subprocess_exec", fake_exec)
     _reset()
 
@@ -138,7 +138,7 @@ def test_add_conflict_when_exists(client, monkeypatch, tmp_path):
     wdir = tmp_path / "workflows"
     (wdir / "quickstart").mkdir(parents=True)
     monkeypatch.setattr(mkt, "_fetch_registry", fake_registry)
-    monkeypatch.setattr(mkt, "WORKFLOWS_DIR", str(wdir))
+    monkeypatch.setenv("STUDIO_WORKSPACE_DIR", str(tmp_path))
     _reset()
 
     assert client.post("/api/marketplace/quickstart/add").status_code == 409
@@ -182,7 +182,7 @@ def test_add_refuses_non_http_repo_url(client, monkeypatch, tmp_path):
         raise AssertionError("git must not run for a non-http(s) URL")
 
     monkeypatch.setattr(mkt, "_catalog", fake_catalog)
-    monkeypatch.setattr(mkt, "WORKFLOWS_DIR", str(tmp_path / "workflows"))
+    monkeypatch.setenv("STUDIO_WORKSPACE_DIR", str(tmp_path))
     monkeypatch.setattr(mkt.asyncio, "create_subprocess_exec", fake_exec)
 
     res = client.post("/api/marketplace/evil/add")
@@ -211,7 +211,7 @@ def test_add_uses_separator_and_protocol_pin(client, monkeypatch, tmp_path):
         return FakeProc()
 
     monkeypatch.setattr(mkt, "_fetch_registry", fake_registry)
-    monkeypatch.setattr(mkt, "WORKFLOWS_DIR", str(tmp_path / "workflows"))
+    monkeypatch.setenv("STUDIO_WORKSPACE_DIR", str(tmp_path))
     monkeypatch.setattr(mkt.asyncio, "create_subprocess_exec", fake_exec)
     _reset()
 

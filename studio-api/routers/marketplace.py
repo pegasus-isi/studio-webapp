@@ -33,11 +33,17 @@ _FETCH_TIMEOUT = float(os.environ.get("STUDIO_MARKETPLACE_TIMEOUT", "10"))
 _CACHE_TTL = float(os.environ.get("STUDIO_MARKETPLACE_TTL", "3600"))
 _CLONE_TIMEOUT = float(os.environ.get("STUDIO_MARKETPLACE_CLONE_TIMEOUT", "180"))
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
-WORKFLOWS_DIR = os.path.join(WORKSPACE_ROOT, "workflows")
+def _workflows_dir() -> str:
+    """The active backend's project workspace, resolved per call.
+
+    A marketplace Add must land where the Workflows page discovers
+    projects. With a remote backend that is the backend's local mirror
+    workspace — this module's own frozen ~/work default once put a clone
+    where nothing would ever list it (found during the earthquake-workflow
+    demo)."""
+    from services.backends import active_backend
+
+    return active_backend().workflows_dir()
 
 # Curated Pegasus-ISI workflows to always surface, merged (and deduped by repo
 # URL) with the live registry. Descriptions from each repo's GitHub metadata.
@@ -217,7 +223,8 @@ async def add_workflow(workflow_id: str) -> dict[str, Any]:
     if entry is None:
         raise HTTPException(status_code=404, detail=f"Unknown workflow: {workflow_id}")
 
-    project_dir = os.path.join(WORKFLOWS_DIR, workflow_id)
+    workflows_dir = _workflows_dir()
+    project_dir = os.path.join(workflows_dir, workflow_id)
     if os.path.exists(project_dir):
         raise HTTPException(
             status_code=409,
@@ -234,7 +241,7 @@ async def add_workflow(workflow_id: str) -> dict[str, Any]:
             status_code=400, detail="Unsupported repository URL scheme"
         )
 
-    os.makedirs(WORKFLOWS_DIR, exist_ok=True)
+    os.makedirs(workflows_dir, exist_ok=True)
     proc = await asyncio.create_subprocess_exec(
         "git", "clone", "--depth", "1", "--", repo_url, project_dir,
         stdout=asyncio.subprocess.PIPE,
