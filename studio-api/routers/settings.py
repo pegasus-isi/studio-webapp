@@ -51,6 +51,53 @@ async def update_registry(req: RegistryRequest) -> dict:
     return await get_registry()
 
 
+class UIPreferences(BaseModel):
+    """Per-user UI preferences for the non-specialist redesign (#241).
+
+    Server-side rather than localStorage because these must follow the *user*,
+    not the browser. Someone who tries Studio from a laptop and then a lab
+    machine should not silently get two different products, and the rollout
+    flag has to mean the same thing in both places for a staged rollout to be
+    interpretable at all.
+    """
+
+    # Phase 1 rollout flag. Off by default: a merge here deploys to live pods,
+    # so the unified Run flow is opt-in until the terminology check and the
+    # Phase 8 task test have run (docs/UX-NON-SPECIALIST-DESIGN.md, Rollout
+    # strategy). Flipping the default is a deliberate, separate change.
+    simple_run: bool = False
+    # Whether the Advanced disclosure (the individual Generate/Build/Plan/Run
+    # verbs) starts open. Persisted so a Pegasus-literate user doesn't reopen
+    # it on every visit.
+    advanced_open: bool = False
+
+
+_UI_PREFS_KEY = "ui_preferences"
+
+
+@router.get("/ui", response_model=UIPreferences)
+async def get_ui_preferences() -> UIPreferences:
+    """UI preferences, with defaults for any key never set."""
+    from main import db
+
+    stored = await db.get_setting(_UI_PREFS_KEY, {}) or {}
+    if not isinstance(stored, dict):
+        stored = {}
+    return UIPreferences(**{
+        k: v for k, v in stored.items() if k in UIPreferences.model_fields
+    })
+
+
+@router.put("/ui", response_model=UIPreferences)
+async def update_ui_preferences(req: UIPreferences) -> UIPreferences:
+    """Replace UI preferences wholesale (the payload is small and complete)."""
+    from main import db
+
+    await db.set_setting(_UI_PREFS_KEY, req.model_dump())
+    log.info("ui_preferences_updated", **req.model_dump())
+    return req
+
+
 @router.get("", response_model=SettingsResponse)
 async def get_settings() -> SettingsResponse:
     from main import db

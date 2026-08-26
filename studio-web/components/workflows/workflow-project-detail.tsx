@@ -11,9 +11,15 @@ import {
   useAnalyzeWorkflow,
   useDeleteWorkflow,
 } from "@/lib/hooks/use-workflows";
-import type { WorkflowParam } from "@/lib/api/client";
 import { DagViewer } from "@/components/workflows/dag-viewer";
+import { RunFlowPanel } from "@/components/workflows/run-flow-panel";
+import {
+  ParamField,
+  buildArgs,
+  type ParamValues,
+} from "@/components/workflows/param-field";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
+import { useUIPreferences, useUpdateUIPreferences } from "@/lib/hooks/use-ui-prefs";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUrl } from "@/lib/urls";
 import { cn, statusColor } from "@/lib/utils";
@@ -21,8 +27,6 @@ import { cn, statusColor } from "@/lib/utils";
 interface Props {
   projectId: string;
 }
-
-type ParamValues = Record<string, string | boolean>;
 
 // Recognize common pegasus-plan / pegasus-run failures in the raw output and
 // return a short, actionable hint shown above the log. null = no hint.
@@ -47,22 +51,8 @@ function outputHint(output: string | null): string | null {
   return null;
 }
 
-function buildArgs(params: WorkflowParam[], values: ParamValues): string[] {
-  const args: string[] = [];
-  for (const p of params) {
-    const v = values[p.dest];
-    if (p.is_flag) {
-      if (v === true) args.push(p.flag);
-    } else {
-      const s = (v ?? "").toString().trim();
-      if (s !== "") args.push(p.flag, s);
-    }
-  }
-  return args;
-}
-
 export function WorkflowProjectDetail({ projectId }: Props) {
-  const { data } = useWorkflowProjects();
+  const { data, refetch: refetchProjects } = useWorkflowProjects();
   const project = data?.projects.find((p) => p.project_id === projectId);
   const { data: params } = useProjectParams(projectId);
 
@@ -71,6 +61,10 @@ export function WorkflowProjectDetail({ projectId }: Props) {
   const submit = useSubmitWorkflowProject();
   const deleteRun = useDeleteWorkflow();
   const runAction = useActionToast();
+  // Phase 1 rollout flag (#241). Off by default, so this page is byte-for-byte
+  // what it was until a user opts in from Settings.
+  const { prefs } = useUIPreferences();
+  const updatePrefs = useUpdateUIPreferences();
 
   const [output, setOutput] = useState<string | null>(null);
   const [outputCollapsed, setOutputCollapsed] = useState(false);
@@ -261,6 +255,183 @@ export function WorkflowProjectDetail({ projectId }: Props) {
   const isBusy =
     generate.isPending || plan.isPending || submit.isPending || building;
 
+  // The four Pegasus verbs and their supporting panels. In simple mode these
+  // move wholesale into the Advanced disclosure rather than being rewritten,
+  // so the Pegasus-literate path stays exactly as it is today.
+  const advancedSections = (
+    <>
+      {/* Files section */}
+      <div>
+        <h3 className="mb-3 text-sm font-semibold text-fg">Project Files</h3>
+        <div className="grid grid-cols-2 gap-2">
+          <FileCheck
+            label="workflow_generator.py"
+            exists={project.has_generator}
+          />
+          <FileCheck label="workflow.yml" exists={project.has_workflow_yml} />
+          <FileCheck label="Apptainer def" exists={project.has_container_def} />
+        </div>
+      </div>
+      {/* Parameters (discovered per-workflow from the generator's argparse) */}
+      {(genParams.length > 0 || planParams.length > 0) && (
+        <div>
+          <h3 className="mb-3 text-sm font-semibold text-fg">
+            Parameters
+          </h3>
+
+          {genParams.length > 0 && (
+            <div className="mb-4 rounded-md border border-line p-4">
+              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-fgsubtle">
+                Generate
+              </p>
+              {mutexGroups.map((grp, i) => (
+                <p key={i} className="mb-2 text-xs text-amber-600 dark:text-amber-400">
+                  Provide exactly one of:{" "}
+                  {grp
+                    .map((d) => genParams.find((p) => p.dest === d)?.flag ?? d)
+                    .join(" or ")}
+                </p>
+              ))}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {genParams.map((p) => (
+                  <ParamField
+                    key={p.dest}
+                    param={p}
+                    value={values[p.dest]}
+                    onChange={(v) => setValue(p.dest, v)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {planParams.length > 0 && (
+            <div className="rounded-md border border-line p-4">
+              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-fgsubtle">
+                Plan / Submit
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {planParams.map((p) => (
+                  <ParamField
+                    key={p.dest}
+                    param={p}
+                    value={values[p.dest]}
+                    onChange={(v) => setValue(p.dest, v)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div>
+        <h3 className="mb-3 text-sm font-semibold text-fg">
+          Actions
+        </h3>
+        <div className="flex flex-wrap gap-2">
+          {project.has_generator && (
+            <button
+              onClick={handleGenerate}
+              disabled={isBusy}
+              className="rounded-md bg-gray-600 px-4 py-2 text-sm text-white hover:bg-gray-700 disabled:opacity-50"
+            >
+              {generate.isPending ? "Generating..." : "Generate Workflow"}
+            </button>
+          )}
+
+          {project.has_container_def && (
+            <button
+              onClick={handleBuild}
+              disabled={isBusy}
+              title="Build the project's Apptainer definition into a .sif beside it (and publish it if a registry is set in Settings → Pegasus Options)"
+              className="rounded-md bg-sky-700 px-4 py-2 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+            >
+              {building ? "Building..." : "Build Image"}
+            </button>
+          )}
+
+          {project.has_workflow_yml && (
+            <>
+              <button
+                onClick={handlePlan}
+                disabled={isBusy}
+                className="rounded-md bg-yellow-600 px-4 py-2 text-sm text-white hover:bg-yellow-700 disabled:opacity-50"
+              >
+                {plan.isPending ? "Planning..." : "Plan"}
+              </button>
+              <button
+                onClick={handleRun}
+                disabled={isBusy}
+                title="Submit the planned workflow (pegasus-run) without re-planning"
+                className="rounded-md bg-pegasus-600 px-4 py-2 text-sm text-white hover:bg-pegasus-700 disabled:opacity-50"
+              >
+                {submit.isPending ? "Running..." : "Run"}
+              </button>
+              <button
+                onClick={() =>
+                  setDag({
+                    url: apiUrl(
+                      `workflows/projects/${projectId}/graph.json`
+                    ),
+                    title: `${project.name} — workflow DAG`,
+                    live: false,
+                  })
+                }
+                className="rounded-md border border-pegasus-300 bg-surface px-4 py-2 text-sm text-pegasus-700 hover:bg-pegasus-50 dark:border-pegasus-700 dark:text-pegasus-300 dark:hover:bg-pegasus-400/10"
+              >
+                Visualize DAG
+              </button>
+            </>
+          )}
+        </div>
+        {builtImage && (
+          <p className="mt-2 text-xs text-fgmuted">
+            Latest image:{" "}
+            <span className="font-mono text-fg">{builtImage}</span>
+          </p>
+        )}
+      </div>
+
+      {/* Command output */}
+      {output && (
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-fg">Output</h3>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setOutputCollapsed((c) => !c)}
+                className="rounded px-2 py-0.5 text-xs text-fgmuted hover:bg-base hover:text-fg"
+                title={outputCollapsed ? "Expand output" : "Collapse output"}
+              >
+                {outputCollapsed ? "Expand" : "Collapse"}
+              </button>
+              <button
+                onClick={() => setOutput(null)}
+                className="rounded px-2 py-0.5 text-xs text-fgmuted hover:bg-base hover:text-fg"
+                title="Close output"
+                aria-label="Close output"
+              >
+                {"✕"}
+              </button>
+            </div>
+          </div>
+          {!outputCollapsed && !outputIsBuild && outputHint(output) && (
+            <div className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+              {outputHint(output)}
+            </div>
+          )}
+          {!outputCollapsed && (
+            <pre className="max-h-64 w-full overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] break-all rounded-md bg-gray-900 p-4 text-xs text-green-400">
+              {output}
+            </pre>
+          )}
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="h-full overflow-auto">
       {/* Header */}
@@ -284,184 +455,40 @@ export function WorkflowProjectDetail({ projectId }: Props) {
       </div>
 
       <div className="p-6 space-y-6">
-        {/* Files section */}
-        <div>
-          <h3 className="mb-3 text-sm font-semibold text-fg">
-            Project Files
-          </h3>
-          <div className="grid grid-cols-2 gap-2">
-            <FileCheck
-              label="workflow_generator.py"
-              exists={project.has_generator}
+        {prefs.simple_run && (
+          <>
+            <RunFlowPanel
+              projectId={projectId}
+              params={params}
+              values={values}
+              onChange={setValue}
+              onSubmitted={() => refetchProjects()}
             />
-            <FileCheck
-              label="workflow.yml"
-              exists={project.has_workflow_yml}
-            />
-            <FileCheck
-              label="Apptainer def"
-              exists={project.has_container_def}
-            />
-          </div>
-        </div>
 
-        {/* Parameters (discovered per-workflow from the generator's argparse) */}
-        {(genParams.length > 0 || planParams.length > 0) && (
-          <div>
-            <h3 className="mb-3 text-sm font-semibold text-fg">
-              Parameters
-            </h3>
-
-            {genParams.length > 0 && (
-              <div className="mb-4 rounded-md border border-line p-4">
-                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-fgsubtle">
-                  Generate
-                </p>
-                {mutexGroups.map((grp, i) => (
-                  <p key={i} className="mb-2 text-xs text-amber-600 dark:text-amber-400">
-                    Provide exactly one of:{" "}
-                    {grp
-                      .map((d) => genParams.find((p) => p.dest === d)?.flag ?? d)
-                      .join(" or ")}
-                  </p>
-                ))}
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {genParams.map((p) => (
-                    <ParamField
-                      key={p.dest}
-                      param={p}
-                      value={values[p.dest]}
-                      onChange={(v) => setValue(p.dest, v)}
-                    />
-                  ))}
-                </div>
+            {/* Everything Pegasus-shaped lives behind one disclosure. Open
+                state is a per-user preference, so a workflow engineer who
+                wants it doesn't reopen it on every visit. */}
+            <details
+              open={prefs.advanced_open}
+              onToggle={(e) => {
+                const open = (e.currentTarget as HTMLDetailsElement).open;
+                if (open !== prefs.advanced_open) {
+                  updatePrefs.mutate({ ...prefs, advanced_open: open });
+                }
+              }}
+              className="rounded-xl border border-line bg-surface"
+            >
+              <summary className="cursor-pointer px-5 py-3 text-sm font-medium text-fgmuted hover:text-fg">
+                Advanced — run the steps individually
+              </summary>
+              <div className="space-y-6 border-t border-line p-5">
+                {advancedSections}
               </div>
-            )}
-
-            {planParams.length > 0 && (
-              <div className="rounded-md border border-line p-4">
-                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-fgsubtle">
-                  Plan / Submit
-                </p>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {planParams.map((p) => (
-                    <ParamField
-                      key={p.dest}
-                      param={p}
-                      value={values[p.dest]}
-                      onChange={(v) => setValue(p.dest, v)}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+            </details>
+          </>
         )}
 
-        {/* Action buttons */}
-        <div>
-          <h3 className="mb-3 text-sm font-semibold text-fg">
-            Actions
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {project.has_generator && (
-              <button
-                onClick={handleGenerate}
-                disabled={isBusy}
-                className="rounded-md bg-gray-600 px-4 py-2 text-sm text-white hover:bg-gray-700 disabled:opacity-50"
-              >
-                {generate.isPending ? "Generating..." : "Generate Workflow"}
-              </button>
-            )}
-
-            {project.has_container_def && (
-              <button
-                onClick={handleBuild}
-                disabled={isBusy}
-                title="Build the project's Apptainer definition into a .sif beside it (and publish it if a registry is set in Settings → Pegasus Options)"
-                className="rounded-md bg-sky-700 px-4 py-2 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
-              >
-                {building ? "Building..." : "Build Image"}
-              </button>
-            )}
-
-            {project.has_workflow_yml && (
-              <>
-                <button
-                  onClick={handlePlan}
-                  disabled={isBusy}
-                  className="rounded-md bg-yellow-600 px-4 py-2 text-sm text-white hover:bg-yellow-700 disabled:opacity-50"
-                >
-                  {plan.isPending ? "Planning..." : "Plan"}
-                </button>
-                <button
-                  onClick={handleRun}
-                  disabled={isBusy}
-                  title="Submit the planned workflow (pegasus-run) without re-planning"
-                  className="rounded-md bg-pegasus-600 px-4 py-2 text-sm text-white hover:bg-pegasus-700 disabled:opacity-50"
-                >
-                  {submit.isPending ? "Running..." : "Run"}
-                </button>
-                <button
-                  onClick={() =>
-                    setDag({
-                      url: apiUrl(
-                        `workflows/projects/${projectId}/graph.json`
-                      ),
-                      title: `${project.name} — workflow DAG`,
-                      live: false,
-                    })
-                  }
-                  className="rounded-md border border-pegasus-300 bg-surface px-4 py-2 text-sm text-pegasus-700 hover:bg-pegasus-50 dark:border-pegasus-700 dark:text-pegasus-300 dark:hover:bg-pegasus-400/10"
-                >
-                  Visualize DAG
-                </button>
-              </>
-            )}
-          </div>
-          {builtImage && (
-            <p className="mt-2 text-xs text-fgmuted">
-              Latest image:{" "}
-              <span className="font-mono text-fg">{builtImage}</span>
-            </p>
-          )}
-        </div>
-
-        {/* Command output */}
-        {output && (
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-fg">Output</h3>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setOutputCollapsed((c) => !c)}
-                  className="rounded px-2 py-0.5 text-xs text-fgmuted hover:bg-base hover:text-fg"
-                  title={outputCollapsed ? "Expand output" : "Collapse output"}
-                >
-                  {outputCollapsed ? "Expand" : "Collapse"}
-                </button>
-                <button
-                  onClick={() => setOutput(null)}
-                  className="rounded px-2 py-0.5 text-xs text-fgmuted hover:bg-base hover:text-fg"
-                  title="Close output"
-                  aria-label="Close output"
-                >
-                  {"✕"}
-                </button>
-              </div>
-            </div>
-            {!outputCollapsed && !outputIsBuild && outputHint(output) && (
-              <div className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-                {outputHint(output)}
-              </div>
-            )}
-            {!outputCollapsed && (
-              <pre className="max-h-64 w-full overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] break-all rounded-md bg-gray-900 p-4 text-xs text-green-400">
-                {output}
-              </pre>
-            )}
-          </div>
-        )}
+        {!prefs.simple_run && advancedSections}
 
         {/* Submitted runs */}
         {project.runs.length > 0 && (
@@ -562,71 +589,6 @@ export function WorkflowProjectDetail({ projectId }: Props) {
           onConfirm={handleDeleteRun}
           onCancel={() => setRunToDelete(null)}
         />
-      )}
-    </div>
-  );
-}
-
-function ParamField({
-  param,
-  value,
-  onChange,
-}: {
-  param: WorkflowParam;
-  value: string | boolean | undefined;
-  onChange: (v: string | boolean) => void;
-}) {
-  const label = param.flag.replace(/^-+/, "").replace(/-/g, " ");
-
-  if (param.is_flag) {
-    return (
-      <label className="flex items-center gap-2 text-sm text-fg">
-        <input
-          type="checkbox"
-          checked={Boolean(value)}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-        <span title={param.help}>{label}</span>
-      </label>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-fgmuted">
-        {label}
-        {param.required && <span className="ml-1 text-red-500">*</span>}
-      </label>
-      {param.choices ? (
-        <select
-          value={String(value ?? "")}
-          onChange={(e) => onChange(e.target.value)}
-          className="rounded-md border border-line px-2 py-1 text-sm"
-        >
-          {param.choices.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input
-          type="text"
-          value={String(value ?? "")}
-          // Prefix so a grayed default reads as guidance, not a filled value.
-          placeholder={
-            param.default == null
-              ? param.required
-                ? "required"
-                : "optional"
-              : `default: ${param.default}`
-          }
-          onChange={(e) => onChange(e.target.value)}
-          className="rounded-md border border-line px-2 py-1 text-sm font-mono"
-        />
-      )}
-      {param.help && (
-        <span className="text-xs text-fgsubtle">{param.help}</span>
       )}
     </div>
   );
