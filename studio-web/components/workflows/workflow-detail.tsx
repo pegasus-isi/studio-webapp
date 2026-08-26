@@ -11,6 +11,7 @@ import {
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { OutputsPanel } from "@/components/workflows/outputs-panel";
+import { FailureCards } from "@/components/workflows/failure-cards";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUrl } from "@/lib/urls";
 import { cn, formatDuration, statusColor } from "@/lib/utils";
@@ -59,6 +60,13 @@ export function WorkflowDetail({ runId }: Props) {
     }
     return "results";
   });
+  // Once a manual choice is made, stop steering: an auto-switch that fights
+  // the user is worse than landing on the wrong tab once.
+  const tabPinned = useRef(false);
+  const chooseTab = (t: "results" | "steps") => {
+    tabPinned.current = true;
+    setTab(t);
+  };
   // Only a run with queue presence can be removed from it. "running" covers a
   // DAG whose jobs are queued or executing; a finished or failed run has nothing
   // left to remove, and offering the button there just invites a 409.
@@ -130,6 +138,11 @@ export function WorkflowDetail({ runId }: Props) {
       eventSourceRef.current = null;
     };
   }, [runId, isRunning, setEventSource]);
+
+  useEffect(() => {
+    if (tabPinned.current) return;
+    if (run?.status === "failed") setTab("steps");
+  }, [run?.status]);
 
   const handleAnalyze = async () => {
     const result = await runAction("Analyze", () => analyze.mutateAsync(runId));
@@ -285,7 +298,7 @@ export function WorkflowDetail({ runId }: Props) {
               key={t}
               role="tab"
               aria-selected={tab === t}
-              onClick={() => setTab(t)}
+              onClick={() => chooseTab(t)}
               className={cn(
                 "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors",
                 tab === t
@@ -353,14 +366,21 @@ export function WorkflowDetail({ runId }: Props) {
           </p>
         )}
 
-        {/* Diagnostics: failed-job stderr beside pegasus-analyzer output, so
-            the failure reason is visible without leaving the run page. */}
+        {/* Failure cards first (#241, Phase 5): what went wrong and what to
+            do about it. The raw stderr and analyzer output stay below, as
+            detail rather than as the whole answer. */}
+        <div className="mt-6">
+          <FailureCards runId={runId} runFinished={!isRunning} />
+        </div>
+
         {(failedJobDetails.length > 0 || analysis) && (
-          <div className="mt-6">
-            <h3 className="mb-2 text-sm font-semibold text-fg">Diagnostics</h3>
+          <details className="mt-6">
+            <summary className="cursor-pointer text-sm font-semibold text-fgmuted hover:text-fg">
+              Raw diagnostics
+            </summary>
 
             {failedJobDetails.length > 0 && (
-              <div className="mb-4 space-y-3">
+              <div className="mb-4 mt-3 space-y-3">
                 {failedJobDetails.map((job, i) => (
                   <div
                     key={i}
@@ -395,7 +415,7 @@ export function WorkflowDetail({ runId }: Props) {
                 failures.
               </p>
             )}
-          </div>
+          </details>
         )}
       </div>
 

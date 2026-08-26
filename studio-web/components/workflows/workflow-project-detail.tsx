@@ -14,6 +14,7 @@ import {
 import { DagViewer } from "@/components/workflows/dag-viewer";
 import { RunFlowPanel } from "@/components/workflows/run-flow-panel";
 import { OutputsPanel } from "@/components/workflows/outputs-panel";
+import { FailureCards } from "@/components/workflows/failure-cards";
 import {
   ParamField,
   buildArgs,
@@ -655,11 +656,16 @@ function RunJobsPanel({
   const analyze = useAnalyzeWorkflow();
   const runAction = useActionToast();
   const [analysis, setAnalysis] = useState<string | null>(null);
-  // Results first, for the same reason as the standalone run page: it is what
-  // the user ran the analysis to get. Without this tab the outputs view was
-  // unreachable from the project page — i.e. from the primary flow — which
-  // made the whole of Phase 4 invisible to exactly the user it was for (#241).
-  const [tab, setTab] = useState<"results" | "steps">("results");
+  // Results first — it is what the user ran the analysis to get. Without this
+  // tab the outputs view was unreachable from the project page, i.e. from the
+  // primary flow, which made the whole of Phase 4 invisible to exactly the
+  // user it was for (#241).
+  //
+  // Unless the run failed: then there are no results to collect and the
+  // diagnosis is what they need, so open on Steps where the failure cards are.
+  const [tab, setTab] = useState<"results" | "steps">(
+    runStatus === "failed" ? "steps" : "results"
+  );
 
   const handleAnalyze = async () => {
     const result = await runAction("Analyze", () => analyze.mutateAsync(runId));
@@ -692,6 +698,12 @@ function RunJobsPanel({
       )}
 
       <div className={cn("px-4 py-3", tab !== "steps" && "hidden")}>
+      {/* What went wrong comes before the job table (#241, Phase 5): the
+          table is how you look something up, not how you find out you have a
+          problem. */}
+      <div className="mb-3">
+        <FailureCards runId={runId} runFinished={runStatus !== "running"} />
+      </div>
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-medium text-fgmuted">Jobs</span>
         <button
