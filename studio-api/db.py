@@ -836,3 +836,24 @@ class Database:
             (key, json.dumps(value), _now()),
         )
         await self.db.commit()
+
+    async def has_prior_activity(self) -> bool:
+        """True if this workspace was already in use before now.
+
+        Used by the onboarding funnel (services/onboarding_metrics.py) to tell
+        a genuinely new user from an existing one whose DB predates the
+        instrumentation. Without the distinction, an upgrading user whose runs
+        succeeded months ago records first-seen and first-success within
+        milliseconds of each other and reports a ~0s time-to-first-success,
+        which would quietly wreck the very baseline the metric exists to
+        establish.
+
+        Deliberately cheap and conservative: a single EXISTS against the two
+        tables that only get rows once someone has actually done something.
+        """
+        async with self.db.execute(
+            """SELECT EXISTS(SELECT 1 FROM workflow_runs)
+                   OR EXISTS(SELECT 1 FROM chat_messages) AS used"""
+        ) as cursor:
+            row = await cursor.fetchone()
+        return bool(row["used"]) if row else False
