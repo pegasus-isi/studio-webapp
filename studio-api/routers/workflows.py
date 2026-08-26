@@ -63,6 +63,23 @@ class BuildRequest(BaseModel):
     # pushing is a separate, opt-in step rather than part of building.
     push: bool = False
 
+
+class RunFlowRequest(BaseModel):
+    """Everything the one-button Run needs (#241, Phase 1).
+
+    Combines what Generate and Plan/Run took separately, because the user makes
+    these choices once, in one form, before pressing Run.
+    """
+
+    args: list[str] = Field(default_factory=list)
+    site: str = "condorpool"
+    output_site: str = "local"
+    # Rebuild the software environment even when it looks current. The default
+    # skips an up-to-date image, which is the slowest avoidable step in a
+    # re-run; this is the escape hatch for when the definition changed in a way
+    # mtime didn't catch.
+    force_build: bool = False
+
 log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -281,6 +298,100 @@ async def build_project_image(
         except GeneratorExit:
             # Client disconnected — skip the finally's [DONE] to avoid the
             # "async generator ignored GeneratorExit" noise (BE-9).
+            client_gone = True
+            raise
+        finally:
+            if not client_gone:
+                yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── Unified Run flow (#241, Phase 1) ──────────────────────────────────────
+#
+# One action replacing the Generate / Build / Plan / Run button row. The four
+# endpoints above stay exactly as they are: Advanced mode still drives them
+# individually, and nothing here changes their behaviour.
+
+
+@router.post("/projects/{project_id}/run-flow")
+async def start_run_flow(project_id: str, req: RunFlowRequest) -> dict:
+    """Start the whole prepare-and-run sequence as one background flow.
+
+    Returns as soon as the flow is created — progress arrives on
+    `/run-flow/events`. The flow outlives the request that started it, so
+    closing the tab doesn't strand it half-done.
+    """
+    from services.run_flow import manager
+
+    projects = await discover_projects_async()
+    proj = next((p for p in projects if p["project_id"] == project_id), None)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+
+    try:
+        flow = manager.start(
+            project_id=project_id,
+            project_dir=proj["project_dir"],
+            generator_file=proj.get("generator_file") if proj["has_generator"] else None,
+            has_container_def=bool(proj["has_container_def"]),
+            generator_args=req.args,
+            site=req.site,
+            output_site=req.output_site,
+            force_build=req.force_build,
+        )
+    except RuntimeError as e:
+        # 409, not 400: the request is well-formed, the project is just busy.
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+    return flow.snapshot()
+
+
+@router.get("/projects/{project_id}/run-flow")
+async def get_run_flow(project_id: str) -> dict:
+    """Current (or most recent) flow for a project, without streaming.
+
+    How a reopened page finds out whether a run is in progress before deciding
+    to attach to the event stream.
+    """
+    from services.run_flow import manager
+
+    flow = manager.get(project_id)
+    if flow is None:
+        return {"project_id": project_id, "state": None, "active": False}
+    return flow.snapshot()
+
+
+@router.get("/projects/{project_id}/run-flow/events")
+async def run_flow_events(project_id: str) -> StreamingResponse:
+    """SSE stream of a flow: full replay, then live until it ends.
+
+    Replaying rather than streaming-from-now is what makes the flow
+    reattachable — a client that arrives late sees the same sequence as one
+    present from the start.
+    """
+    from services.run_flow import manager
+
+    flow = manager.get(project_id)
+    if flow is None:
+        raise HTTPException(status_code=404, detail="No run in progress")
+
+    async def event_stream():
+        client_gone = False
+        try:
+            async for event in flow.subscribe():
+                yield f"data: {json.dumps(event)}\n\n"
+        except GeneratorExit:
+            # Client disconnected — skip the [DONE] to avoid the "async
+            # generator ignored GeneratorExit" noise (same as build, BE-9).
             client_gone = True
             raise
         finally:
