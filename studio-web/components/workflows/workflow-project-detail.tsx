@@ -144,39 +144,49 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     setOutputIsBuild(false);
   };
 
+  // Failures persist in the output panel instead of only flashing a toast:
+  // with a remote backend an action can spend a minute pushing the project
+  // before failing, and a 4-second toast after that reads as a dead button.
+  const failureText = (label: string, e: unknown) =>
+    `${label} failed: ${e instanceof Error ? e.message : String(e)}`;
+
   const handleGenerate = async () => {
     setOutput(null);
     // Regenerating invalidates any prior plan.
     setPlannedRunDir(null);
-    const result = await runAction("Generate", () =>
-      generate.mutateAsync({
+    try {
+      const result = await generate.mutateAsync({
         projectId,
         args: buildArgs(genParams, values),
-      })
-    );
-    if (result) showOutput(result.output);
+      });
+      showOutput(result.output);
+    } catch (e) {
+      showOutput(failureText("Generate", e));
+    }
   };
 
   const handlePlan = async () => {
     setOutput(null);
-    const result = await runAction("Plan", () =>
-      plan.mutateAsync({ projectId, opts: planOpts() })
-    );
-    if (result) {
+    try {
+      const result = await plan.mutateAsync({ projectId, opts: planOpts() });
       setPlannedRunDir(result.run_dir || null);
       showOutput(result.output);
+    } catch (e) {
+      showOutput(failureText("Plan", e));
     }
   };
 
   const handleRun = async () => {
     setOutput(null);
-    const result = await runAction("Run", () =>
-      submit.mutateAsync({
+    try {
+      const result = await submit.mutateAsync({
         projectId,
         opts: { ...planOpts(), run_dir: plannedRunDir ?? undefined },
-      })
-    );
-    if (result) showOutput(result.output ?? "Submitted");
+      });
+      showOutput(result.output ?? "Submitted");
+    } catch (e) {
+      showOutput(failureText("Run", e));
+    }
   };
 
   // Build the project's container image, streaming the build log into the
