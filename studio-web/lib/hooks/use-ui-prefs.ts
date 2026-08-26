@@ -17,10 +17,15 @@ const KEY = ["ui-preferences"];
 
 /** Defaults used before the fetch lands, and if the request fails entirely. */
 const FALLBACK: api.UIPreferences = {
-  // Off by default — see routers/settings.py. The unified Run flow is opt-in
-  // until validation, and a failed fetch must land on the *current* UI rather
-  // than flipping users into the new one by accident.
-  simple_run: false,
+  // Matches the server default (#241). It has to: this value is what renders
+  // between mount and the fetch landing, so a mismatch shows every user the
+  // other layout for a beat and then swaps it under them.
+  //
+  // It is also what a *failed* fetch falls back to. Defaulting to the flow the
+  // product now leads with is the right failure mode — someone whose
+  // preference request failed should see the standard product, and can still
+  // reach the individual steps through Advanced.
+  simple_run: true,
   advanced_open: false,
 };
 
