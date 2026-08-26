@@ -99,12 +99,15 @@ export function ParamField({
   const helpId = description ? `${id}-help` : undefined;
   const text = String(value ?? "");
 
-  const placeholder =
-    param.default == null
-      ? param.required
-        ? "required"
-        : "optional"
-      : `default: ${param.default}`;
+  // An empty-string default is *no* default: rendering it as "default: "
+  // promises a value and then shows none, which reads as a broken field.
+  const hasDefault =
+    param.default != null && String(param.default).trim() !== "";
+  const placeholder = hasDefault
+    ? `default: ${param.default}`
+    : param.required
+      ? "required"
+      : "optional";
 
   if (param.is_flag || param.type === "boolean") {
     return (
