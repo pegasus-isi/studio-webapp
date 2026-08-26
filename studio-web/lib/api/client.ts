@@ -480,6 +480,64 @@ export async function updateUIPreferences(prefs: UIPreferences) {
   });
 }
 
+// --- Run outputs (#241, Phase 4) ---
+
+export interface OutputFile {
+  /** Path relative to the run's output directory. */
+  path: string;
+  name: string;
+  size: number;
+  modified: string;
+  kind: "image" | "table" | "text" | "binary";
+  /** Decided server-side, so the size threshold can't drift between the two. */
+  previewable: boolean;
+}
+
+export interface RunOutputs {
+  run_id: string;
+  output_dir: string | null;
+  /**
+   * How the output directory was located. "catalog" = the workflow declared
+   * it, so an empty listing means "nothing produced yet". "convention" = we
+   * guessed from a directory name. "none" = we couldn't tell where this
+   * workflow puts results, which is NOT the same as there being none.
+   */
+  found_via: "catalog" | "convention" | "none";
+  exists: boolean;
+  total: number;
+  files: OutputFile[];
+  /** The walk hit its ceiling — more files exist than are listed. */
+  truncated: boolean;
+  offset: number;
+  limit: number;
+}
+
+export async function getRunOutputs(
+  runId: string,
+  opts: { offset?: number; limit?: number } = {}
+) {
+  const query = new URLSearchParams();
+  if (opts.offset) query.set("offset", String(opts.offset));
+  if (opts.limit) query.set("limit", String(opts.limit));
+  const suffix = query.toString() ? `?${query}` : "";
+  return request<RunOutputs>(
+    `/workflows/${encodeURIComponent(runId)}/outputs${suffix}`
+  );
+}
+
+/** URL for previewing or downloading one output file. */
+export function runOutputFileUrl(
+  runId: string,
+  path: string,
+  download = false
+): string {
+  const query = new URLSearchParams({ path });
+  if (download) query.set("download", "1");
+  return apiUrl(
+    `workflows/${encodeURIComponent(runId)}/outputs/file?${query}`
+  );
+}
+
 export interface RunEstimate {
   remaining_seconds: number;
   method: string;

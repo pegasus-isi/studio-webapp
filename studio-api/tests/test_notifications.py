@@ -320,3 +320,17 @@ def test_notify_run_started_skips_non_submitted(monkeypatch):
     monkeypatch.setattr(ne.engine, "notify", fake_notify)
     asyncio.run(wf._notify_run_started({"status": "error", "output": "boom"}))
     assert called["n"] == 0
+
+
+def test_finished_run_notification_links_to_results(tmp_path):
+    """A completed run should land the user on its results, not the job table.
+
+    The files are what they were waiting for (#241, Phase 4). A failure is the
+    opposite case: the diagnosis is in the steps, so it links there explicitly.
+    """
+    from services.notification_engine import _run_link
+
+    assert _run_link("abc123", "succeeded") == "/workflows?run=abc123"
+    assert _run_link("abc123", "failed") == "/workflows?run=abc123&view=steps"
+    # Anything mid-flight also wants the steps — there are no results yet.
+    assert _run_link("abc123", "running").endswith("&view=steps")
