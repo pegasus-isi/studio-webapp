@@ -28,7 +28,9 @@ import { cn } from "@/lib/utils";
 import {
   ParamField,
   buildArgs,
+  isAdvancedParam,
   missingRequired,
+  paramLabel,
   type ParamValues,
 } from "@/components/workflows/param-field";
 
@@ -105,6 +107,20 @@ export function RunFlowPanel({
     [allGenParams, siteParams]
   );
 
+  // Split the form by what the parameter *is for*. Running the EEG workflow
+  // showed `output: workflow.yml` and `skip sites catalog` sitting at the same
+  // visual weight as `num subjects` — the workflow's bookkeeping competing for
+  // attention with the actual science (#256). The backend marks the difference
+  // (#241, Phase 3a) and never marks a required parameter as plumbing.
+  const primaryParams = useMemo(
+    () => genParams.filter((p) => !isAdvancedParam(p)),
+    [genParams]
+  );
+  const plumbingParams = useMemo(
+    () => genParams.filter(isAdvancedParam),
+    [genParams]
+  );
+
   // Radio → every site-ish generator param, so what's submitted matches what
   // the user picked regardless of which knob the generator reads.
   const chooseSite = useCallback(
@@ -132,6 +148,31 @@ export function RunFlowPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [values["site"], siteParams]);
   const running = flow?.state === "running";
+
+  // A plain-language recap of the choices that matter, built from the values
+  // the user actually set. Defaults left untouched are omitted: repeating them
+  // buries the two or three lines that are the point.
+  const summary = useMemo(() => {
+    const rows: { label: string; value: string }[] = [];
+    const site = String(values["site"] ?? "condorpool");
+    const siteLabel =
+      EXECUTION_SITES.find((s) => s.value === site)?.label ?? site;
+    rows.push({ label: "Where it runs", value: siteLabel });
+
+    for (const p of primaryParams) {
+      if (p.is_flag) {
+        if (values[p.dest] === true) {
+          rows.push({ label: paramLabel(p), value: "yes" });
+        }
+        continue;
+      }
+      const current = String(values[p.dest] ?? "").trim();
+      if (!current) continue;
+      if (p.default != null && current === String(p.default)) continue;
+      rows.push({ label: paramLabel(p), value: current });
+    }
+    return rows;
+  }, [primaryParams, values]);
 
   // ── attach to the server-side flow ──────────────────────────────────────
 
@@ -262,9 +303,9 @@ export function RunFlowPanel({
           Run. Studio prepares everything and starts it for you.
         </p>
 
-        {genParams.length > 0 && (
+        {primaryParams.length > 0 && (
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {genParams.map((p: WorkflowParam) => (
+            {primaryParams.map((p: WorkflowParam) => (
               <ParamField
                 key={p.dest}
                 param={p}
@@ -273,6 +314,24 @@ export function RunFlowPanel({
               />
             ))}
           </div>
+        )}
+
+        {plumbingParams.length > 0 && (
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs font-medium text-fgmuted hover:text-fg">
+              More options ({plumbingParams.length})
+            </summary>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {plumbingParams.map((p: WorkflowParam) => (
+                <ParamField
+                  key={p.dest}
+                  param={p}
+                  value={values[p.dest]}
+                  onChange={(v) => onChange(p.dest, v)}
+                />
+              ))}
+            </div>
+          </details>
         )}
 
         <fieldset className="mt-5">
@@ -314,6 +373,28 @@ export function RunFlowPanel({
             })}
           </div>
         </fieldset>
+
+        {/* What pressing Run will actually do. A non-specialist has no way to
+            predict the consequences of a form they only half understand, and
+            "it started something on a cluster" is a bad moment to find out.
+            Values only — no flags, no command line. */}
+        {!running && summary.length > 0 && (
+          <div className="mt-5 rounded-lg border border-line bg-base p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-fgsubtle">
+              What will happen
+            </p>
+            <dl className="mt-2 space-y-1">
+              {summary.map((row) => (
+                <div key={row.label} className="flex gap-2 text-sm">
+                  <dt className="shrink-0 text-fgmuted">{row.label}:</dt>
+                  <dd className="min-w-0 flex-1 truncate text-fg" title={row.value}>
+                    {row.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        )}
 
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <button
