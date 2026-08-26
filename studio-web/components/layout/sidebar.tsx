@@ -15,6 +15,9 @@ const NAV_ITEMS: {
 }[] = [
   { href: "/", label: "Dashboard", icon: "🏠" },
   { href: "/workflows", label: "Workflows", icon: "📊" },
+  // Sits next to Workflows because "add my data" and "run my analysis" are two
+  // halves of one task (#241, Phase 2).
+  { href: "/data", label: "My data", icon: "📁" },
   { href: "/marketplace", label: "Marketplace", icon: "🛒" },
   { href: "/provisioning", label: "Resources", icon: "🖥️" },
   // Notebooks opens the prefix-aware JupyterLab in a new tab.
