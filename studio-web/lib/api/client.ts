@@ -348,6 +348,22 @@ export async function getWorkflowProjects() {
 
 // Parameter schema discovered per workflow (different generators expose
 // different arguments).
+/**
+ * Widget hint from argparse introspection (#241, Phase 3).
+ *
+ * A hint, not a contract: every value is still a string on the command line.
+ * Anything unrecognised must render as a plain text input.
+ */
+export type ParamType =
+  | "text"
+  | "integer"
+  | "number"
+  | "boolean"
+  | "choice"
+  | "file"
+  | "directory"
+  | "date";
+
 export interface WorkflowParam {
   dest: string;
   flag: string;
@@ -357,6 +373,13 @@ export interface WorkflowParam {
   required: boolean;
   is_flag: boolean;
   choices: string[] | null;
+  // Phase 3 hints. Optional so a backend that predates them (or an
+  // introspection fallback that returns a bare schema) still renders.
+  type?: ParamType;
+  /** Human label, preferring the author's help text over the flag name. */
+  label?: string;
+  /** Plumbing rather than science — belongs under "More options". */
+  advanced?: boolean;
 }
 
 export interface ProjectParams {
