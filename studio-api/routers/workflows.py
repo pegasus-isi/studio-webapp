@@ -121,6 +121,20 @@ async def list_workflows() -> WorkflowListResponse:
             exec_site=detail.get("exec_site"),
         )
 
+    # Onboarding funnel (#241). Also hooked here, not only on the dashboard: a
+    # user who lands straight on Workflows and never opens the dashboard would
+    # otherwise never have their submit/success milestones observed.
+    try:
+        from services import onboarding_metrics
+
+        await onboarding_metrics.observe(
+            db,
+            has_runs=bool(workflows),
+            has_success=any(w.status == "succeeded" for w in workflows),
+        )
+    except Exception as e:  # noqa: BLE001 — metrics must not break the list
+        log.warning("onboarding_observe_failed", error=str(e))
+
     return WorkflowListResponse(workflows=workflows)
 
 

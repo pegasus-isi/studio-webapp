@@ -276,3 +276,57 @@ the perceived change; 2 and 3 complete the Runner's input side and depend on
 1's form; 5 extends 1's failure pattern to runs; 6 and 7 are polish that pays
 off only once the core flow is coherent; 8 closes the loop and gates the
 default-on flip.
+
+---
+
+## Appendix A — Backend copy audit (Phase 0 deliverable)
+
+Inventory of user-facing strings composed in Python, which the Phase 0
+vocabulary table will govern. Recorded here, **not yet changed** — the copy
+flip happens behind the rollout flag in later phases.
+
+| Source | String | Governed terms |
+|---|---|---|
+| `services/notification_engine.py` | "Workflow “X” completed" / "failed" / "is now `<status>`" | workflow, raw status |
+| `services/notification_engine.py` | "All jobs finished successfully (N jobs)." | job |
+| `services/notification_engine.py` | "Job failure in “X”", "N job(s) just failed" | job |
+| `services/notification_engine.py` | "Workflow “X” needs resources" | workflow, resources |
+| `services/condor_pool.py` | "N more GPU(s)/CPU(s) needed", "Idle jobs request …" | idle, job, pool |
+| `services/condor_pool.py` | "Jobs waiting N min for resources" | job |
+| `services/condor_pool.py` | "N held job(s)", "Hold reason(s): …" | **held**, job |
+| `services/condor_pool.py` | "N job(s) idle requesting … pool has N free. Add N to unblock." | idle, job, pool |
+| `studio-web/components/workflows/workflow-project-detail.tsx` | `outputHint()` strings ("remove the run's monitord.pid file") | run dir, PegasusLite internals |
+| `studio-web/components/workflows/workflow-list.tsx` | empty state: "run `pegasus-plan --submit` in the terminal" | CLI instruction to a non-CLI user |
+
+**Structural finding.** `vocabulary.ts` is TypeScript; these strings are
+composed in Python and cannot import it. Rather than maintaining a Python twin
+that will drift, prefer **returning structured data and composing the sentence
+in the frontend**:
+
+- *Pressure findings are already structured.* Each carries `kind`
+  (`gpu_shortage`, `cpu_shortage`, `long_wait`, `held_jobs`) plus `delta` with
+  the numbers, so the frontend can render its own copy from `kind` + `delta`
+  today and the backend's `title`/`detail`/`body` strings become a fallback for
+  non-UI consumers. No backend change needed — a frontend change in Phase 7.
+- *Notifications are harder*: `title` and `body` are persisted as text in the
+  `notifications` table, so already-delivered notifications keep whatever
+  wording they were written with. Changing the templates only affects new
+  notifications, and the feed will legitimately mix vocabularies during the
+  transition. Accept that rather than migrating historical rows; alternatively,
+  persist `kind` + `meta` and render at display time, which is the cleaner fix
+  if notification copy churns again.
+
+## Appendix B — Phase 0 status
+
+| Deliverable | Status |
+|---|---|
+| `studio-web/lib/vocabulary.ts` | ✅ landed (not yet consumed by components, by design) |
+| Chat vocabulary sync (`knowledge/overlay/STUDIO_ENV.md`) | ✅ landed |
+| Baseline telemetry (`services/onboarding_metrics.py` + hooks + endpoint) | ✅ landed |
+| Backend copy audit | ✅ Appendix A |
+| Terminology validation with 3–4 users | ⏳ protocol ready (`docs/ux-terminology-test.md`), **not yet run** |
+
+The terminology check is the one Phase 0 item that cannot be completed in
+code. Phase 1 may build against the current `vocabulary.ts` values, but the
+vocabulary flip must not ship default-on until the protocol has run and its
+results table is filled in.

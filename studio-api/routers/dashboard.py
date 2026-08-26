@@ -14,7 +14,7 @@ from fastapi import APIRouter
 
 from routers.health import _run_version_cmd
 from routers.knowledge import list_agents, list_skills
-from services import condor_pool
+from services import condor_pool, onboarding_metrics
 from services.workflow_monitor import get_workflow_detail
 from services.workflow_scanner import discover_projects, discover_runs
 
@@ -78,6 +78,20 @@ async def dashboard() -> dict:
     except Exception:
         skills, agents = [], []
 
+    # Onboarding funnel: this endpoint already knows everything the funnel
+    # needs, so observing here costs one settings read per poll and nothing
+    # else. Failures are swallowed — a metrics problem must not blank the
+    # landing page.
+    try:
+        await onboarding_metrics.observe(
+            db,
+            has_projects=bool(projects),
+            has_runs=bool(run_rows),
+            has_success=by_status.get("succeeded", 0) > 0,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("onboarding_observe_failed", error=str(e))
+
     return {
         "ai": {"skills": skills, "agents": agents},
         "projects": {"total": len(projects), "by_status": project_status},
@@ -90,3 +104,16 @@ async def dashboard() -> dict:
         "versions": {"pegasus": pegasus_version, "condor": condor_version},
         "notifications": {"unread": unread},
     }
+
+
+@router.get("/onboarding")
+async def onboarding() -> dict:
+    """This workspace's onboarding funnel — the redesign's baseline metric.
+
+    Phase 0 instrumentation (#241). Read-only: the milestones are recorded by
+    the polling endpoints, not by fetching this. Nothing in the UI consumes it
+    yet; it exists so the before/after comparison in Phase 8 has a "before".
+    """
+    from main import db
+
+    return await onboarding_metrics.snapshot(db)
