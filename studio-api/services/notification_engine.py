@@ -45,6 +45,18 @@ _SEVERITY_FOR_STATUS = {
 }
 
 
+def _run_link(run_id: str, status: str) -> str:
+    """In-app link for a run notification, aimed at what the user needs next.
+
+    A completed run's notification should land on its results — the files are
+    what they were waiting for, and the run page's Results tab is the default
+    anyway. A failure lands on the steps instead, because the diagnosis is
+    there and the results are beside the point (#241, Phase 4).
+    """
+    base = f"/workflows?run={run_id}"
+    return base if status == "succeeded" else f"{base}&view=steps"
+
+
 class _RunState:
     """Last-observed snapshot of a single run, used to detect transitions."""
 
@@ -246,7 +258,7 @@ class NotificationEngine:
             return
         if status == "succeeded":
             title = f"Workflow “{label}” completed"
-            body = f"All jobs finished successfully ({total} jobs)."
+            body = f"All jobs finished successfully ({total} jobs). See the results."
         else:  # failed
             title = f"Workflow “{label}” failed"
             body = (
@@ -260,7 +272,11 @@ class NotificationEngine:
             body=body,
             severity=_SEVERITY_FOR_STATUS.get(status, "info"),
             run_id=run_id,
-            link=f"/workflows?run={run_id}",
+            # A finished run's notification lands on its results rather than
+            # the job table (#241, Phase 4) — the files are what the user was
+            # waiting for. A failure still opens the steps, where the diagnosis
+            # is.
+            link=_run_link(run_id, status),
             dedup_key=dedup_key,
         )
 
@@ -273,14 +289,17 @@ class NotificationEngine:
         failed: int,
         total: int,
     ) -> None:
-        link = f"/workflows?run={run_id}"
+        link = _run_link(run_id, status)
 
         # 1. Status transition.
         if status != prev.status:
             severity = _SEVERITY_FOR_STATUS.get(status, "info")
             if status == "succeeded":
                 title = f"Workflow “{label}” completed"
-                body = f"All jobs finished successfully ({total} jobs)."
+                body = (
+                    f"All jobs finished successfully ({total} jobs). "
+                    "See the results."
+                )
             elif status == "failed":
                 title = f"Workflow “{label}” failed"
                 body = (
