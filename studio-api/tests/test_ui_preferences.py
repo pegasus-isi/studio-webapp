@@ -17,7 +17,7 @@ def test_simple_run_is_on_by_default(client):
     res = client.get("/api/settings/ui")
     assert res.status_code == 200
     assert res.json() == {
-        "simple_run": False,
+        "simple_run": True,
         "advanced_open": False,
         "welcome_dismissed": False,
     }
@@ -71,7 +71,7 @@ def test_corrupt_stored_settings_fall_back_to_defaults(client, monkeypatch):
     res = client.get("/api/settings/ui")
     assert res.status_code == 200
     assert res.json() == {
-        "simple_run": False,
+        "simple_run": True,
         "advanced_open": False,
         "welcome_dismissed": False,
     }
