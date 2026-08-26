@@ -66,6 +66,11 @@ _RESPONSES_HINTS = (
 # gpt-5.5 on the FABRIC/RENCI proxy and OpenAI reasoning models (o1/o3/o4).
 _RESPONSES_MODEL_PREFIXES = ("gpt-5", "o1", "o1-", "o3", "o4")
 
+# Pegasus bot routing: when enabled, every LLM call goes through 
+# the pegasus bot server's /chat endpoint
+PEGASUS_BOT_SERVER_URL = os.environ.get("PEGASUS_BOT_SERVER_URL", "").rstrip("/")
+_PEGASUS_BOT_CHAT_ENABLED = os.environ.get("PEGASUS_BOT_CHAT_ROUTE", "") == "1"
+
 
 def _is_responses_model(model: str) -> bool:
     """Heuristic: True if the model id implies a Responses-only endpoint."""
@@ -610,6 +615,79 @@ async def _raise_for_stream_status(resp: httpx.Response) -> None:
     if resp.status_code >= 400:
         await resp.aread()
         resp.raise_for_status()
+
+
+async def _pegasus_chat_stream(
+    client: httpx.AsyncClient,
+    bot_base_url: str,
+    messages: list[dict],
+    tools: list[dict],
+    user: str,
+    request_id: str,
+    conversation_id: str | None,
+    system_prompt: str,
+    display_text: str | None = None,
+) -> AsyncGenerator[dict, None]:
+    """Run ONE LLM round through the Pegasus bot server, heartbeat-aware.
+
+    Prepends the system prompt, posts the conversation + tool definitions to
+    {bot}/chat, and reshapes the JSON reply into the same ``result`` dict the
+    builtin generators produce, so the shared tool-round machinery downstream
+    (usage aggregation, local tool execution, persistence) works unchanged.
+    Yields ``__heartbeat__`` while awaiting the bot to keep the SSE warm.
+    """
+    body = {
+        "messages": [{"role": "system", "content": system_prompt}] + messages,
+        "tools": tools,
+        "user": user,
+        "request_id": request_id,
+        "conversation_id": conversation_id,
+        "display_text": display_text,
+    }
+
+    async def _do_post():
+        resp = await client.post(f"{bot_base_url}/chat", json=body, timeout=120.0)
+        resp.raise_for_status()
+        return resp.json()
+
+    task = asyncio.create_task(_do_post())
+    while not task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=15)
+        except asyncio.TimeoutError:
+            yield {"type": "__heartbeat__"}
+    data = task.result()
+
+    if data.get("status_code") != 200 or data.get("status") != "successful":
+        raise RuntimeError(data.get("detail") or data.get("response") or "bot server error")
+
+    tool_calls = []
+    for tc in data.get("tool_calls") or []:
+        args = tc.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args else {}
+            except json.JSONDecodeError:
+                args = {}
+        tool_calls.append({
+            "id": tc.get("id") or str(uuid.uuid4()),
+            "name": tc.get("name", ""),
+            "arguments": args if isinstance(args, dict) else {},
+        })
+
+    usage = data.get("usage") or {}
+    yield {
+        "type": "result",
+        "result": {
+            "content": data.get("response", "") or "",
+            "tool_calls": tool_calls,
+            "stop_reason": "tool_calls" if tool_calls else (data.get("finish_reason") or "stop"),
+            "usage": {
+                "input": usage.get("input_tokens", 0) or 0,
+                "output": usage.get("output_tokens", 0) or 0,
+            },
+        },
+    }
 
 
 async def _anthropic_stream(
@@ -1190,6 +1268,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
         return _error_sse("Invalid JSON body")
 
     messages = body.get("messages", [])
+    display_text = body.get("display_text")
     model_override = body.get("model", "")
     provider_override = body.get("provider", "")
     max_tokens_override = body.get("max_tokens")
@@ -1255,6 +1334,9 @@ async def chat_stream(request: Request) -> StreamingResponse:
     # "auto" | "chat" | "responses". Lets an operator force the Responses API
     # for a provider whose model id isn't auto-detected.
     wire_api = (config.get("extra_config") or {}).get("wire_api", "auto")
+
+    use_bot_route = _PEGASUS_BOT_CHAT_ENABLED and bool(PEGASUS_BOT_SERVER_URL)
+    user = os.environ.get("JUPYTERHUB_USER", "unknown")
 
     # Optional output ceiling: extra_config.max_tokens. Unset means the model
     # and endpoint decide, which is what reasoning models need — a fixed cap is
@@ -1366,58 +1448,88 @@ async def chat_stream(request: Request) -> StreamingResponse:
                 yield ": ping\n\n"
 
                 result: dict[str, Any] | None = None
-                # Retry the round on a transient transport drop, but only while
-                # nothing has been streamed to the client yet — retrying after
-                # tokens were emitted would duplicate them.
                 emitted_text = False
-                retry = 0
-                while True:
+
+                if use_bot_route:
+                    # Bot-server round: one non-streaming POST per LLM call.
+                    # Tool calls come back in the result below and are executed
+                    # by the shared local machinery — same as the builtin path.
                     try:
-                        if is_anthropic:
-                            stream = _anthropic_stream(
-                                client, base_url, api_key, model,
-                                conv_messages, system_prompt, max_tokens,
-                            )
-                        else:
-                            stream = _openai_dispatch(
-                                client, base_url, api_key, model,
-                                conv_messages, system_prompt, wire_api,
-                                max_tokens,
-                            )
-                        async for ev in _with_heartbeat(stream):
-                            # Client cancelled mid-stream — stop and release the
-                            # HTTP connection instead of draining the response.
-                            if request_id not in _active_clients:
-                                await stream.aclose()
-                                return
+                        async for ev in _with_heartbeat(_pegasus_chat_stream(
+                            client, PEGASUS_BOT_SERVER_URL, conv_messages,
+                            TOOL_DEFINITIONS, user, request_id,
+                            conversation_id, system_prompt, display_text,
+                        )):
                             if ev["type"] == "__heartbeat__":
                                 yield ": ping\n\n"
                                 continue
-                            if ev["type"] == "text":
-                                emitted_text = True
-                                yield f"data: {json.dumps({'content': ev['text']})}\n\n"
-                            elif ev["type"] == "result":
+                            if ev["type"] == "result":
                                 result = ev["result"]
-                        break  # stream completed cleanly
+                        break
                     except httpx.HTTPStatusError as e:
                         status = e.response.status_code if e.response is not None else "?"
-                        error_body = e.response.text[:500] if e.response is not None else str(e)
-                        yield f"data: {json.dumps({'error': f'LLM API error ({status}): {error_body}'})}\n\n"
-                        return
-                    except httpx.TransportError as e:
-                        # Transient network drop to the LLM endpoint. Retry only
-                        # if no tokens were emitted this round yet; otherwise a
-                        # retry would duplicate already-streamed content.
-                        if not emitted_text and retry < _MAX_STREAM_RETRIES:
-                            retry += 1
-                            await asyncio.sleep(_STREAM_RETRY_DELAY_S * retry)
-                            yield ": reconnecting\n\n"  # SSE comment heartbeat
-                            continue
-                        yield f"data: {json.dumps({'error': _transport_error_message(e, base_url, emitted_text)})}\n\n"
+                        body_txt = e.response.text[:500] if e.response is not None else str(e)
+                        yield f"data: {json.dumps({'error': f'Bot server error ({status}): {body_txt}'})}\n\n"
                         return
                     except Exception as e:
-                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                        yield f"data: {json.dumps({'error': f'Bot server error: {e}'})}\n\n"
                         return
+                    if request_id not in _active_clients:
+                        return
+                    if result.get("content"):
+                        yield f"data: {json.dumps({'content': result['content']})}\n\n"
+                else:
+                    # Retry the round on a transient transport drop, but only while
+                    # nothing has been streamed to the client yet — retrying after
+                    # tokens were emitted would duplicate them.
+                    retry = 0
+                    while True:
+                        try:
+                            if is_anthropic:
+                                stream = _anthropic_stream(
+                                    client, base_url, api_key, model,
+                                    conv_messages, system_prompt, max_tokens,
+                                )
+                            else:
+                                stream = _openai_dispatch(
+                                    client, base_url, api_key, model,
+                                    conv_messages, system_prompt, wire_api,
+                                    max_tokens,
+                                )
+                            async for ev in _with_heartbeat(stream):
+                                # Client cancelled mid-stream — stop and release the
+                                # HTTP connection instead of draining the response.
+                                if request_id not in _active_clients:
+                                    await stream.aclose()
+                                    return
+                                if ev["type"] == "__heartbeat__":
+                                    yield ": ping\n\n"
+                                    continue
+                                if ev["type"] == "text":
+                                    emitted_text = True
+                                    yield f"data: {json.dumps({'content': ev['text']})}\n\n"
+                                elif ev["type"] == "result":
+                                    result = ev["result"]
+                            break  # stream completed cleanly
+                        except httpx.HTTPStatusError as e:
+                            status = e.response.status_code if e.response is not None else "?"
+                            error_body = e.response.text[:500] if e.response is not None else str(e)
+                            yield f"data: {json.dumps({'error': f'LLM API error ({status}): {error_body}'})}\n\n"
+                            return
+                        except httpx.TransportError as e:
+                            # Transient network drop to the LLM endpoint. Retry only
+                            # if no tokens were emitted this round yet; otherwise a
+                            # retry would duplicate already-streamed content.
+                            if not emitted_text and retry < _MAX_STREAM_RETRIES:
+                                retry += 1
+                                await asyncio.sleep(_STREAM_RETRY_DELAY_S * retry)
+                                yield ": reconnecting\n\n"  # SSE comment heartbeat
+                                continue
+                            yield f"data: {json.dumps({'error': _transport_error_message(e, base_url, emitted_text)})}\n\n"
+                            return
+                        except Exception as e:
+                            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                            return
 
                 if result is None:
                     return
@@ -1458,7 +1570,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                 # Prefatory text (if any) was already streamed as deltas.
 
                 # Execute tool calls
-                if is_anthropic:
+                if is_anthropic and not use_bot_route:
                     assistant_content: list[dict] = []
                     if result.get("content"):
                         assistant_content.append({"type": "text", "text": result["content"]})
