@@ -27,6 +27,10 @@ const FALLBACK: api.UIPreferences = {
   // reach the individual steps through Advanced.
   simple_run: true,
   advanced_open: false,
+  // Assume dismissed until we know otherwise: showing a first-run welcome to
+  // a returning user because a fetch was slow is worse than showing it a
+  // moment late to someone genuinely new.
+  welcome_dismissed: true,
 };
 
 export function useUIPreferences() {

@@ -2,13 +2,23 @@
 
 import { useChatStore, genId, type ChatMsg } from "@/lib/stores/chat-store";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
+import { usePanelStore } from "@/lib/stores/panel-store";
 import { ChatMarkdown } from "@/components/chat/markdown";
 import * as api from "@/lib/api/client";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
+// Openers phrased as a scientist would say them. Each maps to a skill the
+// model already has; naming the skill is our problem, not theirs.
+const CHAT_STARTERS = [
+  "Build me a workflow that",
+  "Why did my run fail",
+  "Explain what this workflow does",
+];
+
 export function ChatPanel() {
   const messages = useChatStore((s) => s.messages);
+  const setChatDraft = usePanelStore((s) => s.setChatDraft);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const activeId = useChatStore((s) => s.activeId);
   const loadHistory = useChatStore((s) => s.loadHistory);
@@ -86,13 +96,24 @@ export function ChatPanel() {
             </div>
             <p className="text-lg">Welcome to PegasusAI Chat</p>
             <p className="mt-1 text-sm">
-              Ask me to create, debug, or review Pegasus workflows.
+              Describe what you want to do and I&apos;ll build or fix it for
+              you.
             </p>
-            <p className="mt-1 text-sm">
-              Try: <code className="rounded bg-muted px-1">/scaffold</code>,{" "}
-              <code className="rounded bg-muted px-1">/debug</code>,{" "}
-              <code className="rounded bg-muted px-1">/review</code>
-            </p>
+            {/* Plain-language starters, not slash commands (#241, Phase 6).
+                Slashes are a programmer idiom; a scientist shouldn't have to
+                know one to begin. They still work, and clicking a starter
+                sends ordinary prose — the model routes to the right skill. */}
+            <div className="mt-4 space-y-1.5">
+              {CHAT_STARTERS.map((starter) => (
+                <button
+                  key={starter}
+                  onClick={() => setChatDraft(starter + " ")}
+                  className="block w-full rounded-md border border-line bg-surface px-3 py-2 text-left text-sm text-fgmuted transition-colors hover:border-pegasus-400 hover:text-fg"
+                >
+                  {starter}…
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       ) : (

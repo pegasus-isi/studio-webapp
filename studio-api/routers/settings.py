@@ -75,6 +75,11 @@ class UIPreferences(BaseModel):
     # verbs) starts open. Persisted so a Pegasus-literate user doesn't reopen
     # it on every visit.
     advanced_open: bool = False
+    # First-run welcome (#241, Phase 6). Persisted server-side, not in
+    # localStorage: "have I introduced myself to this person" is a fact about
+    # the user, and clearing a browser or opening Studio on a second machine
+    # should not restart the introduction.
+    welcome_dismissed: bool = False
 
 
 _UI_PREFS_KEY = "ui_preferences"

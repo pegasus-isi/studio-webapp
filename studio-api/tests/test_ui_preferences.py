@@ -16,21 +16,24 @@ def test_simple_run_is_on_by_default(client):
     # take an edit to this line to change it.
     res = client.get("/api/settings/ui")
     assert res.status_code == 200
-    assert res.json() == {"simple_run": True, "advanced_open": False}
+    assert res.json() == {
+        "simple_run": False,
+        "advanced_open": False,
+        "welcome_dismissed": False,
+    }
 
 
 def test_preferences_round_trip(client):
-    saved = client.put(
-        "/api/settings/ui",
-        json={"simple_run": True, "advanced_open": True},
-    )
-    assert saved.status_code == 200
-    assert saved.json() == {"simple_run": True, "advanced_open": True}
-
-    assert client.get("/api/settings/ui").json() == {
+    payload = {
         "simple_run": True,
         "advanced_open": True,
+        "welcome_dismissed": True,
     }
+    saved = client.put("/api/settings/ui", json=payload)
+    assert saved.status_code == 200
+    assert saved.json() == payload
+
+    assert client.get("/api/settings/ui").json() == payload
 
 
 def test_unknown_keys_in_stored_settings_are_ignored(client, monkeypatch):
@@ -48,7 +51,11 @@ def test_unknown_keys_in_stored_settings_are_ignored(client, monkeypatch):
 
     res = client.get("/api/settings/ui")
     assert res.status_code == 200
-    assert res.json() == {"simple_run": True, "advanced_open": False}
+    assert res.json() == {
+        "simple_run": True,
+        "advanced_open": False,
+        "welcome_dismissed": False,
+    }
 
 
 def test_corrupt_stored_settings_fall_back_to_defaults(client, monkeypatch):
@@ -63,7 +70,11 @@ def test_corrupt_stored_settings_fall_back_to_defaults(client, monkeypatch):
 
     res = client.get("/api/settings/ui")
     assert res.status_code == 200
-    assert res.json() == {"simple_run": True, "advanced_open": False}
+    assert res.json() == {
+        "simple_run": False,
+        "advanced_open": False,
+        "welcome_dismissed": False,
+    }
 
 
 def test_partial_payload_falls_back_to_defaults(client):
