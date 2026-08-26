@@ -22,6 +22,10 @@ const FALLBACK: api.UIPreferences = {
   // than flipping users into the new one by accident.
   simple_run: false,
   advanced_open: false,
+  // Assume dismissed until we know otherwise: showing a first-run welcome to
+  // a returning user because a fetch was slow is worse than showing it a
+  // moment late to someone genuinely new.
+  welcome_dismissed: true,
 };
 
 export function useUIPreferences() {

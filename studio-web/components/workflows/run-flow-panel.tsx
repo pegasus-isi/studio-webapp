@@ -24,6 +24,7 @@ import type {
 import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
 import { EXECUTION_SITES } from "@/lib/vocabulary";
+import { GlossaryTerm } from "@/components/ui/glossary-term";
 import { cn } from "@/lib/utils";
 import {
   ParamField,
@@ -337,6 +338,7 @@ export function RunFlowPanel({
         <fieldset className="mt-5">
           <legend className="text-xs font-medium uppercase tracking-wide text-fgsubtle">
             Where it runs
+            <GlossaryTerm term="Where it runs" />
           </legend>
           <div className="mt-2 space-y-2">
             {EXECUTION_SITES.map((site) => {

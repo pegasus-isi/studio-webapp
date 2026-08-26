@@ -494,6 +494,7 @@ export async function getRunFlow(projectId: string) {
 export interface UIPreferences {
   simple_run: boolean;
   advanced_open: boolean;
+  welcome_dismissed: boolean;
 }
 
 export async function getUIPreferences() {

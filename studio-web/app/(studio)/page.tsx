@@ -6,6 +6,7 @@ import { useDashboard } from "@/lib/hooks/use-dashboard";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { appRelativePath, jupyterUrl } from "@/lib/urls";
 import { cn, statusColor } from "@/lib/utils";
+import { WelcomeCard } from "@/components/dashboard/welcome-card";
 
 // Slash commands not shown as capability cards (meta / infra-heavy — still
 // available in Chat). New skills appear automatically otherwise.
@@ -198,6 +199,9 @@ export default function DashboardPage() {
   return (
     <div className="h-full overflow-auto">
       <div className="mx-auto max-w-5xl px-6 py-8">
+        {/* First-run onboarding (#241, Phase 6) — shown once, then never. */}
+        <WelcomeCard />
+
         {/* Welcome */}
         <h1 className="text-2xl font-semibold text-fg">
           Welcome to PegasusAI Studio
