@@ -979,6 +979,45 @@ async def analyze_workflow(run_id: str) -> dict:
     return {"run_id": run_id, "analysis": output}
 
 
+@router.get("/{run_id}/diagnosis")
+async def diagnose_run(run_id: str) -> dict:
+    """Plain-language failure cards for a running/finished workflow (#241, P5).
+
+    Phase 1 covers the pre-run stages; this covers the workflow itself, where
+    the raw material is job stderr, exit codes and HTCondor hold reasons. Every
+    card carries an action — naming a problem and stopping is the failure mode
+    of the raw-stderr panel this replaces.
+
+    Cheap and side-effect free (it reads what the monitor already collected),
+    so it is safe to poll alongside the jobs table. `pegasus-analyzer` stays a
+    separate, explicit action.
+    """
+    from services import run_diagnosis
+
+    run_dir = await _resolve_run_dir(run_id)
+    jobs = await get_workflow_jobs(run_dir)
+
+    cards = run_diagnosis.diagnose_jobs(jobs)
+
+    # Hold reasons come from the live queue, which is only meaningful while the
+    # run still has jobs in it. A queue that isn't reachable is not an error
+    # here — it just means no hold information to add.
+    try:
+        from services import condor_pool
+
+        # get_status() is cached, so this rides the snapshot the dashboard and
+        # Resources page already refresh rather than issuing its own condor_q.
+        status = await condor_pool.get_status()
+        demand = status.get("demand") or {}
+        cards.extend(
+            run_diagnosis.diagnose_holds(demand.get("held_reasons") or [])
+        )
+    except Exception as e:  # noqa: BLE001 — diagnosis is best-effort
+        log.debug("diagnosis_hold_lookup_failed", run_id=run_id, error=str(e))
+
+    return {"run_id": run_id, "cards": cards, "total": len(cards)}
+
+
 @router.post("/{run_id}/cancel")
 async def cancel_workflow_run(run_id: str) -> dict:
     """Take a run out of the Condor queue, keeping its directory on disk.
