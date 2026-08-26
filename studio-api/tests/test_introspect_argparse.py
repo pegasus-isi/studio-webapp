@@ -76,3 +76,88 @@ def test_unparseable_generator_is_not_executed(tmp_path):
     gen = tmp_path / "workflow-generator.py"
     gen.write_text("def broken(:\n    pass\n")  # syntax error
     assert _run(str(gen)) == {"params": [], "mutex_required": []}
+
+
+# ── Phase 3 parameter hints (#241) ────────────────────────────────────────
+#
+# These are *hints*: the UI picks a nicer widget from them and falls back to a
+# text input for anything it doesn't recognise. A wrong guess must never block
+# submission, so the tests care most about the fallbacks being sane.
+
+
+def _params(tmp_path, body: str) -> dict:
+    gen = tmp_path / "workflow_generator.py"
+    gen.write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        f"{body}\n"
+        "p.parse_args()\n"
+    )
+    return {p["dest"]: p for p in _run(str(gen))["params"]}
+
+
+def test_types_are_inferred_from_argparse_and_names(tmp_path):
+    params = _params(
+        tmp_path,
+        "p.add_argument('--num-subjects', type=int, default=24)\n"
+        "p.add_argument('--threshold', type=float)\n"
+        "p.add_argument('--input-file')\n"
+        "p.add_argument('--output-dir')\n"
+        "p.add_argument('--start-date')\n"
+        "p.add_argument('--mode', choices=['a', 'b'])\n"
+        "p.add_argument('--verbose', action='store_true')\n"
+        "p.add_argument('--label')\n",
+    )
+    assert params["num_subjects"]["type"] == "integer"
+    assert params["threshold"]["type"] == "number"
+    assert params["input_file"]["type"] == "file"
+    assert params["output_dir"]["type"] == "directory"
+    assert params["start_date"]["type"] == "date"
+    assert params["mode"]["type"] == "choice"
+    assert params["verbose"]["type"] == "boolean"
+    # Nothing to go on — plain text, which is what the form rendered before.
+    assert params["label"]["type"] == "text"
+
+
+def test_label_prefers_help_text_over_the_flag_name(tmp_path):
+    params = _params(
+        tmp_path,
+        "p.add_argument('--num-subjects', type=int, default=24,\n"
+        "               help='Number of subjects to process (default: 24)')\n",
+    )
+    # "num subjects" is what stripping dashes gives; the author wrote better.
+    assert params["num_subjects"]["label"] == "Number of subjects to process"
+
+
+def test_label_falls_back_to_the_flag_when_help_is_long_or_absent(tmp_path):
+    params = _params(
+        tmp_path,
+        "p.add_argument('--subject-ids')\n"
+        "p.add_argument('--min-subjects', help='"
+        + "A very long explanation that would wrap and read as a paragraph "
+        "rather than a field label, so it stays a description'"
+        ")\n",
+    )
+    assert params["subject_ids"]["label"] == "Subject ids"
+    assert params["min_subjects"]["label"] == "Min subjects"
+    # The full help survives regardless — only the *label* falls back.
+    assert "very long explanation" in params["min_subjects"]["help"]
+
+
+def test_plumbing_is_marked_advanced_but_required_params_never_are(tmp_path):
+    params = _params(
+        tmp_path,
+        "p.add_argument('--output', default='workflow.yml')\n"
+        "p.add_argument('--skip-sites-catalog', action='store_true')\n"
+        "p.add_argument('--execution-site', default='condorpool')\n"
+        "p.add_argument('--num-subjects', type=int, default=24)\n"
+        "p.add_argument('--required-output', dest='output_file', required=True)\n",
+    )
+    assert params["output"]["advanced"] is True
+    assert params["skip_sites_catalog"]["advanced"] is True
+    assert params["execution_site"]["advanced"] is True
+    # The science parameter stays in the main form.
+    assert params["num_subjects"]["advanced"] is False
+    # Required beats the plumbing name every time: a form that hides something
+    # you must fill in is worse than one that shows too much.
+    assert params["output_file"]["advanced"] is False
