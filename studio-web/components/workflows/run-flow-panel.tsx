@@ -24,7 +24,7 @@ import type {
 import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
 import { useExecutionBackend } from "@/lib/hooks/use-execution-backend";
-import { executionSitesFor } from "@/lib/vocabulary";
+import { EXECUTION_SITES } from "@/lib/vocabulary";
 import { GlossaryTerm } from "@/components/ui/glossary-term";
 import { cn } from "@/lib/utils";
 import {
@@ -84,15 +84,9 @@ export function RunFlowPanel({
   );
 
   // Which compute backend the flow's stages execute on. With a remote backend
-  // active, the "This machine" wording below would be false — the tools run on
-  // the connected system's submit host — so the site choices re-word
-  // themselves (lib/vocabulary.ts) and a chip names the system the run is
-  // actually handed to.
+  // active, "This machine" really means the connected system's submit host —
+  // the chip below the legend names that system, so the familiar labels stay.
   const { backend: activeBackend, isRemote } = useExecutionBackend();
-  const sites = useMemo(
-    () => executionSitesFor(isRemote && activeBackend ? activeBackend : null),
-    [activeBackend, isRemote]
-  );
 
   /**
    * Generator parameters that name the execution site.
@@ -168,7 +162,8 @@ export function RunFlowPanel({
   const summary = useMemo(() => {
     const rows: { label: string; value: string }[] = [];
     const site = String(values["site"] ?? "condorpool");
-    const siteLabel = sites.find((s) => s.value === site)?.label ?? site;
+    const siteLabel =
+      EXECUTION_SITES.find((s) => s.value === site)?.label ?? site;
     rows.push({ label: "Where it runs", value: siteLabel });
 
     for (const p of primaryParams) {
@@ -184,7 +179,7 @@ export function RunFlowPanel({
       rows.push({ label: paramLabel(p), value: current });
     }
     return rows;
-  }, [primaryParams, sites, values]);
+  }, [primaryParams, values]);
 
   // ── attach to the server-side flow ──────────────────────────────────────
 
@@ -362,7 +357,7 @@ export function RunFlowPanel({
             </span>
           )}
           <div className="mt-2 space-y-2">
-            {sites.map((site) => {
+            {EXECUTION_SITES.map((site) => {
               const selected =
                 String(values["site"] ?? "condorpool") === site.value;
               return (
