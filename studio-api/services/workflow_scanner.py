@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import glob
 import os
+import re
 from typing import Any
 
 import structlog
@@ -325,6 +326,70 @@ def _jobstate_terminal_status(run_dir: str) -> str | None:
     return None
 
 
+# How much of dagman.out's tail to scan for the session-exit marker. DAGMan
+# writes EXITING WITH STATUS as effectively its last line, so a few KB is
+# plenty; 64KB leaves room for post-exit noise without reading a whole log.
+_DAGMAN_OUT_TAIL_BYTES = 64 * 1024
+
+# Session markers in *.dag.dagman.out. Every DAGMan session — normal end,
+# abort, OOM kill cleanup — closes with the EXITING line; a rescue/re-run
+# appends a fresh session that opens with the STARTING UP banner.
+_DAGMAN_EXITING_RE = re.compile(r"EXITING WITH STATUS\s+(-?\d+)")
+_DAGMAN_STARTUP_MARKER = "STARTING UP"
+
+
+def dagman_exit_status(run_dir: str) -> str | None:
+    """Terminal status from the DAGMan session log, or None while DAGMan is
+    (as far as its log shows) still alive.
+
+    When DAGMan dies abnormally it takes monitord down with it, so no terminal
+    marker is ever written: the event stream ends mid-run, jobstate.log has no
+    DAGMAN_FINISHED, and the stampede DB holds a lone WORKFLOW_STARTED row.
+    Every status source derived from those reads "running" forever (#296).
+    dagman.out is the one file DAGMan itself always closes out — every session
+    ends with ``**** condor_scheduniv_exec.<id> (condor_DAGMAN) pid <pid>
+    EXITING WITH STATUS <n>``, abort or not.
+
+    Reads only the file tail: discover_projects() calls get_run_status() per
+    run per listing request, so this must stay a cheap disk read, never a
+    condor-querying subprocess. The *last* EXITING line wins, and only when no
+    STARTING UP banner follows it — a later banner means a rescue/re-run is
+    live in the same file.
+    """
+    candidates = glob.glob(os.path.join(run_dir, "*.dag.dagman.out"))
+    if not candidates:
+        return None
+    # A rescue DAG can leave several dagman.out files; the newest is the one
+    # describing the current/last session.
+    path = max(candidates, key=lambda p: os.path.getmtime(p))
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > _DAGMAN_OUT_TAIL_BYTES:
+                f.seek(size - _DAGMAN_OUT_TAIL_BYTES)
+            tail = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+    exit_code: int | None = None
+    for line in tail.splitlines():
+        m = _DAGMAN_EXITING_RE.search(line)
+        if m:
+            try:
+                exit_code = int(m.group(1))
+            except ValueError:
+                continue
+        elif _DAGMAN_STARTUP_MARKER in line and exit_code is not None:
+            # A session started after the last recorded exit — live again.
+            exit_code = None
+
+    if exit_code is None:
+        return None
+    # A clean exit (0) normally also wrote workflow_end/DAGMAN_FINISHED, so in
+    # practice this path converts zombies to "failed"; handle 0 anyway.
+    return "succeeded" if exit_code == 0 else "failed"
+
+
 def _pegasus_status(run_dir: str) -> str | None:
     """Authoritative live status via ``pegasus-status``. Parses the DAG STATE
     column (Success/Failure/Running). Returns None if pegasus-status is
@@ -363,7 +428,16 @@ def get_run_status(run_dir: str) -> str:
     """
     events = read_events(run_dir)
     if events:
-        return event_workflow_status(events)
+        status = event_workflow_status(events)
+        if status == "running":
+            # The event stream is truthful ("no end event seen") but not
+            # sufficient: an abnormal DAGMan death takes monitord with it, so
+            # no end event is ever written and the run reads "running"
+            # forever (#296). Cross-check that DAGMan is actually alive.
+            terminal = dagman_exit_status(run_dir)
+            if terminal:
+                return terminal
+        return status
 
     # Terminal status from jobstate.log is fast and definitive — trust it and
     # skip the (slower, condor-querying) pegasus-status call.
