@@ -30,6 +30,37 @@ type Props = Omit<ComponentProps<"a">, "href"> & {
   href: string;
 };
 
+/**
+ * How long to wait for a client-side push to take effect before giving up and
+ * loading the page normally.
+ *
+ * A navigation that silently does nothing is the worst outcome available — the
+ * user is simply stuck, with no error and nothing to click. Falling back costs
+ * a page load, which is exactly what this component was built to avoid, but a
+ * slow correct navigation beats a fast broken one.
+ */
+const PUSH_TIMEOUT_MS = 1200;
+
+/**
+ * True for a path that resolves to the app root.
+ *
+ * Home is the only route whose resolved path equals the per-user prefix
+ * itself, which makes it the only one where middleware's rewrite changes the
+ * route depth (`/user/<name>` → `/`) rather than just trimming a prefix from a
+ * deeper path. That case has proved unreliable for client-side navigation on
+ * the real deployment (#288, and still after removing the redirect), so it
+ * takes a normal page load.
+ *
+ * This is a workaround, not a diagnosis: the underlying reason the RSC
+ * navigation does not settle is unconfirmed, and I could not reproduce it
+ * without a live per-user prefix. Going to Home costs the in-memory state that
+ * everything else now keeps; every other route is unaffected.
+ */
+function isAppRoot(href: string): boolean {
+  const path = href.split(/[?#]/)[0];
+  return path === "/" || path === "";
+}
+
 export function AppLink({ href, onClick, ...rest }: Props) {
   const router = useRouter();
 
@@ -51,8 +82,21 @@ export function AppLink({ href, onClick, ...rest }: Props) {
         ) {
           return;
         }
+
+        // Let the browser handle the app root itself — see isAppRoot.
+        if (isAppRoot(href)) return;
+
         e.preventDefault();
-        router.push(appPushPath(href));
+        const target = appPushPath(href);
+        router.push(target);
+
+        // Watchdog. If the URL has not moved by now the push did not take, and
+        // leaving the user on a page that ignored their click is not an option.
+        window.setTimeout(() => {
+          if (window.location.pathname !== target.split(/[?#]/)[0]) {
+            window.location.assign(target);
+          }
+        }, PUSH_TIMEOUT_MS);
       }}
       {...rest}
     />
