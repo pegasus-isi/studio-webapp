@@ -23,7 +23,8 @@ import type {
 } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
-import { EXECUTION_SITES } from "@/lib/vocabulary";
+import { useExecutionBackend } from "@/lib/hooks/use-execution-backend";
+import { executionSitesFor } from "@/lib/vocabulary";
 import { GlossaryTerm } from "@/components/ui/glossary-term";
 import { cn } from "@/lib/utils";
 import {
@@ -80,6 +81,17 @@ export function RunFlowPanel({
   const allGenParams = useMemo(
     () => params?.generator.params ?? [],
     [params]
+  );
+
+  // Which compute backend the flow's stages execute on. With a remote backend
+  // active, the "This machine" wording below would be false — the tools run on
+  // the connected system's submit host — so the site choices re-word
+  // themselves (lib/vocabulary.ts) and a chip names the system the run is
+  // actually handed to.
+  const { backend: activeBackend, isRemote } = useExecutionBackend();
+  const sites = useMemo(
+    () => executionSitesFor(isRemote && activeBackend ? activeBackend : null),
+    [activeBackend, isRemote]
   );
 
   /**
@@ -156,8 +168,7 @@ export function RunFlowPanel({
   const summary = useMemo(() => {
     const rows: { label: string; value: string }[] = [];
     const site = String(values["site"] ?? "condorpool");
-    const siteLabel =
-      EXECUTION_SITES.find((s) => s.value === site)?.label ?? site;
+    const siteLabel = sites.find((s) => s.value === site)?.label ?? site;
     rows.push({ label: "Where it runs", value: siteLabel });
 
     for (const p of primaryParams) {
@@ -173,7 +184,7 @@ export function RunFlowPanel({
       rows.push({ label: paramLabel(p), value: current });
     }
     return rows;
-  }, [primaryParams, values]);
+  }, [primaryParams, sites, values]);
 
   // ── attach to the server-side flow ──────────────────────────────────────
 
@@ -340,8 +351,18 @@ export function RunFlowPanel({
             Where it runs
             <GlossaryTerm term="Where it runs" />
           </legend>
+          {/* Name the system the run is handed to — the generic labels below
+              deliberately don't, so this is the one place it appears. */}
+          {isRemote && activeBackend && (
+            <span className="mt-1 inline-block rounded-full border border-line px-1.5 py-px text-xs text-fgsubtle">
+              Connected to {activeBackend.label}
+              {activeBackend.type
+                ? ` via ${activeBackend.type === "ssh" ? "SSH" : activeBackend.type}`
+                : ""}
+            </span>
+          )}
           <div className="mt-2 space-y-2">
-            {EXECUTION_SITES.map((site) => {
+            {sites.map((site) => {
               const selected =
                 String(values["site"] ?? "condorpool") === site.value;
               return (

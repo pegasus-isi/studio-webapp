@@ -77,7 +77,7 @@ export const TERMS = {
     ui: "Where it runs",
     pegasus: "execution site",
     definition:
-      "Whether your analysis runs on this machine or is sent out to a shared cluster.",
+      "Whether your analysis runs on the machine where Studio's tools run, or is sent out to a cluster of many machines.",
   },
   analyzerOutput: {
     ui: "What went wrong",
@@ -126,6 +126,34 @@ export const EXECUTION_SITES: ReadonlyArray<{
     hint: "Best for a full analysis. Sends your steps out to many machines, which may mean waiting for a turn.",
   },
 ];
+
+/**
+ * Site choices worded for the active compute backend.
+ *
+ * With a remote backend (an SSH-connected slice, say) "This machine" would be
+ * a lie — the tools run on the connected system's submit host, not this
+ * computer — so the labels shift to name the connected system instead. The
+ * argument is a plain `{ label }` rather than the API client's type so this
+ * module keeps zero imports; the generic wording doesn't use the label today,
+ * but callers pass it so a future wording can without touching them.
+ */
+export function executionSitesFor(
+  backend: { readonly label: string } | null
+): typeof EXECUTION_SITES {
+  if (!backend) return EXECUTION_SITES;
+  return [
+    {
+      value: "local",
+      label: "Connected system",
+      hint: "Best for small tests. Runs on the connected system's own submit machine — not this computer.",
+    },
+    {
+      value: "condorpool",
+      label: "Connected system's cluster",
+      hint: "Best for a full analysis. Sends your steps out to the connected system's worker machines, which may mean waiting for a turn.",
+    },
+  ];
+}
 
 /**
  * Status labels.
