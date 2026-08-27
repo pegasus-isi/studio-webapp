@@ -190,6 +190,9 @@ class WorkflowProjectRunResponse(BaseModel):
     status: str
     # Compute backend the run belongs to ("local" or a configured remote id).
     backend: str | None = None
+    # Path relative to $HOME, which is JupyterLab's root — the browser only has
+    # the absolute container path and cannot derive this itself.
+    jupyter_path: str = ""
 
 
 class WorkflowProjectResponse(BaseModel):
@@ -200,6 +203,7 @@ class WorkflowProjectResponse(BaseModel):
     has_generator: bool = False
     has_workflow_yml: bool = False
     has_container_def: bool = False
+    jupyter_path: str = ""
     runs: list[WorkflowProjectRunResponse] = Field(default_factory=list)
 
 

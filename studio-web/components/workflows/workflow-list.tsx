@@ -2,7 +2,9 @@
 
 import type { WorkflowRun, WorkflowProject } from "@/lib/api/client";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import { usePanelStore } from "@/lib/stores/panel-store";
 import { cn, statusColor } from "@/lib/utils";
+import { AppLink } from "@/components/layout/app-link";
 
 interface Props {
   projects: WorkflowProject[];
@@ -14,15 +16,36 @@ export function WorkflowList({ projects, workflows }: Props) {
   const selectedProjectId = useWorkflowStore((s) => s.selectedProjectId);
   const selectWorkflow = useWorkflowStore((s) => s.selectWorkflow);
   const selectProject = useWorkflowStore((s) => s.selectProject);
+  const openChatWith = usePanelStore((s) => s.openChatWith);
 
   if (projects.length === 0 && workflows.length === 0) {
+    // An empty state is the one screen guaranteed to be read by someone who
+    // has never done this before, and it used to answer them with a terminal
+    // command (#241, Phase 6). Offer the two things that actually work from
+    // here instead.
     return (
-      <div className="p-4 text-sm text-fgmuted">
-        No workflows discovered. Use the AI assistant to scaffold a workflow in{" "}
-        <code className="rounded bg-muted px-1">~/work/workflows/</code>{" "}
-        or run{" "}
-        <code className="rounded bg-muted px-1">pegasus-plan --submit</code>{" "}
-        in the terminal.
+      <div className="p-4">
+        <p className="text-sm font-medium text-fg">No workflows yet</p>
+        <p className="mt-1 text-sm text-fgmuted">
+          Start from a ready-made example, or describe what you want and let the
+          assistant build it.
+        </p>
+        <div className="mt-3 flex flex-col gap-2">
+          <AppLink
+            href="/marketplace"
+            className="rounded-md bg-pegasus-600 px-3 py-2 text-center text-sm font-medium text-white hover:bg-pegasus-700"
+          >
+            Browse examples
+          </AppLink>
+          <button
+            onClick={() =>
+              openChatWith("Build me a workflow that ")
+            }
+            className="rounded-md border border-line px-3 py-2 text-sm font-medium text-fgmuted hover:border-pegasus-400 hover:text-fg"
+          >
+            Describe one to the assistant
+          </button>
+        </div>
       </div>
     );
   }

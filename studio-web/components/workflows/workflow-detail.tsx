@@ -10,6 +10,8 @@ import {
 } from "@/lib/hooks/use-workflows";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
+import { OutputsPanel } from "@/components/workflows/outputs-panel";
+import { FailureCards } from "@/components/workflows/failure-cards";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUrl } from "@/lib/urls";
 import { cn, formatDuration, statusColor } from "@/lib/utils";
@@ -46,6 +48,25 @@ export function WorkflowDetail({ runId }: Props) {
   const [analysis, setAnalysis] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  // Results leads: it is what the user came for, and the job table is the
+  // diagnostic view rather than the destination. Safe to lead with even mid-run
+  // because progress lives in the header above the tabs, and the panel has a
+  // real "no results yet" state. `?view=steps` opts out; the "finished"
+  // notification deep-links here with no param and lands on Results.
+  const [tab, setTab] = useState<"results" | "steps">(() => {
+    if (typeof window !== "undefined") {
+      const view = new URLSearchParams(window.location.search).get("view");
+      if (view === "steps") return "steps";
+    }
+    return "results";
+  });
+  // Once a manual choice is made, stop steering: an auto-switch that fights
+  // the user is worse than landing on the wrong tab once.
+  const tabPinned = useRef(false);
+  const chooseTab = (t: "results" | "steps") => {
+    tabPinned.current = true;
+    setTab(t);
+  };
   // Only a run with queue presence can be removed from it. "running" covers a
   // DAG whose jobs are queued or executing; a finished or failed run has nothing
   // left to remove, and offering the button there just invites a 409.
@@ -118,6 +139,11 @@ export function WorkflowDetail({ runId }: Props) {
     };
   }, [runId, isRunning, setEventSource]);
 
+  useEffect(() => {
+    if (tabPinned.current) return;
+    if (run?.status === "failed") setTab("steps");
+  }, [run?.status]);
+
   const handleAnalyze = async () => {
     const result = await runAction("Analyze", () => analyze.mutateAsync(runId));
     if (result) setAnalysis(result.analysis);
@@ -155,7 +181,7 @@ export function WorkflowDetail({ runId }: Props) {
     <div className="h-full overflow-auto">
       {/* Header */}
       <div className="border-b border-line bg-surface px-6 py-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-fg">
               {run?.name ?? runId}
@@ -227,21 +253,66 @@ export function WorkflowDetail({ runId }: Props) {
                 {failedJobs > 0 && (
                   <span className="text-red-600 dark:text-rose-400">{failedJobs} failed</span>
                 )}
-                {estimate && estimate.remaining_seconds > 0 && (
-                  <span
-                    title={`Historical per-transformation mean over ${estimate.remaining_jobs} remaining job(s); ${estimate.confidence} confidence`}
-                  >
-                    ~{formatDuration(estimate.remaining_seconds)} remaining
-                  </span>
-                )}
+                {/* Confidence-gated (#241, Phase 4). The estimate is a
+                    historical-mean heuristic, so on a first run — exactly the
+                    user this redesign targets — there is no history to average
+                    and the number would be invented. A non-specialist reads
+                    "~4m remaining" literally and plans around it, so with a
+                    low-confidence or absent estimate we say the honest thing
+                    instead. */}
+                {isRunning &&
+                  (estimate &&
+                  estimate.remaining_seconds > 0 &&
+                  estimate.confidence !== "low" ? (
+                    <span
+                      title={`Historical per-transformation mean over ${estimate.remaining_jobs} remaining job(s); ${estimate.confidence} confidence`}
+                    >
+                      about {formatDuration(estimate.remaining_seconds)}{" "}
+                      remaining
+                    </span>
+                  ) : (
+                    <span title="Not enough history from this workflow to estimate a finish time yet">
+                      this can take a while — we&apos;ll notify you when
+                      it&apos;s done
+                    </span>
+                  ))}
               </div>
             )}
           </div>
         )}
       </div>
 
+      {/* Results | Steps (#241, Phase 4).
+          Results leads because it is what the user came for; the job table is
+          the diagnostic view, not the destination. A run that hasn't finished
+          opens on Steps, since there is nothing to collect yet. */}
+      <div className="border-b border-line bg-surface px-6">
+        <div className="flex gap-1" role="tablist">
+          {(["results", "steps"] as const).map((t) => (
+            <button
+              key={t}
+              role="tab"
+              aria-selected={tab === t}
+              onClick={() => chooseTab(t)}
+              className={cn(
+                "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                tab === t
+                  ? "border-pegasus-500 text-pegasus-700 dark:text-pegasus-300"
+                  : "border-transparent text-fgmuted hover:text-fg"
+              )}
+            >
+              {t === "results" ? "Results" : "Steps"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {tab === "results" && (
+        <OutputsPanel runId={runId} runFinished={!isRunning} />
+      )}
+
       {/* Jobs table */}
-      <div className="p-6">
+      <div className={cn("p-6", tab !== "steps" && "hidden")}>
         {isLoading ? (
           <p className="text-sm text-fgmuted">Loading jobs...</p>
         ) : data?.jobs && data.jobs.length > 0 ? (
@@ -290,14 +361,21 @@ export function WorkflowDetail({ runId }: Props) {
           </p>
         )}
 
-        {/* Diagnostics: failed-job stderr beside pegasus-analyzer output, so
-            the failure reason is visible without leaving the run page. */}
+        {/* Failure cards first (#241, Phase 5): what went wrong and what to
+            do about it. The raw stderr and analyzer output stay below, as
+            detail rather than as the whole answer. */}
+        <div className="mt-6">
+          <FailureCards runId={runId} runFinished={!isRunning} />
+        </div>
+
         {(failedJobDetails.length > 0 || analysis) && (
-          <div className="mt-6">
-            <h3 className="mb-2 text-sm font-semibold text-fg">Diagnostics</h3>
+          <details className="mt-6">
+            <summary className="cursor-pointer text-sm font-semibold text-fgmuted hover:text-fg">
+              Raw diagnostics
+            </summary>
 
             {failedJobDetails.length > 0 && (
-              <div className="mb-4 space-y-3">
+              <div className="mb-4 mt-3 space-y-3">
                 {failedJobDetails.map((job, i) => (
                   <div
                     key={i}
@@ -332,7 +410,7 @@ export function WorkflowDetail({ runId }: Props) {
                 failures.
               </p>
             )}
-          </div>
+          </details>
         )}
       </div>
 

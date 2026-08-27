@@ -36,7 +36,7 @@ npm run build
 
 ```sh
 # Backend (from repo root; assumes the studio-api venv is active with deps installed)
-(cd studio-api && pytest -q)                          # ~242 tests; no Pegasus/Condor/keys needed
+(cd studio-api && pytest -q)                          # ~450 tests; no Pegasus/Condor/keys needed
 
 # Frontend (needs `npm ci` first so node_modules/.bin/tsc exists)
 (cd studio-web && npm ci && node_modules/.bin/tsc --noEmit)   # strict mode
@@ -58,7 +58,7 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
 `opencode serve` runs on localhost:**4747** for the chat engine.
 
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
-  migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 15 services
+  migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 22 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
   opencode chat engine, notifications, terminal/PTY sessions). Workflow runs are
   discovered by globbing `**/braindump.yml` under `$HOME`; monitoring tails
@@ -102,6 +102,13 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   `VENDORED.md`); local mods are limited to three files (`src/configPlugin.tsx`,
   `src/api.ts`, `src/toolbarPlugin.ts`). Disable with `--build-arg
   ENABLE_PEGASUS_BOT_CLIENT=0`. Respect the vendoring boundary.
+- **Work that outlives a request gets a broker.** `services/run_flow.py` (the
+  one-button Run) and `services/chat_turn.py` (an assistant turn) both run as a
+  background task with a buffered event log; subscribers replay from the start
+  and then follow live. That is what makes both survive a navigation, a closed
+  tab or a dropped connection — Studio's left nav used to be full page loads,
+  and anything owned by the request died with it. Reach for this shape rather
+  than sequencing calls in the browser.
 - Chat is engine-dispatched (`routers/chat.py`): `opencode` (default) or `builtin`
   fallback. **`chat.py` is not legacy** — `_opencode_stream()` lives in it and
   serves every real session; only the builtin engine's own machinery
@@ -150,6 +157,13 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
 - `SPEC.md` — design spec + V2 direction (refreshed to current code in PR #138).
 - `README.md`, `studio-web/README.md`, `studio-api/README.md` — current
   (rewritten in PRs #134 / #138); prefer them and the code.
+- `docs/UX-NON-SPECIALIST-DESIGN.md` — the redesign that made Studio usable
+  without Pegasus literacy (tracker issue #241). **All seven phases shipped**;
+  Appendix B is the status table and the Rollout section records one deviation:
+  the simplified interface was flipped on by default *ahead of* the terminology
+  check that was meant to gate it. `docs/ux-terminology-test.md` is that
+  protocol — written, runnable, and **still unrun**, so the vocabulary now in
+  front of every user has not been validated with anyone outside the team.
 - `docs/TODO-PLAN.md`, `docs/CODE_REVIEW_2026-07.md` — historical snapshots
   (banners point to the Aug review).
 - `docs/CODE_REVIEW_2026-08.md` — the August full-repo review. **Fully

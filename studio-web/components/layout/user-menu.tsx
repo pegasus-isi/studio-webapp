@@ -4,11 +4,27 @@ import { useEffect, useRef, useState } from "react";
 import { apiUrl, appRelativePath } from "@/lib/urls";
 import { useThemeStore, applyTheme, type Theme } from "@/lib/stores/theme-store";
 import { NotificationCenter } from "@/components/notifications/notification-center";
+import { cn } from "@/lib/utils";
+import { AppLink } from "@/components/layout/app-link";
 
 /**
- * Top-right user menu: username + dropdown (theme, Settings, JupyterHub server
- * control / Stop server, Sign out). Identity and the hub URLs come from
- * /api/whoami (JUPYTERHUB_USER + JUPYTERHUB_BASE_URL); hidden if no identity.
+ * User menu: username + dropdown (theme, Settings, JupyterHub server control /
+ * Stop server, Sign out). Identity and the hub URLs come from /api/whoami
+ * (JUPYTERHUB_USER + JUPYTERHUB_BASE_URL); hidden if no identity.
+ *
+ * ## Lives in the sidebar, not floating over the page (#276)
+ *
+ * This used to be `fixed right-4 top-2.5`, overlaying the page rather than
+ * occupying layout space — so every page header with right-aligned content had
+ * to reserve the corner by hand (`pr-[19rem]`), a constraint the next header
+ * to be written would silently violate.
+ *
+ * The obvious alternative, a global top bar, would stack a second bar above
+ * every page's own header and cost vertical space on all of them. The sidebar
+ * footer is already always-present and always-visible, costs the content area
+ * nothing, and collapses with the rest of the nav — so identity moved there
+ * instead. Both dropdowns consequently open *upward and rightward*, over the
+ * main content, since there is nothing below or to the left of them.
  */
 const THEMES: { value: Theme; label: string; icon: string }[] = [
   { value: "light", label: "Light", icon: "☀️" },
@@ -16,7 +32,7 @@ const THEMES: { value: Theme; label: string; icon: string }[] = [
   { value: "system", label: "System", icon: "🖥️" },
 ];
 
-export function UserMenu() {
+export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
   const [user, setUser] = useState<string | null>(null);
   const [logoutUrl, setLogoutUrl] = useState<string | null>(null);
   const [controlUrl, setControlUrl] = useState<string | null>(null);
@@ -56,34 +72,48 @@ export function UserMenu() {
   const initial = user ? user[0]?.toUpperCase() ?? "?" : "⚙";
 
   return (
-    <div className="fixed right-4 top-2.5 z-50 flex items-center gap-2">
+    <div
+      className={cn(
+        "flex items-center gap-2",
+        collapsed && "flex-col gap-1"
+      )}
+    >
       <NotificationCenter />
-      <div ref={menuRef} className="relative">
+      <div ref={menuRef} className="relative min-w-0 flex-1">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-full border border-line bg-surface py-1 pl-1 pr-3 text-sm shadow-sm transition-colors hover:bg-muted"
+        title={user ?? "Account"}
+        aria-label={user ? `Account menu for ${user}` : "Account menu"}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-full border border-line bg-surface py-1 text-sm transition-colors hover:bg-muted",
+          collapsed ? "justify-center px-1" : "pl-1 pr-3"
+        )}
       >
-        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-fg">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-fg">
           {initial}
         </span>
-        {user && (
-          <span className="max-w-[180px] truncate text-fgmuted">{user}</span>
+        {!collapsed && user && (
+          <span className="min-w-0 flex-1 truncate text-left text-fgmuted">
+            {user}
+          </span>
         )}
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          className="text-fgsubtle"
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
+        {!collapsed && (
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="shrink-0 text-fgsubtle"
+          >
+            <polyline points="18 15 12 9 6 15" />
+          </svg>
+        )}
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-1.5 w-60 overflow-hidden rounded-lg border border-line bg-surface shadow-lg">
+        <div className="absolute bottom-full left-0 z-50 mb-1.5 w-60 overflow-hidden rounded-lg border border-line bg-surface shadow-lg">
           {user && (
             <div className="border-b border-line px-4 py-3">
               <p className="text-xs text-fgsubtle">Signed in as</p>
@@ -115,13 +145,13 @@ export function UserMenu() {
           </div>
 
           <nav className="py-1 text-sm text-fg">
-            <a
-              href={appRelativePath("/settings")}
+            <AppLink
+              href="/settings"
               onClick={() => setOpen(false)}
               className="block px-4 py-2 hover:bg-muted"
             >
               ⚙️ Settings
-            </a>
+            </AppLink>
             <a
               href="https://github.com/pegasus-isi/studio-webapp#readme"
               target="_blank"

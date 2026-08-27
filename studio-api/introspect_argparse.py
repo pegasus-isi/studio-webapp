@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import runpy
 import sys
 
@@ -60,6 +61,84 @@ def _uses_argparse(target: str) -> bool:
     return False
 
 
+# Dest names that identify a parameter as plumbing rather than science: the
+# workflow's own bookkeeping, not something the person running it decided.
+# Matched only against *optional* params — a required argument is never
+# demoted, however it is named, because burying one makes the form unusable.
+_PLUMBING_DESTS = frozenset({
+    "output", "outfile", "out_file", "output_file", "workflow_file",
+    "execution_site", "exec_site", "site", "output_site", "sites_catalog",
+    "skip_sites_catalog", "skip_catalog", "tc", "rc", "sc",
+    "verbose", "debug", "quiet", "dry_run", "force",
+})
+
+_PLUMBING_PREFIXES = ("skip_", "no_")
+
+
+def _infer_type(act: argparse.Action, is_flag: bool) -> str:
+    """Best-effort widget hint for a parameter.
+
+    Deliberately a *hint*: every value is still a string on the command line,
+    and the UI falls back to a plain text input for anything it doesn't
+    recognise. A wrong guess here must never block submission — argparse
+    remains the thing that validates, and it does so with the generator's own
+    error messages.
+    """
+    if is_flag:
+        return "boolean"
+    if act.choices:
+        return "choice"
+    if act.type is int:
+        return "integer"
+    if act.type is float:
+        return "number"
+
+    # Name-based heuristics, checked against dest and metavar. These carry the
+    # cases argparse cannot express: `type=str` tells us nothing about whether
+    # a string is a path, a date, or free text.
+    name = f"{act.dest} {act.metavar or ''}".lower()
+    if any(k in name for k in ("_dir", "dir_", "directory", "folder")):
+        return "directory"
+    if any(k in name for k in ("_file", "file_", "_path", "path_", "input", "csv", "tsv")):
+        return "file"
+    if "date" in name:
+        return "date"
+    return "text"
+
+
+def _label_for(act: argparse.Action) -> str:
+    """A human label, preferring the author's help text over the flag name.
+
+    Generator authors write real sentences in `help`; the flag is a CLI
+    identifier. "Number of subjects to process" beats "num subjects", which is
+    what stripping dashes off `--num-subjects` produces. Long help stays as the
+    description and the flag-derived name is used instead, so a label never
+    becomes a paragraph.
+    """
+    help_text = (act.help or "").strip()
+    # argparse convention: authors append "(default: X)" — that belongs in the
+    # placeholder, not the label.
+    help_text = re.sub(r"\s*\(default:.*?\)\s*$", "", help_text).strip()
+    # Take the first sentence only.
+    first = re.split(r"(?<=[.!?])\s", help_text)[0].strip().rstrip(".")
+    if first and len(first) <= 48:
+        return first[0].upper() + first[1:]
+    flag = sorted(act.option_strings, key=len)[-1] if act.option_strings else act.dest
+    pretty = flag.lstrip("-").replace("-", " ").replace("_", " ")
+    return pretty[:1].upper() + pretty[1:]
+
+
+def _is_advanced(dest: str, required: bool) -> bool:
+    """True for plumbing that shouldn't compete with the science parameters.
+
+    Never demotes a required parameter: a form that hides something you must
+    fill in is worse than one that shows too much.
+    """
+    if required:
+        return False
+    return dest in _PLUMBING_DESTS or dest.startswith(_PLUMBING_PREFIXES)
+
+
 def _schema_from_parser(parser: argparse.ArgumentParser) -> dict:
     mutex_required = []
     for grp in getattr(parser, "_mutually_exclusive_groups", []):
@@ -86,6 +165,11 @@ def _schema_from_parser(parser: argparse.ArgumentParser) -> dict:
             "required": bool(act.required),
             "is_flag": is_flag,
             "choices": [str(c) for c in act.choices] if act.choices else None,
+            # Additive hints (#241, Phase 3). Older frontends ignore them and
+            # keep rendering every parameter as a text input.
+            "type": _infer_type(act, is_flag),
+            "label": _label_for(act),
+            "advanced": _is_advanced(act.dest, bool(act.required)),
         })
     return {"params": params, "mutex_required": mutex_required}
 

@@ -296,6 +296,8 @@ Common endpoints:
 | `GET` | `/api/files` | List workspace files |
 | `GET` | `/api/files/read` | Read a workspace file |
 | `POST` | `/api/files/write` | Write a workspace file |
+| `POST` | `/api/files/upload` | Upload a file into the workspace (streamed multipart) |
+| `GET` | `/api/files/upload-limit` | Upload ceiling + free space, so the UI can refuse before sending |
 | `GET` | `/api/workflows` | List workflow runs |
 | `GET` | `/api/workflows/projects` | List workflow projects |
 | `GET` | `/api/workflows/projects/{id}/params` | Introspect generator params |
@@ -303,17 +305,28 @@ Common endpoints:
 | `POST` | `/api/workflows/projects/{id}/build` | Build & push the project's container image (SSE log) |
 | `POST` | `/api/workflows/projects/{id}/plan` | Plan a workflow |
 | `POST` | `/api/workflows/projects/{id}/submit` | Submit a workflow |
+| `POST` | `/api/workflows/projects/{id}/run-flow` | Start the whole prepare-and-run sequence as one background flow |
+| `GET` | `/api/workflows/projects/{id}/run-flow` | Current/most-recent flow, for reattaching after a reload |
+| `GET` | `/api/workflows/projects/{id}/run-flow/events` | SSE: full replay of the flow, then live |
+| `DELETE` | `/api/workflows/projects/{id}` | **Destructive**: delete a workflow, its runs (cancelled first) and its files |
 | `GET/PUT` | `/api/settings/registry` | Container registry + credentials for Build |
+| `GET/PUT` | `/api/settings/ui` | Per-user interface preferences (Simplified Run, disclosure state, welcome) |
 | `GET` | `/api/workflows/{run_id}/jobs` | Job status |
 | `GET` | `/api/workflows/{run_id}/events` | Workflow event stream |
 | `POST` | `/api/workflows/{run_id}/analyze` | Run diagnostics |
-| `GET` | `/api/workflows/{run_id}/estimate` | Remaining-time estimate (historical mean) |
+| `GET` | `/api/workflows/{run_id}/estimate` | Remaining-time estimate (historical mean; shown only when confidence allows) |
+| `GET` | `/api/workflows/{run_id}/outputs` | Files a run produced (paginated) |
+| `GET` | `/api/workflows/{run_id}/outputs/file` | Preview or download one output file |
+| `GET` | `/api/workflows/{run_id}/diagnosis` | Plain-language failure cards (cause, action, technical detail) |
 | `DELETE` | `/api/workflows/{run_id}` | **Destructive**: cancel if running, then remove the run's submit directory from disk |
 | `GET` | `/api/dashboard` | Aggregate landing-page snapshot |
+| `GET` | `/api/dashboard/onboarding` | Onboarding funnel (first seen → first workflow → first run → first success) |
 | `GET` | `/api/provisioning/status` | Pool inventory, demand, pressure findings, OSPool capacity |
 | `GET` | `/api/marketplace` | Workflow catalog sourced live from GitHub |
 | `POST` | `/api/marketplace/{id}/add` | git-clone a catalog workflow into the workspace |
-| `POST` | `/api/chat/stream` | Built-in SSE chat (engine-dispatched) |
+| `POST` | `/api/chat/stream` | Built-in SSE chat (engine-dispatched, brokered so a turn outlives the request) |
+| `GET` | `/api/chat/turn` | Whether a turn is in flight, so a reloaded panel can reattach |
+| `GET` | `/api/chat/turn/events` | SSE: replay the in-flight turn from its start, then follow live |
 | `POST` | `/api/chat/permission` | Approve/deny a pending shell command (per-turn gate) |
 | `GET/PUT` | `/api/chat/engine`, `/api/chat/command-approval` | Chat engine selection + approval posture |
 | `GET` | `/api/notifications` | Notification feed (+ `/prefs`, `/stream` SSE) |

@@ -285,6 +285,81 @@ async def delete_run(run_dir: str) -> dict[str, str]:
     }
 
 
+async def delete_project(project_dir: str) -> dict[str, str]:
+    """Delete a whole workflow project: its runs, then the directory itself.
+
+    The caller MUST validate that ``project_dir`` is inside the workflows
+    directory before calling — this deletes files on disk.
+
+    Runs are deleted first, individually, rather than by rmtree'ing the project
+    outright. That is not tidiness: a run still in the Condor queue whose submit
+    directory vanishes leaves jobs that reference files that no longer exist,
+    and no way to reach them. ``delete_run`` already cancels before removing, so
+    routing every run through it means the queue is always left consistent.
+
+    A run that cannot be deleted (files held open on NFS) aborts the whole
+    operation rather than pressing on — a half-deleted project with live jobs
+    is a worse state than the one we started in, and the user can retry once
+    the holder exits.
+    """
+    runs = sorted(
+        os.path.dirname(bd)
+        for bd in _glob.glob(
+            os.path.join(project_dir, "**", "braindump.yml"), recursive=True
+        )
+    )
+    for run_dir in runs:
+        result = await delete_run(run_dir)
+        if result.get("status") != "deleted":
+            log.warning(
+                "project_delete_blocked_by_run",
+                project_dir=project_dir, run_dir=run_dir,
+            )
+            return {
+                "status": "error",
+                "output": (
+                    "Couldn't delete this workflow because one of its runs "
+                    "could not be removed yet. "
+                    + str(result.get("output") or "")
+                ).strip(),
+            }
+
+    loop = asyncio.get_event_loop()
+    last_err: OSError | None = None
+    for attempt in range(_DELETE_RETRIES):
+        try:
+            await loop.run_in_executor(None, lambda: shutil.rmtree(project_dir))
+            log.info("project_deleted", project_dir=project_dir, runs=len(runs))
+            return {"status": "deleted"}
+        except FileNotFoundError:
+            return {"status": "deleted"}  # already gone
+        except OSError as e:
+            last_err = e
+            if attempt < _DELETE_RETRIES - 1:
+                await asyncio.sleep(_DELETE_RETRY_DELAY)
+
+    # Same NFS reasoning as delete_run: strip what we can, and treat the
+    # project as gone once nothing is left for the scanner to find.
+    held = await loop.run_in_executor(None, _best_effort_rmtree, project_dir)
+    if not os.path.isdir(project_dir) or not os.listdir(project_dir):
+        log.warning(
+            "project_deleted_partial", project_dir=project_dir, held=len(held)
+        )
+        return {"status": "deleted"}
+
+    log.warning(
+        "project_delete_blocked", project_dir=project_dir, error=str(last_err)
+    )
+    return {
+        "status": "error",
+        "output": (
+            "Could not delete this workflow — some of its files are still held "
+            "open by a running process. Try again in a moment. "
+            f"({last_err})"
+        ),
+    }
+
+
 # YAML files that are catalogs / aux config — never the abstract workflow.
 # Feeding any of these to pegasus-plan triggers
 # "Illegal key <...> for element workflow".

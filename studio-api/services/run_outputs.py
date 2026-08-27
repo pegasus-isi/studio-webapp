@@ -1,0 +1,261 @@
+"""Where a run's results actually are, and what's in them.
+
+Phase 4 of docs/UX-NON-SPECIALIST-DESIGN.md (#241). Studio has never had a
+concept of a run's *outputs*: no endpoint, no UI. A scientist runs an analysis
+in order to get files back, and today the only way to find them is to leave for
+JupyterLab and go hunting through the filesystem — which requires knowing that
+Pegasus stages results to a storage directory, and where the site catalog says
+that is. This module answers "where are my results" so the UI can stop making
+that the user's problem.
+
+## Finding the output directory
+
+Pegasus stages outputs to the *output site*'s storage directory, declared in
+the site catalog the generator writes. That catalog is the authoritative
+answer, so it is tried first and the convention-based guesses only run when it
+can't be read. Every result records *how* it was found, because a guess and a
+declaration deserve different confidence in the UI — telling a user "no results
+found" is very different depending on whether we read a catalog or just checked
+for a directory named `output`.
+"""
+
+from __future__ import annotations
+
+import os
+from datetime import datetime, timezone
+from typing import Any
+
+import structlog
+
+log = structlog.get_logger()
+
+# Conventional storage directory names, in preference order. Used only when the
+# site catalog can't be read — every Pegasus workflow in the wild that doesn't
+# declare one puts results in a directory named some variant of "output".
+_CONVENTIONAL_DIRS = ("output", "outputs", "wf-output", "results")
+
+# Files Pegasus leaves in a storage dir that are bookkeeping, not results.
+_NOISE_NAMES = {
+    ".pegasus-metadata",
+    "braindump.yml",
+    "braindump.yaml",
+}
+
+# Extensions we can show inline, grouped by how the UI should render them.
+_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"}
+_TABLE_EXT = {".csv", ".tsv"}
+_TEXT_EXT = {
+    ".txt", ".log", ".md", ".json", ".yml", ".yaml", ".xml", ".html",
+    ".py", ".sh", ".r", ".cfg", ".ini", ".toml", ".dat", ".out", ".err",
+}
+
+# Above this, don't offer an inline preview — offer a download instead. A
+# scientist's output can be gigabytes, and pulling one into a browser tab to
+# render it as text is a way to hang their session, not a feature.
+PREVIEW_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
+
+# Hard ceiling on how many files we will even enumerate. A run that wrote
+# 200k files should degrade to "here are the first 5000" rather than blocking
+# the event loop walking the tree.
+_WALK_LIMIT = 5000
+
+
+def classify(name: str) -> str:
+    """Coarse file kind, for choosing a preview renderer."""
+    ext = os.path.splitext(name)[1].lower()
+    if ext in _IMAGE_EXT:
+        return "image"
+    if ext in _TABLE_EXT:
+        return "table"
+    if ext in _TEXT_EXT:
+        return "text"
+    return "binary"
+
+
+def _site_catalog_storage(catalog_path: str, output_site: str) -> str | None:
+    """The localStorage path for `output_site` from a Pegasus 5 site catalog."""
+    try:
+        import yaml
+
+        with open(catalog_path) as fh:
+            data = yaml.safe_load(fh)
+    except Exception:  # noqa: BLE001 — unreadable catalog just means "guess"
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    sites = data.get("sites")
+    if not isinstance(sites, list):
+        return None
+    for site in sites:
+        if not isinstance(site, dict) or site.get("name") != output_site:
+            continue
+        for directory in site.get("directories") or []:
+            if not isinstance(directory, dict):
+                continue
+            # Pegasus 5 writes "localStorage"; be lenient about spelling so a
+            # catalog written by hand still resolves.
+            if str(directory.get("type", "")).lower().replace("_", "") in (
+                "localstorage",
+                "sharedstorage",
+            ):
+                path = directory.get("path")
+                if path:
+                    return os.path.realpath(str(path))
+    return None
+
+
+def project_dir_for_run(run_dir: str, workflows_root: str) -> str | None:
+    """The project directory a run belongs to.
+
+    Runs live at `<workflows_root>/<project>/…/run0001`, so the project is the
+    first path component under the workflows root. Returns None for a run that
+    isn't under it at all (a workflow submitted by hand elsewhere).
+    """
+    run = os.path.realpath(run_dir)
+    root = os.path.realpath(workflows_root)
+    if not run.startswith(root + os.sep):
+        return None
+    relative = run[len(root) + 1 :]
+    project = relative.split(os.sep, 1)[0]
+    return os.path.join(root, project) if project else None
+
+
+def resolve_output_dir(
+    run_dir: str, workflows_root: str, output_site: str = "local"
+) -> tuple[str | None, str]:
+    """(output directory, how it was found).
+
+    `found_via` is one of "catalog", "convention", or "none" — the UI uses it
+    to distinguish "the workflow says it puts results here and there are none
+    yet" from "we guessed and found nothing".
+    """
+    project_dir = project_dir_for_run(run_dir, workflows_root)
+
+    # 1. The site catalog, wherever it lives. pegasus-plan copies catalogs into
+    #    the submit directory, so check there first — it's the one that was
+    #    actually used for this run, not whatever the project has since been
+    #    regenerated with.
+    search_dirs = [run_dir] + ([project_dir] if project_dir else [])
+    for directory in search_dirs:
+        for name in ("sites.yml", "sites.yaml"):
+            candidate = os.path.join(directory, name)
+            if not os.path.isfile(candidate):
+                continue
+            storage = _site_catalog_storage(candidate, output_site)
+            if storage:
+                return storage, "catalog"
+
+    # 2. Convention, relative to the project.
+    if project_dir:
+        for name in _CONVENTIONAL_DIRS:
+            candidate = os.path.join(project_dir, name)
+            if os.path.isdir(candidate):
+                return os.path.realpath(candidate), "convention"
+
+    return None, "none"
+
+
+def _entry(full_path: str, relative: str) -> dict[str, Any] | None:
+    try:
+        stat = os.stat(full_path)
+    except OSError:
+        return None
+    name = os.path.basename(relative)
+    kind = classify(name)
+    return {
+        "path": relative,
+        "name": name,
+        "size": stat.st_size,
+        "modified": datetime.fromtimestamp(
+            stat.st_mtime, tz=timezone.utc
+        ).isoformat(),
+        "kind": kind,
+        # Previewability is a property of the file, decided here rather than in
+        # the UI, so the size ceiling can't drift between the two.
+        "previewable": kind != "binary" and stat.st_size <= PREVIEW_MAX_BYTES,
+    }
+
+
+def collect(output_dir: str) -> tuple[list[dict[str, Any]], bool]:
+    """(files, hit_walk_limit) under `output_dir`, newest first.
+
+    Newest first because the most recently written file is usually the one a
+    user is looking for — a plot or summary produced by the last step, not the
+    intermediate the first step wrote.
+    """
+    files: list[dict[str, Any]] = []
+    truncated = False
+
+    for dirpath, dirnames, filenames in os.walk(output_dir):
+        # Don't descend into Pegasus bookkeeping.
+        dirnames[:] = [d for d in dirnames if d not in _NOISE_NAMES]
+        for filename in filenames:
+            if filename in _NOISE_NAMES or filename.startswith("."):
+                continue
+            full = os.path.join(dirpath, filename)
+            relative = os.path.relpath(full, output_dir)
+            entry = _entry(full, relative)
+            if entry is not None:
+                files.append(entry)
+            if len(files) >= _WALK_LIMIT:
+                truncated = True
+                break
+        if truncated:
+            break
+
+    files.sort(key=lambda f: str(f["modified"]), reverse=True)
+    return files, truncated
+
+
+def listing(
+    run_dir: str,
+    workflows_root: str,
+    *,
+    output_site: str = "local",
+    offset: int = 0,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """A page of a run's outputs, plus enough context to explain an empty one."""
+    output_dir, found_via = resolve_output_dir(
+        run_dir, workflows_root, output_site
+    )
+    if output_dir is None or not os.path.isdir(output_dir):
+        return {
+            "output_dir": output_dir,
+            "found_via": found_via,
+            "exists": False,
+            "total": 0,
+            "files": [],
+            "truncated": False,
+            "offset": offset,
+            "limit": limit,
+        }
+
+    files, truncated = collect(output_dir)
+    page = files[offset : offset + limit]
+    return {
+        "output_dir": output_dir,
+        "found_via": found_via,
+        "exists": True,
+        "total": len(files),
+        "files": page,
+        "truncated": truncated,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+def safe_output_path(output_dir: str, relative: str) -> str:
+    """Resolve `relative` inside `output_dir`, or raise ValueError.
+
+    The outputs API takes a caller-supplied path, so this is the boundary that
+    stops `../../.ssh/id_rsa` from being served. Resolve first, compare after —
+    checking for ".." in the string is defeated by symlinks and by encodings
+    that normalize to it.
+    """
+    root = os.path.realpath(output_dir)
+    resolved = os.path.realpath(os.path.join(root, relative))
+    if resolved != root and not resolved.startswith(root + os.sep):
+        raise ValueError("path escapes the output directory")
+    return resolved

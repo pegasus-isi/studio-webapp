@@ -22,7 +22,14 @@ _SENTINEL = "__ARGPARSE_SCHEMA__"
 _TIMEOUT = 30
 
 # Standard pegasus-plan options exposed for the Plan/Submit actions. These are
-# the same across workflows (they are pegasus-plan args, not generator args).
+# the same across workflows (they are pegasus-plan args, not generator args),
+# and are given the same shape introspection produces
+# for generator params — including the Phase 3 hints (#241), so a consumer
+# never has to care which source a parameter came from.
+#
+# Both are marked `advanced`: the simple Run form asks "where it runs" as a
+# plain-language choice and drives these from it, so surfacing the raw site
+# names again would be asking the same question twice in two vocabularies.
 PLAN_PARAMS: list[dict[str, Any]] = [
     {
         "dest": "site",
@@ -32,6 +39,9 @@ PLAN_PARAMS: list[dict[str, Any]] = [
         "required": True,
         "is_flag": False,
         "choices": None,
+        "type": "text",
+        "label": "Execution site",
+        "advanced": True,
     },
     {
         "dest": "output_site",
@@ -41,6 +51,9 @@ PLAN_PARAMS: list[dict[str, Any]] = [
         "required": True,
         "is_flag": False,
         "choices": None,
+        "type": "text",
+        "label": "Output site",
+        "advanced": True,
     },
 ]
 

@@ -125,3 +125,15 @@ export function useSubmitWorkflowProject() {
     },
   });
 }
+
+export function useDeleteWorkflowProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (projectId: string) => api.deleteWorkflowProject(projectId),
+    onSuccess: () => {
+      // Runs live inside the project, so both lists are stale after this.
+      qc.invalidateQueries({ queryKey: ["workflow-projects"] });
+      qc.invalidateQueries({ queryKey: ["workflows"] });
+    },
+  });
+}

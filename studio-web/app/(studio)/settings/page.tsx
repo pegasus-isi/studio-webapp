@@ -11,6 +11,10 @@ import {
 } from "@/lib/hooks/use-llm";
 import { useTools } from "@/lib/hooks/use-tools";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
+import {
+  useUIPreferences,
+  useUpdateUIPreferences,
+} from "@/lib/hooks/use-ui-prefs";
 import { ToolCard } from "@/components/tools/tool-card";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
@@ -19,6 +23,20 @@ import type { ProviderConfig } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 
 type Tab = "providers" | "tools" | "chat" | "pegasus" | "notifications";
+
+// What an ordinary user changes, versus what an operator does. Pegasus Options
+// sits on the everyday side because it holds the Simplified Run toggle — the
+// one switch a scientist is most likely to come here for.
+const EVERYDAY_TABS: [Tab, string][] = [
+  ["notifications", "Notifications"],
+  ["pegasus", "Pegasus Options"],
+  ["chat", "Chat"],
+];
+
+const ADVANCED_TABS: [Tab, string][] = [
+  ["providers", "LLM Providers"],
+  ["tools", "Tools"],
+];
 
 // Notification categories the engine emits, with friendly labels for the
 // mute toggles. `kind` matches the backend `kind` field.
@@ -50,72 +68,62 @@ const NOTIFICATION_CATEGORIES: {
 ];
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("providers");
+  // Notifications first (#241, Phase 7). LLM providers, tool installs and
+  // registry credentials are infrastructure; opening Settings on an API-key
+  // form tells a scientist this product is not for them.
+  const [activeTab, setActiveTab] = useState<Tab>("notifications");
 
   return (
     <div className="mx-auto max-w-4xl p-6">
       <h1 className="text-lg font-semibold text-fg">Settings</h1>
       <p className="mt-1 text-sm text-fgmuted">
-        Configure LLM providers, manage AI tools, and set Pegasus options.
+        Notifications, how workflows run, and the chat assistant. Provider keys
+        and tool installs are under Advanced.
       </p>
 
-      {/* Tab navigation */}
-      <div className="mt-4 flex border-b border-line">
-        <button
-          onClick={() => setActiveTab("providers")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
-            activeTab === "providers"
-              ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
-          )}
-        >
-          LLM Providers
-        </button>
-        <button
-          onClick={() => setActiveTab("tools")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
-            activeTab === "tools"
-              ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
-          )}
-        >
-          Tools
-        </button>
-        <button
-          onClick={() => setActiveTab("chat")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
-            activeTab === "chat"
-              ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
-          )}
-        >
-          Chat
-        </button>
-        <button
-          onClick={() => setActiveTab("pegasus")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
-            activeTab === "pegasus"
-              ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
-          )}
-        >
-          Pegasus Options
-        </button>
-        <button
-          onClick={() => setActiveTab("notifications")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
-            activeTab === "notifications"
-              ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
-          )}
-        >
-          Notifications
-        </button>
+      {/* Tab navigation.
+          Ordered by who needs it (#241, Phase 7): the everyday preferences
+          first, then a divider, then the infrastructure. Opening Settings on
+          an LLM API-key form tells a scientist this product is not for them,
+          which is the opposite of what a settings page should do. */}
+      <div className="mt-4 flex flex-wrap items-center border-b border-line">
+        {EVERYDAY_TABS.map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setActiveTab(id)}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
+              activeTab === id
+                ? "border-pegasus-600 text-pegasus-600"
+                : "border-transparent text-fgmuted hover:text-fg hover:border-line"
+            )}
+          >
+            {label}
+          </button>
+        ))}
+
+        <span
+          aria-hidden="true"
+          className="mx-2 h-4 w-px shrink-0 bg-line"
+        />
+        <span className="mr-1 text-xs uppercase tracking-wider text-fgsubtle">
+          Advanced
+        </span>
+
+        {ADVANCED_TABS.map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setActiveTab(id)}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
+              activeTab === id
+                ? "border-pegasus-600 text-pegasus-600"
+                : "border-transparent text-fgmuted hover:text-fg hover:border-line"
+            )}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Tab content */}
@@ -1124,8 +1132,54 @@ function PegasusOptionsTab() {
       {/* Execution backend — shown only when remote backends are configured */}
       <ExecutionBackendSection />
 
+      {/* Simplified Run flow — the Phase 1 rollout flag (#241) */}
+      <SimpleRunSection />
+
       {/* Container registry — persisted; drives the Build Image action */}
       <RegistrySection />
+    </div>
+  );
+}
+
+/**
+ * Opt-*out* of the unified Run flow (#241, Phase 1).
+ *
+ * On by default: the single Run action is the product, and the four Pegasus
+ * verbs are what you turn it back to. This stays a per-user preference rather
+ * than disappearing because the flow's vocabulary has not yet been through the
+ * terminology check, so "turn it off" needs to remain a one-click answer for
+ * anyone it doesn't suit.
+ */
+function SimpleRunSection() {
+  const { prefs } = useUIPreferences();
+  const update = useUpdateUIPreferences();
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <h2 className="text-sm font-semibold text-fg">Simplified Run</h2>
+      <p className="mt-1 text-xs text-fgmuted">
+        A single <strong>Run</strong> button prepares and starts your workflow,
+        doing the Generate, Build Image, Plan and Run steps in order and showing
+        you the progress. The individual steps stay available under
+        &ldquo;Advanced&rdquo; on each workflow. Turn this off to go back to
+        driving the four steps yourself.
+      </p>
+      <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-fg">
+        <input
+          type="checkbox"
+          checked={prefs.simple_run}
+          disabled={update.isPending}
+          onChange={(e) =>
+            update.mutate({ ...prefs, simple_run: e.target.checked })
+          }
+        />
+        Use the simplified Run flow
+      </label>
+      {update.isError && (
+        <p className="mt-2 text-xs text-red-600 dark:text-rose-400">
+          Couldn&apos;t save: {(update.error as Error).message}
+        </p>
+      )}
     </div>
   );
 }

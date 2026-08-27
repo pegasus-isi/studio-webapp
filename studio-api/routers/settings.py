@@ -51,6 +51,69 @@ async def update_registry(req: RegistryRequest) -> dict:
     return await get_registry()
 
 
+class UIPreferences(BaseModel):
+    """Per-user UI preferences for the non-specialist redesign (#241).
+
+    Server-side rather than localStorage because these must follow the *user*,
+    not the browser. Someone who tries Studio from a laptop and then a lab
+    machine should not silently get two different products, and the rollout
+    flag has to mean the same thing in both places for a staged rollout to be
+    interpretable at all.
+    """
+
+    # Phase 1 rollout flag, now on by default (#241): the unified Run flow is
+    # the product, and the four Pegasus verbs are the opt-out.
+    #
+    # This was flipped ahead of the terminology check and the Phase 8 task
+    # test, which the plan named as the gate. The vocabulary the flow uses is
+    # therefore still unvalidated with real users, and the honest reading of a
+    # complaint about wording is "we haven't tested this yet", not "users
+    # disagree with the research". Turning it off per user in Settings remains
+    # the escape hatch, and remains the first thing to suggest.
+    simple_run: bool = True
+    # Whether the Advanced disclosure (the individual Generate/Build/Plan/Run
+    # verbs) starts open. Persisted so a Pegasus-literate user doesn't reopen
+    # it on every visit.
+    advanced_open: bool = False
+    # First-run welcome (#241, Phase 6). Persisted server-side, not in
+    # localStorage: "have I introduced myself to this person" is a fact about
+    # the user, and clearing a browser or opening Studio on a second machine
+    # should not restart the introduction.
+    welcome_dismissed: bool = False
+    # Whether the sidebar's Advanced group (Resources, Terminal) starts open
+    # (#241, Phase 7). Separate from `advanced_open`, which is the run form's
+    # disclosure — someone who wants the individual Pegasus verbs does not
+    # necessarily want a terminal in their sidebar, and coupling two unrelated
+    # disclosures to one flag makes both surprising.
+    nav_advanced_open: bool = False
+
+
+_UI_PREFS_KEY = "ui_preferences"
+
+
+@router.get("/ui", response_model=UIPreferences)
+async def get_ui_preferences() -> UIPreferences:
+    """UI preferences, with defaults for any key never set."""
+    from main import db
+
+    stored = await db.get_setting(_UI_PREFS_KEY, {}) or {}
+    if not isinstance(stored, dict):
+        stored = {}
+    return UIPreferences(**{
+        k: v for k, v in stored.items() if k in UIPreferences.model_fields
+    })
+
+
+@router.put("/ui", response_model=UIPreferences)
+async def update_ui_preferences(req: UIPreferences) -> UIPreferences:
+    """Replace UI preferences wholesale (the payload is small and complete)."""
+    from main import db
+
+    await db.set_setting(_UI_PREFS_KEY, req.model_dump())
+    log.info("ui_preferences_updated", **req.model_dump())
+    return req
+
+
 @router.get("", response_model=SettingsResponse)
 async def get_settings() -> SettingsResponse:
     from main import db

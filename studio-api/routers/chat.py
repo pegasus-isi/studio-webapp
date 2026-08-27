@@ -1081,8 +1081,14 @@ async def _opencode_stream(
             if not client_gone:
                 yield "data: [DONE]\n\n"
 
+    return _brokered_stream(event_generator(), conversation_id)
+
+
+# --- Chat endpoints ---
+
+def _sse_response(source) -> StreamingResponse:
     return StreamingResponse(
-        event_generator(),
+        source,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1092,7 +1098,49 @@ async def _opencode_stream(
     )
 
 
-# --- Chat endpoints ---
+def _brokered_stream(
+    generator, conversation_id: str | None
+) -> StreamingResponse:
+    """Stream a turn through the broker rather than straight to the client.
+
+    The response looks identical to the caller. The difference is ownership:
+    the generator is drained by a background task, so the turn survives the
+    request ending — a navigation, a closed tab, a dropped connection — and
+    can be reattached to via /turn/events.
+
+    Both engines go through here. Anything that changed only one of them would
+    reintroduce the difference this exists to remove.
+    """
+    from services.chat_turn import manager as turn_manager
+
+    turn = turn_manager.start(generator, conversation_id)
+    return _sse_response(turn.subscribe())
+
+
+@router.get("/turn")
+async def current_turn() -> dict:
+    """Whether a turn is in flight, so a freshly-loaded panel can reattach."""
+    from services.chat_turn import manager as turn_manager
+
+    turn = turn_manager.active()
+    return turn.snapshot() if turn else {"active": False}
+
+
+@router.get("/turn/events")
+async def turn_events() -> StreamingResponse:
+    """Replay the in-flight turn from its start, then follow it live.
+
+    Replay rather than tail: a panel that reloaded mid-answer has a truncated
+    message in local storage, and rebuilding from the beginning is the only way
+    to end up with the same text a client that never left would have.
+    """
+    from services.chat_turn import manager as turn_manager
+
+    turn = turn_manager.current()
+    if turn is None:
+        raise HTTPException(status_code=404, detail="No chat turn in progress")
+    return _sse_response(turn.subscribe())
+
 
 @router.post("/stream")
 async def chat_stream(request: Request) -> StreamingResponse:
@@ -1446,15 +1494,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
             if not client_gone:
                 yield "data: [DONE]\n\n"
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return _brokered_stream(event_generator(), conversation_id)
 
 
 @router.post("/stop")

@@ -359,6 +359,8 @@ export interface WorkflowProjectRun {
   status: string;
   // Compute backend the run belongs to ("local" or a configured remote id).
   backend?: string | null;
+  /** Path relative to $HOME (JupyterLab's root); "" when outside it. */
+  jupyter_path: string;
 }
 
 export interface WorkflowProject {
@@ -366,6 +368,8 @@ export interface WorkflowProject {
   name: string;
   project_dir: string;
   status: string;
+  /** Path relative to $HOME (JupyterLab's root); "" when outside it. */
+  jupyter_path: string;
   has_generator: boolean;
   has_workflow_yml: boolean;
   has_container_def: boolean;
@@ -378,6 +382,22 @@ export async function getWorkflowProjects() {
 
 // Parameter schema discovered per workflow (different generators expose
 // different arguments).
+/**
+ * Widget hint from argparse introspection (#241, Phase 3).
+ *
+ * A hint, not a contract: every value is still a string on the command line.
+ * Anything unrecognised must render as a plain text input.
+ */
+export type ParamType =
+  | "text"
+  | "integer"
+  | "number"
+  | "boolean"
+  | "choice"
+  | "file"
+  | "directory"
+  | "date";
+
 export interface WorkflowParam {
   dest: string;
   flag: string;
@@ -387,12 +407,26 @@ export interface WorkflowParam {
   required: boolean;
   is_flag: boolean;
   choices: string[] | null;
+  // Phase 3 hints. Optional so a backend that predates them (or an
+  // introspection fallback that returns a bare schema) still renders.
+  type?: ParamType;
+  /** Human label, preferring the author's help text over the flag name. */
+  label?: string;
+  /** Plumbing rather than science — belongs under "More options". */
+  advanced?: boolean;
 }
 
 export interface ProjectParams {
   project_id: string;
   generator: { params: WorkflowParam[]; mutex_required: string[][] };
   plan: { params: WorkflowParam[] };
+}
+
+export async function deleteWorkflowProject(projectId: string) {
+  return request<{ project_id: string; status: string }>(
+    `/workflows/projects/${encodeURIComponent(projectId)}`,
+    { method: "DELETE" }
+  );
 }
 
 export async function getProjectParams(projectId: string) {
@@ -429,6 +463,176 @@ export async function submitWorkflowProject(
   return request<{ project_id: string; status: string; run_dir?: string; output?: string }>(
     `/workflows/projects/${encodeURIComponent(projectId)}/submit`,
     { method: "POST", body: JSON.stringify(opts) }
+  );
+}
+
+// --- Unified Run flow (#241, Phase 1) ---
+//
+// One Run action replacing the Generate / Build / Plan / Run button row. The
+// flow runs server-side and outlives the request that starts it, so the three
+// calls here are start, reattach, and (via EventSource) follow.
+
+export type RunFlowStageStatus =
+  | "pending"
+  | "running"
+  | "done"
+  | "skipped"
+  | "failed";
+
+export interface RunFlowStage {
+  key: string;
+  /** Already in the user's terms — render as-is, don't re-map. */
+  label: string;
+  status: RunFlowStageStatus;
+  detail: string;
+}
+
+export interface RunFlowFailure {
+  stage: string;
+  /** What went wrong, in plain language. */
+  cause: string;
+  /** What to do about it. Never empty. */
+  action: string;
+  /** Raw log — collapsed by default, never discarded. */
+  technical: string;
+}
+
+export interface RunFlowSnapshot {
+  flow_id?: string;
+  project_id: string;
+  state: "running" | "succeeded" | "failed" | null;
+  stages?: RunFlowStage[];
+  failure?: RunFlowFailure | null;
+  run_dir?: string;
+  active: boolean;
+}
+
+export interface RunFlowOptions {
+  args?: string[];
+  site?: string;
+  output_site?: string;
+  force_build?: boolean;
+}
+
+export async function startRunFlow(
+  projectId: string,
+  opts: RunFlowOptions = {}
+) {
+  return request<RunFlowSnapshot>(
+    `/workflows/projects/${encodeURIComponent(projectId)}/run-flow`,
+    { method: "POST", body: JSON.stringify(opts) }
+  );
+}
+
+export async function getRunFlow(projectId: string) {
+  return request<RunFlowSnapshot>(
+    `/workflows/projects/${encodeURIComponent(projectId)}/run-flow`
+  );
+}
+
+// --- UI preferences (per-user rollout flag) ---
+
+export interface UIPreferences {
+  /**
+   * The simplified interface: one Run action, and a sidebar that leads with
+   * what a scientist does rather than what the infrastructure offers. On by
+   * default; turning it off restores the four Pegasus verbs and the full nav.
+   */
+  simple_run: boolean;
+  /** Run form's Advanced disclosure (the individual verbs). */
+  advanced_open: boolean;
+  welcome_dismissed: boolean;
+  /** Sidebar's Advanced group (Resources, Terminal). */
+  nav_advanced_open: boolean;
+}
+
+export async function getUIPreferences() {
+  return request<UIPreferences>("/settings/ui");
+}
+
+export async function updateUIPreferences(prefs: UIPreferences) {
+  return request<UIPreferences>("/settings/ui", {
+    method: "PUT",
+    body: JSON.stringify(prefs),
+  });
+}
+
+// --- Run outputs (#241, Phase 4) ---
+
+export interface OutputFile {
+  /** Path relative to the run's output directory. */
+  path: string;
+  name: string;
+  size: number;
+  modified: string;
+  kind: "image" | "table" | "text" | "binary";
+  /** Decided server-side, so the size threshold can't drift between the two. */
+  previewable: boolean;
+}
+
+export interface RunOutputs {
+  run_id: string;
+  output_dir: string | null;
+  /**
+   * How the output directory was located. "catalog" = the workflow declared
+   * it, so an empty listing means "nothing produced yet". "convention" = we
+   * guessed from a directory name. "none" = we couldn't tell where this
+   * workflow puts results, which is NOT the same as there being none.
+   */
+  found_via: "catalog" | "convention" | "none";
+  exists: boolean;
+  total: number;
+  files: OutputFile[];
+  /** The walk hit its ceiling — more files exist than are listed. */
+  truncated: boolean;
+  offset: number;
+  limit: number;
+}
+
+export async function getRunOutputs(
+  runId: string,
+  opts: { offset?: number; limit?: number } = {}
+) {
+  const query = new URLSearchParams();
+  if (opts.offset) query.set("offset", String(opts.offset));
+  if (opts.limit) query.set("limit", String(opts.limit));
+  const suffix = query.toString() ? `?${query}` : "";
+  return request<RunOutputs>(
+    `/workflows/${encodeURIComponent(runId)}/outputs${suffix}`
+  );
+}
+
+/** URL for previewing or downloading one output file. */
+export function runOutputFileUrl(
+  runId: string,
+  path: string,
+  download = false
+): string {
+  const query = new URLSearchParams({ path });
+  if (download) query.set("download", "1");
+  return apiUrl(
+    `workflows/${encodeURIComponent(runId)}/outputs/file?${query}`
+  );
+}
+
+// --- Runtime failure diagnosis (#241, Phase 5) ---
+
+export interface DiagnosisCard {
+  kind: "job" | "held";
+  /** The step that failed, named as the workflow names it. "" for holds. */
+  step: string;
+  /** What went wrong, in plain language. */
+  cause: string;
+  /** What to do about it. Never empty — a cause without an action isn't help. */
+  action: string;
+  exitcode: number | string | null;
+  /** Raw stderr or hold reason. Kept, never led with. */
+  technical: string;
+}
+
+export async function getRunDiagnosis(runId: string) {
+  return request<{ run_id: string; cards: DiagnosisCard[]; total: number }>(
+    `/workflows/${encodeURIComponent(runId)}/diagnosis`
   );
 }
 
@@ -644,6 +848,83 @@ export async function getAgents() {
 
 // --- Files ---
 
+// --- Data upload (#241, Phase 2) ---
+
+export interface UploadLimit {
+  max_bytes: number;
+  free_bytes: number;
+  /** Absolute path of the default upload directory, for display. */
+  data_dir: string;
+}
+
+export interface UploadedFile {
+  path: string;
+  name: string;
+  size: number;
+  /** Workspace-relative — what to show, and what to paste into a run field. */
+  relative_path: string;
+}
+
+export async function getUploadLimit() {
+  return request<UploadLimit>("/files/upload-limit");
+}
+
+/**
+ * Upload one file, reporting progress.
+ *
+ * XMLHttpRequest rather than fetch: fetch cannot report *upload* progress, and
+ * a data file large enough to matter is exactly the case where a progress bar
+ * is the difference between waiting and assuming it hung.
+ */
+export function uploadFile(
+  file: File,
+  opts: {
+    dest?: string;
+    onProgress?: (fraction: number) => void;
+    signal?: AbortSignal;
+  } = {}
+): Promise<UploadedFile> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (opts.dest) form.append("dest", opts.dest);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", apiUrl("files/upload"));
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) opts.onProgress?.(e.loaded / e.total);
+    };
+
+    xhr.onload = () => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(xhr.responseText);
+      } catch {
+        parsed = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(parsed as UploadedFile);
+        return;
+      }
+      // Surface the backend's message (size limit, disk full, bad name) —
+      // those are written for the user and are the whole point of the errors.
+      const detail =
+        parsed && typeof (parsed as { detail?: unknown }).detail === "string"
+          ? (parsed as { detail: string }).detail
+          : `Upload failed (${xhr.status})`;
+      reject(new Error(detail));
+    };
+
+    xhr.onerror = () =>
+      reject(new Error("Upload failed — check your connection and try again."));
+    xhr.onabort = () => reject(new Error("Upload cancelled"));
+    opts.signal?.addEventListener("abort", () => xhr.abort());
+
+    xhr.send(form);
+  });
+}
+
 export interface FileEntry {
   name: string;
   type: string;
@@ -654,6 +935,13 @@ export interface FileEntry {
 export async function listFiles(path = "") {
   const q = path ? `?path=${encodeURIComponent(path)}` : "";
   return request<{ path: string; entries: FileEntry[] }>(`/files${q}`);
+}
+
+export async function deleteFile(path: string) {
+  return request<{ status: string }>(
+    `/files?path=${encodeURIComponent(path)}`,
+    { method: "DELETE" }
+  );
 }
 
 export async function readFile(path: string) {

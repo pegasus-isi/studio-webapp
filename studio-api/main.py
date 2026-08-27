@@ -176,6 +176,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await db.connect()
     log.info("studio_api_started", version=__version__)
 
+    # Stamp the onboarding funnel's start the first time this workspace is ever
+    # opened (no-op on every later boot). Recorded at startup rather than on
+    # first request so the clock starts when the pod becomes usable, not when
+    # the user happens to load a page that polls.
+    try:
+        from services import onboarding_metrics
+
+        await onboarding_metrics.record(db, "first_seen")
+    except Exception as e:  # noqa: BLE001 — metrics must never block startup
+        log.warning("onboarding_first_seen_failed", error=str(e))
+
     # Register image-bundled tools (OpenCode) on first boot, then re-install
     # any tools whose binaries are missing (e.g. after container restart).
     try:

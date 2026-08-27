@@ -24,10 +24,11 @@ studio-api/
 │   ├── claude_code.py / opencode.py / codex_cli.py / antigravity.py / web_chat.py
 ├── services/               # workflow scan/submit/monitor, condor pool, image
 │                           # builder, opencode engine, notifications, terminals,
-│                           # chat_permissions, procutil, …
+│                           # chat_permissions, procutil, run_flow, run_outputs,
+│                           # run_diagnosis, chat_turn, onboarding_metrics, …
 ├── init_db.py              # CLI: initialize / migrate the SQLite schema
 ├── propagate_llm.py        # CLI: propagate the saved LLM config to installed tools
-└── tests/                  # ~240 tests; no Pegasus/Condor/keys needed
+└── tests/                  # ~450 tests; no Pegasus/Condor/keys needed
 ```
 
 The SQLite DB (`~/.studio/studio.db`; an existing one is moved out of `~/work/.studio` on first start) has **8 tables**: `app_settings`,
@@ -91,19 +92,25 @@ All tests use temporary SQLite DBs and need no Pegasus, HTCondor, or LLM keys.
 |--------|------|-------|
 | GET | `/api/workflows` | discover + list runs |
 | GET | `/api/workflows/{id}` `/jobs` `/events` `/estimate` `/graph.json` | detail, jobs, SSE events, ETA, DAG |
+| GET | `/api/workflows/{id}/outputs` `/outputs/file` | files a run produced (paginated); preview or download one |
+| GET | `/api/workflows/{id}/diagnosis` | plain-language failure cards — cause, action, technical detail |
 | POST | `/api/workflows/{id}/analyze` | pegasus-analyzer |
 | DELETE | `/api/workflows/{id}` | **destructive** — cancels if running, then removes the run's submit directory from disk |
 | GET/POST | `/api/workflows/projects…` | project list, params, generate, plan, run, build image (SSE) |
+| POST/GET | `/api/workflows/projects/{id}/run-flow` `/run-flow/events` | the one-button Run: start a background flow; snapshot it; SSE replay-then-live |
+| DELETE | `/api/workflows/projects/{id}` | **destructive** — deletes a workflow, its runs (cancelled first) and its files |
 
 ### Chat, Tools, Files, Terminals
 
 | Method | Path | Notes |
 |--------|------|-------|
-| POST | `/api/chat/stream` | SSE chat (engine: `opencode` default, or `builtin`) |
+| POST | `/api/chat/stream` | SSE chat (engine: `opencode` default, or `builtin`); brokered so a turn outlives the request |
+| GET | `/api/chat/turn` `/turn/events` | reattach to an in-flight turn after a reload — snapshot, then SSE replay-then-live |
 | POST | `/api/chat/permission` | approve/deny a pending shell command (per-turn gate) |
 | GET/PUT | `/api/chat/engine`, `/api/chat/command-approval` | engine + approval posture |
 | * | `/api/tools/{id}/install|uninstall|start|stop` | AI-tool lifecycle |
 | * | `/api/files…` | workspace CRUD (path-confined) |
+| POST/GET | `/api/files/upload`, `/api/files/upload-limit` | streamed multipart upload; ceiling + free space so the UI can refuse before sending |
 | WS | `/ws/terminal`, `/ws/terminal/{tool_id}` | bash / AI-tool PTY |
 
 ### Jupyter

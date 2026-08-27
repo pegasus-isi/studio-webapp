@@ -12,6 +12,27 @@ export function appRelativePath(path: string): string {
   return normalized || ".";
 }
 
+/**
+ * The absolute browser path for an in-app route, including the per-user prefix.
+ *
+ * `appRelativePath` returns something the *browser* resolves against
+ * `<base href>` — perfect for an `href`, useless for `router.push`, which needs
+ * a real path. This resolves it the same way the browser would, so it yields
+ * `/user/<name>/workflows` behind KubeSpawner and `/workflows` in dev, without
+ * either the caller or Next needing to know a prefix exists.
+ *
+ * Next's `basePath` is build-time only, which is why the prefix cannot be
+ * configured and has to be derived at runtime like this.
+ */
+export function appPushPath(path: string): string {
+  const relative = appRelativePath(path);
+  if (typeof document === "undefined") {
+    return path.startsWith("/") ? path : `/${path}`;
+  }
+  const url = new URL(relative, document.baseURI);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 export function apiUrl(path: string): string {
   return appRelativePath(`api/${path.replace(/^\/+/, "")}`);
 }

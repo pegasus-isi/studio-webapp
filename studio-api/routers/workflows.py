@@ -63,11 +63,46 @@ class BuildRequest(BaseModel):
     # pushing is a separate, opt-in step rather than part of building.
     push: bool = False
 
+
+class RunFlowRequest(BaseModel):
+    """Everything the one-button Run needs (#241, Phase 1).
+
+    Combines what Generate and Plan/Run took separately, because the user makes
+    these choices once, in one form, before pressing Run.
+    """
+
+    args: list[str] = Field(default_factory=list)
+    site: str = "condorpool"
+    output_site: str = "local"
+    # Rebuild the software environment even when it looks current. The default
+    # skips an up-to-date image, which is the slowest avoidable step in a
+    # re-run; this is the escape hatch for when the definition changed in a way
+    # mtime didn't catch.
+    force_build: bool = False
+
 log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
 _CMD_TIMEOUT = 300  # 5 minutes
+
+
+def jupyter_path(abs_path: str) -> str:
+    """`abs_path` relative to $HOME, which is JupyterLab's root.
+
+    docker/supervisor/scripts/jupyter.sh roots the lab at $HOME, so a
+    `/lab/tree/<x>` URL needs `x` relative to it. The browser only ever sees
+    absolute container paths and cannot compute this, so it is served
+    alongside them. Returns "" for anything outside $HOME rather than a
+    `../..` path that would 404 in the lab.
+    """
+    home = os.path.realpath(os.environ.get("HOME", "/"))
+    resolved = os.path.realpath(abs_path)
+    if resolved == home:
+        return ""
+    if not resolved.startswith(home + os.sep):
+        return ""
+    return os.path.relpath(resolved, home)
 
 
 @router.get("", response_model=WorkflowListResponse)
@@ -118,6 +153,20 @@ async def list_workflows() -> WorkflowListResponse:
             exec_site=detail.get("exec_site"),
         )
 
+    # Onboarding funnel (#241). Also hooked here, not only on the dashboard: a
+    # user who lands straight on Workflows and never opens the dashboard would
+    # otherwise never have their submit/success milestones observed.
+    try:
+        from services import onboarding_metrics
+
+        await onboarding_metrics.observe(
+            db,
+            has_runs=bool(workflows),
+            has_success=any(w.status == "succeeded" for w in workflows),
+        )
+    except Exception as e:  # noqa: BLE001 — metrics must not break the list
+        log.warning("onboarding_observe_failed", error=str(e))
+
     return WorkflowListResponse(workflows=workflows)
 
 
@@ -138,14 +187,59 @@ async def list_projects() -> WorkflowProjectListResponse:
             has_generator=p["has_generator"],
             has_workflow_yml=p["has_workflow_yml"],
             has_container_def=p["has_container_def"],
+            jupyter_path=jupyter_path(p["project_dir"]),
             runs=[
-                WorkflowProjectRunResponse(**r, backend=backend_id)
+                WorkflowProjectRunResponse(
+                    **r, backend=backend_id, jupyter_path=jupyter_path(r["run_dir"])
+                )
                 for r in p["submitted_runs"]
             ],
         )
         for p in raw
     ]
     return WorkflowProjectListResponse(projects=projects)
+
+
+@router.delete("/projects/{project_id}")
+async def delete_project(project_id: str) -> dict:
+    """Delete a workflow project and everything in it.
+
+    Destructive and irreversible. Two guards:
+
+    * the project must be one the scanner found, so an arbitrary
+      ``project_id`` cannot name a directory to remove; and
+    * its resolved path must still sit inside the workflows directory, which
+      catches a symlinked project pointing somewhere else entirely.
+
+    Runs inside it are cancelled and removed first — see
+    ``workflow_submitter.delete_project`` for why that ordering matters.
+    """
+    from services.workflow_scanner import workflows_dir
+    from services.workflow_submitter import delete_project as remove_project
+
+    projects = await discover_projects_async()
+    proj = next((p for p in projects if p["project_id"] == project_id), None)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+
+    project_dir = os.path.realpath(proj["project_dir"])
+    root = os.path.realpath(workflows_dir())
+    if not project_dir.startswith(root + os.sep):
+        # Belt and braces: the scanner only walks the workflows dir, but a
+        # symlinked entry could still resolve outside it, and this deletes
+        # files.
+        raise HTTPException(
+            status_code=403, detail="Refusing to delete outside the workflows directory"
+        )
+
+    result = await remove_project(project_dir)
+    if result.get("status") != "deleted":
+        # 409, not 500: nothing is broken, the files are just busy right now.
+        raise HTTPException(
+            status_code=409,
+            detail=result.get("output") or "Could not delete this workflow",
+        )
+    return {"project_id": project_id, **result}
 
 
 @router.get("/projects/{project_id}/params")
@@ -274,6 +368,100 @@ async def build_project_image(
         except GeneratorExit:
             # Client disconnected — skip the finally's [DONE] to avoid the
             # "async generator ignored GeneratorExit" noise (BE-9).
+            client_gone = True
+            raise
+        finally:
+            if not client_gone:
+                yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── Unified Run flow (#241, Phase 1) ──────────────────────────────────────
+#
+# One action replacing the Generate / Build / Plan / Run button row. The four
+# endpoints above stay exactly as they are: Advanced mode still drives them
+# individually, and nothing here changes their behaviour.
+
+
+@router.post("/projects/{project_id}/run-flow")
+async def start_run_flow(project_id: str, req: RunFlowRequest) -> dict:
+    """Start the whole prepare-and-run sequence as one background flow.
+
+    Returns as soon as the flow is created — progress arrives on
+    `/run-flow/events`. The flow outlives the request that started it, so
+    closing the tab doesn't strand it half-done.
+    """
+    from services.run_flow import manager
+
+    projects = await discover_projects_async()
+    proj = next((p for p in projects if p["project_id"] == project_id), None)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+
+    try:
+        flow = manager.start(
+            project_id=project_id,
+            project_dir=proj["project_dir"],
+            generator_file=proj.get("generator_file") if proj["has_generator"] else None,
+            has_container_def=bool(proj["has_container_def"]),
+            generator_args=req.args,
+            site=req.site,
+            output_site=req.output_site,
+            force_build=req.force_build,
+        )
+    except RuntimeError as e:
+        # 409, not 400: the request is well-formed, the project is just busy.
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+    return flow.snapshot()
+
+
+@router.get("/projects/{project_id}/run-flow")
+async def get_run_flow(project_id: str) -> dict:
+    """Current (or most recent) flow for a project, without streaming.
+
+    How a reopened page finds out whether a run is in progress before deciding
+    to attach to the event stream.
+    """
+    from services.run_flow import manager
+
+    flow = manager.get(project_id)
+    if flow is None:
+        return {"project_id": project_id, "state": None, "active": False}
+    return flow.snapshot()
+
+
+@router.get("/projects/{project_id}/run-flow/events")
+async def run_flow_events(project_id: str) -> StreamingResponse:
+    """SSE stream of a flow: full replay, then live until it ends.
+
+    Replaying rather than streaming-from-now is what makes the flow
+    reattachable — a client that arrives late sees the same sequence as one
+    present from the start.
+    """
+    from services.run_flow import manager
+
+    flow = manager.get(project_id)
+    if flow is None:
+        raise HTTPException(status_code=404, detail="No run in progress")
+
+    async def event_stream():
+        client_gone = False
+        try:
+            async for event in flow.subscribe():
+                yield f"data: {json.dumps(event)}\n\n"
+        except GeneratorExit:
+            # Client disconnected — skip the [DONE] to avoid the "async
+            # generator ignored GeneratorExit" noise (same as build, BE-9).
             client_gone = True
             raise
         finally:
@@ -732,6 +920,87 @@ async def get_jobs(run_id: str) -> dict:
     return {"run_id": run_id, "jobs": jobs}
 
 
+@router.get("/{run_id}/outputs")
+async def get_run_outputs(
+    run_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    output_site: str = Query("local"),
+) -> dict:
+    """The files a run produced (#241, Phase 4).
+
+    Studio had no notion of a run's results until this: a scientist runs an
+    analysis to get files back, and finding them meant leaving for JupyterLab
+    and knowing where Pegasus stages outputs. Paginated because a run's storage
+    directory is unbounded.
+    """
+    from services import run_outputs
+    from services.workflow_scanner import workflows_dir
+
+    run_dir = (await _resolve_run(run_id)).run_dir
+    loop = asyncio.get_event_loop()
+    # The walk touches the filesystem (NFS in production), so keep it off the
+    # event loop — every other request and WebSocket shares it.
+    result = await loop.run_in_executor(
+        None,
+        lambda: run_outputs.listing(
+            run_dir,
+            workflows_dir(),
+            output_site=output_site,
+            offset=offset,
+            limit=limit,
+        ),
+    )
+    return {"run_id": run_id, **result}
+
+
+@router.get("/{run_id}/outputs/file")
+async def get_run_output_file(
+    run_id: str,
+    path: str = Query(..., description="Path relative to the output directory"),
+    download: bool = Query(False),
+    output_site: str = Query("local"),
+):
+    """Serve one output file, inline for preview or as an attachment.
+
+    `path` is caller-supplied, so it is resolved strictly inside the run's
+    output directory — see `run_outputs.safe_output_path`.
+    """
+    from fastapi.responses import FileResponse
+
+    from services import run_outputs
+    from services.workflow_scanner import workflows_dir
+
+    run_dir = (await _resolve_run(run_id)).run_dir
+    output_dir, _ = run_outputs.resolve_output_dir(
+        run_dir, workflows_dir(), output_site
+    )
+    if not output_dir:
+        raise HTTPException(status_code=404, detail="No output directory for this run")
+
+    try:
+        resolved = run_outputs.safe_output_path(output_dir, path)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied") from None
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    size = os.path.getsize(resolved)
+    if not download and size > run_outputs.PREVIEW_MAX_BYTES:
+        # Refuse to inline a file big enough to hang the tab; the client should
+        # be offering a download for these anyway (`previewable` says so).
+        raise HTTPException(
+            status_code=413,
+            detail="File is too large to preview — download it instead",
+        )
+
+    return FileResponse(
+        resolved,
+        filename=os.path.basename(resolved) if download else None,
+        content_disposition_type="attachment" if download else "inline",
+    )
+
+
 @router.get("/{run_id}/events")
 async def workflow_events(run_id: str) -> StreamingResponse:
     """SSE stream of real-time workflow monitoring events."""
@@ -771,6 +1040,45 @@ async def analyze_workflow(run_id: str) -> dict:
     run_dir = (await _resolve_run(run_id)).run_dir
     output = await run_pegasus_analyzer(run_dir)
     return {"run_id": run_id, "analysis": output}
+
+
+@router.get("/{run_id}/diagnosis")
+async def diagnose_run(run_id: str) -> dict:
+    """Plain-language failure cards for a running/finished workflow (#241, P5).
+
+    Phase 1 covers the pre-run stages; this covers the workflow itself, where
+    the raw material is job stderr, exit codes and HTCondor hold reasons. Every
+    card carries an action — naming a problem and stopping is the failure mode
+    of the raw-stderr panel this replaces.
+
+    Cheap and side-effect free (it reads what the monitor already collected),
+    so it is safe to poll alongside the jobs table. `pegasus-analyzer` stays a
+    separate, explicit action.
+    """
+    from services import run_diagnosis
+
+    run_dir = (await _resolve_run(run_id)).run_dir
+    jobs = await get_workflow_jobs(run_dir)
+
+    cards = run_diagnosis.diagnose_jobs(jobs)
+
+    # Hold reasons come from the live queue, which is only meaningful while the
+    # run still has jobs in it. A queue that isn't reachable is not an error
+    # here — it just means no hold information to add.
+    try:
+        from services import condor_pool
+
+        # get_status() is cached, so this rides the snapshot the dashboard and
+        # Resources page already refresh rather than issuing its own condor_q.
+        status = await condor_pool.get_status()
+        demand = status.get("demand") or {}
+        cards.extend(
+            run_diagnosis.diagnose_holds(demand.get("held_reasons") or [])
+        )
+    except Exception as e:  # noqa: BLE001 — diagnosis is best-effort
+        log.debug("diagnosis_hold_lookup_failed", run_id=run_id, error=str(e))
+
+    return {"run_id": run_id, "cards": cards, "total": len(cards)}
 
 
 @router.post("/{run_id}/cancel")

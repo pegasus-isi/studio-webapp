@@ -89,18 +89,33 @@ the cluster policy.
 
 | View (nav label) | Route | Purpose |
 |------------------|-------|---------|
-| Home | `/` | Landing page: capabilities, recent runs, resources at a glance |
-| Workflows | `/workflows` | Discover projects and runs; generate, plan, build, submit, monitor, and analyze workflows |
-| Marketplace | `/marketplace` | Browse workflows sourced live from GitHub (PegasusHub registry + curated Pegasus-ISI list) and "Add" (git-clone) one into the workspace |
-| Resources | `/provisioning` | HTCondor pool inventory, workflow demand, pressure findings, and an OSPool (OSG) capacity panel |
+| Home | `/` | Landing page: first-run welcome, capabilities, recent runs, resources at a glance |
+| My analyses | `/workflows` | Discover projects and runs; set up and run a workflow, watch its steps, read its results, diagnose failures |
+| My data | `/data` | Drag-and-drop your own input files into the workspace; copy a path to paste into a run |
+| Examples | `/marketplace` | Browse workflows sourced live from GitHub (PegasusHub registry + curated Pegasus-ISI list) and "Add" (git-clone) one into the workspace |
+| Resources | `/provisioning` | Whether there is capacity to run now, with HTCondor pool inventory, workflow demand, pressure findings and an OSPool (OSG) panel under Details |
 | Notebooks | `/notebooks` | Open the always-on JupyterLab instance |
-| Settings | `/settings` | LLM providers, chat engine + shell-command approval, **Tools** (install + launch AI tools / bash terminal), container registry |
+| Settings | `/settings` | Notifications, Pegasus options (incl. the Simplified Run toggle) and chat engine, with LLM providers and **Tools** under Advanced |
 | PegasusAI Chat | (slide-in panel + `/chat`) | Built-in SSE chat with file, shell, and Pegasus tool use; per-turn approval before shell commands run |
 | Terminal | (panel) | Browser PTY connected to the workspace |
 
-Workflow Generate / Plan / Submit introspect each project's
-`workflow_generator.py` `argparse` definition at runtime, so each workflow gets
-its own parameter form.
+**Running a workflow.** One **Run** button prepares and starts the workflow —
+generating it, building the software environment only if it is stale, planning
+and submitting — and reports each stage in plain language. The four Pegasus
+steps remain individually available under "Advanced" on each workflow, and
+turning off **Simplified Run** in Settings restores them as the primary
+controls along with the full navigation.
+
+The run form is built at runtime from each project's `workflow_generator.py`
+`argparse` definition, so every workflow gets its own parameters, with dates,
+numbers and file pickers inferred where the definition allows it. Anything that
+cannot be inferred stays a plain text field, and `argparse` remains the
+validator.
+
+When a run finishes, its output files are on the **Results** tab, with preview
+for images, CSV and text. When one fails, the failure is reported as a cause
+and a suggested action, with the raw log kept underneath and an "Explain this
+failure" button that hands it to the assistant.
 
 ## AI Tools
 
