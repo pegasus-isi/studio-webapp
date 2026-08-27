@@ -202,6 +202,48 @@ async def list_projects() -> WorkflowProjectListResponse:
     return WorkflowProjectListResponse(projects=projects)
 
 
+@router.delete("/projects/{project_id}")
+async def delete_project(project_id: str) -> dict:
+    """Delete a workflow project and everything in it.
+
+    Destructive and irreversible. Two guards:
+
+    * the project must be one the scanner found, so an arbitrary
+      ``project_id`` cannot name a directory to remove; and
+    * its resolved path must still sit inside the workflows directory, which
+      catches a symlinked project pointing somewhere else entirely.
+
+    Runs inside it are cancelled and removed first — see
+    ``workflow_submitter.delete_project`` for why that ordering matters.
+    """
+    from services.workflow_scanner import WORKFLOWS_DIR
+    from services.workflow_submitter import delete_project as remove_project
+
+    projects = await discover_projects_async()
+    proj = next((p for p in projects if p["project_id"] == project_id), None)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+
+    project_dir = os.path.realpath(proj["project_dir"])
+    root = os.path.realpath(WORKFLOWS_DIR)
+    if not project_dir.startswith(root + os.sep):
+        # Belt and braces: the scanner only walks the workflows dir, but a
+        # symlinked entry could still resolve outside it, and this deletes
+        # files.
+        raise HTTPException(
+            status_code=403, detail="Refusing to delete outside the workflows directory"
+        )
+
+    result = await remove_project(project_dir)
+    if result.get("status") != "deleted":
+        # 409, not 500: nothing is broken, the files are just busy right now.
+        raise HTTPException(
+            status_code=409,
+            detail=result.get("output") or "Could not delete this workflow",
+        )
+    return {"project_id": project_id, **result}
+
+
 @router.get("/projects/{project_id}/params")
 async def get_project_params(project_id: str) -> dict:
     """Discover the configurable parameters for a project's actions.

@@ -10,8 +10,10 @@ import {
   useWorkflowJobs,
   useAnalyzeWorkflow,
   useDeleteWorkflow,
+  useDeleteWorkflowProject,
 } from "@/lib/hooks/use-workflows";
 import { DagViewer } from "@/components/workflows/dag-viewer";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { RunFlowPanel } from "@/components/workflows/run-flow-panel";
 import { OutputsPanel } from "@/components/workflows/outputs-panel";
 import { FailureCards } from "@/components/workflows/failure-cards";
@@ -62,6 +64,8 @@ export function WorkflowProjectDetail({ projectId }: Props) {
   const plan = usePlanWorkflow();
   const submit = useSubmitWorkflowProject();
   const deleteRun = useDeleteWorkflow();
+  const deleteProject = useDeleteWorkflowProject();
+  const selectProject = useWorkflowStore((s) => s.selectProject);
   const runAction = useActionToast();
   // Phase 1 rollout flag (#241). Off by default, so this page is byte-for-byte
   // what it was until a user opts in from Settings.
@@ -85,6 +89,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     run_id: string;
     label: string;
   } | null>(null);
+  const [confirmDeleteProject, setConfirmDeleteProject] = useState(false);
   const [values, setValues] = useState<ParamValues>({});
   const [dag, setDag] = useState<{
     url: string;
@@ -242,6 +247,16 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     } finally {
       setBuilding(false);
     }
+  };
+
+  const handleDeleteProject = async () => {
+    const result = await runAction("Delete workflow", () =>
+      deleteProject.mutateAsync(projectId)
+    );
+    setConfirmDeleteProject(false);
+    // Clear the selection: the project it pointed at no longer exists, and
+    // leaving it selected renders "Project not found".
+    if (result) selectProject(null);
   };
 
   const handleDeleteRun = async () => {
@@ -461,6 +476,13 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                 Open in JupyterLab ↗
               </a>
             )}
+            <button
+              onClick={() => setConfirmDeleteProject(true)}
+              title="Delete this workflow and everything in it"
+              className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-fgmuted hover:border-red-400 hover:text-red-600 dark:hover:text-red-400"
+            >
+              Delete
+            </button>
             <span
               className={cn(
                 "rounded-full px-3 py-1 text-sm font-medium",
@@ -609,6 +631,24 @@ export function WorkflowProjectDetail({ projectId }: Props) {
           title={dag.title}
           live={dag.live}
           onClose={() => setDag(null)}
+        />
+      )}
+
+      {confirmDeleteProject && (
+        <ConfirmDialog
+          title={`Delete "${project.name}"?`}
+          message={
+            `This permanently deletes the workflow "${project.name}", its ` +
+            `generator and any files you added to it, together with ` +
+            `${project.runs.length} run${project.runs.length === 1 ? "" : "s"} ` +
+            `and their results. Runs still going will be stopped first. ` +
+            `Nothing here can be recovered afterwards.`
+          }
+          confirmLabel="Delete workflow"
+          destructive
+          busy={deleteProject.isPending}
+          onConfirm={handleDeleteProject}
+          onCancel={() => setConfirmDeleteProject(false)}
         />
       )}
 
