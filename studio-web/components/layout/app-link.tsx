@@ -41,26 +41,6 @@ type Props = Omit<ComponentProps<"a">, "href"> & {
  */
 const PUSH_TIMEOUT_MS = 1200;
 
-/**
- * True for a path that resolves to the app root.
- *
- * Home is the only route whose resolved path equals the per-user prefix
- * itself, which makes it the only one where middleware's rewrite changes the
- * route depth (`/user/<name>` → `/`) rather than just trimming a prefix from a
- * deeper path. That case has proved unreliable for client-side navigation on
- * the real deployment (#288, and still after removing the redirect), so it
- * takes a normal page load.
- *
- * This is a workaround, not a diagnosis: the underlying reason the RSC
- * navigation does not settle is unconfirmed, and I could not reproduce it
- * without a live per-user prefix. Going to Home costs the in-memory state that
- * everything else now keeps; every other route is unaffected.
- */
-function isAppRoot(href: string): boolean {
-  const path = href.split(/[?#]/)[0];
-  return path === "/" || path === "";
-}
-
 export function AppLink({ href, onClick, ...rest }: Props) {
   const router = useRouter();
 
@@ -83,9 +63,6 @@ export function AppLink({ href, onClick, ...rest }: Props) {
           return;
         }
 
-        // Let the browser handle the app root itself — see isAppRoot.
-        if (isAppRoot(href)) return;
-
         e.preventDefault();
         const target = appPushPath(href);
         router.push(target);
@@ -93,7 +70,11 @@ export function AppLink({ href, onClick, ...rest }: Props) {
         // Watchdog. If the URL has not moved by now the push did not take, and
         // leaving the user on a page that ignored their click is not an option.
         window.setTimeout(() => {
-          if (window.location.pathname !== target.split(/[?#]/)[0]) {
+          // Compare without a trailing slash: Next normalises it away on push
+          // (trailingSlash defaults to false), so a literal comparison would
+          // report a successful navigation as failed and reload the page.
+          const trim = (p: string) => p.replace(/\/+$/, "") || "/";
+          if (trim(window.location.pathname) !== trim(target.split(/[?#]/)[0])) {
             window.location.assign(target);
           }
         }, PUSH_TIMEOUT_MS);
