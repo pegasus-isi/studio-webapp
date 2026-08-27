@@ -388,6 +388,13 @@ export interface ProjectParams {
   plan: { params: WorkflowParam[] };
 }
 
+export async function deleteWorkflowProject(projectId: string) {
+  return request<{ project_id: string; status: string }>(
+    `/workflows/projects/${encodeURIComponent(projectId)}`,
+    { method: "DELETE" }
+  );
+}
+
 export async function getProjectParams(projectId: string) {
   return request<ProjectParams>(
     `/workflows/projects/${encodeURIComponent(projectId)}/params`
