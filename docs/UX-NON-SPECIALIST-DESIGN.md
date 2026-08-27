@@ -329,13 +329,48 @@ in the frontend**:
 
 ## Appendix B — Phase 0 status
 
+### Phase 0
+
 | Deliverable | Status |
 |---|---|
-| `studio-web/lib/vocabulary.ts` | ✅ landed (not yet consumed by components, by design) |
+| `studio-web/lib/vocabulary.ts` | ✅ landed — consumed by the run form and the Phase 6 glossary |
 | Chat vocabulary sync (`knowledge/overlay/STUDIO_ENV.md`) | ✅ landed |
 | Baseline telemetry (`services/onboarding_metrics.py` + hooks + endpoint) | ✅ landed |
 | Backend copy audit | ✅ Appendix A |
 | Terminology validation with 3–4 users | ⏳ protocol ready (`docs/ux-terminology-test.md`), **not yet run** — and now overtaken by the default-on flip, see Rollout strategy |
+
+### All phases, as shipped
+
+Every phase merged between 2026-08-26 and 2026-08-27. Larger ones were split
+into backend and frontend PRs so each stayed reviewable.
+
+| Phase | Shipped as |
+|---|---|
+| 0 — Vocabulary, personas, baseline | #245 |
+| 1 — One Run flow | #247 (server-side orchestration), #249 (UI behind the flag) |
+| 2 — Data ingress | #255 |
+| 3 — Humanized run form | #259 (argparse type/label/plumbing hints), #261 (typed widgets, file picker, pre-submit summary) |
+| 4 — Progress and results | #251 (outputs API), #253 (Results tab, honest estimate, notification deep link) |
+| 5 — Actionable failures | #263 (diagnosis rules), #267 (failure cards, "Explain this failure") |
+| 6 — Onboarding and help | #271 |
+| 7 — Progressive disclosure | #275 |
+| Default flipped on | #269 — **ahead of the terminology gate**, see Rollout strategy |
+
+Follow-ups found by using it rather than by review: #257 (Results was
+unreachable from the project page, and two controls could disagree about where
+a run executes), #265 and #277 (page headers rendered under the floating user
+menu, then the menu moved into the sidebar), #279 (delete a whole workflow),
+#281 (resizable workflow pane), #283 and #287 (a chat turn, then navigation
+itself, surviving a page change), #285 (the app shell pinned to the viewport),
+#289 (client-side navigation to Home).
+
+### Still outstanding — none of it code
+
+| Item | Status |
+|---|---|
+| Terminology protocol (`docs/ux-terminology-test.md`) | Written, runnable, **unrun**. The vocabulary is live with every user. |
+| Phase 8 — five-participant task test | Not started. Now also has to cover the terminology the flip shipped unvalidated. |
+| Baseline comparison | The funnel has been recording time-to-first-successful-run since before any phase shipped, so `GET /api/dashboard/onboarding` should now have data to compare against. |
 
 The terminology check is the one Phase 0 item that cannot be completed in
 code. It was originally the gate on shipping the vocabulary default-on; that
