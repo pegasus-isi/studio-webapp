@@ -38,12 +38,26 @@ All app routes live under `app/(studio)/` and share the studio chrome (left nav
 
 | Route | Nav label | Description |
 |-------|-----------|-------------|
-| `/` | Home | Dashboard — capability cards, recent runs, resource snapshot, version badge |
-| `/workflows` | Workflows | Project list, per-project Generate/Plan/Run/Build, run list + detail, live DAG viewer |
-| `/marketplace` | Marketplace | Browse & "Add" (git-clone) workflows sourced live from GitHub (PegasusHub + curated Pegasus-ISI) |
+| `/` | Home | Dashboard — first-run welcome, capability cards, recent runs, resource snapshot, version badge |
+| `/workflows` | My analyses | Project list (resizable/collapsible), the one-button Run form, Results + Steps tabs, failure cards, live DAG viewer |
+| `/data` | My data | Drag-and-drop upload into the workspace, with copy-path and delete |
+| `/marketplace` | Examples | Browse & "Add" (git-clone) workflows sourced live from GitHub (PegasusHub + curated Pegasus-ISI) |
 | `/notebooks` | Notebooks | Opens JupyterLab (served at `/jupyter/`) |
-| `/provisioning` | Resources | HTCondor pool + OSPool (OSG) capacity/pressure panels |
-| `/settings` | Settings | LLM providers, chat engine + shell-command approval, AI tools, container registry |
+| `/provisioning` | Resources | A plain-language capacity verdict, with HTCondor pool + OSPool (OSG) panels under Details |
+| `/settings` | Settings | Notifications, Pegasus options (incl. Simplified Run) and chat engine, with LLM providers and AI tools under Advanced |
+
+Nav labels and the Advanced grouping follow the **Simplified Run** preference
+(`GET/PUT /api/settings/ui`). Turning it off restores the four Pegasus verbs as
+the primary controls and flattens the navigation — see
+`docs/UX-NON-SPECIALIST-DESIGN.md`.
+
+**In-app links do not reload the page.** `components/layout/app-link.tsx`
+pushes through the client router so the chat panel, terminals and scroll
+positions survive a nav click. It stays an `<a>` with a real `href`, which is
+what keeps middle-click and open-in-new-tab working. Next's `basePath` is
+build-time only, so the per-user prefix is recovered at runtime from
+`<base href>` by `appPushPath()` in `lib/urls.ts` — never hardcode an absolute
+app path.
 
 `app/chat/page.tsx` is a standalone, chrome-less chat page (not under the studio
 layout). It is iframed into JupyterLab by the `jupyter-pegasusai-chat` extension
