@@ -81,6 +81,7 @@ All tests use temporary SQLite DBs and need no Pegasus, HTCondor, or LLM keys.
 |--------|------|-------|
 | GET | `/api/health`, `/api/health/detailed` | liveness + DB/Pegasus/HTCondor |
 | GET/PUT | `/api/settings` | LLM-config accessor (shares the validated `llm` save path) |
+| GET/PUT | `/api/settings/workflow-scan` | user-added run-scan roots/excludes, merged with the env defaults (#306) |
 | GET/PUT | `/api/llm/config` | active provider/model; **keys are write-only** — GETs return `has_api_key`, never the value |
 | GET/PUT | `/api/llm/provider-configs` | saved providers (also write-only keys) |
 | GET | `/api/llm/provider-configs/{id}/models` | model discovery using the **stored** key (server-side) |
@@ -125,7 +126,7 @@ stop it.
 |----------|---------|-------------|
 | `HOME` | set by KubeSpawner | user home; workspace defaults to `$HOME/work` |
 | `STUDIO_WORKSPACE_DIR` | `$HOME/work` | workspace root (DB, tool configs, projects) |
-| `STUDIO_SCAN_DIR` | `$HOME` | root scanned for `braindump.yml` runs |
+| `STUDIO_SCAN_DIR` | `$HOME` | root scanned for `braindump.yml` runs; users extend it via `/api/settings/workflow-scan` |
 | `KNOWLEDGE_ROOT` | set by the image | knowledge tree path. Unset falls back to the marketplace checkout, then the legacy `/opt/pegasus-ai/knowledge`. Set it for local dev, where neither exists. |
 | `KNOWLEDGE_MARKETPLACE` | (unset) | pin the marketplace checkout. Unset prefers the user's `~/.local/share/pegasus-ai/marketplace`, then the image-baked `/opt/pegasus-ai/marketplace` |
 | `STUDIO_KNOWLEDGE_GIT_TIMEOUT` | `20` | Seconds before a knowledge-base `git` call (status / fast-forward) is abandoned |

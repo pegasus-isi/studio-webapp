@@ -99,68 +99,116 @@ _EXCLUDE_RUN_PATH_FRAGMENTS = (
 )
 
 
-def _is_excluded_run_dir(run_dir: str) -> bool:
-    """True for run dirs that belong to cloned repos / test fixtures."""
-    return any(frag in run_dir for frag in _EXCLUDE_RUN_PATH_FRAGMENTS)
+def _is_excluded_run_dir(run_dir: str, extra: tuple | list = ()) -> bool:
+    """True for run dirs that belong to cloned repos / test fixtures, or match
+    a user-added exclude fragment (plain substrings, same semantics as the
+    builtin list)."""
+    if any(frag in run_dir for frag in _EXCLUDE_RUN_PATH_FRAGMENTS):
+        return True
+    return any(frag and frag in run_dir for frag in extra)
 
 
-def discover_runs(workspace: str | None = None) -> list[dict[str, Any]]:
-    """Find all Pegasus run directories under the scan root.
+def _effective_scan_roots(
+    primary: str, extra_roots: tuple | list = ()
+) -> list[str]:
+    """The primary scan root plus user-added ones, deduplicated.
+
+    An extra root nested under an already-scanned root is dropped — the
+    recursive glob would visit it anyway and every run inside would list
+    twice. Missing directories are skipped silently: a root that points at an
+    unmounted volume should mean "no runs from there right now", not a broken
+    Workflows page.
+    """
+    roots: list[str] = []
+    for root in [primary, *extra_roots]:
+        if not root or not os.path.isdir(root):
+            continue
+        real = os.path.realpath(root)
+        if any(
+            real == kept or real.startswith(kept + os.sep) for kept in roots
+        ):
+            continue
+        roots.append(real)
+    return roots
+
+
+def discover_runs(
+    workspace: str | None = None,
+    extra_roots: tuple | list = (),
+    extra_excludes: tuple | list = (),
+) -> list[dict[str, Any]]:
+    """Find all Pegasus run directories under the scan roots.
 
     Looks for braindump.yml files which Pegasus creates in every run directory
     after pegasus-plan. Scans SCAN_ROOT (the home dir by default, overridable
-    via STUDIO_SCAN_DIR) and skips paths that belong to cloned repos or test
-    fixtures, so unrelated braindumps don't show up as runs.
+    via STUDIO_SCAN_DIR) plus any user-configured extra roots, and skips paths
+    that belong to cloned repos or test fixtures — or match a user-added
+    exclude fragment — so unrelated braindumps don't show up as runs.
+
+    The async wrapper resolves ``extra_roots``/``extra_excludes`` from the
+    user's settings (see routers/settings.py, workflow-scan); direct callers
+    can pass them explicitly.
 
     Returns list of dicts with keys: run_id, name, run_dir, status.
     """
-    workspace = workspace or SCAN_ROOT
     runs: list[dict[str, Any]] = []
+    seen_run_dirs: set[str] = set()
 
-    # Pegasus creates braindump.yml in the submit directory
-    pattern = os.path.join(workspace, "**", "braindump.yml")
-    for braindump_path in glob.glob(pattern, recursive=True):
-        run_dir = os.path.dirname(braindump_path)
-        if _is_excluded_run_dir(run_dir):
-            continue
-        try:
-            bd = _parse_braindump(braindump_path)
-            run_id = bd.get("wf_uuid", os.path.basename(run_dir))
-            name = bd.get("pegasus_wf_name", os.path.basename(run_dir))
-            runs.append({
-                "run_id": run_id,
-                # Human-friendly submit-dir name (e.g. "run0001") for display;
-                # run_id stays the globally-unique wf_uuid used for routing.
-                "run_name": os.path.basename(run_dir),
-                "name": name,
-                "run_dir": run_dir,
-                "submit_dir": bd.get("submit_dir", run_dir),
-                "user": bd.get("user", ""),
-                "grid_dn": bd.get("grid_dn"),
-                "planner_version": bd.get("planner_version"),
-                "dax_label": bd.get("dax_label"),
-                "timestamp": bd.get("timestamp"),
-            })
-        except Exception as e:
-            log.warning("braindump_parse_failed", path=braindump_path, error=str(e))
-            # Still include with basic info
-            runs.append({
-                "run_id": os.path.basename(run_dir),
-                "name": os.path.basename(run_dir),
-                "run_dir": run_dir,
-            })
+    for root in _effective_scan_roots(workspace or SCAN_ROOT, extra_roots):
+        # Pegasus creates braindump.yml in the submit directory
+        pattern = os.path.join(root, "**", "braindump.yml")
+        for braindump_path in glob.glob(pattern, recursive=True):
+            run_dir = os.path.dirname(braindump_path)
+            if run_dir in seen_run_dirs:
+                continue
+            seen_run_dirs.add(run_dir)
+            if _is_excluded_run_dir(run_dir, extra_excludes):
+                continue
+            try:
+                bd = _parse_braindump(braindump_path)
+                run_id = bd.get("wf_uuid", os.path.basename(run_dir))
+                name = bd.get("pegasus_wf_name", os.path.basename(run_dir))
+                runs.append({
+                    "run_id": run_id,
+                    # Human-friendly submit-dir name (e.g. "run0001") for
+                    # display; run_id stays the globally-unique wf_uuid used
+                    # for routing.
+                    "run_name": os.path.basename(run_dir),
+                    "name": name,
+                    "run_dir": run_dir,
+                    "submit_dir": bd.get("submit_dir", run_dir),
+                    "user": bd.get("user", ""),
+                    "grid_dn": bd.get("grid_dn"),
+                    "planner_version": bd.get("planner_version"),
+                    "dax_label": bd.get("dax_label"),
+                    "timestamp": bd.get("timestamp"),
+                })
+            except Exception as e:
+                log.warning(
+                    "braindump_parse_failed", path=braindump_path, error=str(e)
+                )
+                # Still include with basic info
+                runs.append({
+                    "run_id": os.path.basename(run_dir),
+                    "name": os.path.basename(run_dir),
+                    "run_dir": run_dir,
+                })
 
     log.info("workflow_scan_complete", count=len(runs), workspace=workspace)
     return runs
 
 
-def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
+def discover_projects(
+    workspace: str | None = None,
+    extra_excludes: tuple | list = (),
+) -> list[dict[str, Any]]:
     """Find workflow projects in the workflows directory.
 
     Scans ~/work/workflows/ for directories containing workflow_generator.py
     or workflow YAML files.  Returns a list of project dicts that merge
     unsubmitted project metadata with any submitted runs found inside the
-    project tree.
+    project tree. ``extra_excludes`` extends the builtin run-dir exclusion
+    fragments (the projects dir itself is not affected by scan roots).
     """
     workspace = workspace or WORKFLOWS_DIR
     projects: list[dict[str, Any]] = []
@@ -209,7 +257,7 @@ def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
             os.path.join(project_dir, "**", "braindump.yml"), recursive=True
         ):
             run_dir = os.path.dirname(bd_path)
-            if _is_excluded_run_dir(run_dir):
+            if _is_excluded_run_dir(run_dir, extra_excludes):
                 continue
             try:
                 bd = _parse_braindump(bd_path)
@@ -474,16 +522,48 @@ def get_run_status(run_dir: str) -> str:
 # body in the default thread-pool executor (the pattern dashboard.py used).
 
 
+async def _user_scan_config() -> tuple[list[str], list[str]]:
+    """User-configured extra scan roots and exclude fragments from settings
+    (written by routers/settings.py's workflow-scan endpoints).
+
+    Soft-failing by design: settings being unreadable (no DB in a bare unit
+    test, a corrupt row) must degrade to the env-default scan, never break
+    discovery — an empty Workflows page with no cause is the failure mode
+    this avoids. Validation happens at the PUT endpoint; this trusts shape
+    only as far as "list of strings"."""
+    try:
+        from main import db
+
+        roots = await db.get_setting("workflow_scan_roots", []) or []
+        excludes = await db.get_setting("workflow_scan_excludes", []) or []
+        return (
+            [r for r in roots if isinstance(r, str) and os.path.isabs(r)],
+            [e for e in excludes if isinstance(e, str) and e.strip()],
+        )
+    except Exception:  # noqa: BLE001 — discovery must survive settings issues
+        return [], []
+
+
 async def discover_runs_async(workspace: str | None = None) -> list[dict[str, Any]]:
+    extra_roots, extra_excludes = await _user_scan_config()
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, discover_runs, workspace)
+    return await loop.run_in_executor(
+        None,
+        lambda: discover_runs(
+            workspace, extra_roots=extra_roots, extra_excludes=extra_excludes
+        ),
+    )
 
 
 async def discover_projects_async(
     workspace: str | None = None,
 ) -> list[dict[str, Any]]:
+    _, extra_excludes = await _user_scan_config()
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, discover_projects, workspace)
+    return await loop.run_in_executor(
+        None,
+        lambda: discover_projects(workspace, extra_excludes=extra_excludes),
+    )
 
 
 async def get_run_status_async(run_dir: str) -> str:

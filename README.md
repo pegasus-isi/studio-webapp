@@ -171,7 +171,7 @@ to bypass the proxy if the server is directly browser-reachable.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `STUDIO_WORKSPACE_DIR` | `$HOME/work` | Workspace root for projects, SQLite state, and tool configs |
-| `STUDIO_SCAN_DIR` | `$HOME` | Root scanned for `braindump.yml` runs (the run list + notification scan) |
+| `STUDIO_SCAN_DIR` | `$HOME` | Root scanned for `braindump.yml` runs (the run list + notification scan). Users can add scan roots/excludes on top — see [Workflow discovery](#workflow-discovery) |
 | `STUDIO_SECRET_KEY` / `STUDIO_SECRET_KEY_FILE` | unset | Master secret used to encrypt stored API keys + the registry password at rest. Unset → stored plaintext with a warning. Must come from a sealed secret, **not** the PVC |
 | `STUDIO_LLM_GATEWAY_URL` | internal | Base URL for the zero-config `gateway` provider |
 | `STUDIO_ALLOWED_ORIGINS` | (empty) | Extra CORS origins (same-origin is always allowed) |
@@ -187,6 +187,42 @@ to bypass the proxy if the server is directly browser-reachable.
 | `PEGASUS_BOT_SERVER_URL` | `http://server.ai-bot:8000` | Upstream PegasusAI Bot server the in-pod proxy (`/api/pegasus-bot`) forwards to |
 | `PEGASUS_BOT_CLIENT_URL` | `<prefix>/api/pegasus-bot` | Server URL injected into the extension; defaults to the same-origin proxy path. Override to point the browser at a directly-reachable server |
 | `STUDIO_ENABLE_PEGASUS_BOT` | `1` | Inject the PegasusAI Bot config (server + env user) into JupyterLab (`0` leaves the bundled extension inert / manual) |
+
+### Workflow discovery
+
+How things show up on the **My analyses** page (`services/workflow_scanner.py`):
+
+- **Projects** are the immediate subdirectories of
+  `$STUDIO_WORKSPACE_DIR/workflows` that look like a workflow: a generator
+  (`workflow_generator.py`, `workflow-generator.py`, or a custom name declared
+  under `scripts.generator` in a `.pegasushub.yml` marker), a top-level
+  workflow YAML (anything but `braindump.yml`), or the `.pegasushub.yml`
+  marker itself (so a freshly-cloned PegasusHub repo appears before its first
+  Generate).
+- **Runs** are found by recursively scanning for `braindump.yml` — the file
+  Pegasus writes into every submit directory at plan time — under
+  `$STUDIO_SCAN_DIR` (default: the whole home directory). Runs inside a
+  project's tree are grouped under it; the rest are listed standalone. Paths
+  containing `test(s)/`, `.git/`, `node_modules/`, `site-packages` and the
+  Pegasus sample-data fragments are skipped so cloned repos don't pollute the
+  list.
+
+Both scans are extendable per user in **Settings → Pegasus Options →
+Workflow discovery** (stored in the workspace DB, `GET/PUT
+/api/settings/workflow-scan`):
+
+- **Extra scan directories** — absolute paths also scanned for runs, e.g. a
+  mounted volume outside the home dir. Merged with `$STUDIO_SCAN_DIR`; the
+  notification engine watches the same effective set, so an added run is both
+  listed and alerted on.
+- **Exclude path fragments** — plain substrings matched against run-directory
+  paths, for hiding a noisy subtree or keeping the recursive scan out of a
+  large data directory. Merged with the builtin list.
+
+User additions extend the deployment defaults; they never replace them, so
+misconfiguration can't empty the Workflows page. Project-detection rules
+(generator filenames, the `workflows/` directory) are Pegasus/PegasusHub
+conventions and are deliberately not configurable.
 
 ### HTCondor connection
 

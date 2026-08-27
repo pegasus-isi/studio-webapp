@@ -924,6 +924,141 @@ function PegasusOptionsTab() {
 
       {/* Container registry — persisted; drives the Build Image action */}
       <RegistrySection />
+
+      {/* Where runs are looked for — extra scan roots / excludes (#306) */}
+      <WorkflowDiscoverySection />
+    </div>
+  );
+}
+
+/**
+ * User additions to run discovery (#306). Runs are found by scanning for
+ * `braindump.yml` under the deployment's scan root; a run planned onto a
+ * mounted volume outside it is invisible, and a huge subtree slows every
+ * listing. Both lists here *extend* the deployment defaults — a user can't
+ * configure themselves into an empty Workflows page.
+ */
+function WorkflowDiscoverySection() {
+  const [settings, setSettings] =
+    useState<api.WorkflowScanSettings | null>(null);
+  const [rootsText, setRootsText] = useState("");
+  const [excludesText, setExcludesText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getWorkflowScanSettings()
+      .then((s) => {
+        setSettings(s);
+        setRootsText(s.roots.join("\n"));
+        setExcludesText(s.excludes.join("\n"));
+      })
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const res = await api.updateWorkflowScanSettings({
+        roots: rootsText.split("\n").map((l) => l.trim()).filter(Boolean),
+        excludes: excludesText.split("\n").map((l) => l.trim()).filter(Boolean),
+      });
+      setSettings(res);
+      setRootsText(res.roots.join("\n"));
+      setExcludesText(res.excludes.join("\n"));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      setError((e as Error).message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <h2 className="text-sm font-semibold text-fg">Workflow discovery</h2>
+      <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+        Runs are found by scanning for <code>braindump.yml</code> under{" "}
+        <code>{settings?.defaults.scan_root ?? "your home directory"}</code>;
+        workflow projects live in{" "}
+        <code>{settings?.defaults.workflows_dir ?? "~/work/workflows"}</code>.
+        Add directories below to also scan them (runs on a mounted volume),
+        or path fragments to skip (a large data directory slowing the list).
+        Your additions extend the defaults — they never replace them.
+      </p>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className="text-xs font-medium text-fgmuted">
+            Extra scan directories{" "}
+            <span className="font-normal text-fgsubtle">
+              (absolute paths, one per line)
+            </span>
+          </label>
+          <textarea
+            value={rootsText}
+            onChange={(e) => setRootsText(e.target.value)}
+            rows={3}
+            placeholder={"/mnt/scratch\n/data/shared-runs"}
+            spellCheck={false}
+            className="mt-1 w-full rounded-md border border-line bg-base px-2 py-1.5 font-mono text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
+            data-testid="workflow-scan-roots"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-fgmuted">
+            Exclude path fragments{" "}
+            <span className="font-normal text-fgsubtle">(one per line)</span>
+          </label>
+          <textarea
+            value={excludesText}
+            onChange={(e) => setExcludesText(e.target.value)}
+            rows={3}
+            placeholder={"big-dataset\narchive/"}
+            spellCheck={false}
+            className="mt-1 w-full rounded-md border border-line bg-base px-2 py-1.5 font-mono text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
+            data-testid="workflow-scan-excludes"
+          />
+          <p className="mt-1 text-[11px] text-fgsubtle">
+            Runs whose directory path contains a fragment are hidden. Built-in:{" "}
+            {settings?.defaults.builtin_excludes
+              .map((f) => f.replace(/^\/+|\/+$/g, ""))
+              .join(", ") ?? "…"}
+            .
+          </p>
+        </div>
+      </div>
+
+      {settings && settings.missing_roots.length > 0 && (
+        <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+          Not found right now (scanned once they appear):{" "}
+          {settings.missing_roots.join(", ")}
+        </p>
+      )}
+      {error && (
+        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{error}</p>
+      )}
+
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          onClick={handleSave}
+          disabled={saving || settings === null}
+          className="rounded-md bg-pegasus-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-pegasus-700 disabled:opacity-50"
+          data-testid="workflow-scan-save"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {saved && (
+          <span className="text-xs text-emerald-600 dark:text-emerald-400">
+            Saved — the Workflows page uses this on its next refresh.
+          </span>
+        )}
+      </div>
     </div>
   );
 }

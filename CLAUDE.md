@@ -60,8 +60,11 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 21 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
   notifications, terminal/PTY sessions). Workflow runs are
-  discovered by globbing `**/braindump.yml` under `$HOME`; monitoring tails
-  `workflow-events.jsonl` written by an external `workflow-monitor --serve` process.
+  discovered by globbing `**/braindump.yml` under `$HOME` (`STUDIO_SCAN_DIR`),
+  plus user-added scan roots/excludes from Settings → Pegasus Options
+  (`/api/settings/workflow-scan`, merged in `workflow_scanner`'s async
+  wrappers); monitoring tails `workflow-events.jsonl` written by an external
+  `workflow-monitor --serve` process.
 - **studio-web/** — Next.js 15 App Router, React 19, TS strict, Tailwind 3, Zustand,
   TanStack Query, xterm.js, `@xyflow/react` DAG viewer. Routes under `app/(studio)/`;
   `app/chat/page.tsx` is a standalone chrome-less page iframed into JupyterLab by the

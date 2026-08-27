@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
+
 import structlog
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from models import LLMConfigRequest, SettingsResponse
@@ -49,6 +51,86 @@ async def update_registry(req: RegistryRequest) -> dict:
             "container_registry_password", secretbox.encrypt(req.password)
         )
     return await get_registry()
+
+
+class WorkflowScanRequest(BaseModel):
+    """User additions to workflow run discovery (issue #306).
+
+    Both lists *extend* the deployment defaults (STUDIO_SCAN_DIR and the
+    builtin exclusion fragments) — they never replace them, so a user can't
+    configure themselves into an empty Workflows page.
+    """
+
+    # Extra directories to scan for runs (absolute paths).
+    roots: list[str] = []
+    # Extra path fragments to exclude — plain substrings, matched against the
+    # run directory path exactly like the builtin list.
+    excludes: list[str] = []
+
+
+async def _workflow_scan_response() -> dict:
+    from main import db
+    from services.workflow_scanner import (
+        _EXCLUDE_RUN_PATH_FRAGMENTS,
+        SCAN_ROOT,
+        WORKFLOWS_DIR,
+    )
+
+    roots = await db.get_setting("workflow_scan_roots", []) or []
+    excludes = await db.get_setting("workflow_scan_excludes", []) or []
+    return {
+        "roots": roots,
+        "excludes": excludes,
+        # Roots that don't exist right now (unmounted volume, typo). The scan
+        # skips them silently, so the UI is where the user learns about it.
+        "missing_roots": [r for r in roots if not os.path.isdir(r)],
+        "defaults": {
+            "scan_root": SCAN_ROOT,
+            "workflows_dir": WORKFLOWS_DIR,
+            "builtin_excludes": list(_EXCLUDE_RUN_PATH_FRAGMENTS),
+        },
+    }
+
+
+@router.get("/workflow-scan")
+async def get_workflow_scan() -> dict:
+    """Current run-discovery config: user additions plus the env defaults."""
+    return await _workflow_scan_response()
+
+
+@router.put("/workflow-scan")
+async def update_workflow_scan(req: WorkflowScanRequest) -> dict:
+    """Persist extra scan roots / exclude fragments.
+
+    Absolute paths only for roots — a relative path would silently resolve
+    against whatever cwd the server happens to have. Nonexistent roots are
+    accepted (a volume may mount later) but reported via ``missing_roots``.
+    """
+    from main import db
+
+    roots: list[str] = []
+    for raw in req.roots:
+        root = raw.strip()
+        if not root:
+            continue
+        if not os.path.isabs(root):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Scan roots must be absolute paths: {root!r}",
+            )
+        if root not in roots:
+            roots.append(root)
+
+    excludes: list[str] = []
+    for raw in req.excludes:
+        frag = raw.strip()
+        if frag and frag not in excludes:
+            excludes.append(frag)
+
+    await db.set_setting("workflow_scan_roots", roots)
+    await db.set_setting("workflow_scan_excludes", excludes)
+    log.info("workflow_scan_config_updated", roots=roots, excludes=excludes)
+    return await _workflow_scan_response()
 
 
 class UIPreferences(BaseModel):
