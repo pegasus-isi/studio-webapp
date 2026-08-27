@@ -115,26 +115,6 @@ def _tool_command(tool_id: str) -> tuple[list[str], str]:
     ], label
 
 
-async def _opencode_attach_env() -> dict:
-    """OPENCODE_ATTACH_URL / OPENCODE_SERVER_PASSWORD for `opencode attach`.
-
-    Injected only while OpenCode is the selected chat engine, so terminal
-    users join the same shared runtime as the chat panel (sessions shared
-    live). Empty otherwise — no idle secret in every shell.
-    """
-    try:
-        from main import db
-        from routers.chat import default_engine
-        from services.opencode_engine import engine as oc_engine
-
-        if await db.get_setting("chat_engine", default_engine()) != "opencode":
-            return {}
-        oc_engine.set_db(db)
-        return await oc_engine.attach_env()
-    except Exception:
-        return {}
-
-
 @router.post("/api/terminals")
 async def create_terminal(body: CreateTerminalBody) -> dict:
     """Create a server-held terminal session and return its metadata."""
@@ -145,7 +125,6 @@ async def create_terminal(body: CreateTerminalBody) -> dict:
             command=["/bin/bash"],
             label=body.label or "Terminal",
             cwd=cwd,
-            env=await _opencode_attach_env(),
         )
     elif body.type == "tool":
         if not body.tool_id:
@@ -156,7 +135,7 @@ async def create_terminal(body: CreateTerminalBody) -> dict:
             command=command,
             label=body.label or label,
             cwd=cwd,
-            env={**(await _llm_env()), **(await _opencode_attach_env())},
+            env=await _llm_env(),
         )
     else:
         raise HTTPException(

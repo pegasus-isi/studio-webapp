@@ -955,30 +955,6 @@ export async function stopChat(requestId?: string) {
   });
 }
 
-// --- Chat engine (builtin | opencode) ---
-
-export interface ChatEngineStatus {
-  engine: "builtin" | "opencode";
-  error?: string | null;
-  opencode: {
-    installed: boolean;
-    running: boolean;
-    url: string;
-    attach_command: string;
-  };
-}
-
-export async function getChatEngine() {
-  return request<ChatEngineStatus>("/chat/engine");
-}
-
-export async function updateChatEngine(engine: "builtin" | "opencode") {
-  return request<ChatEngineStatus>("/chat/engine", {
-    method: "PUT",
-    body: JSON.stringify({ engine }),
-  });
-}
-
 // --- Command approval (SEC-4 per-turn confirmation) ---
 
 // Resolve a pending shell-command approval prompt mid-stream.

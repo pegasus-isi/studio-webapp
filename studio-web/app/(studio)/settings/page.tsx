@@ -715,21 +715,14 @@ function ToolsTab() {
 
 /* ─── Pegasus Options Tab ─── */
 
-/* ─── Chat Tab (engine selection) ─── */
+/* ─── Chat Tab ─── */
 
 function ChatTab() {
-  const [status, setStatus] = useState<api.ChatEngineStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [switching, setSwitching] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [requireApproval, setRequireApproval] = useState<boolean | null>(null);
   const [approvalSaving, setApprovalSaving] = useState(false);
 
   useEffect(() => {
-    api
-      .getChatEngine()
-      .then(setStatus)
-      .catch((e) => setError(String(e)));
     api
       .getCommandApproval()
       .then((r) => setRequireApproval(r.require_approval))
@@ -752,124 +745,18 @@ function ChatTab() {
     }
   };
 
-  const select = async (engine: "builtin" | "opencode") => {
-    if (!status || status.engine === engine || switching) return;
-    setSwitching(true);
-    setError(null);
-    try {
-      const res = await api.updateChatEngine(engine);
-      setStatus(res);
-      if (res.error) setError(res.error);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSwitching(false);
-    }
-  };
-
-  const copyAttach = async () => {
-    if (!status) return;
-    try {
-      await navigator.clipboard.writeText(status.opencode.attach_command);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
-    }
-  };
-
-  const engineCard = (
-    id: "builtin" | "opencode",
-    title: string,
-    description: string,
-    note?: string
-  ) => (
-    <button
-      onClick={() => select(id)}
-      disabled={switching}
-      className={cn(
-        "flex-1 rounded-lg border p-4 text-left transition-colors",
-        status?.engine === id
-          ? "border-pegasus-600 bg-pegasus-50 dark:bg-pegasus-400/10"
-          : "border-line bg-surface hover:border-pegasus-300"
-      )}
-    >
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-fg">{title}</span>
-        {status?.engine === id && (
-          <span className="rounded-full bg-pegasus-600 px-2 py-0.5 text-xs font-medium text-white">
-            active
-          </span>
-        )}
-      </div>
-      <p className="mt-1 text-xs leading-relaxed text-fgmuted">{description}</p>
-      {note && <p className="mt-1 text-xs text-fgsubtle">{note}</p>}
-    </button>
-  );
-
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-sm font-semibold text-fg">Chat engine</h2>
+        <h2 className="text-sm font-semibold text-fg">Chat</h2>
         <p className="text-sm text-fgmuted">
-          The agent that powers the PegasusAI Chat panel. Switching engines
-          keeps the same chat interface.
+          Options for the PegasusAI Chat panel.
         </p>
       </div>
 
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-rose-500/10 dark:text-rose-400">
           {error}
-        </div>
-      )}
-
-      <div className="flex flex-col gap-3 sm:flex-row">
-        {engineCard(
-          "opencode",
-          "OpenCode (default)",
-          "A shared `opencode serve` runtime powers the panel: full agent with multi-step tool use, file edits, LSP and MCP support.",
-          status && !status.opencode.installed
-            ? "OpenCode is not installed — install it from the Tools tab first."
-            : undefined
-        )}
-        {engineCard(
-          "builtin",
-          "Built-in",
-          "Studio's own agent loop with workspace file and shell tools. Used automatically whenever OpenCode is unavailable."
-        )}
-      </div>
-
-      {status?.engine === "opencode" && (
-        <div className="rounded-lg border border-line bg-surface p-4">
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "h-2 w-2 rounded-full",
-                status.opencode.running ? "bg-emerald-500" : "bg-amber-500"
-              )}
-            />
-            <span className="text-sm font-medium text-fg">
-              {status.opencode.running
-                ? `Server running at ${status.opencode.url}`
-                : "Server starting…"}
-            </span>
-          </div>
-          <p className="mt-2 text-xs leading-relaxed text-fgmuted">
-            Terminals opened in Studio share this runtime — run the command
-            below in any Studio terminal to open the same sessions in the
-            OpenCode TUI. Chat and CLI stay in sync live.
-          </p>
-          <div className="mt-2 flex items-center gap-2">
-            <code className="flex-1 overflow-x-auto whitespace-nowrap rounded bg-muted px-2 py-1.5 font-mono text-xs text-fg">
-              {status.opencode.attach_command}
-            </code>
-            <button
-              onClick={copyAttach}
-              className="rounded-md border border-line px-2 py-1.5 text-xs font-medium text-fgmuted hover:bg-muted hover:text-fg"
-            >
-              {copied ? "Copied!" : "Copy"}
-            </button>
-          </div>
         </div>
       )}
 
