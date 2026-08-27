@@ -24,6 +24,20 @@ import * as api from "@/lib/api/client";
 
 type Tab = "providers" | "tools" | "chat" | "pegasus" | "notifications";
 
+// What an ordinary user changes, versus what an operator does. Pegasus Options
+// sits on the everyday side because it holds the Simplified Run toggle — the
+// one switch a scientist is most likely to come here for.
+const EVERYDAY_TABS: [Tab, string][] = [
+  ["notifications", "Notifications"],
+  ["pegasus", "Pegasus Options"],
+  ["chat", "Chat"],
+];
+
+const ADVANCED_TABS: [Tab, string][] = [
+  ["providers", "LLM Providers"],
+  ["tools", "Tools"],
+];
+
 // Notification categories the engine emits, with friendly labels for the
 // mute toggles. `kind` matches the backend `kind` field.
 const NOTIFICATION_CATEGORIES: {
@@ -54,72 +68,62 @@ const NOTIFICATION_CATEGORIES: {
 ];
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("providers");
+  // Notifications first (#241, Phase 7). LLM providers, tool installs and
+  // registry credentials are infrastructure; opening Settings on an API-key
+  // form tells a scientist this product is not for them.
+  const [activeTab, setActiveTab] = useState<Tab>("notifications");
 
   return (
     <div className="mx-auto max-w-4xl p-6">
       <h1 className="text-lg font-semibold text-fg">Settings</h1>
       <p className="mt-1 text-sm text-fgmuted">
-        Configure LLM providers, manage AI tools, and set Pegasus options.
+        Notifications, how workflows run, and the chat assistant. Provider keys
+        and tool installs are under Advanced.
       </p>
 
-      {/* Tab navigation */}
-      <div className="mt-4 flex border-b border-line">
-        <button
-          onClick={() => setActiveTab("providers")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
-            activeTab === "providers"
-              ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
-          )}
-        >
-          LLM Providers
-        </button>
-        <button
-          onClick={() => setActiveTab("tools")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
-            activeTab === "tools"
-              ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
-          )}
-        >
-          Tools
-        </button>
-        <button
-          onClick={() => setActiveTab("chat")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
-            activeTab === "chat"
-              ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
-          )}
-        >
-          Chat
-        </button>
-        <button
-          onClick={() => setActiveTab("pegasus")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
-            activeTab === "pegasus"
-              ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
-          )}
-        >
-          Pegasus Options
-        </button>
-        <button
-          onClick={() => setActiveTab("notifications")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
-            activeTab === "notifications"
-              ? "border-pegasus-600 text-pegasus-600"
-              : "border-transparent text-fgmuted hover:text-fg hover:border-line"
-          )}
-        >
-          Notifications
-        </button>
+      {/* Tab navigation.
+          Ordered by who needs it (#241, Phase 7): the everyday preferences
+          first, then a divider, then the infrastructure. Opening Settings on
+          an LLM API-key form tells a scientist this product is not for them,
+          which is the opposite of what a settings page should do. */}
+      <div className="mt-4 flex flex-wrap items-center border-b border-line">
+        {EVERYDAY_TABS.map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setActiveTab(id)}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
+              activeTab === id
+                ? "border-pegasus-600 text-pegasus-600"
+                : "border-transparent text-fgmuted hover:text-fg hover:border-line"
+            )}
+          >
+            {label}
+          </button>
+        ))}
+
+        <span
+          aria-hidden="true"
+          className="mx-2 h-4 w-px shrink-0 bg-line"
+        />
+        <span className="mr-1 text-xs uppercase tracking-wider text-fgsubtle">
+          Advanced
+        </span>
+
+        {ADVANCED_TABS.map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setActiveTab(id)}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px",
+              activeTab === id
+                ? "border-pegasus-600 text-pegasus-600"
+                : "border-transparent text-fgmuted hover:text-fg hover:border-line"
+            )}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Tab content */}
