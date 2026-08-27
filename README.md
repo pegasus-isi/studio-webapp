@@ -181,10 +181,7 @@ to bypass the proxy if the server is directly browser-reachable.
 | `STUDIO_RESOURCE_WAIT_SECONDS` | `300` | Idle-job queue wait past which a resource alert is raised |
 | `STUDIO_OSPOOL_CM` | `cm-1.ospool.osg-htc.org` | OSPool central manager for the Provisioning OSPool panel (empty disables it) |
 | `STUDIO_OSPOOL_CACHE_TTL` | `120` | Seconds to cache the (slow, remote) OSPool query |
-| `STUDIO_OPENCODE_PORT` | `4747` | Localhost port for the shared `opencode serve` chat engine |
-| `STUDIO_OPENCODE_BIN` | `opencode` | OpenCode binary used by the chat engine |
 | `STUDIO_DEFAULT_TOOLS` | `opencode` | Image-bundled tools registered as installed at startup (csv; empty disables) |
-| `STUDIO_CHAT_ENGINE_DEFAULT` | `opencode` | Chat engine when the user hasn't picked one (`opencode` or `builtin`); builtin remains the automatic fallback if OpenCode is unavailable |
 | `STUDIO_BUILD_TIMEOUT` | `1800` | Seconds before a Build Image action (`apptainer build`, plus push) is aborted |
 | `STUDIO_BUILD_FAKEROOT` | _(unset)_ | Force `apptainer build --fakeroot --ignore-fakeroot-command` on (`1`) or off (`0`); unset follows the process euid |
 | `PEGASUS_BOT_SERVER_URL` | `http://server.ai-bot:8000` | Upstream PegasusAI Bot server the in-pod proxy (`/api/pegasus-bot`) forwards to |

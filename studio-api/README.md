@@ -23,7 +23,7 @@ studio-api/
 │   ├── adapters.py         # KnowledgeAdapter ABC + registry
 │   ├── claude_code.py / opencode.py / codex_cli.py / antigravity.py / web_chat.py
 ├── services/               # workflow scan/submit/monitor, condor pool, image
-│                           # builder, opencode engine, notifications, terminals,
+│                           # builder, notifications, terminals,
 │                           # chat_permissions, procutil, run_flow, run_outputs,
 │                           # run_diagnosis, chat_turn, onboarding_metrics, …
 ├── init_db.py              # CLI: initialize / migrate the SQLite schema
@@ -104,10 +104,10 @@ All tests use temporary SQLite DBs and need no Pegasus, HTCondor, or LLM keys.
 
 | Method | Path | Notes |
 |--------|------|-------|
-| POST | `/api/chat/stream` | SSE chat (engine: `opencode` default, or `builtin`); brokered so a turn outlives the request |
+| POST | `/api/chat/stream` | SSE chat (builtin agent loop); brokered so a turn outlives the request |
 | GET | `/api/chat/turn` `/turn/events` | reattach to an in-flight turn after a reload — snapshot, then SSE replay-then-live |
 | POST | `/api/chat/permission` | approve/deny a pending shell command (per-turn gate) |
-| GET/PUT | `/api/chat/engine`, `/api/chat/command-approval` | engine + approval posture |
+| GET/PUT | `/api/chat/command-approval` | approval posture |
 | * | `/api/tools/{id}/install|uninstall|start|stop` | AI-tool lifecycle |
 | * | `/api/files…` | workspace CRUD (path-confined) |
 | POST/GET | `/api/files/upload`, `/api/files/upload-limit` | streamed multipart upload; ceiling + free space so the UI can refuse before sending |
@@ -130,7 +130,6 @@ stop it.
 | `KNOWLEDGE_MARKETPLACE` | (unset) | pin the marketplace checkout. Unset prefers the user's `~/.local/share/pegasus-ai/marketplace`, then the image-baked `/opt/pegasus-ai/marketplace` |
 | `STUDIO_KNOWLEDGE_GIT_TIMEOUT` | `20` | Seconds before a knowledge-base `git` call (status / fast-forward) is abandoned |
 | `KNOWLEDGE_OVERLAY` | `/opt/pegasus-ai/overlay` | Studio-specific context composed on top of the portable Pegasus guide |
-| `STUDIO_CHAT_ENGINE_DEFAULT` | `opencode` | default chat engine |
 | `STUDIO_ALLOWED_ORIGINS` | (empty) | extra CORS origins (same-origin always allowed) |
 | `STUDIO_TRUST_AUTH_HEADER` | `0` | trust `X-Auth-User` for display identity (opt-in) |
 | `STUDIO_LLM_GATEWAY_URL` | internal | base URL for the zero-config `gateway` provider |
@@ -156,8 +155,8 @@ Supervised by supervisord. `docker/entrypoint.sh`:
    and seeds `AGENTS.md`.
 2. Writes `~/.pegasus/pegasus.conf` (agent URL) if absent.
 3. Backgrounds `propagate_llm.py` (hard-timeout'd) to sync tool configs.
-4. `exec supervisord` — which starts nginx, studio-api (uvicorn), JupyterLab,
-   and `opencode serve`.
+4. `exec supervisord` — which starts nginx, studio-api (uvicorn), and
+   JupyterLab.
 
 ## Supported LLM Providers
 

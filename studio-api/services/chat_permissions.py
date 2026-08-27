@@ -3,8 +3,7 @@
 The chat response is a one-way SSE stream, so pausing a turn to ask the user
 whether a shell command may run needs a side channel: the streaming generator
 emits a ``permission_request`` event and then awaits a decision here; the
-``POST /api/chat/permission`` endpoint resolves it. Both the builtin loop and
-the opencode engine share this registry.
+``POST /api/chat/permission`` endpoint resolves it.
 
 Single-process, in-memory — the same assumption ``_active_clients`` in
 ``routers/chat.py`` already makes (one uvicorn worker under supervisord). The

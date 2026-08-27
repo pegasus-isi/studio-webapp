@@ -222,11 +222,10 @@ ENV NPM_CONFIG_PREFIX=/opt/npm-global
 ENV PATH="/opt/npm-global/bin:${PATH}"
 
 # ---- default AI tools ----
-# OpenCode ships in the image so the chat panel's OpenCode engine and
-# `opencode attach` work out of the box. Version pinned: the chat engine's
-# event translation is validated against this release's API (/doc OpenAPI).
-# The startup seeding step (main._seed_default_tools) registers it as
-# installed and runs its knowledge adapter on first boot.
+# OpenCode ships in the image as a launchable terminal AI tool, version
+# pinned for reproducible builds. The startup seeding step
+# (main._seed_default_tools) registers it as installed and runs its
+# knowledge adapter on first boot.
 RUN npm install -g opencode-ai@1.18.8 && opencode --version \
     # opencode's install (as root) creates /opt/npm-global/lib/node_modules
     # owned root:root 0755 — the earlier `chmod 777` only covered the top dir,

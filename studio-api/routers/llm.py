@@ -48,30 +48,16 @@ def _provider_response(row: dict) -> ProviderConfigResponse:
     )
 
 
-async def _propagate_and_restart(db) -> None:
-    """Propagate the active LLM config to installed tools, then restart the
-    OpenCode chat server so it actually uses the new provider.
+async def _propagate_to_tools(db) -> None:
+    """Propagate the active LLM config to installed tools.
 
-    ``opencode serve`` reads provider config once at startup; a running instance
-    keeps the old provider — so switching providers (or dropping one whose
-    streaming is broken) silently has no effect on chat until serve restarts.
-    Stopping it here makes the next chat turn re-spawn with the new config.
+    CLI tools (opencode, crush, …) read the generated config at launch, so the
+    next session picks the new provider up; the builtin chat reads it per turn.
     """
     try:
         await LLMPropagator().propagate(db)
     except Exception as e:
         log.warning("llm_propagation_failed", error=str(e))
-    try:
-        from services.opencode_engine import engine as opencode_engine
-
-        # Existing opencode sessions are bound to the old provider/model and
-        # would fail with "Model not found" after a switch — drop the mapping so
-        # the next turn creates fresh sessions on the new provider.
-        await opencode_engine.forget_sessions(db)
-        await opencode_engine.restart()
-        log.info("opencode_restarted_on_llm_change")
-    except Exception as e:
-        log.warning("opencode_restart_failed", error=str(e))
 
 
 @router.get("/config", response_model=LLMConfigResponse)
@@ -121,7 +107,7 @@ async def save_llm_config(db, req: LLMConfigRequest) -> None:
     )
     log.info("llm_config_updated", provider=req.provider.value, model=req.model)
 
-    await _propagate_and_restart(db)
+    await _propagate_to_tools(db)
 
 
 @router.put("/config", response_model=LLMConfigResponse)
@@ -292,7 +278,7 @@ async def upsert_provider_config(req: ProviderConfigRequest) -> ProviderConfigRe
         log.info("provider_draft_saved", provider_id=req.provider_id)
 
     # Always propagate so tool configs (e.g. codex config.toml) stay in sync
-    await _propagate_and_restart(db)
+    await _propagate_to_tools(db)
 
     row = await db.get_provider_config(req.provider_id)
     return _provider_response(row or {})
@@ -316,7 +302,7 @@ async def activate_provider(provider_id: str) -> ProviderConfigResponse:
 
     await db.set_active_provider(provider_id)
 
-    await _propagate_and_restart(db)
+    await _propagate_to_tools(db)
 
     row = await db.get_provider_config(provider_id)
     return _provider_response(row or {})
@@ -351,5 +337,5 @@ async def delete_provider_config(provider_id: str) -> dict[str, str]:
             )
         log.info("llm_active_provider_deleted_fallback", deleted=provider_id)
 
-    await _propagate_and_restart(db)
+    await _propagate_to_tools(db)
     return {"status": "deleted", "provider_id": provider_id}

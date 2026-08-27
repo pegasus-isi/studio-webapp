@@ -64,11 +64,11 @@ if [ ! -d "${USER_MARKETPLACE}/.claude-plugin" ] \
 fi
 
 # The checkout is kept current by studio-api at startup, not here. Pulling from
-# the entrypoint raced the tools that read the result: opencode loads skills once
-# when it starts and never reloads, so whether the assistant got today's skills
-# came down to which background job finished first, with nothing in any log to
-# say which way it went. studio-api owns it now and restarts opencode when the
-# checkout actually moves.
+# the entrypoint raced the tools that read the result: CLI tools load skills
+# once when they start and never reload, so whether the assistant got today's
+# skills came down to which background job finished first, with nothing in any
+# log to say which way it went. studio-api owns it now and re-propagates when
+# the checkout actually moves.
 
 # What the tools will actually read, for the AGENTS.md seed below and the log.
 if [ -d "${USER_MARKETPLACE}/plugins/pegasus-ai" ]; then
