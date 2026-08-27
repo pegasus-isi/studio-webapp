@@ -437,12 +437,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
   return (
     <div className="h-full overflow-auto">
       {/* Header */}
-      {/* pr-[19rem] reserves the top-right corner: UserMenu is `fixed`, so
-          anything right-aligned in a page header renders underneath it. 19rem
-          is the menu's bounded width (bell + chip, whose username is capped at
-          max-w-[180px]) plus its right-4 offset. flex-wrap lets a narrow
-          viewport stack instead of crushing the actions. */}
-      <div className="border-b border-line bg-surface px-6 py-4 pr-[19rem]">
+      <div className="border-b border-line bg-surface px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-fg">

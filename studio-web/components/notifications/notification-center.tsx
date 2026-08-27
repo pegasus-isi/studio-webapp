@@ -60,8 +60,10 @@ export function NotificationCenter() {
         )}
       </button>
 
+      {/* Opens upward and rightward: the trigger now sits in the sidebar
+          footer (#276), so there is nothing below or to the left of it. */}
       {open && (
-        <div className="absolute right-0 mt-1.5 w-96 overflow-hidden rounded-lg border border-line bg-surface shadow-lg">
+        <div className="absolute bottom-full left-0 z-50 mb-1.5 w-96 overflow-hidden rounded-lg border border-line bg-surface shadow-lg">
           <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
             <p className="text-sm font-medium text-fg">Notifications</p>
             <div className="flex items-center gap-2 text-xs">
