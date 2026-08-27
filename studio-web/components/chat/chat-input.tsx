@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useChatStore, genId } from "@/lib/stores/chat-store";
+import { useConsumeChatStream } from "@/lib/hooks/use-chat-stream";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { useNotebookContextStore } from "@/lib/stores/notebook-context-store";
 import {
@@ -28,6 +29,7 @@ export function ChatInput() {
   const setLastServerId = useChatStore((s) => s.setLastServerId);
   const setLastError = useChatStore((s) => s.setLastError);
   const setStreaming = useChatStore((s) => s.setStreaming);
+  const consumeStream = useConsumeChatStream();
   const messages = useChatStore((s) => s.messages);
   const agentId = useChatStore((s) => s.agentId);
 
@@ -177,57 +179,8 @@ export function ChatInput() {
         return;
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      await consumeStream(response.body, convId);
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6);
-          if (data === "[DONE]") break;
-
-          try {
-            const event = JSON.parse(data);
-            if (event.content) {
-              appendToLast(event.content, convId);
-            } else if (event.permission_request) {
-              addPermissionRequest(event.permission_request, convId);
-            } else if (event.tool_call) {
-              // The tool ran (approved or auto): the pending card, if any,
-              // is now resolved — drop it so only the call/result show.
-              clearPermissionRequest(event.tool_call.id, convId);
-              addToolCall(event.tool_call, convId);
-            } else if (event.tool_result) {
-              addToolResult(event.tool_result, convId);
-            } else if (event.meta) {
-              setLastMeta(
-                {
-                  tokens: event.meta.tokens,
-                  inputTokens: event.meta.input_tokens,
-                  outputTokens: event.meta.output_tokens,
-                  toolCalls: event.meta.tool_calls,
-                  durationS: event.meta.duration_s,
-                },
-                convId
-              );
-            } else if (typeof event.message_id === "number") {
-              setLastServerId(event.message_id, convId);
-            } else if (event.error) {
-              setLastError(event.error, convId);
-            }
-          } catch {
-            // Skip malformed SSE lines
-          }
-        }
-      }
     } catch (err) {
       // A user-initiated stop aborts the fetch — that's not an error to show.
       if ((err as Error).name !== "AbortError") {
@@ -245,14 +198,8 @@ export function ChatInput() {
     chatProvider,
     chatModel,
     addMessage,
-    appendToLast,
-    addToolCall,
-    addToolResult,
-    addPermissionRequest,
-    clearPermissionRequest,
-    setLastMeta,
-    setLastServerId,
     setLastError,
+    consumeStream,
     setStreaming,
   ]);
 

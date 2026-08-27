@@ -3,6 +3,8 @@
 import { useChatStore, genId, type ChatMsg } from "@/lib/stores/chat-store";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 import { usePanelStore } from "@/lib/stores/panel-store";
+import { useConsumeChatStream } from "@/lib/hooks/use-chat-stream";
+import { apiUrl } from "@/lib/urls";
 import { ChatMarkdown } from "@/components/chat/markdown";
 import * as api from "@/lib/api/client";
 import { useEffect, useRef, useState } from "react";
@@ -19,8 +21,51 @@ const CHAT_STARTERS = [
 export function ChatPanel() {
   const messages = useChatStore((s) => s.messages);
   const setChatDraft = usePanelStore((s) => s.setChatDraft);
+  const consumeStream = useConsumeChatStream();
+  const setStreaming = useChatStore((s) => s.setStreaming);
+  const dropLastAssistant = useChatStore((s) => s.dropLastAssistant);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const activeId = useChatStore((s) => s.activeId);
+
+  const reattached = useRef(false);
+
+  // Reattach to a turn that is still running (#282).
+  //
+  // Studio's left nav is plain <a> links, so switching pages is a full page
+  // load. Before the server-side broker that killed the answer mid-sentence;
+  // now the turn keeps going without us, and this picks it back up.
+  //
+  // The stream replays from the turn's start, so the partial assistant message
+  // restored from local storage has to go first — otherwise the replay appends
+  // to it and the text appears twice.
+  useEffect(() => {
+    if (reattached.current) return;
+    reattached.current = true;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch(apiUrl("chat/turn"));
+        if (!res.ok) return;
+        const turn = await res.json();
+        if (cancelled || !turn.active) return;
+
+        dropLastAssistant(turn.conversation_id ?? activeId);
+        setStreaming(true);
+        const events = await fetch(apiUrl("chat/turn/events"));
+        if (cancelled || !events.ok || !events.body) return;
+        await consumeStream(events.body, turn.conversation_id ?? activeId);
+      } catch {
+        /* nothing in flight, or the backend predates this — show history */
+      } finally {
+        if (!cancelled) setStreaming(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [consumeStream, setStreaming, dropLastAssistant, activeId]);
   const loadHistory = useChatStore((s) => s.loadHistory);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);

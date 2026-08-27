@@ -70,6 +70,14 @@ def client(tmp_db, monkeypatch):
     workspace = tempfile.mkdtemp()
     monkeypatch.setattr(routers.files, "WORKSPACE_ROOT", workspace)
 
+    # The chat-turn broker is a process-wide singleton, so a turn started by
+    # one test is still "in flight" for the next one — which made a test
+    # asserting "no turn in progress" pass alone and fail in the suite. Give
+    # each test its own, the same way main.db is replaced above.
+    from services import chat_turn
+
+    monkeypatch.setattr(chat_turn, "manager", chat_turn.ChatTurnManager())
+
     with TestClient(app) as tc:
         tc.workspace_root = workspace  # type: ignore[attr-defined]
         yield tc
