@@ -3,12 +3,15 @@ name: Build and Push Docker Image
 # The :main tag auto-deploys: production pulls it with imagePullPolicy: Always,
 # so a push to main reaches live user pods on their next spawn. The test job
 # below is the only automated gate in front of that — do not remove it.
+# Pushes to develop publish :develop the same way (metadata-action tags by
+# branch name); nothing in production pulls :develop, so it is safe for
+# staging/testing images.
 on:
   push:
-    branches: ['main']
+    branches: ['main', 'develop']
     tags: ['v*']
   pull_request:
-    branches: ['main']
+    branches: ['main', 'develop']
   workflow_dispatch:
 
 permissions:
