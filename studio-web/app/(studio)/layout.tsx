@@ -2,7 +2,6 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { GlobalChatPanel } from "@/components/layout/global-chat-panel";
 import { GlobalTerminalPanel } from "@/components/layout/global-terminal-panel";
 import { StatusBar } from "@/components/layout/status-bar";
-import { UserMenu } from "@/components/layout/user-menu";
 import { ToastContainer } from "@/components/notifications/toast-container";
 
 /**
@@ -17,7 +16,6 @@ export default function StudioLayout({
 }) {
   return (
     <>
-      <UserMenu />
       <ToastContainer />
       <div className="flex h-screen overflow-hidden">
         <Sidebar />

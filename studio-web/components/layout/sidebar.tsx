@@ -5,6 +5,7 @@ import { appRelativePath, jupyterUrl, stripAppBasePath } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { useStudioVersion } from "@/lib/hooks/use-version";
+import { UserMenu } from "@/components/layout/user-menu";
 import {
   useUIPreferences,
   useUpdateUIPreferences,
@@ -276,6 +277,14 @@ export function Sidebar() {
           )}
         </div>
       </nav>
+
+      {/* Identity lives here rather than floating over the page (#276). The
+          sidebar is always present and always visible, so the menu costs the
+          content area nothing and no page header has to reserve a corner for
+          it. */}
+      <div className="border-t border-line p-2">
+        <UserMenu collapsed={collapsed} />
+      </div>
     </aside>
   );
 }
