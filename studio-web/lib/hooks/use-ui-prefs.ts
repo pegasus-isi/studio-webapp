@@ -31,6 +31,7 @@ const FALLBACK: api.UIPreferences = {
   // a returning user because a fetch was slow is worse than showing it a
   // moment late to someone genuinely new.
   welcome_dismissed: true,
+  nav_advanced_open: false,
 };
 
 export function useUIPreferences() {

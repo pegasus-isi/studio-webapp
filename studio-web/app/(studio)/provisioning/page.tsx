@@ -36,6 +36,58 @@ function PoolRow({ name, bucket }: { name: string; bucket: PoolBucket }) {
   );
 }
 
+/**
+ * The answer, before the evidence (#241, Phase 7).
+ *
+ * This page was an HTCondor admin console: idle/total CPUs, queued/held jobs,
+ * slot inventory, per-workflow demand. All true, none of it answering the
+ * question a scientist actually arrives with — "can I run my analysis now, or
+ * am I going to wait?"
+ *
+ * Deliberately hedged rather than precise. Whether *your* run waits depends on
+ * what it asks for, which we don't know here, so this says what is generally
+ * true and stops short of a promise it can't keep.
+ */
+function Verdict({
+  idleCpus,
+  totalCpus,
+  pressureCount,
+  queued,
+}: {
+  idleCpus: number;
+  totalCpus: number;
+  pressureCount: number;
+  queued: number;
+}) {
+  let tone = "border-green-300 bg-green-50 dark:border-emerald-500/40 dark:bg-emerald-500/10";
+  let headline = "There's capacity available now.";
+  let detail =
+    `${idleCpus} of ${totalCpus} processors are free, so a run started now ` +
+    "should begin without much of a wait.";
+
+  if (idleCpus === 0) {
+    tone = "border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10";
+    headline = "Everything is busy right now.";
+    detail =
+      "All processors are in use. You can still start a run — it will wait " +
+      "its turn and begin automatically when something frees up.";
+  } else if (pressureCount > 0 || queued > 0) {
+    tone = "border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10";
+    headline = "There's some capacity, but work is already queued.";
+    detail =
+      `${idleCpus} of ${totalCpus} processors are free and ${queued} ` +
+      `step${queued === 1 ? " is" : "s are"} already waiting, so a new run ` +
+      "may take a while to start.";
+  }
+
+  return (
+    <div className={cn("rounded-xl border p-5", tone)}>
+      <p className="text-base font-semibold text-fg">{headline}</p>
+      <p className="mt-1 text-sm text-fgmuted">{detail}</p>
+    </div>
+  );
+}
+
 export default function ProvisioningPage() {
   const { data, isLoading, error } = useProvisioningStatus();
 
@@ -48,10 +100,9 @@ export default function ProvisioningPage() {
   return (
     <div className="h-full overflow-auto">
       <div className="border-b border-line bg-surface px-6 py-4">
-        <h1 className="text-lg font-semibold text-fg">Resources</h1>
+        <h1 className="text-lg font-semibold text-fg">Computing capacity</h1>
         <p className="text-sm text-fgmuted">
-          Pool inventory and workflow demand (read-only). Provisioning actions
-          — HTCondor Annex first — arrive in a later phase.
+          How much computing power is available to run your analyses right now.
         </p>
       </div>
 
@@ -63,15 +114,39 @@ export default function ProvisioningPage() {
 
       <div className="space-y-6 p-6">
         {isLoading ? (
-          <p className="text-sm text-fgmuted">Querying HTCondor…</p>
+          <p className="text-sm text-fgmuted">Checking…</p>
         ) : !poolUp ? (
-          <div className="rounded-md border border-line bg-surface p-4 text-sm text-fgmuted">
-            HTCondor pool is not reachable
-            {pool?.error ? ` (${pool.error})` : ""}. Pool inventory and
-            supply/demand appear here once a pool is available.
+          <div className="rounded-md border border-line bg-surface p-4">
+            <p className="text-sm font-medium text-fg">
+              We can&apos;t reach the shared cluster right now.
+            </p>
+            <p className="mt-1 text-sm text-fgmuted">
+              You can still run analyses on this machine. If you need the
+              cluster, this is worth reporting to whoever runs Studio
+              {pool?.error ? ` — the error was: ${pool.error}` : ""}.
+            </p>
           </div>
         ) : (
           <>
+            {/* The one sentence this page exists to answer (#241, Phase 7).
+                Everything below is the evidence for it, and belongs under
+                Details rather than in front of someone who just wants to know
+                whether to press Run. */}
+            <Verdict
+              idleCpus={pool.idle_cpus ?? 0}
+              totalCpus={pool.total_cpus ?? 0}
+              pressureCount={data?.pressure.length ?? 0}
+              queued={demandUp ? demand?.idle_jobs ?? 0 : 0}
+            />
+
+            {/* The numbers behind the verdict. Kept in full — an operator
+                needs them — but behind a disclosure so they stop being the
+                first thing on the page. */}
+            <details>
+              <summary className="cursor-pointer text-sm font-medium text-fgmuted hover:text-fg">
+                Details
+              </summary>
+              <div className="mt-4 space-y-6">
             {/* Supply vs demand */}
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
               <Metric
@@ -222,6 +297,8 @@ export default function ProvisioningPage() {
                 </div>
               )}
             </div>
+              </div>
+            </details>
           </>
         )}
 

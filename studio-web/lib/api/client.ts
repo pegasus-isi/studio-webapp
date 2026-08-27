@@ -492,9 +492,17 @@ export async function getRunFlow(projectId: string) {
 // --- UI preferences (per-user rollout flag) ---
 
 export interface UIPreferences {
+  /**
+   * The simplified interface: one Run action, and a sidebar that leads with
+   * what a scientist does rather than what the infrastructure offers. On by
+   * default; turning it off restores the four Pegasus verbs and the full nav.
+   */
   simple_run: boolean;
+  /** Run form's Advanced disclosure (the individual verbs). */
   advanced_open: boolean;
   welcome_dismissed: boolean;
+  /** Sidebar's Advanced group (Resources, Terminal). */
+  nav_advanced_open: boolean;
 }
 
 export async function getUIPreferences() {

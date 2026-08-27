@@ -80,6 +80,12 @@ class UIPreferences(BaseModel):
     # the user, and clearing a browser or opening Studio on a second machine
     # should not restart the introduction.
     welcome_dismissed: bool = False
+    # Whether the sidebar's Advanced group (Resources, Terminal) starts open
+    # (#241, Phase 7). Separate from `advanced_open`, which is the run form's
+    # disclosure — someone who wants the individual Pegasus verbs does not
+    # necessarily want a terminal in their sidebar, and coupling two unrelated
+    # disclosures to one flag makes both surprising.
+    nav_advanced_open: bool = False
 
 
 _UI_PREFS_KEY = "ui_preferences"
