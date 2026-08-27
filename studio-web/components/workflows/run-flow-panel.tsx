@@ -383,7 +383,7 @@ export function RunFlowPanel({
                       {site.label}
                     </span>
                     <span className="block text-xs text-fgmuted">
-                      {site.hint}
+                      {isRemote ? site.remoteHint : site.hint}
                     </span>
                   </span>
                 </label>

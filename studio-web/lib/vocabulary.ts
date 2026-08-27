@@ -109,21 +109,31 @@ export const TERMS = {
  * Where a run executes. Replaces the raw `condorpool` / `local` strings, which
  * name HTCondor concepts rather than answering the user's actual question:
  * "is this going to run here, or somewhere bigger?"
+ *
+ * The labels stay the same under a remote compute backend — familiarity wins —
+ * but there "This machine" really means the connected system's submit host,
+ * so each entry carries a `remoteHint` that says so; the run panel shows it
+ * whenever the active backend is remote.
  */
 export const EXECUTION_SITES: ReadonlyArray<{
   readonly value: string;
   readonly label: string;
   readonly hint: string;
+  readonly remoteHint: string;
 }> = [
   {
     value: "local",
     label: "This machine",
     hint: "Best for small tests. Uses only this workspace's own resources.",
+    remoteHint:
+      "Best for small tests. Runs on the connected system's submit machine — not this computer.",
   },
   {
     value: "condorpool",
     label: "Shared cluster",
     hint: "Best for a full analysis. Sends your steps out to many machines, which may mean waiting for a turn.",
+    remoteHint:
+      "Best for a full analysis. Sends your steps out to the connected system's worker machines, which may mean waiting for a turn.",
   },
 ];
 
