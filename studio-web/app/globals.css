@@ -36,6 +36,28 @@
   --c-accent-fg: #04121f;
 }
 
+/* The app is a fixed shell: the sidebar, panels and status bar stay put and
+   only the regions inside them scroll (`main` is overflow-auto, the chat and
+   terminal panels manage their own).
+   
+   Without pinning the document to the viewport, that only held as long as
+   nothing overflowed. Anything that did made the *body* taller than 100vh, and
+   because the shell is `h-screen`, scrolling past it revealed dead white space
+   below the status bar rather than more content — the shell stayed 100vh and
+   the page simply scrolled off it.
+   
+   Pinning here makes the shell authoritative: the document cannot scroll, so
+   overflow has to be handled by the region that owns it. Every route already
+   works this way, including the chrome-less /chat page that JupyterLab
+   iframes. */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  /* Stop the rubber-band scroll that a trackpad can still trigger. */
+  overscroll-behavior: none;
+}
+
 body {
   color: var(--c-fg);
   background: var(--c-base);
