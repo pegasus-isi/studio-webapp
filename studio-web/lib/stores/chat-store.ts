@@ -100,6 +100,15 @@ interface ChatStore {
     convId?: string
   ) => void;
   clearPermissionRequest: (callId: string, convId?: string) => void;
+  /**
+   * Remove a trailing assistant message.
+   *
+   * Used when reattaching to a turn that is still running (#282): the stream
+   * replays from the turn's start, so the partial reply restored from local
+   * storage has to go first or the replay appends to it and the text appears
+   * twice.
+   */
+  dropLastAssistant: (convId?: string) => void;
   setLastMeta: (meta: NonNullable<ChatMsg["meta"]>, convId?: string) => void;
   setLastServerId: (serverId: number, convId?: string) => void;
   setMessageFeedback: (
@@ -199,6 +208,20 @@ export const useChatStore = create<ChatStore>()(
             messagesById: { ...s.messagesById, [s.activeId]: arr },
             messages: arr,
             conversations,
+          };
+        }),
+
+      dropLastAssistant: (convId) =>
+        set((s) => {
+          const id = convId ?? s.activeId;
+          const list = s.messagesById[id] ?? [];
+          if (list.length === 0) return s;
+          if (list[list.length - 1].role !== "assistant") return s;
+          const next = list.slice(0, -1);
+          const byId = { ...s.messagesById, [id]: next };
+          return {
+            messagesById: byId,
+            messages: id === s.activeId ? next : s.messages,
           };
         }),
 
