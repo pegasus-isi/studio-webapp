@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useWorkflows, useWorkflowProjects } from "@/lib/hooks/use-workflows";
 import { WorkflowList } from "@/components/workflows/workflow-list";
+import { ResizablePane } from "@/components/layout/resizable-pane";
 import { WorkflowDetail } from "@/components/workflows/workflow-detail";
 import { WorkflowProjectDetail } from "@/components/workflows/workflow-project-detail";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
@@ -35,8 +36,10 @@ export default function WorkflowsPage() {
 
   return (
     <div className="flex h-full">
-      {/* Workflow list */}
-      <div className="w-96 border-r border-line bg-surface">
+      {/* Workflow list — resizable and collapsible. A fixed width was wrong in
+          both directions: too narrow for long workflow names, too wide once
+          you're watching a run and want the space for the run itself. */}
+      <ResizablePane storageKey="workflow-list">
         <div className="border-b border-line px-4 py-3">
           <h1 className="text-lg font-semibold text-fg">Workflows</h1>
           <p className="text-sm text-fgmuted">
@@ -56,10 +59,12 @@ export default function WorkflowsPage() {
           projects={projects}
           workflows={standaloneRuns}
         />
-      </div>
+      </ResizablePane>
 
-      {/* Detail panel */}
-      <div className="flex-1">
+      {/* Detail panel. min-w-0 so a wide list shrinks this rather than
+          pushing its content out of the viewport — flex items default to
+          min-width:auto, which refuses to go below their content's width. */}
+      <div className="min-w-0 flex-1">
         {selectedProjectId ? (
           // key forces a fresh mount per project so per-workflow UI state
           // (Output panel, planned run dir, selected run) doesn't leak from
