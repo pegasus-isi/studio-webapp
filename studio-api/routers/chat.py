@@ -1021,6 +1021,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
     agent_id = body.get("agent", "general")
     request_id = body.get("request_id", str(uuid.uuid4()))
     conversation_id = body.get("conversation_id")
+    scope = body.get("context") if isinstance(body.get("context"), dict) else {}
 
     if not messages:
         return _error_sse("No messages provided")
@@ -1081,6 +1082,17 @@ async def chat_stream(request: Request) -> StreamingResponse:
     wire_api = (config.get("extra_config") or {}).get("wire_api", "auto")
 
     system_prompt = _load_system_prompt(agent_id)
+
+    # Workflow/run scope from the chat panel's context picker. Resolved fresh
+    # per turn (status and diagnosis move while a conversation is open) and
+    # soft-failing: an unknown or unreadable scope logs and the turn proceeds
+    # unscoped rather than erroring.
+    if scope:
+        from services.chat_scope import build_scope_block
+
+        scope_block = await build_scope_block(scope.get("type"), scope.get("id"))
+        if scope_block:
+            system_prompt = f"{system_prompt}\n\n{scope_block}"
 
     async def event_generator() -> AsyncGenerator[str, None]:
         import time
