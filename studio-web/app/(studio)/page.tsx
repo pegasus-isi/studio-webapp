@@ -4,9 +4,10 @@ import type { ReactNode } from "react";
 import type { SkillMeta } from "@/lib/api/client";
 import { useDashboard } from "@/lib/hooks/use-dashboard";
 import { usePanelStore } from "@/lib/stores/panel-store";
-import { appRelativePath, jupyterUrl } from "@/lib/urls";
+import { jupyterUrl } from "@/lib/urls";
 import { cn, statusColor } from "@/lib/utils";
 import { WelcomeCard } from "@/components/dashboard/welcome-card";
+import { AppLink } from "@/components/layout/app-link";
 
 // Slash commands not shown as capability cards (meta / infra-heavy — still
 // available in Chat). New skills appear automatically otherwise.
@@ -94,14 +95,25 @@ function ActionCard({
     "flex h-full flex-col rounded-xl border border-line bg-surface p-5 text-left transition-colors hover:border-pegasus-400 hover:bg-base";
 
   if (href) {
+    // External destinations (JupyterLab) are real navigations and stay plain
+    // anchors; in-app ones route client-side so the chat panel and terminals
+    // survive the click (#286).
+    if (external) {
+      return (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={className}
+        >
+          {inner}
+        </a>
+      );
+    }
     return (
-      <a
-        href={href}
-        {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-        className={className}
-      >
+      <AppLink href={href} className={className}>
         {inner}
-      </a>
+      </AppLink>
     );
   }
   return (
@@ -141,7 +153,7 @@ export default function DashboardPage() {
       icon="🛒"
       title="Browse examples"
       description="Add a ready-made example workflow from the Marketplace to your workspace in one click."
-      href={appRelativePath("/marketplace")}
+      href="/marketplace"
     />
   );
   const runCard = (
@@ -150,7 +162,7 @@ export default function DashboardPage() {
       icon="📊"
       title="Run & monitor"
       description="Generate, plan, build the image, submit, and watch jobs, logs, and status."
-      href={appRelativePath("/workflows")}
+      href="/workflows"
     />
   );
   const resourcesCard = (
@@ -159,7 +171,7 @@ export default function DashboardPage() {
       icon="🖥️"
       title="Resources"
       description="See pool capacity, workflow demand, and alerts when more resources are needed."
-      href={appRelativePath("/provisioning")}
+      href="/provisioning"
     />
   );
   const notebooksCard = (
@@ -263,8 +275,8 @@ export default function DashboardPage() {
 
         {/* Resource pressure — only when something needs attention */}
         {pressure.length > 0 && (
-          <a
-            href={appRelativePath("/provisioning")}
+          <AppLink
+            href="/provisioning"
             className="mt-3 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
           >
             <span>⚠</span>
@@ -273,7 +285,7 @@ export default function DashboardPage() {
               {pressure.length > 1 && ` +${pressure.length - 1} more`} — view
               provisioning
             </span>
-          </a>
+          </AppLink>
         )}
 
         {/* Recent runs — a short, light list */}
@@ -283,20 +295,18 @@ export default function DashboardPage() {
               <h2 className="text-sm font-medium uppercase tracking-wider text-fgsubtle">
                 Recent runs
               </h2>
-              <a
-                href={appRelativePath("/workflows")}
+              <AppLink
+                href="/workflows"
                 className="text-xs font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
               >
                 All workflows →
-              </a>
+              </AppLink>
             </div>
             <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
               {data?.runs.recent.map((r) => (
                 <li key={r.run_id}>
-                  <a
-                    href={appRelativePath(
-                      `/workflows?run=${encodeURIComponent(r.run_id)}`
-                    )}
+                  <AppLink
+                    href={`/workflows?run=${encodeURIComponent(r.run_id)}`}
                     className="flex items-center gap-3 px-4 py-2.5 hover:bg-base"
                   >
                     <span
@@ -318,7 +328,7 @@ export default function DashboardPage() {
                         {r.completed_jobs}/{r.total_jobs} jobs
                       </span>
                     )}
-                  </a>
+                  </AppLink>
                 </li>
               ))}
             </ul>

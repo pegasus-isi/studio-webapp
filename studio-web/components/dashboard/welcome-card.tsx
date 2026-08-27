@@ -16,7 +16,7 @@
 import { useState } from "react";
 import { GlossaryList } from "@/components/ui/glossary-term";
 import { useUIPreferences, useUpdateUIPreferences } from "@/lib/hooks/use-ui-prefs";
-import { appRelativePath } from "@/lib/urls";
+import { AppLink } from "@/components/layout/app-link";
 
 const STEPS = [
   {
@@ -86,12 +86,12 @@ export function WelcomeCard() {
       </ol>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <a
-          href={appRelativePath("/marketplace")}
+        <AppLink
+          href="/marketplace"
           className="rounded-md bg-pegasus-600 px-4 py-2 text-sm font-medium text-white hover:bg-pegasus-700"
         >
           Browse examples
-        </a>
+        </AppLink>
         <button
           onClick={() => setShowGlossary((v) => !v)}
           aria-expanded={showGlossary}
