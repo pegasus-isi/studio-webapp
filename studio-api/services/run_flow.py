@@ -572,20 +572,22 @@ async def _execute(
 async def _capture(
     cmd: list[str], cwd: str, timeout: int = 300
 ) -> tuple[int, str]:
-    """Run a command, returning (returncode, combined output)."""
-    from services.procutil import communicate_or_kill
+    """Run a command via the active backend, returning (returncode, output).
+
+    Routed through the backend rather than a local subprocess so the guided
+    Run executes where workflows actually run — with a remote backend active,
+    a local pegasus-plan would bake this machine's paths into the plan. The
+    backend contract raises the same exceptions a local spawn would
+    (FileNotFoundError, asyncio.TimeoutError), so the 127/124 mapping holds
+    either way.
+    """
+    from services.backends import active_backend
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-        )
-        stdout, stderr = await communicate_or_kill(proc, timeout)
-        out = stdout.decode("utf-8", errors="replace")
-        err = stderr.decode("utf-8", errors="replace")
-        return proc.returncode or 0, out + (f"\nstderr:\n{err}" if err else "")
+        result = await active_backend().exec(cmd, cwd=cwd, timeout=timeout)
+        out = result.stdout.decode("utf-8", errors="replace")
+        err = result.stderr.decode("utf-8", errors="replace")
+        return result.returncode, out + (f"\nstderr:\n{err}" if err else "")
     except FileNotFoundError:
         return 127, f"{cmd[0]}: command not found"
     except asyncio.TimeoutError:
@@ -602,7 +604,13 @@ def _emit_output(flow: RunFlow, stage: str, output: str, limit: int = 200) -> No
 async def _run_generate(
     flow: RunFlow, *, project_dir: str, generator_file: str, args: list[str]
 ) -> bool:
+    from services.backends import active_backend
+
     flow._begin("generate")
+    # A remote backend needs the project's local edits on the submit host
+    # before its generator runs there — otherwise sites.yml is written with
+    # this machine's paths (no-op for local).
+    await active_backend().push_project(project_dir)
     code, output = await _capture(
         ["python3", generator_file, *args], cwd=project_dir
     )
@@ -612,6 +620,35 @@ async def _run_generate(
         return False
     flow._finish("generate", "done", "Your analysis is ready to plan.")
     return True
+
+
+async def _image_stale_on_backend(definition: str, sif: str) -> bool:
+    """image_is_stale, evaluated where the image actually lives.
+
+    A remote build's .sif deliberately stays on the backend host, so the
+    local mtime check would call it missing and rebuild on every guided
+    Run — minutes each over a WAN. Ask the backend instead; any failure to
+    check reads as stale, the same never-skip-wrongly bias image_is_stale
+    has.
+    """
+    import shlex
+
+    from services.backends import active_backend
+
+    backend = active_backend()
+    if not backend.is_remote:
+        return image_is_stale(definition, sif)
+    rdef = backend.to_remote(definition)
+    rsif = backend.to_remote(sif)
+    check = (
+        f"test -s {shlex.quote(rsif)}"
+        f" && ! test {shlex.quote(rdef)} -nt {shlex.quote(rsif)}"
+    )
+    try:
+        result = await backend.exec(["sh", "-c", check], timeout=20)
+    except (FileNotFoundError, asyncio.TimeoutError, OSError):
+        return True
+    return result.returncode != 0
 
 
 async def _run_build(flow: RunFlow, *, project_dir: str, force: bool) -> bool:
@@ -624,7 +661,7 @@ async def _run_build(flow: RunFlow, *, project_dir: str, force: bool) -> bool:
         return True
 
     definition, sif = found
-    if not force and not image_is_stale(definition, sif):
+    if not force and not await _image_stale_on_backend(definition, sif):
         # The common case on a re-run. Saying "already up to date" rather than
         # silently skipping is what stops a user wondering if it was missed.
         flow._finish("build", "skipped", "Already up to date.")
@@ -694,7 +731,11 @@ def _parse_sse(chunk: str) -> dict[str, Any] | None:
 async def _run_plan(
     flow: RunFlow, *, project_dir: str, site: str, output_site: str
 ) -> bool:
-    from services.workflow_submitter import _find_workflow_file
+    from services.backends import active_backend
+    from services.workflow_submitter import (
+        _find_workflow_file,
+        _plan_property_flags,
+    )
 
     flow._begin("plan")
     wf_file = _find_workflow_file(project_dir)
@@ -702,8 +743,13 @@ async def _run_plan(
         flow._fail("plan", "No workflow YAML file found in the project.")
         return False
 
+    # Ship local edits to the backend before planning there, and carry the
+    # same -D property flags a manual Plan injects — without them a guided
+    # run loses the wfmonitor event JSONL the live views tail.
+    await active_backend().push_project(project_dir)
     code, output = await _capture(
-        ["pegasus-plan", "-s", site, "-o", output_site, wf_file], cwd=project_dir
+        ["pegasus-plan", *_plan_property_flags(), "-s", site, "-o", output_site, wf_file],
+        cwd=project_dir,
     )
     _emit_output(flow, "plan", output)
     if code != 0:

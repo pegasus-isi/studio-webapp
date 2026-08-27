@@ -72,8 +72,12 @@ class RunFlowRequest(BaseModel):
     """
 
     args: list[str] = Field(default_factory=list)
-    site: str = "condorpool"
-    output_site: str = "local"
+    # None means "use the active backend's plan defaults" — a pool whose
+    # sites are named differently would otherwise make every guided Run
+    # start out wrong. The form sends explicit values; this is the
+    # no-value fallback.
+    site: str | None = None
+    output_site: str | None = None
     # Rebuild the software environment even when it looks current. The default
     # skips an up-to-date image, which is the slowest avoidable step in a
     # re-run; this is the escape hatch for when the definition changed in a way
@@ -407,6 +411,10 @@ async def start_run_flow(project_id: str, req: RunFlowRequest) -> dict:
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
 
+    # An omitted site means "the active backend's defaults" — the same
+    # source the Plan form starts from.
+    defaults = active_backend().plan_defaults()
+
     try:
         flow = manager.start(
             project_id=project_id,
@@ -414,8 +422,8 @@ async def start_run_flow(project_id: str, req: RunFlowRequest) -> dict:
             generator_file=proj.get("generator_file") if proj["has_generator"] else None,
             has_container_def=bool(proj["has_container_def"]),
             generator_args=req.args,
-            site=req.site,
-            output_site=req.output_site,
+            site=req.site or defaults["site"],
+            output_site=req.output_site or defaults["output_site"],
             force_build=req.force_build,
         )
     except RuntimeError as e:
