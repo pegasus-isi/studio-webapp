@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import type { MarketplaceWorkflow } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 import { appRelativePath } from "@/lib/urls";
+import { AppLink } from "@/components/layout/app-link";
 
 export default function MarketplacePage() {
   const qc = useQueryClient();
@@ -151,12 +152,12 @@ function WorkflowCard({
               <span className="text-xs font-medium text-green-600 dark:text-emerald-400">
                 ✓ Added
               </span>
-              <a
-                href={appRelativePath("/workflows")}
+              <AppLink
+                href="/workflows"
                 className="text-xs font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
               >
                 Open in Workflows →
-              </a>
+              </AppLink>
             </>
           ) : (
             <button

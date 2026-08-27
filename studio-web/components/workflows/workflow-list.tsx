@@ -3,8 +3,8 @@
 import type { WorkflowRun, WorkflowProject } from "@/lib/api/client";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
-import { appRelativePath } from "@/lib/urls";
 import { cn, statusColor } from "@/lib/utils";
+import { AppLink } from "@/components/layout/app-link";
 
 interface Props {
   projects: WorkflowProject[];
@@ -31,12 +31,12 @@ export function WorkflowList({ projects, workflows }: Props) {
           assistant build it.
         </p>
         <div className="mt-3 flex flex-col gap-2">
-          <a
-            href={appRelativePath("/marketplace")}
+          <AppLink
+            href="/marketplace"
             className="rounded-md bg-pegasus-600 px-3 py-2 text-center text-sm font-medium text-white hover:bg-pegasus-700"
           >
             Browse examples
-          </a>
+          </AppLink>
           <button
             onClick={() =>
               openChatWith("Build me a workflow that ")

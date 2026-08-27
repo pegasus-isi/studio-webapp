@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { appRelativePath, jupyterUrl, stripAppBasePath } from "@/lib/urls";
+import { AppLink } from "@/components/layout/app-link";
 import { cn } from "@/lib/utils";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { useStudioVersion } from "@/lib/hooks/use-version";
@@ -101,9 +102,9 @@ export function Sidebar() {
         : activePathname === item.href ||
           activePathname.startsWith(item.href + "/");
     return (
-      <a
+      <AppLink
         key={item.href}
-        href={appRelativePath(item.href)}
+        href={item.href}
         title={item.label}
         className={cn(
           base,
@@ -114,7 +115,7 @@ export function Sidebar() {
       >
         <span>{item.icon}</span>
         {!collapsed && item.label}
-      </a>
+      </AppLink>
     );
   };
 

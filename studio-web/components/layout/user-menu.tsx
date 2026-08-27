@@ -5,6 +5,7 @@ import { apiUrl, appRelativePath } from "@/lib/urls";
 import { useThemeStore, applyTheme, type Theme } from "@/lib/stores/theme-store";
 import { NotificationCenter } from "@/components/notifications/notification-center";
 import { cn } from "@/lib/utils";
+import { AppLink } from "@/components/layout/app-link";
 
 /**
  * User menu: username + dropdown (theme, Settings, JupyterHub server control /
@@ -144,13 +145,13 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
           </div>
 
           <nav className="py-1 text-sm text-fg">
-            <a
-              href={appRelativePath("/settings")}
+            <AppLink
+              href="/settings"
               onClick={() => setOpen(false)}
               className="block px-4 py-2 hover:bg-muted"
             >
               ⚙️ Settings
-            </a>
+            </AppLink>
             <a
               href="https://github.com/pegasus-isi/studio-webapp#readme"
               target="_blank"
