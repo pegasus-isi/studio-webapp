@@ -224,6 +224,13 @@ TOOL_DEFINITIONS = [
     },
 ]
 
+# Pegasus-aware read-only tools (run status, jobs, diagnosis, outputs) with
+# chat-scope argument defaulting — defined in services/chat_tools.py so they
+# stay unit-testable away from the streaming loop.
+from services import chat_tools as _chat_tools
+
+TOOL_DEFINITIONS += _chat_tools.TOOL_DEFINITIONS
+
 # Anthropic-format tool definitions
 TOOL_DEFINITIONS_ANTHROPIC = [
     {
@@ -259,10 +266,20 @@ def _safe_path(path: str) -> str:
     return resolved
 
 
-async def _execute_tool(name: str, arguments: dict[str, Any]) -> str:
-    """Execute a tool and return result string."""
+async def _execute_tool(
+    name: str,
+    arguments: dict[str, Any],
+    scope: dict[str, Any] | None = None,
+) -> str:
+    """Execute a tool and return result string. `scope` is the chat's active
+    workflow/run context; the Pegasus tools default their ids from it."""
     import asyncio
     import shutil
+
+    # Pegasus tools first — read-only service wrappers, never shell-gated.
+    pegasus_result = await _chat_tools.execute(name, arguments, scope)
+    if pegasus_result is not None:
+        return pegasus_result
 
     try:
         if name == "write_file":
@@ -343,6 +360,7 @@ async def _run_tool_gated(
     *,
     request_id: str,
     require_approval: bool,
+    scope: dict[str, Any] | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Yield SSE payload dicts for one tool call, pausing for approval first
     when the tool runs arbitrary shell.
@@ -385,7 +403,7 @@ async def _run_tool_gated(
         "id": arguments["_call_id"], "name": name,
         "arguments": _public_args(arguments),
     }}
-    result = await _execute_tool(name, _public_args(arguments))
+    result = await _execute_tool(name, _public_args(arguments), scope)
     yield {"tool_result": {
         "id": arguments["_call_id"], "name": name,
         "result": _clip_ui_result(result),
@@ -416,6 +434,12 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
         "\n\n## Tool Use Instructions\n\n"
         "You have access to tools for file operations and shell commands. "
         "Use them to help the user create, run, and debug Pegasus workflows.\n\n"
+        "For workflow questions, prefer the structured Pegasus tools over "
+        "shelling out: list_workflow_projects, list_workflow_runs, "
+        "get_run_status, get_run_jobs, diagnose_run (the right first call for "
+        "'why did it fail?'), and list_run_outputs. When the chat has an "
+        "Active Context, their run_id/project_id default to it — call them "
+        "with no arguments.\n\n"
         "You have no interactive question tool. To ask something, write the "
         "question as ordinary prose and wait for the reply — never emit a "
         "tool-call object as your message.\n\n"
@@ -1086,13 +1110,17 @@ async def chat_stream(request: Request) -> StreamingResponse:
     # Workflow/run scope from the chat panel's context picker. Resolved fresh
     # per turn (status and diagnosis move while a conversation is open) and
     # soft-failing: an unknown or unreadable scope logs and the turn proceeds
-    # unscoped rather than erroring.
+    # unscoped rather than erroring. The validated form also feeds the Pegasus
+    # tools, whose run_id/project_id default to it.
+    tool_scope: dict[str, Any] | None = None
     if scope:
-        from services.chat_scope import build_scope_block
+        from services.chat_scope import SCOPE_TYPES, build_scope_block
 
         scope_block = await build_scope_block(scope.get("type"), scope.get("id"))
         if scope_block:
             system_prompt = f"{system_prompt}\n\n{scope_block}"
+        if scope.get("type") in SCOPE_TYPES and scope.get("id"):
+            tool_scope = {"type": scope["type"], "id": scope["id"]}
 
     async def event_generator() -> AsyncGenerator[str, None]:
         import time
@@ -1276,6 +1304,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                             tc["name"], gated_args,
                             request_id=request_id,
                             require_approval=require_approval,
+                            scope=tool_scope,
                         ):
                             if "_final_result" in ev:
                                 tool_result = ev["_final_result"]
@@ -1314,6 +1343,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                             tc["name"], gated_args,
                             request_id=request_id,
                             require_approval=require_approval,
+                            scope=tool_scope,
                         ):
                             if "_final_result" in ev:
                                 tool_result = ev["_final_result"]
