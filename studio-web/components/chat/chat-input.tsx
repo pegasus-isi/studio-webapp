@@ -5,6 +5,8 @@ import { useChatStore, genId } from "@/lib/stores/chat-store";
 import { useConsumeChatStream } from "@/lib/hooks/use-chat-stream";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { useNotebookContextStore } from "@/lib/stores/notebook-context-store";
+import { useChatContextStore } from "@/lib/stores/chat-context-store";
+import { ChatContextChip } from "@/components/chat/context-chip";
 import {
   useLLMConfig,
   useProviderConfigs,
@@ -19,6 +21,16 @@ export function ChatInput() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const isStreaming = useChatStore((s) => s.isStreaming);
+  const activeConvId = useChatStore((s) => s.activeId);
+  const scopeFromStore = useChatContextStore(
+    (s) => s.scopeByConv[activeConvId] ?? null
+  );
+  // Scope comes from localStorage-persisted state, which the server render
+  // can't see — show the neutral placeholder until mounted (same hydration
+  // guard the conversation bar uses).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const activeScope = mounted ? scopeFromStore : null;
   const addMessage = useChatStore((s) => s.addMessage);
   const appendToLast = useChatStore((s) => s.appendToLast);
   const addToolCall = useChatStore((s) => s.addToolCall);
@@ -113,11 +125,12 @@ export function ChatInput() {
         : text;
 
     // Build message history for the API. Skip empty-content messages (e.g. an
-    // assistant bubble that only carried a transient error) so failures never
-    // become part of the model-visible transcript.
+    // assistant bubble that only carried a transient error) and the local
+    // context-switch dividers (system role, display-only) so neither becomes
+    // part of the model-visible transcript.
     const apiMessages = [
       ...messages
-        .filter((m) => m.content.trim().length > 0)
+        .filter((m) => m.role !== "system" && m.content.trim().length > 0)
         .map((m) => ({ role: m.role, content: m.content })),
       { role: "user", content: apiText },
     ];
@@ -135,6 +148,13 @@ export function ChatInput() {
         request_id: requestId,
         conversation_id: convId,
       };
+
+      // Workflow/run scope from the context chip. Only {type, id} goes over
+      // the wire — the backend resolves it fresh (status, diagnosis) per turn.
+      const scope = useChatContextStore.getState().scopeByConv[convId] ?? null;
+      if (scope) {
+        body.context = { type: scope.type, id: scope.id };
+      }
 
       // Include provider/model overrides if set. With the Default provider,
       // send neither so the server uses the configured default model.
@@ -249,9 +269,10 @@ export function ChatInput() {
   return (
     <div className="border-t border-line bg-surface p-4">
       <div className="mx-auto max-w-3xl space-y-2">
-        {/* Provider / Model selectors */}
+        {/* Context scope / Provider / Model selectors */}
         <div className="flex items-center gap-2 text-xs">
-          <label className="text-fgmuted">Provider:</label>
+          <ChatContextChip />
+          <label className="ml-1 text-fgmuted">Provider:</label>
           <select
             value={chatProvider || ""}
             onChange={(e) => {
@@ -327,7 +348,11 @@ export function ChatInput() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about Pegasus workflows... (Shift+Enter for newline)"
+            placeholder={
+              activeScope
+                ? `Ask about ${activeScope.label}... (Shift+Enter for newline)`
+                : "Ask about Pegasus workflows... (Shift+Enter for newline)"
+            }
             rows={3}
             className="min-h-[72px] max-h-56 flex-1 resize-none rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
           />
