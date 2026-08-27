@@ -31,7 +31,8 @@ interface NavItem {
  * results in.
  */
 const PRIMARY_NAV: NavItem[] = [
-  { href: "/", label: "Home", icon: "🏠" },
+  // "/home", not "/" — see app/(studio)/home/page.tsx (#292).
+  { href: "/home", label: "Home", icon: "🏠" },
   { href: "/workflows", label: "My analyses", icon: "📊" },
   // Next to analyses because "add my data" and "run my analysis" are two
   // halves of one task (#241, Phase 2).
@@ -96,9 +97,11 @@ export function Sidebar() {
         </a>
       );
     }
+    // The dashboard answers to both "/" (where a user lands) and "/home"
+    // (where the nav link goes), so either should light up Home.
     const active =
-      item.href === "/"
-        ? activePathname === "/"
+      item.href === "/home"
+        ? activePathname === "/" || activePathname.startsWith("/home")
         : activePathname === item.href ||
           activePathname.startsWith(item.href + "/");
     return (
