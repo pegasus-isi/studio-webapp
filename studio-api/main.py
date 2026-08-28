@@ -45,10 +45,10 @@ db = Database()
 async def _seed_default_tools() -> None:
     """Register image-bundled tools (binary already present) as installed.
 
-    Tools baked into the container (e.g. OpenCode, for the chat engine and
-    `opencode attach`) have their binary on PATH but no DB row on first boot,
-    so the Workbench would show them as uninstalled and their knowledge
-    adapter (AGENTS.md, .opencode/…, provider config) would never run.
+    Tools baked into the container (e.g. OpenCode) have their binary on PATH
+    but no DB row on first boot, so the Workbench would show them as
+    uninstalled and their knowledge adapter (AGENTS.md, .opencode/…, provider
+    config) would never run.
     installer.install() skips npm when the binary exists, so seeding is just
     adapter + DB row. Override the set with STUDIO_DEFAULT_TOOLS (csv; empty
     disables).
@@ -222,16 +222,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async def _refresh_knowledge_checkout() -> None:
         """Fast-forward the marketplace checkout, then make the update visible.
 
-        opencode reads skills, agents and config once when it starts and never
-        reloads them. The pull used to run from the entrypoint, backgrounded
-        alongside the rest of the boot, which made "does the assistant get
-        today's skills?" a race with no signal either way: a pod was observed
-        winning it by 67 seconds, and losing it looks exactly the same from
-        outside — the checkout on disk is current, `git log` says so, and the
-        assistant quietly follows the skills of whenever the server started.
+        CLI tools read skills, agents and config when they launch, not live.
+        The pull used to run from the entrypoint, backgrounded alongside the
+        rest of the boot, which made "does the assistant get today's skills?"
+        a race with no signal either way: a pod was observed winning it by 67
+        seconds, and losing it looks exactly the same from outside — the
+        checkout on disk is current, `git log` says so, and the assistant
+        quietly follows the skills of whenever the server started.
 
-        Doing it here means one owner, and a restart when (and only when) the
-        checkout actually moved, so the running server picks the new skills up.
+        Doing it here means one owner, and a re-propagation when (and only
+        when) the checkout actually moved, so freshly launched tools pick the
+        new skills up.
         """
         from knowledge import checkout
 
@@ -251,22 +252,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         log.info("knowledge_checkout_updated", sha=result.get("short_sha"))
 
-        # Re-run the adapters so generated context/links follow the new tree,
-        # then restart opencode so it re-reads them.
+        # Re-run the adapters so generated context/links follow the new tree.
+        # Installed CLI tools (opencode, crush, …) pick the regenerated config
+        # up on their next launch — nothing long-running needs a restart.
         try:
             from llm.propagator import LLMPropagator
 
             await LLMPropagator().propagate(db)
         except Exception as e:
             log.warning("knowledge_repropagate_failed", error=str(e))
-        try:
-            from services.opencode_engine import engine as opencode_engine
-
-            await opencode_engine.forget_sessions(db)
-            await opencode_engine.restart()
-            log.info("opencode_restarted_on_knowledge_update")
-        except Exception as e:
-            log.warning("opencode_restart_failed", error=str(e))
 
     knowledge_task = asyncio.create_task(_refresh_knowledge_checkout())
 
@@ -339,9 +333,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await compute_backends.active_backend().stop()
     except Exception as e:
         log.warning("backend_stop_failed", error=str(e))
-    from services.opencode_engine import engine as opencode_engine
-
-    await opencode_engine.stop()
     prune_task.cancel()
     knowledge_task.cancel()
     for s in terminal_sessions.list_sessions():

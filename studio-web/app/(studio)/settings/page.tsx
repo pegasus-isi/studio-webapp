@@ -715,21 +715,14 @@ function ToolsTab() {
 
 /* ─── Pegasus Options Tab ─── */
 
-/* ─── Chat Tab (engine selection) ─── */
+/* ─── Chat Tab ─── */
 
 function ChatTab() {
-  const [status, setStatus] = useState<api.ChatEngineStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [switching, setSwitching] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [requireApproval, setRequireApproval] = useState<boolean | null>(null);
   const [approvalSaving, setApprovalSaving] = useState(false);
 
   useEffect(() => {
-    api
-      .getChatEngine()
-      .then(setStatus)
-      .catch((e) => setError(String(e)));
     api
       .getCommandApproval()
       .then((r) => setRequireApproval(r.require_approval))
@@ -752,124 +745,18 @@ function ChatTab() {
     }
   };
 
-  const select = async (engine: "builtin" | "opencode") => {
-    if (!status || status.engine === engine || switching) return;
-    setSwitching(true);
-    setError(null);
-    try {
-      const res = await api.updateChatEngine(engine);
-      setStatus(res);
-      if (res.error) setError(res.error);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSwitching(false);
-    }
-  };
-
-  const copyAttach = async () => {
-    if (!status) return;
-    try {
-      await navigator.clipboard.writeText(status.opencode.attach_command);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
-    }
-  };
-
-  const engineCard = (
-    id: "builtin" | "opencode",
-    title: string,
-    description: string,
-    note?: string
-  ) => (
-    <button
-      onClick={() => select(id)}
-      disabled={switching}
-      className={cn(
-        "flex-1 rounded-lg border p-4 text-left transition-colors",
-        status?.engine === id
-          ? "border-pegasus-600 bg-pegasus-50 dark:bg-pegasus-400/10"
-          : "border-line bg-surface hover:border-pegasus-300"
-      )}
-    >
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-fg">{title}</span>
-        {status?.engine === id && (
-          <span className="rounded-full bg-pegasus-600 px-2 py-0.5 text-xs font-medium text-white">
-            active
-          </span>
-        )}
-      </div>
-      <p className="mt-1 text-xs leading-relaxed text-fgmuted">{description}</p>
-      {note && <p className="mt-1 text-xs text-fgsubtle">{note}</p>}
-    </button>
-  );
-
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-sm font-semibold text-fg">Chat engine</h2>
+        <h2 className="text-sm font-semibold text-fg">Chat</h2>
         <p className="text-sm text-fgmuted">
-          The agent that powers the PegasusAI Chat panel. Switching engines
-          keeps the same chat interface.
+          Options for the PegasusAI Chat panel.
         </p>
       </div>
 
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-rose-500/10 dark:text-rose-400">
           {error}
-        </div>
-      )}
-
-      <div className="flex flex-col gap-3 sm:flex-row">
-        {engineCard(
-          "opencode",
-          "OpenCode (default)",
-          "A shared `opencode serve` runtime powers the panel: full agent with multi-step tool use, file edits, LSP and MCP support.",
-          status && !status.opencode.installed
-            ? "OpenCode is not installed — install it from the Tools tab first."
-            : undefined
-        )}
-        {engineCard(
-          "builtin",
-          "Built-in",
-          "Studio's own agent loop with workspace file and shell tools. Used automatically whenever OpenCode is unavailable."
-        )}
-      </div>
-
-      {status?.engine === "opencode" && (
-        <div className="rounded-lg border border-line bg-surface p-4">
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "h-2 w-2 rounded-full",
-                status.opencode.running ? "bg-emerald-500" : "bg-amber-500"
-              )}
-            />
-            <span className="text-sm font-medium text-fg">
-              {status.opencode.running
-                ? `Server running at ${status.opencode.url}`
-                : "Server starting…"}
-            </span>
-          </div>
-          <p className="mt-2 text-xs leading-relaxed text-fgmuted">
-            Terminals opened in Studio share this runtime — run the command
-            below in any Studio terminal to open the same sessions in the
-            OpenCode TUI. Chat and CLI stay in sync live.
-          </p>
-          <div className="mt-2 flex items-center gap-2">
-            <code className="flex-1 overflow-x-auto whitespace-nowrap rounded bg-muted px-2 py-1.5 font-mono text-xs text-fg">
-              {status.opencode.attach_command}
-            </code>
-            <button
-              onClick={copyAttach}
-              className="rounded-md border border-line px-2 py-1.5 text-xs font-medium text-fgmuted hover:bg-muted hover:text-fg"
-            >
-              {copied ? "Copied!" : "Copy"}
-            </button>
-          </div>
         </div>
       )}
 
@@ -1137,6 +1024,141 @@ function PegasusOptionsTab() {
 
       {/* Container registry — persisted; drives the Build Image action */}
       <RegistrySection />
+
+      {/* Where runs are looked for — extra scan roots / excludes (#306) */}
+      <WorkflowDiscoverySection />
+    </div>
+  );
+}
+
+/**
+ * User additions to run discovery (#306). Runs are found by scanning for
+ * `braindump.yml` under the deployment's scan root; a run planned onto a
+ * mounted volume outside it is invisible, and a huge subtree slows every
+ * listing. Both lists here *extend* the deployment defaults — a user can't
+ * configure themselves into an empty Workflows page.
+ */
+function WorkflowDiscoverySection() {
+  const [settings, setSettings] =
+    useState<api.WorkflowScanSettings | null>(null);
+  const [rootsText, setRootsText] = useState("");
+  const [excludesText, setExcludesText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getWorkflowScanSettings()
+      .then((s) => {
+        setSettings(s);
+        setRootsText(s.roots.join("\n"));
+        setExcludesText(s.excludes.join("\n"));
+      })
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const res = await api.updateWorkflowScanSettings({
+        roots: rootsText.split("\n").map((l) => l.trim()).filter(Boolean),
+        excludes: excludesText.split("\n").map((l) => l.trim()).filter(Boolean),
+      });
+      setSettings(res);
+      setRootsText(res.roots.join("\n"));
+      setExcludesText(res.excludes.join("\n"));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      setError((e as Error).message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <h2 className="text-sm font-semibold text-fg">Workflow discovery</h2>
+      <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+        Runs are found by scanning for <code>braindump.yml</code> under{" "}
+        <code>{settings?.defaults.scan_root ?? "your home directory"}</code>;
+        workflow projects live in{" "}
+        <code>{settings?.defaults.workflows_dir ?? "~/work/workflows"}</code>.
+        Add directories below to also scan them (runs on a mounted volume),
+        or path fragments to skip (a large data directory slowing the list).
+        Your additions extend the defaults — they never replace them.
+      </p>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className="text-xs font-medium text-fgmuted">
+            Extra scan directories{" "}
+            <span className="font-normal text-fgsubtle">
+              (absolute paths, one per line)
+            </span>
+          </label>
+          <textarea
+            value={rootsText}
+            onChange={(e) => setRootsText(e.target.value)}
+            rows={3}
+            placeholder={"/mnt/scratch\n/data/shared-runs"}
+            spellCheck={false}
+            className="mt-1 w-full rounded-md border border-line bg-base px-2 py-1.5 font-mono text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
+            data-testid="workflow-scan-roots"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-fgmuted">
+            Exclude path fragments{" "}
+            <span className="font-normal text-fgsubtle">(one per line)</span>
+          </label>
+          <textarea
+            value={excludesText}
+            onChange={(e) => setExcludesText(e.target.value)}
+            rows={3}
+            placeholder={"big-dataset\narchive/"}
+            spellCheck={false}
+            className="mt-1 w-full rounded-md border border-line bg-base px-2 py-1.5 font-mono text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
+            data-testid="workflow-scan-excludes"
+          />
+          <p className="mt-1 text-[11px] text-fgsubtle">
+            Runs whose directory path contains a fragment are hidden. Built-in:{" "}
+            {settings?.defaults.builtin_excludes
+              .map((f) => f.replace(/^\/+|\/+$/g, ""))
+              .join(", ") ?? "…"}
+            .
+          </p>
+        </div>
+      </div>
+
+      {settings && settings.missing_roots.length > 0 && (
+        <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+          Not found right now (scanned once they appear):{" "}
+          {settings.missing_roots.join(", ")}
+        </p>
+      )}
+      {error && (
+        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{error}</p>
+      )}
+
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          onClick={handleSave}
+          disabled={saving || settings === null}
+          className="rounded-md bg-pegasus-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-pegasus-700 disabled:opacity-50"
+          data-testid="workflow-scan-save"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {saved && (
+          <span className="text-xs text-emerald-600 dark:text-emerald-400">
+            Saved — the Workflows page uses this on its next refresh.
+          </span>
+        )}
+      </div>
     </div>
   );
 }

@@ -55,14 +55,16 @@ nginx on **:8888** is the only exposed port, routing `/` → studio-web (Next.js
 standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**),
 `/jupyter/*` → JupyterLab (**:8889**). Supervised by supervisord (`docker/supervisor/`);
 `docker/entrypoint.sh` runs `init_db.py` (first launch only) then `exec supervisord`.
-`opencode serve` runs on localhost:**4747** for the chat engine.
 
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
-  migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 22 services
+  migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 21 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
-  opencode chat engine, notifications, terminal/PTY sessions). Workflow runs are
-  discovered by globbing `**/braindump.yml` under `$HOME`; monitoring tails
-  `workflow-events.jsonl` written by an external `workflow-monitor --serve` process.
+  notifications, terminal/PTY sessions). Workflow runs are
+  discovered by globbing `**/braindump.yml` under `$HOME` (`STUDIO_SCAN_DIR`),
+  plus user-added scan roots/excludes from Settings → Pegasus Options
+  (`/api/settings/workflow-scan`, merged in `workflow_scanner`'s async
+  wrappers); monitoring tails `workflow-events.jsonl` written by an external
+  `workflow-monitor --serve` process.
 - **studio-web/** — Next.js 15 App Router, React 19, TS strict, Tailwind 3, Zustand,
   TanStack Query, xterm.js, `@xyflow/react` DAG viewer. Routes under `app/(studio)/`;
   `app/chat/page.tsx` is a standalone chrome-less page iframed into JupyterLab by the
@@ -109,16 +111,13 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   tab or a dropped connection — Studio's left nav used to be full page loads,
   and anything owned by the request died with it. Reach for this shape rather
   than sequencing calls in the browser.
-- Chat is engine-dispatched (`routers/chat.py`): `opencode` (default) or `builtin`
-  fallback. **`chat.py` is not legacy** — `_opencode_stream()` lives in it and
-  serves every real session; only the builtin engine's own machinery
-  (`TOOL_DEFINITIONS`, the direct provider calls, the Responses-API fallback) is
-  the seldom-exercised part. Both share `_load_system_prompt()` and
-  `_process_slash_command()`, so a change made "just for the builtin engine"
-  reaches opencode too — which is how the chat lost its context, personas and
-  skills at once when this file kept its own `KNOWLEDGE_ROOT` after the
-  knowledge base moved (#179). Anything reading the knowledge tree goes through
-  `knowledge/layout.py`; nothing should resolve it independently.
+- Chat is the builtin agent loop in `routers/chat.py` (direct provider calls
+  with tool use, Anthropic + OpenAI-compatible + Responses API). OpenCode was
+  removed as a chat backend (#299) — it remains only as a launchable terminal
+  AI tool. Anything reading the knowledge tree goes through
+  `knowledge/layout.py`; nothing should resolve it independently — `chat.py`
+  keeping its own `KNOWLEDGE_ROOT` after the knowledge base moved is how the
+  chat lost its context, personas and skills at once (#179).
   The Marketplace is sourced live from GitHub (PegasusHub registry +
   curated Pegasus-ISI list), nothing baked in. "Add" git-clones into `~/work/workflows`.
 - Deliberate exclusions: JupyterLab ships **without** `jupyter-ai` and without

@@ -224,6 +224,13 @@ TOOL_DEFINITIONS = [
     },
 ]
 
+# Pegasus-aware read-only tools (run status, jobs, diagnosis, outputs) with
+# chat-scope argument defaulting — defined in services/chat_tools.py so they
+# stay unit-testable away from the streaming loop.
+from services import chat_tools as _chat_tools
+
+TOOL_DEFINITIONS += _chat_tools.TOOL_DEFINITIONS
+
 # Anthropic-format tool definitions
 TOOL_DEFINITIONS_ANTHROPIC = [
     {
@@ -259,10 +266,20 @@ def _safe_path(path: str) -> str:
     return resolved
 
 
-async def _execute_tool(name: str, arguments: dict[str, Any]) -> str:
-    """Execute a tool and return result string."""
+async def _execute_tool(
+    name: str,
+    arguments: dict[str, Any],
+    scope: dict[str, Any] | None = None,
+) -> str:
+    """Execute a tool and return result string. `scope` is the chat's active
+    workflow/run context; the Pegasus tools default their ids from it."""
     import asyncio
     import shutil
+
+    # Pegasus tools first — read-only service wrappers, never shell-gated.
+    pegasus_result = await _chat_tools.execute(name, arguments, scope)
+    if pegasus_result is not None:
+        return pegasus_result
 
     try:
         if name == "write_file":
@@ -343,6 +360,7 @@ async def _run_tool_gated(
     *,
     request_id: str,
     require_approval: bool,
+    scope: dict[str, Any] | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Yield SSE payload dicts for one tool call, pausing for approval first
     when the tool runs arbitrary shell.
@@ -385,7 +403,7 @@ async def _run_tool_gated(
         "id": arguments["_call_id"], "name": name,
         "arguments": _public_args(arguments),
     }}
-    result = await _execute_tool(name, _public_args(arguments))
+    result = await _execute_tool(name, _public_args(arguments), scope)
     yield {"tool_result": {
         "id": arguments["_call_id"], "name": name,
         "result": _clip_ui_result(result),
@@ -416,6 +434,12 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
         "\n\n## Tool Use Instructions\n\n"
         "You have access to tools for file operations and shell commands. "
         "Use them to help the user create, run, and debug Pegasus workflows.\n\n"
+        "For workflow questions, prefer the structured Pegasus tools over "
+        "shelling out: list_workflow_projects, list_workflow_runs, "
+        "get_run_status, get_run_jobs, diagnose_run (the right first call for "
+        "'why did it fail?'), and list_run_outputs. When the chat has an "
+        "Active Context, their run_id/project_id default to it — call them "
+        "with no arguments.\n\n"
         "You have no interactive question tool. To ask something, write the "
         "question as ordinary prose and wait for the reply — never emit a "
         "tool-call object as your message.\n\n"
@@ -906,7 +930,7 @@ def _skill_for_command(command: str) -> str | None:
     Built from what is installed rather than a hardcoded table. The table listed
     the pre-plugin names (scaffold, dockerfile, ...), so after the rename to
     pegasus-scaffold, pegasus-apptainer and the rest it matched nothing: every
-    slash command expanded to no skill, silently, on the opencode path too.
+    slash command expanded to no skill, silently.
 
     Both spellings resolve, so /scaffold keeps working beside /pegasus-scaffold.
     """
@@ -952,138 +976,6 @@ def _process_slash_command(message: str) -> tuple[str, str | None]:
     return f"[Using /{command} skill]\n\n{prompt}\n\nUser request: {user_args}", skill_name
 
 
-# --- Chat engine selection (builtin | opencode) ---
-
-_ENGINE_SETTING_KEY = "chat_engine"
-_VALID_ENGINES = ("builtin", "opencode")
-
-
-def default_engine() -> str:
-    """Engine used when the user hasn't chosen one. OpenCode ships in the
-    image and is the richer agent, so it is the default; the builtin loop
-    remains the automatic fallback whenever OpenCode is unavailable.
-    Operators can flip the default with STUDIO_CHAT_ENGINE_DEFAULT."""
-    configured = os.environ.get("STUDIO_CHAT_ENGINE_DEFAULT", "opencode")
-    return configured if configured in _VALID_ENGINES else "builtin"
-
-
-@router.get("/engine")
-async def get_engine() -> dict:
-    """Current chat engine plus OpenCode availability for the settings UI."""
-    from main import db
-    from services.opencode_engine import engine as oc_engine
-
-    oc_engine.set_db(db)
-    current = await db.get_setting(_ENGINE_SETTING_KEY, default_engine())
-    if current not in _VALID_ENGINES:
-        current = default_engine()
-    return {"engine": current, "opencode": await oc_engine.status()}
-
-
-@router.put("/engine")
-async def set_engine(request: Request) -> dict:
-    """Switch the chat engine. Selecting opencode starts the shared server."""
-    from main import db
-    from services.opencode_engine import engine as oc_engine
-
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
-    engine_id = body.get("engine", "")
-    if engine_id not in _VALID_ENGINES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"engine must be one of {list(_VALID_ENGINES)}",
-        )
-
-    oc_engine.set_db(db)
-    error = None
-    if engine_id == "opencode":
-        error = await oc_engine.ensure_running()
-        if error:
-            # Don't switch to a broken engine — report why instead.
-            return {"engine": await db.get_setting(
-                        _ENGINE_SETTING_KEY, default_engine()),
-                    "error": error,
-                    "opencode": await oc_engine.status()}
-    await db.set_setting(_ENGINE_SETTING_KEY, engine_id)
-    return {"engine": engine_id, "error": error,
-            "opencode": await oc_engine.status()}
-
-
-async def _opencode_stream(
-    db, messages: list, agent_id: str, request_id: str,
-    conversation_id: str | None,
-) -> StreamingResponse:
-    """Proxy one chat turn through the shared opencode serve instance."""
-    from services.opencode_engine import engine as oc_engine
-
-    last = messages[-1]
-    user_text = last.get("content") if isinstance(last.get("content"), str) else ""
-    # Slash commands expand exactly like the builtin path, so /scaffold etc.
-    # carry their skill prompt into the OpenCode session too.
-    expanded, _skill = _process_slash_command(user_text)
-
-    async def event_generator() -> AsyncGenerator[str, None]:
-        client_gone = False
-        try:
-            if last.get("role") == "user" and user_text:
-                try:
-                    await db.add_chat_message(
-                        "user", user_text, agent_id=agent_id,
-                        conversation_id=conversation_id,
-                    )
-                except Exception:
-                    pass
-
-            # Per-call sink, NOT engine.last_turn: the engine is a
-            # process-wide singleton, so two overlapping turns sharing its
-            # accumulator would cross-persist (BE-3).
-            turn: dict[str, Any] = {}
-            async for chunk in oc_engine.stream_turn(
-                text=expanded,
-                conversation_id=conversation_id,
-                agent_id=agent_id,
-                request_id=request_id,
-                active_clients=_active_clients,
-                turn_sink=turn,
-            ):
-                yield chunk
-
-            if turn.get("text"):
-                try:
-                    msg_id = await db.add_chat_message(
-                        "assistant", turn["text"], agent_id=agent_id,
-                        tool_calls=turn.get("tools") or None,
-                        conversation_id=conversation_id,
-                    )
-                    # Expose the saved row id so the client can attach 👍/👎.
-                    yield f"data: {json.dumps({'message_id': msg_id})}\n\n"
-                except Exception:
-                    pass
-        except Exception as e:
-            # Backstop for anything the engine didn't turn into an error
-            # frame itself (e.g. a failure before its own try block). Both
-            # the July and August reviews trace "chat is silently broken"
-            # reports to turns ending as a bare [DONE] with the cause only
-            # in logs — never let that happen again.
-            log.error("opencode_stream_failed", error=str(e))
-            yield f"data: {json.dumps({'error': f'Chat engine error: {e}'})}\n\n"
-        except GeneratorExit:
-            # Client disconnected (Stop / tab close). Yielding in the finally
-            # while unwinding a GeneratorExit raises "async generator ignored
-            # GeneratorExit" — log noise that masks real errors (BE-9). Flag it
-            # so the finally skips the trailing [DONE]; cleanup still runs.
-            client_gone = True
-            raise
-        finally:
-            if not client_gone:
-                yield "data: [DONE]\n\n"
-
-    return _brokered_stream(event_generator(), conversation_id)
-
-
 # --- Chat endpoints ---
 
 def _sse_response(source) -> StreamingResponse:
@@ -1107,9 +999,6 @@ def _brokered_stream(
     the generator is drained by a background task, so the turn survives the
     request ending — a navigation, a closed tab, a dropped connection — and
     can be reattached to via /turn/events.
-
-    Both engines go through here. Anything that changed only one of them would
-    reintroduce the difference this exists to remove.
     """
     from services.chat_turn import manager as turn_manager
 
@@ -1156,27 +1045,13 @@ async def chat_stream(request: Request) -> StreamingResponse:
     agent_id = body.get("agent", "general")
     request_id = body.get("request_id", str(uuid.uuid4()))
     conversation_id = body.get("conversation_id")
+    scope = body.get("context") if isinstance(body.get("context"), dict) else {}
 
     if not messages:
         return _error_sse("No messages provided")
 
     # Load LLM config
     from main import db
-
-    # OpenCode engine: proxy the turn to the shared `opencode serve` runtime.
-    # If it can't be made available, log and fall through to the builtin loop
-    # so chat never hard-fails on an engine problem.
-    engine_choice = await db.get_setting(_ENGINE_SETTING_KEY, default_engine())
-    if engine_choice == "opencode":
-        from services.opencode_engine import engine as oc_engine
-
-        oc_engine.set_db(db)
-        engine_err = await oc_engine.ensure_running()
-        if engine_err is None:
-            return await _opencode_stream(
-                db, messages, agent_id, request_id, conversation_id
-            )
-        log.warning("opencode_engine_unavailable", error=engine_err)
 
     config = await db.get_llm_config()
     if not config or not config.get("provider"):
@@ -1231,6 +1106,21 @@ async def chat_stream(request: Request) -> StreamingResponse:
     wire_api = (config.get("extra_config") or {}).get("wire_api", "auto")
 
     system_prompt = _load_system_prompt(agent_id)
+
+    # Workflow/run scope from the chat panel's context picker. Resolved fresh
+    # per turn (status and diagnosis move while a conversation is open) and
+    # soft-failing: an unknown or unreadable scope logs and the turn proceeds
+    # unscoped rather than erroring. The validated form also feeds the Pegasus
+    # tools, whose run_id/project_id default to it.
+    tool_scope: dict[str, Any] | None = None
+    if scope:
+        from services.chat_scope import SCOPE_TYPES, build_scope_block
+
+        scope_block = await build_scope_block(scope.get("type"), scope.get("id"))
+        if scope_block:
+            system_prompt = f"{system_prompt}\n\n{scope_block}"
+        if scope.get("type") in SCOPE_TYPES and scope.get("id"):
+            tool_scope = {"type": scope["type"], "id": scope["id"]}
 
     async def event_generator() -> AsyncGenerator[str, None]:
         import time
@@ -1414,6 +1304,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                             tc["name"], gated_args,
                             request_id=request_id,
                             require_approval=require_approval,
+                            scope=tool_scope,
                         ):
                             if "_final_result" in ev:
                                 tool_result = ev["_final_result"]
@@ -1452,6 +1343,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                             tc["name"], gated_args,
                             request_id=request_id,
                             require_approval=require_approval,
+                            scope=tool_scope,
                         ):
                             if "_final_result" in ev:
                                 tool_result = ev["_final_result"]

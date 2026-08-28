@@ -16,7 +16,8 @@ from services.event_reader import find_events_file
 from services.event_reader import jobs as event_jobs
 from services.event_reader import read_events
 from services.event_reader import workflow_detail as event_detail
-from services.workflow_scanner import get_run_status_async
+from services.procutil import communicate_or_kill
+from services.workflow_scanner import dagman_exit_status, get_run_status_async
 
 log = structlog.get_logger()
 
@@ -41,7 +42,18 @@ async def get_workflow_detail(run_dir: str) -> dict[str, Any]:
             "running_jobs": 0,
             "exec_site": None,
         }
-    return event_detail(events)
+    detail = event_detail(events)
+    if detail.get("status") == "running":
+        # Same zombie guard as get_run_status (#296): an abnormal DAGMan death
+        # writes no end event, so the stream reads "running" forever. This is
+        # the path the runs list actually flows through (GET /api/workflows →
+        # here, not get_run_status), so both need the cross-check. Job counts
+        # stay as the events reported them — jobs mid-flight when DAGMan died
+        # genuinely never finished.
+        terminal = await loop.run_in_executor(None, dagman_exit_status, run_dir)
+        if terminal:
+            detail["status"] = terminal
+    return detail
 
 
 async def get_workflow_jobs(run_dir: str) -> list[dict[str, Any]]:

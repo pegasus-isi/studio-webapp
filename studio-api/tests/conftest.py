@@ -31,11 +31,8 @@ def client(tmp_db, monkeypatch):
     monkeypatch.setenv("HOME", tempfile.mkdtemp())
 
     # Keep startup hermetic: don't seed image-bundled tools (would run real
-    # knowledge adapters if e.g. opencode is on the dev machine's PATH), and
-    # default the chat engine to builtin so /stream tests never spawn a real
-    # `opencode serve`. Production default is opencode.
+    # knowledge adapters if e.g. opencode is on the dev machine's PATH).
     monkeypatch.setenv("STUDIO_DEFAULT_TOOLS", "")
-    monkeypatch.setenv("STUDIO_CHAT_ENGINE_DEFAULT", "builtin")
 
     # Set KNOWLEDGE_ROOT to a temp dir for tests
     knowledge_dir = tempfile.mkdtemp()

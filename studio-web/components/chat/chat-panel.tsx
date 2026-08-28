@@ -163,13 +163,34 @@ export function ChatPanel() {
         </div>
       ) : (
         <div className="mx-auto max-w-3xl space-y-4">
-          {messages.map((msg) => (
-            <MessageBubble key={msg.id} msg={msg} />
-          ))}
+          {messages.map((msg) =>
+            msg.role === "system" ? (
+              <ContextDivider key={msg.id} label={msg.content} />
+            ) : (
+              <MessageBubble key={msg.id} msg={msg} />
+            )
+          )}
           {showThinking && <ThinkingIndicator />}
           <div ref={bottomRef} />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * A context-switch marker (from the context chip). Rendered as a divider, not
+ * a bubble: answers above it were given under the previous scope, and a
+ * scroll-back should read that way. Display-only — never sent to the model.
+ */
+function ContextDivider({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 py-1" role="separator">
+      <div className="h-px flex-1 bg-line" />
+      <span className="text-[10px] font-medium uppercase tracking-wider text-fgsubtle">
+        {label}
+      </span>
+      <div className="h-px flex-1 bg-line" />
     </div>
   );
 }

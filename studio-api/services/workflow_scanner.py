@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import glob
 import os
+import re
 from typing import Any
 
 import structlog
@@ -113,68 +114,117 @@ _EXCLUDE_RUN_PATH_FRAGMENTS = (
 )
 
 
-def _is_excluded_run_dir(run_dir: str) -> bool:
-    """True for run dirs that belong to cloned repos / test fixtures."""
-    return any(frag in run_dir for frag in _EXCLUDE_RUN_PATH_FRAGMENTS)
+def _is_excluded_run_dir(run_dir: str, extra: tuple | list = ()) -> bool:
+    """True for run dirs that belong to cloned repos / test fixtures, or match
+    a user-added exclude fragment (plain substrings, same semantics as the
+    builtin list)."""
+    if any(frag in run_dir for frag in _EXCLUDE_RUN_PATH_FRAGMENTS):
+        return True
+    return any(frag and frag in run_dir for frag in extra)
 
 
-def discover_runs(workspace: str | None = None) -> list[dict[str, Any]]:
-    """Find all Pegasus run directories under the scan root.
+def _effective_scan_roots(
+    primary: str, extra_roots: tuple | list = ()
+) -> list[str]:
+    """The primary scan root plus user-added ones, deduplicated.
+
+    An extra root nested under an already-scanned root is dropped — the
+    recursive glob would visit it anyway and every run inside would list
+    twice. Missing directories are skipped silently: a root that points at an
+    unmounted volume should mean "no runs from there right now", not a broken
+    Workflows page.
+    """
+    roots: list[str] = []
+    for root in [primary, *extra_roots]:
+        if not root or not os.path.isdir(root):
+            continue
+        real = os.path.realpath(root)
+        if any(
+            real == kept or real.startswith(kept + os.sep) for kept in roots
+        ):
+            continue
+        roots.append(real)
+    return roots
+
+
+def discover_runs(
+    workspace: str | None = None,
+    extra_roots: tuple | list = (),
+    extra_excludes: tuple | list = (),
+) -> list[dict[str, Any]]:
+    """Find all Pegasus run directories under the scan roots.
 
     Looks for braindump.yml files which Pegasus creates in every run directory
-    after pegasus-plan. Scans the backend's scan root (the home dir by
-    default, overridable via STUDIO_SCAN_DIR) and skips paths that belong to cloned repos or test
-    fixtures, so unrelated braindumps don't show up as runs.
+    after pegasus-plan. Scans the active backend's scan root (the home dir
+    by default for the local backend, overridable via STUDIO_SCAN_DIR) plus
+    any user-configured extra roots, and skips paths that belong to cloned
+    repos or test fixtures — or match a user-added exclude fragment — so
+    unrelated braindumps don't show up as runs.
+
+    The async wrapper resolves ``extra_roots``/``extra_excludes`` from the
+    user's settings (see routers/settings.py, workflow-scan); direct callers
+    can pass them explicitly.
 
     Returns list of dicts with keys: run_id, name, run_dir, status.
     """
-    workspace = workspace or scan_root()
     runs: list[dict[str, Any]] = []
+    seen_run_dirs: set[str] = set()
 
-    # Pegasus creates braindump.yml in the submit directory
-    pattern = os.path.join(workspace, "**", "braindump.yml")
-    for braindump_path in glob.glob(pattern, recursive=True):
-        run_dir = os.path.dirname(braindump_path)
-        if _is_excluded_run_dir(run_dir):
-            continue
-        try:
-            bd = _parse_braindump(braindump_path)
-            run_id = bd.get("wf_uuid", os.path.basename(run_dir))
-            name = bd.get("pegasus_wf_name", os.path.basename(run_dir))
-            runs.append({
-                "run_id": run_id,
-                # Human-friendly submit-dir name (e.g. "run0001") for display;
-                # run_id stays the globally-unique wf_uuid used for routing.
-                "run_name": os.path.basename(run_dir),
-                "name": name,
-                "run_dir": run_dir,
-                "submit_dir": bd.get("submit_dir", run_dir),
-                "user": bd.get("user", ""),
-                "grid_dn": bd.get("grid_dn"),
-                "planner_version": bd.get("planner_version"),
-                "dax_label": bd.get("dax_label"),
-                "timestamp": bd.get("timestamp"),
-            })
-        except Exception as e:
-            log.warning("braindump_parse_failed", path=braindump_path, error=str(e))
-            # Still include with basic info
-            runs.append({
-                "run_id": os.path.basename(run_dir),
-                "name": os.path.basename(run_dir),
-                "run_dir": run_dir,
-            })
+    for root in _effective_scan_roots(workspace or scan_root(), extra_roots):
+        # Pegasus creates braindump.yml in the submit directory
+        pattern = os.path.join(root, "**", "braindump.yml")
+        for braindump_path in glob.glob(pattern, recursive=True):
+            run_dir = os.path.dirname(braindump_path)
+            if run_dir in seen_run_dirs:
+                continue
+            seen_run_dirs.add(run_dir)
+            if _is_excluded_run_dir(run_dir, extra_excludes):
+                continue
+            try:
+                bd = _parse_braindump(braindump_path)
+                run_id = bd.get("wf_uuid", os.path.basename(run_dir))
+                name = bd.get("pegasus_wf_name", os.path.basename(run_dir))
+                runs.append({
+                    "run_id": run_id,
+                    # Human-friendly submit-dir name (e.g. "run0001") for
+                    # display; run_id stays the globally-unique wf_uuid used
+                    # for routing.
+                    "run_name": os.path.basename(run_dir),
+                    "name": name,
+                    "run_dir": run_dir,
+                    "submit_dir": bd.get("submit_dir", run_dir),
+                    "user": bd.get("user", ""),
+                    "grid_dn": bd.get("grid_dn"),
+                    "planner_version": bd.get("planner_version"),
+                    "dax_label": bd.get("dax_label"),
+                    "timestamp": bd.get("timestamp"),
+                })
+            except Exception as e:
+                log.warning(
+                    "braindump_parse_failed", path=braindump_path, error=str(e)
+                )
+                # Still include with basic info
+                runs.append({
+                    "run_id": os.path.basename(run_dir),
+                    "name": os.path.basename(run_dir),
+                    "run_dir": run_dir,
+                })
 
     log.info("workflow_scan_complete", count=len(runs), workspace=workspace)
     return runs
 
 
-def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
+def discover_projects(
+    workspace: str | None = None,
+    extra_excludes: tuple | list = (),
+) -> list[dict[str, Any]]:
     """Find workflow projects in the workflows directory.
 
     Scans ~/work/workflows/ for directories containing workflow_generator.py
     or workflow YAML files.  Returns a list of project dicts that merge
     unsubmitted project metadata with any submitted runs found inside the
-    project tree.
+    project tree. ``extra_excludes`` extends the builtin run-dir exclusion
+    fragments (the projects dir itself is not affected by scan roots).
     """
     workspace = workspace or workflows_dir()
     projects: list[dict[str, Any]] = []
@@ -223,7 +273,7 @@ def discover_projects(workspace: str | None = None) -> list[dict[str, Any]]:
             os.path.join(project_dir, "**", "braindump.yml"), recursive=True
         ):
             run_dir = os.path.dirname(bd_path)
-            if _is_excluded_run_dir(run_dir):
+            if _is_excluded_run_dir(run_dir, extra_excludes):
                 continue
             try:
                 bd = _parse_braindump(bd_path)
@@ -340,6 +390,70 @@ def _jobstate_terminal_status(run_dir: str) -> str | None:
     return None
 
 
+# How much of dagman.out's tail to scan for the session-exit marker. DAGMan
+# writes EXITING WITH STATUS as effectively its last line, so a few KB is
+# plenty; 64KB leaves room for post-exit noise without reading a whole log.
+_DAGMAN_OUT_TAIL_BYTES = 64 * 1024
+
+# Session markers in *.dag.dagman.out. Every DAGMan session — normal end,
+# abort, OOM kill cleanup — closes with the EXITING line; a rescue/re-run
+# appends a fresh session that opens with the STARTING UP banner.
+_DAGMAN_EXITING_RE = re.compile(r"EXITING WITH STATUS\s+(-?\d+)")
+_DAGMAN_STARTUP_MARKER = "STARTING UP"
+
+
+def dagman_exit_status(run_dir: str) -> str | None:
+    """Terminal status from the DAGMan session log, or None while DAGMan is
+    (as far as its log shows) still alive.
+
+    When DAGMan dies abnormally it takes monitord down with it, so no terminal
+    marker is ever written: the event stream ends mid-run, jobstate.log has no
+    DAGMAN_FINISHED, and the stampede DB holds a lone WORKFLOW_STARTED row.
+    Every status source derived from those reads "running" forever (#296).
+    dagman.out is the one file DAGMan itself always closes out — every session
+    ends with ``**** condor_scheduniv_exec.<id> (condor_DAGMAN) pid <pid>
+    EXITING WITH STATUS <n>``, abort or not.
+
+    Reads only the file tail: discover_projects() calls get_run_status() per
+    run per listing request, so this must stay a cheap disk read, never a
+    condor-querying subprocess. The *last* EXITING line wins, and only when no
+    STARTING UP banner follows it — a later banner means a rescue/re-run is
+    live in the same file.
+    """
+    candidates = glob.glob(os.path.join(run_dir, "*.dag.dagman.out"))
+    if not candidates:
+        return None
+    # A rescue DAG can leave several dagman.out files; the newest is the one
+    # describing the current/last session.
+    path = max(candidates, key=lambda p: os.path.getmtime(p))
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > _DAGMAN_OUT_TAIL_BYTES:
+                f.seek(size - _DAGMAN_OUT_TAIL_BYTES)
+            tail = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+    exit_code: int | None = None
+    for line in tail.splitlines():
+        m = _DAGMAN_EXITING_RE.search(line)
+        if m:
+            try:
+                exit_code = int(m.group(1))
+            except ValueError:
+                continue
+        elif _DAGMAN_STARTUP_MARKER in line and exit_code is not None:
+            # A session started after the last recorded exit — live again.
+            exit_code = None
+
+    if exit_code is None:
+        return None
+    # A clean exit (0) normally also wrote workflow_end/DAGMAN_FINISHED, so in
+    # practice this path converts zombies to "failed"; handle 0 anyway.
+    return "succeeded" if exit_code == 0 else "failed"
+
+
 def _pegasus_status(run_dir: str) -> str | None:
     """Authoritative live status via ``pegasus-status``. Parses the DAG STATE
     column (Success/Failure/Running). Returns None if pegasus-status is
@@ -379,7 +493,16 @@ def get_run_status(run_dir: str) -> str:
     """
     events = read_events(run_dir)
     if events:
-        return event_workflow_status(events)
+        status = event_workflow_status(events)
+        if status == "running":
+            # The event stream is truthful ("no end event seen") but not
+            # sufficient: an abnormal DAGMan death takes monitord with it, so
+            # no end event is ever written and the run reads "running"
+            # forever (#296). Cross-check that DAGMan is actually alive.
+            terminal = dagman_exit_status(run_dir)
+            if terminal:
+                return terminal
+        return status
 
     # Terminal status from jobstate.log is fast and definitive — trust it and
     # skip the (slower, condor-querying) pegasus-status call.
@@ -416,16 +539,48 @@ def get_run_status(run_dir: str) -> str:
 # body in the default thread-pool executor (the pattern dashboard.py used).
 
 
+async def _user_scan_config() -> tuple[list[str], list[str]]:
+    """User-configured extra scan roots and exclude fragments from settings
+    (written by routers/settings.py's workflow-scan endpoints).
+
+    Soft-failing by design: settings being unreadable (no DB in a bare unit
+    test, a corrupt row) must degrade to the env-default scan, never break
+    discovery — an empty Workflows page with no cause is the failure mode
+    this avoids. Validation happens at the PUT endpoint; this trusts shape
+    only as far as "list of strings"."""
+    try:
+        from main import db
+
+        roots = await db.get_setting("workflow_scan_roots", []) or []
+        excludes = await db.get_setting("workflow_scan_excludes", []) or []
+        return (
+            [r for r in roots if isinstance(r, str) and os.path.isabs(r)],
+            [e for e in excludes if isinstance(e, str) and e.strip()],
+        )
+    except Exception:  # noqa: BLE001 — discovery must survive settings issues
+        return [], []
+
+
 async def discover_runs_async(workspace: str | None = None) -> list[dict[str, Any]]:
+    extra_roots, extra_excludes = await _user_scan_config()
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, discover_runs, workspace)
+    return await loop.run_in_executor(
+        None,
+        lambda: discover_runs(
+            workspace, extra_roots=extra_roots, extra_excludes=extra_excludes
+        ),
+    )
 
 
 async def discover_projects_async(
     workspace: str | None = None,
 ) -> list[dict[str, Any]]:
+    _, extra_excludes = await _user_scan_config()
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, discover_projects, workspace)
+    return await loop.run_in_executor(
+        None,
+        lambda: discover_projects(workspace, extra_excludes=extra_excludes),
+    )
 
 
 async def get_run_status_async(run_dir: str) -> str:
