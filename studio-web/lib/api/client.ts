@@ -83,6 +83,37 @@ export async function updateRegistrySettings(data: {
   });
 }
 
+// --- Workflow discovery (extra scan roots / exclude fragments, #306) ---
+
+export interface WorkflowScanSettings {
+  /** User-added directories scanned for runs, merged with the env default. */
+  roots: string[];
+  /** User-added exclude fragments, merged with the builtin list. */
+  excludes: string[];
+  /** Roots that don't exist right now (unmounted volume, typo) — scanned
+      anyway once they appear, but worth surfacing. */
+  missing_roots: string[];
+  defaults: {
+    scan_root: string;
+    workflows_dir: string;
+    builtin_excludes: string[];
+  };
+}
+
+export async function getWorkflowScanSettings() {
+  return request<WorkflowScanSettings>("/settings/workflow-scan");
+}
+
+export async function updateWorkflowScanSettings(data: {
+  roots: string[];
+  excludes: string[];
+}) {
+  return request<WorkflowScanSettings>("/settings/workflow-scan", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
 // --- LLM ---
 
 export interface LLMConfig {

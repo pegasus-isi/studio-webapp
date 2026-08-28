@@ -8,9 +8,11 @@ import services.workflow_scanner as ws
 
 
 def test_async_wrappers_delegate_to_sync_bodies(monkeypatch):
-    monkeypatch.setattr(ws, "discover_runs", lambda w=None: [{"run_id": "r1"}])
     monkeypatch.setattr(
-        ws, "discover_projects", lambda w=None: [{"project_id": "p1"}]
+        ws, "discover_runs", lambda w=None, **kw: [{"run_id": "r1"}]
+    )
+    monkeypatch.setattr(
+        ws, "discover_projects", lambda w=None, **kw: [{"project_id": "p1"}]
     )
     monkeypatch.setattr(ws, "get_run_status", lambda rd: "running")
 
@@ -22,12 +24,14 @@ def test_async_wrappers_delegate_to_sync_bodies(monkeypatch):
 def test_wrappers_pass_workspace_through(monkeypatch):
     seen = {}
     monkeypatch.setattr(
-        ws, "discover_runs", lambda w=None: seen.setdefault("runs", w) or []
+        ws,
+        "discover_runs",
+        lambda w=None, **kw: seen.setdefault("runs", w) or [],
     )
     monkeypatch.setattr(
         ws,
         "discover_projects",
-        lambda w=None: seen.setdefault("projects", w) or [],
+        lambda w=None, **kw: seen.setdefault("projects", w) or [],
     )
 
     asyncio.run(ws.discover_runs_async("/ws"))
