@@ -1085,6 +1085,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
     messages = body.get("messages", [])
     model_override = body.get("model", "")
     provider_override = body.get("provider", "")
+    max_tokens_override = body.get("max_tokens")
     agent_id = body.get("agent", "general")
     request_id = body.get("request_id", str(uuid.uuid4()))
     conversation_id = body.get("conversation_id")
@@ -1152,8 +1153,15 @@ async def chat_stream(request: Request) -> StreamingResponse:
     # and endpoint decide, which is what reasoning models need — a fixed cap is
     # spent on thinking tokens before any content or tool call is emitted.
     # The Anthropic transport requires a value and falls back to its default.
+    # Per-request override wins, exactly as provider/model do. The stored
+    # value is global — one row, shared by every provider and model a request
+    # can select — so an evaluation harness or a caller that knows the model
+    # cannot express "this model needs more room" through config alone.
     max_tokens = _coerce_max_tokens(
-        (config.get("extra_config") or {}).get("max_tokens"), provider
+        max_tokens_override
+        if max_tokens_override is not None
+        else (config.get("extra_config") or {}).get("max_tokens"),
+        provider,
     )
 
     system_prompt = _load_system_prompt(agent_id)

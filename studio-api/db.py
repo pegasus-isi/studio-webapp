@@ -419,11 +419,16 @@ class Database:
         # Also sync to llm_config table for backward compatibility
         config = await self.get_provider_config(provider_id)
         if config:
+            # Carry the existing extra_config across. Omitting it wrote {},
+            # so activating any provider silently discarded settings such as
+            # wire_api and max_tokens — and activation is routine, not rare.
+            existing = await self.get_llm_config()
             await self.set_llm_config(
                 provider=config["provider_id"],
                 model=config["default_model"] or None,
                 api_key=config["api_key"] or None,
                 base_url=config["base_url"] or None,
+                extra_config=(existing or {}).get("extra_config") or {},
             )
 
     async def delete_provider_config(self, provider_id: str) -> None:

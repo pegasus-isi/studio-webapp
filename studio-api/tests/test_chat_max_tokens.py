@@ -75,3 +75,51 @@ def test_coerce_max_tokens_accepts_positive_int_and_numeric_string():
 def test_coerce_max_tokens_drops_unusable_values():
     for bad in (None, 0, -1, "", "lots", [], {}):
         assert chat._coerce_max_tokens(bad, "p") is None
+
+
+# ── per-request override (body wins over the global stored config) ────────
+
+def _stream_body(monkeypatch, request_body: dict, stored: dict | None = None) -> dict:
+    """POST /api/chat/stream and return the max_tokens the transport received."""
+    from fastapi.testclient import TestClient
+    import main
+
+    seen: dict = {}
+
+    async def fake_dispatch(client_, base_url, api_key, model, messages,
+                            system_prompt, wire_api, max_tokens=None):
+        seen["max_tokens"] = max_tokens
+        yield {"type": "text", "text": "ok"}
+        yield {"type": "result",
+               "result": {"content": "ok", "tool_calls": [], "usage": {}}}
+
+    monkeypatch.setattr(chat, "_openai_dispatch", fake_dispatch)
+
+    async def fake_config():
+        return {"provider": "custom-x", "model": "m", "api_key": "k",
+                "base_url": "http://endpoint/v1", "extra_config": stored or {}}
+
+    monkeypatch.setattr(main.db, "get_llm_config", fake_config)
+
+    with TestClient(main.app) as client:
+        client.post("/api/chat/stream", json={
+            "messages": [{"role": "user", "content": "hi"}], **request_body})
+    return seen
+
+
+def test_request_max_tokens_overrides_stored(monkeypatch):
+    seen = _stream_body(monkeypatch, {"max_tokens": 32000}, stored={"max_tokens": 8192})
+    assert seen["max_tokens"] == 32000
+
+
+def test_stored_max_tokens_used_when_request_omits_it(monkeypatch):
+    seen = _stream_body(monkeypatch, {}, stored={"max_tokens": 8192})
+    assert seen["max_tokens"] == 8192
+
+
+def test_no_ceiling_when_neither_is_set(monkeypatch):
+    assert _stream_body(monkeypatch, {}, stored={})["max_tokens"] is None
+
+
+def test_bad_request_max_tokens_falls_back_to_no_ceiling(monkeypatch):
+    assert _stream_body(monkeypatch, {"max_tokens": "lots"}, stored={})["max_tokens"] is None
