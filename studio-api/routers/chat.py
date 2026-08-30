@@ -107,6 +107,30 @@ _MAX_UI_RESULT_CHARS = 2000        # per tool result shown in the UI
 # stop_reason values that mean the model was cut off at the output-token cap.
 _TRUNCATED_STOP_REASONS = {"length", "max_tokens", "incomplete"}
 
+# Only the Anthropic Messages API makes max_tokens mandatory; the OpenAI
+# transports omit it and let the model decide. 8192 is the ceiling every
+# Messages-API model accepts — override per provider via extra_config.max_tokens.
+_ANTHROPIC_DEFAULT_MAX_TOKENS = 8192
+
+
+def _coerce_max_tokens(value: Any, provider: str) -> int | None:
+    """Validate an operator-supplied ``extra_config.max_tokens``.
+
+    The field is free-form JSON, so a bad value must not take the turn down
+    with it: anything that is not a positive integer is logged and dropped,
+    leaving the ceiling to the model.
+    """
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 0
+    if parsed <= 0:
+        log.warning("llm_max_tokens_invalid", provider=provider, value=value)
+        return None
+    return parsed
+
 
 def _clip_ui_result(text: str) -> str:
     """Cap a tool result shown in the UI, with a visible marker when clipped."""
@@ -491,12 +515,19 @@ async def _anthropic_stream(
     model: str,
     messages: list[dict],
     system_prompt: str,
+    max_tokens: int | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream the Anthropic Messages API.
 
     Yields ``{"type": "text", "text": delta}`` as tokens arrive and a final
     ``{"type": "result", "result": {...}}`` with the aggregated content, tool
     calls and usage (same shape the tool-calling loop expects).
+
+    Unlike the OpenAI transports, the Messages API *requires* ``max_tokens``,
+    so this is the one path that cannot defer the ceiling to the model. When
+    ``extra_config.max_tokens`` is unset we send ``_ANTHROPIC_DEFAULT_MAX_TOKENS``
+    — the ceiling every Messages-API model accepts. Raise it per provider for
+    models that allow more.
     """
     url = f"{base_url}/v1/messages"
     headers = {
@@ -506,7 +537,7 @@ async def _anthropic_stream(
     }
     body = {
         "model": model,
-        "max_tokens": 8192,
+        "max_tokens": max_tokens or _ANTHROPIC_DEFAULT_MAX_TOKENS,
         "system": system_prompt,
         "messages": messages,
         "tools": TOOL_DEFINITIONS_ANTHROPIC,
@@ -591,10 +622,16 @@ async def _openai_stream(
     model: str,
     messages: list[dict],
     system_prompt: str,
+    max_tokens: int | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream an OpenAI-compatible /chat/completions response.
 
     Yields text deltas then a final aggregated result (see _anthropic_stream).
+
+    ``max_tokens`` is omitted unless configured, so the ceiling is whatever the
+    model and endpoint allow. A fixed cap here truncates reasoning models —
+    their thinking tokens are billed against the same budget, so a small
+    ceiling can be spent before any content or tool call is emitted.
     """
     url = f"{base_url}/chat/completions"
     headers: dict[str, str] = {"content-type": "application/json"}
@@ -602,15 +639,16 @@ async def _openai_stream(
         headers["authorization"] = f"Bearer {api_key}"
 
     full_messages = [{"role": "system", "content": system_prompt}] + messages
-    body = {
+    body: dict[str, Any] = {
         "model": model,
         "messages": full_messages,
         "tools": TOOL_DEFINITIONS,
-        "max_tokens": 8192,
         "stream": True,
         # Ask for usage in the terminal chunk (OpenAI + most compatible proxies).
         "stream_options": {"include_usage": True},
     }
+    if max_tokens:
+        body["max_tokens"] = max_tokens
 
     content = ""
     tool_frags: dict[int, dict[str, str]] = {}
@@ -774,25 +812,29 @@ async def _openai_responses_stream(
     model: str,
     messages: list[dict],
     system_prompt: str,
+    max_tokens: int | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream the OpenAI Responses API (/responses).
 
     Text deltas are forwarded live; tool calls and usage come from the terminal
     ``response.completed`` event (whose payload matches the non-streaming shape).
+
+    ``max_output_tokens`` is omitted unless configured (see _openai_stream).
     """
     url = f"{base_url}/responses"
     headers: dict[str, str] = {"content-type": "application/json"}
     if api_key:
         headers["authorization"] = f"Bearer {api_key}"
 
-    body = {
+    body: dict[str, Any] = {
         "model": model,
         "instructions": system_prompt,
         "input": _messages_to_responses_input(messages),
         "tools": _tools_for_responses(),
-        "max_output_tokens": 8192,
         "stream": True,
     }
+    if max_tokens:
+        body["max_output_tokens"] = max_tokens
 
     content = ""
     final: dict[str, Any] | None = None
@@ -840,6 +882,7 @@ async def _openai_dispatch(
     messages: list[dict],
     system_prompt: str,
     wire_api: str = "auto",
+    max_tokens: int | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream via Chat Completions or the Responses API, picking the transport.
 
@@ -860,12 +903,12 @@ async def _openai_dispatch(
     """
     def responses() -> AsyncGenerator[dict[str, Any], None]:
         return _openai_responses_stream(
-            client, base_url, api_key, model, messages, system_prompt
+            client, base_url, api_key, model, messages, system_prompt, max_tokens
         )
 
     def chat() -> AsyncGenerator[dict[str, Any], None]:
         return _openai_stream(
-            client, base_url, api_key, model, messages, system_prompt
+            client, base_url, api_key, model, messages, system_prompt, max_tokens
         )
 
     if wire_api == "responses" or base_url in _RESPONSES_ENDPOINTS or (
@@ -1105,6 +1148,14 @@ async def chat_stream(request: Request) -> StreamingResponse:
     # for a provider whose model id isn't auto-detected.
     wire_api = (config.get("extra_config") or {}).get("wire_api", "auto")
 
+    # Optional output ceiling: extra_config.max_tokens. Unset means the model
+    # and endpoint decide, which is what reasoning models need — a fixed cap is
+    # spent on thinking tokens before any content or tool call is emitted.
+    # The Anthropic transport requires a value and falls back to its default.
+    max_tokens = _coerce_max_tokens(
+        (config.get("extra_config") or {}).get("max_tokens"), provider
+    )
+
     system_prompt = _load_system_prompt(agent_id)
 
     # Workflow/run scope from the chat panel's context picker. Resolved fresh
@@ -1204,12 +1255,13 @@ async def chat_stream(request: Request) -> StreamingResponse:
                         if is_anthropic:
                             stream = _anthropic_stream(
                                 client, base_url, api_key, model,
-                                conv_messages, system_prompt,
+                                conv_messages, system_prompt, max_tokens,
                             )
                         else:
                             stream = _openai_dispatch(
                                 client, base_url, api_key, model,
                                 conv_messages, system_prompt, wire_api,
+                                max_tokens,
                             )
                         async for ev in stream:
                             # Client cancelled mid-stream — stop and release the
