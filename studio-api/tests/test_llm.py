@@ -295,3 +295,33 @@ def test_a_keyless_preset_never_becomes_the_active_provider(client):
     })
     assert resp.status_code == 200
     assert resp.json()["is_active"] is True
+
+
+# --- activation must not discard extra_config ---
+
+
+def test_activating_a_provider_keeps_extra_config(client):
+    """extra_config survives activation.
+
+    It is global (one llm_config row), and activation used to write it as {},
+    so switching provider silently discarded wire_api / max_tokens. Activation
+    is routine, so the loss looked like the setting never applying at all.
+    """
+    _add_provider(client, "custom-abc", active=True)
+    client.put(
+        "/api/llm/config",
+        json={
+            "provider": "custom",
+            "model": "m",
+            "api_key": "k",
+            "base_url": "https://x/v1",
+            "extra_config": {"max_tokens": 16384, "wire_api": "chat"},
+        },
+    )
+
+    _add_provider(client, "custom-def", active=False)
+    assert client.post("/api/llm/provider-configs/custom-def/activate").status_code == 200
+
+    extra = client.get("/api/llm/config").json()["extra_config"]
+    assert extra.get("max_tokens") == 16384
+    assert extra.get("wire_api") == "chat"
