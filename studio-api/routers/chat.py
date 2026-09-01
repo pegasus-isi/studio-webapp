@@ -72,6 +72,53 @@ _MAX_TOOL_ROUNDS = 50
 _MAX_STREAM_RETRIES = 2
 _STREAM_RETRY_DELAY_S = 1.5
 
+# How often to emit an SSE comment while a round is in flight but silent.
+# nginx caps the /api/ location at proxy_read_timeout (300s here), and an
+# ingress in front of a real deployment will have its own limit, so the stream
+# has to prove it is alive from the application side rather than relying on
+# proxy configuration. Well under any plausible proxy timeout.
+_HEARTBEAT_INTERVAL_S = 20.0
+
+_HEARTBEAT = {"type": "__heartbeat__"}
+
+
+async def _with_heartbeat(
+    stream: AsyncGenerator[dict[str, Any], None],
+    interval: float = _HEARTBEAT_INTERVAL_S,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Yield a stream's events, emitting `_HEARTBEAT` whenever it goes quiet.
+
+    A reasoning model can spend minutes on thinking tokens before the first
+    text delta of a round. The per-round ping is emitted *before* the round, so
+    it does not help inside one: the proxy sees no bytes for the whole think and
+    drops the connection, which reaches the client as a bare network error.
+
+    Awaiting the next event as a task lets the wait be bounded without
+    disturbing the stream — nothing is consumed until it actually arrives.
+    """
+    it = stream.__aiter__()
+    pending: asyncio.Task | None = None
+    try:
+        while True:
+            pending = asyncio.ensure_future(it.__anext__())
+            while True:
+                done, _ = await asyncio.wait({pending}, timeout=interval)
+                if done:
+                    break
+                yield _HEARTBEAT
+            try:
+                event = pending.result()
+            except StopAsyncIteration:
+                return
+            finally:
+                pending = None
+            yield event
+    finally:
+        # Caller broke out (client gone, tool round finished early): the
+        # in-flight __anext__ must not outlive this generator.
+        if pending is not None and not pending.done():
+            pending.cancel()
+
 
 def _transport_error_message(
     exc: Exception, base_url: str, mid_stream: bool
@@ -1263,12 +1310,15 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                 conv_messages, system_prompt, wire_api,
                                 max_tokens,
                             )
-                        async for ev in stream:
+                        async for ev in _with_heartbeat(stream):
                             # Client cancelled mid-stream — stop and release the
                             # HTTP connection instead of draining the response.
                             if request_id not in _active_clients:
                                 await stream.aclose()
                                 return
+                            if ev["type"] == "__heartbeat__":
+                                yield ": ping\n\n"
+                                continue
                             if ev["type"] == "text":
                                 emitted_text = True
                                 yield f"data: {json.dumps({'content': ev['text']})}\n\n"
