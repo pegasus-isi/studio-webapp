@@ -165,6 +165,68 @@ def test_normalize_rejects_non_http_repo_urls():
     assert ok is not None
 
 
+def test_comma_joined_topics_split_into_separate_tags():
+    """The registry's `topic` is free text (#314).
+
+    "Machine-Learning, Optuna, Pytorch-Cnn, Transfer-Learning" arrived as one
+    filter chip that matched a single workflow, while "Machine Learning" and
+    "Machine-Learning" sat beside it as two more chips for the same subject.
+    """
+    entry = mkt._normalize(
+        {
+            "repo_url": "https://github.com/x/mask-detection-workflow",
+            "topic": "Machine-Learning, Optuna, Pytorch-Cnn, Transfer-Learning",
+        },
+        "PegasusHub",
+    )
+    assert entry is not None
+    assert entry["topics"] == [
+        "machine learning",
+        "optuna",
+        "pytorch cnn",
+        "transfer learning",
+    ]
+    # `topic` stays a plain string for any client still reading it.
+    assert entry["topic"] == "machine learning"
+
+
+def test_topic_case_and_hyphen_variants_fold_together():
+    variants = ["Machine Learning", "machine-learning", "  MACHINE_LEARNING  "]
+    folded = {
+        mkt._normalize(
+            {"repo_url": "https://github.com/x/y", "topic": v}, "PegasusHub"
+        )["topic"]
+        for v in variants
+    }
+    assert folded == {"machine learning"}
+
+
+def test_missing_topic_yields_no_tags_rather_than_an_empty_one():
+    entry = mkt._normalize({"repo_url": "https://github.com/x/y"}, "PegasusHub")
+    assert entry["topics"] == []
+    assert entry["topic"] == ""
+
+
+def test_name_falls_back_to_a_readable_title_not_the_repo_slug():
+    cases = {
+        "https://github.com/x/variant-calling-pegasus-workflow": "Variant Calling",
+        "https://github.com/x/lung-instance-segmentation-workflow": "Lung Instance Segmentation",
+        "https://github.com/x/1000genome-workflow": "1000genome",
+        "https://github.com/x/montage-workflow-v3": "Montage Workflow V3",
+    }
+    for url, expected in cases.items():
+        entry = mkt._normalize({"repo_url": url}, "PegasusHub")
+        assert entry["name"] == expected, url
+
+
+def test_an_explicit_registry_name_is_never_overridden():
+    entry = mkt._normalize(
+        {"repo_url": "https://github.com/x/y-workflow", "name": "Orcasound workflow"},
+        "PegasusHub",
+    )
+    assert entry["name"] == "Orcasound workflow"
+
+
 def test_add_refuses_non_http_repo_url(client, monkeypatch, tmp_path):
     """Defense in depth behind the _normalize filter: even if a bad URL
     reached the catalog, add must refuse before ever exec'ing git."""

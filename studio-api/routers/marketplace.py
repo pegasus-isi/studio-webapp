@@ -122,6 +122,47 @@ def _id_from_repo(url: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]", "-", slug) or "workflow"
 
 
+def _topics(raw: str) -> list[str]:
+    """Split a registry `topic` string into normalized tags (#314).
+
+    The registry is community-editable and its `topic` field is free text, so
+    it arrives as things like "Machine-Learning, Optuna, Pytorch-Cnn,
+    Transfer-Learning". Passing that through whole made it a single filter chip
+    that matched exactly one workflow, while "Machine Learning" and
+    "Machine-Learning" sat beside it as two more. Nine of thirteen chips
+    returned one result each.
+
+    Splitting on commas/slashes and folding case and hyphens collapses those
+    back into the handful of real subject areas the catalog actually has.
+    """
+    tags: list[str] = []
+    for part in re.split(r"[,/;|]+", raw or ""):
+        tag = re.sub(r"[-_]+", " ", part).strip().lower()
+        tag = re.sub(r"\s+", " ", tag)
+        if tag and tag not in tags:
+            tags.append(tag)
+    return tags
+
+
+def _name_from_slug(slug: str) -> str:
+    """A readable name from a repo slug, for registry entries with no `name`.
+
+    "variant-calling-pegasus-workflow" is an identifier, not a title, and every
+    card carrying one repeats the word "workflow" that is already in the page
+    heading, the search placeholder and the description.
+    """
+    words = re.sub(r"[-_]+", " ", slug).strip()
+    # Trailing "workflow"/"pegasus workflow" is noise on a page of workflows.
+    words = re.sub(r"\s*(pegasus\s+)?workflow$", "", words, flags=re.IGNORECASE)
+    words = re.sub(r"^pegasus\s+", "", words, flags=re.IGNORECASE).strip()
+    if not words:
+        return slug
+    # Title-case, but leave anything already mixed-case or numeric alone so
+    # "1000genome", "v3" and "LLM" survive.
+    return " ".join(w if (w != w.lower() or w[:1].isdigit()) else w.capitalize()
+                    for w in words.split())
+
+
 def _normalize(entry: dict[str, Any], source: str) -> dict[str, Any] | None:
     repo = str(entry.get("repo_url") or entry.get("github_repo") or "").strip()
     # The registry is community-editable, so repo_url is untrusted input to
@@ -130,11 +171,17 @@ def _normalize(entry: dict[str, Any], source: str) -> dict[str, Any] | None:
     # enter the catalog.
     if not repo.startswith(("https://", "http://")):
         return None
+    slug = _id_from_repo(repo)
+    raw_topic = str(entry.get("topic") or "")
+    topics = _topics(raw_topic)
     return {
-        "id": entry.get("id") or _id_from_repo(repo),
-        "name": entry.get("name") or _id_from_repo(repo),
+        "id": entry.get("id") or slug,
+        "name": entry.get("name") or _name_from_slug(slug),
         "description": entry.get("description") or "",
-        "topic": entry.get("topic") or "",
+        # `topic` stays a single string for any client still reading it; the
+        # split list is what the filter chips should use.
+        "topic": topics[0] if topics else "",
+        "topics": topics,
         "repo_url": repo,
         "image": entry.get("image") or "",
         "license": entry.get("license") or "",

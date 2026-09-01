@@ -21,18 +21,25 @@ const config: Config = {
           DEFAULT: "var(--c-accent)",
           fg: "var(--c-accent-fg)",
         },
-        // Pegasus brand scale, retuned to the official site's sky accent.
+        // Pegasus brand scale — cornflower/periwinkle (#314), sampled from the
+        // redesign prototype. The scale name is unchanged so the ~250 existing
+        // `pegasus-*` utilities reskin without touching every component.
+        //
+        // The 500→600 step is deliberately a cliff rather than an even
+        // interval: 500 is the sampled hero value and 600 is the first shade
+        // that carries white text at AA. Everything filled lives at 600+,
+        // everything decorative at 500-.
         pegasus: {
-          50: "#f0f9ff",
-          100: "#e0f2fe",
-          200: "#bae6fd",
-          300: "#7dd3fc",
-          400: "#38bdf8", // dark-mode accent
-          500: "#0ea5e9", // light-mode accent
-          600: "#0284c7",
-          700: "#0369a1",
-          800: "#075985",
-          900: "#0c4a6e",
+          50: "#f3f6ff",
+          100: "#e7eefc",
+          200: "#cfdef7",
+          300: "#aac4ee", // dark-mode text — 10.3:1 on the navy base
+          400: "#84a9e4", // dark-mode accent
+          500: "#6c9cde", // the sampled value; resting fills, non-critical borders
+          600: "#3f6fb8", // filled actions — white text at 5.03:1
+          700: "#35639f", // link/active text on light, and 600's hover
+          800: "#274a78",
+          900: "#1b3252",
         },
       },
       fontFamily: {
