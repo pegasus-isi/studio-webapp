@@ -740,7 +740,11 @@ export interface MarketplaceWorkflow {
   id: string;
   name: string;
   description: string;
+  /** First entry of `topics`, kept for compatibility. Prefer `topics`. */
   topic: string;
+  /** Normalized subject tags — the registry's free-text `topic`, split and
+   *  case/hyphen folded server-side (#314). */
+  topics?: string[];
   repo_url: string;
   image: string;
   license: string;

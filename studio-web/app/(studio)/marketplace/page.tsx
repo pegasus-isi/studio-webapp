@@ -7,6 +7,40 @@ import * as api from "@/lib/api/client";
 import { appRelativePath } from "@/lib/urls";
 import { AppLink } from "@/components/layout/app-link";
 
+/** Tags for a workflow, tolerating an older API that only sends `topic`. */
+function topicsOf(w: MarketplaceWorkflow): string[] {
+  if (w.topics?.length) return w.topics;
+  return w.topic ? [w.topic] : [];
+}
+
+function TopicChip({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={
+        "rounded-full border px-3 py-1 text-xs font-medium capitalize " +
+        (active
+          ? "border-pegasus-500 bg-pegasus-50 text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300"
+          : "border-line text-fgmuted hover:bg-base")
+      }
+    >
+      {label}
+      <span className="ml-1 font-mono text-[10px] text-fgsubtle">{count}</span>
+    </button>
+  );
+}
+
 export default function MarketplacePage() {
   const qc = useQueryClient();
   const { data, isLoading, error } = useQuery({
@@ -24,13 +58,33 @@ export default function MarketplacePage() {
     },
   });
 
+  const [showAllTopics, setShowAllTopics] = useState(false);
+
   const workflows = data?.workflows ?? [];
-  const topics = useMemo(() => {
-    const set = new Set(workflows.map((w) => w.topic).filter(Boolean));
-    return ["all", ...Array.from(set).sort()];
+
+  // A workflow can sit under several subjects now that the registry's
+  // free-text topic is split server-side (#314), so the chip set is built from
+  // the flattened tags with counts, most-populated first. Filters that match a
+  // single workflow are real but not worth the width — they go behind "More",
+  // which is most of them.
+  const tagCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const w of workflows) {
+      for (const t of topicsOf(w)) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort(
+      (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
+    );
   }, [workflows]);
+
+  const primaryTags = tagCounts.filter(([, n]) => n > 1);
+  const restTags = tagCounts.filter(([, n]) => n <= 1);
+  const visibleTags = showAllTopics ? tagCounts : primaryTags;
+
   const shown =
-    topic === "all" ? workflows : workflows.filter((w) => w.topic === topic);
+    topic === "all"
+      ? workflows
+      : workflows.filter((w) => topicsOf(w).includes(topic));
 
   return (
     <div className="h-full overflow-auto">
@@ -58,22 +112,34 @@ export default function MarketplacePage() {
           </div>
         )}
 
-        {!isLoading && topics.length > 2 && (
-          <div className="mb-4 flex flex-wrap gap-2">
-            {topics.map((t) => (
-              <button
+        {!isLoading && tagCounts.length > 1 && (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <TopicChip
+              label="All"
+              count={workflows.length}
+              active={topic === "all"}
+              onClick={() => setTopic("all")}
+            />
+            {visibleTags.map(([t, n]) => (
+              <TopicChip
                 key={t}
+                label={t}
+                count={n}
+                active={topic === t}
                 onClick={() => setTopic(t)}
-                className={
-                  "rounded-full border px-3 py-1 text-xs font-medium capitalize " +
-                  (topic === t
-                    ? "border-pegasus-500 bg-pegasus-50 text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300"
-                    : "border-line text-fgmuted hover:bg-base")
-                }
-              >
-                {t}
-              </button>
+              />
             ))}
+            {restTags.length > 0 && !showAllTopics && (
+              <button
+                onClick={() => setShowAllTopics(true)}
+                className="rounded-full border border-dashed border-line px-3 py-1 text-xs font-medium text-fgmuted hover:bg-base"
+              >
+                More subjects
+                <span className="ml-1 font-mono text-fgsubtle">
+                  {restTags.length}
+                </span>
+              </button>
+            )}
           </div>
         )}
 
@@ -138,10 +204,17 @@ function WorkflowCard({
             {w.source}
           </span>
         </div>
-        {w.topic && (
-          <span className="mt-1 w-fit rounded bg-pegasus-50 px-1.5 py-0.5 text-[10px] font-medium capitalize text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300">
-            {w.topic}
-          </span>
+        {topicsOf(w).length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {topicsOf(w).map((t) => (
+              <span
+                key={t}
+                className="w-fit rounded bg-pegasus-50 px-1.5 py-0.5 text-[10px] font-medium capitalize text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
         )}
         <p className="mt-2 flex-1 text-xs leading-relaxed text-fgmuted">
           {w.description || "Pegasus workflow."}
