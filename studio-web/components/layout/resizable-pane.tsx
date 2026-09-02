@@ -22,6 +22,22 @@ interface Props {
   defaultWidth?: number;
   minWidth?: number;
   maxWidth?: number;
+  /**
+   * Which edge the pane is anchored to. A left pane's drag handle is on its
+   * right and widens as the pointer moves right; a right pane is the mirror
+   * of that, and getting the sign wrong makes it shrink when you pull it
+   * wider.
+   */
+  side?: "left" | "right";
+  /** Panes with their own close control don't need a second way to hide. */
+  collapsible?: boolean;
+  /**
+   * Whether the pane scrolls its children. False for anything that manages
+   * its own scrolling internally — the chat has a scrolling transcript and a
+   * pinned composer, and an outer scroller would fight both.
+   */
+  scroll?: boolean;
+  label?: string;
   children: React.ReactNode;
 }
 
@@ -30,6 +46,10 @@ export function ResizablePane({
   defaultWidth = 384, // the previous fixed w-96, so nothing moves on first load
   minWidth = 240,
   maxWidth = 720,
+  side = "left",
+  collapsible = true,
+  scroll = true,
+  label = "the list",
   children,
 }: Props) {
   const [width, setWidth] = useState(defaultWidth);
@@ -73,9 +93,12 @@ export function ResizablePane({
     if (!dragging) return;
 
     const onMove = (e: MouseEvent) => {
-      const left = paneRef.current?.getBoundingClientRect().left ?? 0;
-      const next = Math.min(maxWidth, Math.max(minWidth, e.clientX - left));
-      setWidth(next);
+      const box = paneRef.current?.getBoundingClientRect();
+      const raw =
+        side === "right"
+          ? (box?.right ?? 0) - e.clientX
+          : e.clientX - (box?.left ?? 0);
+      setWidth(Math.min(maxWidth, Math.max(minWidth, raw)));
     };
     const onUp = () => {
       setDragging(false);
@@ -97,7 +120,7 @@ export function ResizablePane({
       document.body.style.userSelect = previousSelect;
       document.body.style.cursor = "";
     };
-  }, [dragging, minWidth, maxWidth, persist]);
+  }, [dragging, minWidth, maxWidth, persist, side]);
 
   const toggleCollapsed = () => {
     const next = !collapsed;
@@ -110,7 +133,8 @@ export function ResizablePane({
     const step = e.shiftKey ? 64 : 16;
     if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
       e.preventDefault();
-      const delta = e.key === "ArrowLeft" ? -step : step;
+      const grow = side === "right" ? e.key === "ArrowLeft" : e.key === "ArrowRight";
+      const delta = grow ? step : -step;
       const next = Math.min(maxWidth, Math.max(minWidth, width + delta));
       setWidth(next);
       persist({ width: next, collapsed });
@@ -120,13 +144,18 @@ export function ResizablePane({
     }
   };
 
-  if (collapsed) {
+  if (collapsed && collapsible) {
     return (
-      <div className="flex shrink-0 items-start border-r border-line bg-surface">
+      <div
+        className={cn(
+          "flex shrink-0 items-start bg-surface",
+          side === "right" ? "border-l border-line" : "border-r border-line"
+        )}
+      >
         <button
           onClick={toggleCollapsed}
-          title="Show the list"
-          aria-label="Show the list"
+          title={`Show ${label}`}
+          aria-label={`Show ${label}`}
           aria-expanded={false}
           className="px-2 py-3 text-fgsubtle hover:text-fg"
         >
@@ -141,7 +170,9 @@ export function ResizablePane({
             strokeLinejoin="round"
             aria-hidden="true"
           >
-            <polyline points="9 18 15 12 9 6" />
+            <polyline
+              points={side === "right" ? "15 18 9 12 15 6" : "9 18 15 12 9 6"}
+            />
           </svg>
         </button>
       </div>
@@ -152,43 +183,55 @@ export function ResizablePane({
     <div
       ref={paneRef}
       style={{ width }}
-      className="relative flex shrink-0 flex-col border-r border-line bg-surface"
+      className={cn(
+        "relative flex shrink-0 flex-col bg-surface",
+        side === "right" ? "border-l border-line" : "border-r border-line"
+      )}
     >
       {/* Collapse control, top-right (#314).
           It used to sit at the bottom of the pane, below the list — past a
           scroll on any real workspace, which is the same as not being there.
           Once you have picked a workflow the list is the least useful thing on
           screen, so getting rid of it has to be the easiest thing to find. */}
-      <button
-        onClick={toggleCollapsed}
-        title="Hide the list"
-        aria-label="Hide the list"
-        aria-expanded
-        className="absolute right-1.5 top-1.5 z-10 rounded-md p-1 text-fgsubtle transition-colors hover:bg-muted hover:text-fg"
-      >
-        <svg
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
+      {collapsible && (
+        <button
+          onClick={toggleCollapsed}
+          title={`Hide ${label}`}
+          aria-label={`Hide ${label}`}
+          aria-expanded
+          className="absolute right-1.5 top-1.5 z-10 rounded-md p-1 text-fgsubtle transition-colors hover:bg-muted hover:text-fg"
         >
-          <polyline points="15 18 9 12 15 6" />
-        </svg>
-      </button>
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+      )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      <div
+        className={cn(
+          "min-h-0 flex-1",
+          scroll ? "overflow-y-auto" : "overflow-hidden"
+        )}
+      >
+        {children}
+      </div>
 
       {/* Drag handle. Wider than it looks (-right-1 .. w-2) because a 1px
           target is a fine line to hit and this is not a precision task. */}
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize the workflow list"
+        aria-label={`Resize ${label}`}
         tabIndex={0}
         onMouseDown={(e) => {
           e.preventDefault();
@@ -196,7 +239,8 @@ export function ResizablePane({
         }}
         onKeyDown={onHandleKeyDown}
         className={cn(
-          "absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize",
+          "absolute top-0 z-10 h-full w-2 cursor-col-resize",
+          side === "right" ? "-left-1" : "-right-1",
           "hover:bg-pegasus-400/40 focus:bg-pegasus-400/60 focus:outline-none",
           dragging && "bg-pegasus-400/60"
         )}

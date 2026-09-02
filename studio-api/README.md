@@ -28,7 +28,7 @@ studio-api/
 │                           # run_diagnosis, chat_turn, onboarding_metrics, …
 ├── init_db.py              # CLI: initialize / migrate the SQLite schema
 ├── propagate_llm.py        # CLI: propagate the saved LLM config to installed tools
-└── tests/                  # ~450 tests; no Pegasus/Condor/keys needed
+└── tests/                  # ~500 tests; no Pegasus/Condor/keys needed
 ```
 
 The SQLite DB (`~/.studio/studio.db`; an existing one is moved out of `~/work/.studio` on first start) has **8 tables**: `app_settings`,

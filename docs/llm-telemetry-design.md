@@ -1,6 +1,10 @@
 # LLM Interaction Telemetry — Design
 
-Status: **Draft for review**
+Status: **Proposal — not started** (verified 2026-09-02). Nothing in this
+document is built: there is no telemetry service, no collector and no
+telemetry references in `studio-api/` outside of tests for unrelated LLM
+config propagation. Read it as a design to argue with, not as a description
+of anything that exists.
 Scope: studio-webapp (PegasusAI chat) + LiteLLM gateway + GKE platform
 Goal: collect metrics **and prompt/response content** for LLM interactions
 across all clients (PegasusAI chat, opencode, other tools), with per-user cost
