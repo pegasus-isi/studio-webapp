@@ -79,7 +79,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
           'allow-same-origin',
           'allow-forms',
           'allow-popups',
-          'allow-downloads'
+          'allow-downloads',
+          'allow-modals'
         ]
       });
       iframe.url = chatUrl();
