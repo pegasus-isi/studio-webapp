@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { jupyterUrl, stripAppBasePath } from "@/lib/urls";
+import { stripAppBasePath } from "@/lib/urls";
 import { AppLink } from "@/components/layout/app-link";
 import { UserMenu } from "@/components/layout/user-menu";
 import { cn } from "@/lib/utils";
@@ -128,12 +128,14 @@ const PRIMARY_NAV: NavItem[] = [
   // halves of one task (#241, Phase 2).
   { href: "/data", label: "Data", icon: "data", tour: "nav-data" },
   { href: "/marketplace", label: "Examples", icon: "examples", tour: "nav-examples" },
-  // Notebooks opens the prefix-aware JupyterLab in a new tab.
+  // Notebooks is a Studio page that frames JupyterLab, not a link out of the
+  // app: leaving Studio to open a notebook cost you the rail, the assistant
+  // and your analyses. The page keeps an "Open in new tab" button for when
+  // that is what you actually want.
   {
-    href: "/jupyter/lab",
+    href: "/notebooks",
     label: "Notebooks",
     icon: "notebooks",
-    external: true,
     tour: "nav-notebooks",
   },
 ];
@@ -185,7 +187,7 @@ export function Sidebar() {
       return (
         <a
           key={item.href}
-          href={jupyterUrl("/lab")}
+          href={item.href}
           target="_blank"
           rel="noopener noreferrer"
           title={`${item.label} — opens in a new tab`}

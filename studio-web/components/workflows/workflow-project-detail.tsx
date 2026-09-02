@@ -13,6 +13,7 @@ import {
   useDeleteWorkflowProject,
 } from "@/lib/hooks/use-workflows";
 import type { WorkflowProjectRun } from "@/lib/api/client";
+import { AppLink } from "@/components/layout/app-link";
 import { DagViewer } from "@/components/workflows/dag-viewer";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { RunFlowPanel } from "@/components/workflows/run-flow-panel";
@@ -27,7 +28,7 @@ import {
 import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { useUIPreferences, useUpdateUIPreferences } from "@/lib/hooks/use-ui-prefs";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { apiUrl, jupyterUrl } from "@/lib/urls";
+import { apiUrl } from "@/lib/urls";
 import { cn, statusColor } from "@/lib/utils";
 
 interface Props {
@@ -479,15 +480,13 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                 and hunting for the path in JupyterLab's tree is the friction
                 this removes. */}
             {project.jupyter_path && (
-              <a
-                href={jupyterUrl(`/lab/tree/${project.jupyter_path}`)}
-                target="_blank"
-                rel="noopener noreferrer"
+              <AppLink
+                href={`/notebooks?path=${encodeURIComponent(project.jupyter_path)}`}
                 title="Open this workflow's folder in JupyterLab"
                 className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
               >
-                Open in JupyterLab ↗
-              </a>
+                Open in JupyterLab
+              </AppLink>
             )}
             <button
               onClick={() => setConfirmDeleteProject(true)}
@@ -618,15 +617,13 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                     </button>
                     <span className="flex items-center gap-2">
                       {run.jupyter_path && (
-                        <a
-                          href={jupyterUrl(`/lab/tree/${run.jupyter_path}`)}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <AppLink
+                          href={`/notebooks?path=${encodeURIComponent(run.jupyter_path)}`}
                           title="Open this run's folder in JupyterLab"
                           className="rounded border border-line px-2 py-0.5 text-xs text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
                         >
                           Files
-                        </a>
+                        </AppLink>
                       )}
                       <button
                         type="button"

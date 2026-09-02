@@ -20,7 +20,6 @@ import { useEffect, useState } from "react";
 import type { DashboardData } from "@/lib/api/client";
 import { useDashboard } from "@/lib/hooks/use-dashboard";
 import { usePanelStore } from "@/lib/stores/panel-store";
-import { jupyterUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 import { AppLink } from "@/components/layout/app-link";
 import { GlossaryList } from "@/components/ui/glossary-term";
@@ -392,17 +391,12 @@ export function DashboardView() {
               </Tile>
               <span className={actionLabel}>New workflow</span>
             </button>
-            <a
-              href={jupyterUrl("/lab")}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={actionClass}
-            >
+            <AppLink href="/notebooks" className={actionClass}>
               <Tile tone="indigo">
                 <Icon d={I.notebook} />
               </Tile>
               <span className={actionLabel}>Open notebook</span>
-            </a>
+            </AppLink>
             <AppLink href="/marketplace" className={actionClass}>
               <Tile tone="violet">
                 <Icon d={I.catalog} />
