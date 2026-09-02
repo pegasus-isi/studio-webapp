@@ -386,8 +386,20 @@ def _safe_path(path: str) -> str:
     """Resolve and validate path inside workspace."""
     if not path:
         return WORKSPACE_ROOT
-    if not os.path.isabs(path):
-        path = os.path.join(WORKSPACE_ROOT, path)
+    p = path.strip()
+    if not os.path.isabs(p):
+        # Tolerate both "workflows/..." and "work/workflows/..." (and repeats)
+        # — models prefix work/ because prompt says $HOME/work/workflows/...
+        base = os.path.basename(WORKSPACE_ROOT.rstrip(os.sep))  # "work" by default, dynamic if custom
+        # strip one or more leading "base/" segments
+        while True:
+            if p == base:
+                return WORKSPACE_ROOT
+            if p.startswith(base + os.sep):
+                p = p[len(base) + 1 :].lstrip(os.sep)
+                continue
+            break
+        path = os.path.join(WORKSPACE_ROOT, p)
     resolved = os.path.realpath(os.path.expanduser(path))
     root = os.path.realpath(WORKSPACE_ROOT)
     if not resolved.startswith(root + os.sep) and resolved != root:
