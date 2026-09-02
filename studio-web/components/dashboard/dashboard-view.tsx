@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { DashboardData } from "@/lib/api/client";
 import { useDashboard } from "@/lib/hooks/use-dashboard";
 import { usePanelStore } from "@/lib/stores/panel-store";
@@ -310,6 +311,15 @@ export function DashboardView() {
   const [tourOpen, setTourOpen] = useState(false);
   const [glossary, setGlossary] = useState(false);
 
+  // "Take a tour" in the account menu links here with ?tour=1, so the tour is
+  // restartable from any page rather than only from a link at the bottom of
+  // this one.
+  const searchParams = useSearchParams();
+  const tourRequested = searchParams.get("tour") === "1";
+  useEffect(() => {
+    if (tourRequested) setTourOpen(true);
+  }, [tourRequested]);
+
   // First visit runs the tour on its own. `welcome_dismissed` is the same
   // preference the old welcome card used, so anyone who already dismissed that
   // is not re-onboarded by the replacement.
@@ -449,7 +459,8 @@ export function DashboardView() {
 
           {/* Onboarding, on demand. The old welcome card explained Studio on
               the one screen with nothing to point at, and was gone by the time
-              you reached the pages it described (#317). */}
+              you reached the pages it described (#317). The same tour is in
+              the account menu, so it is restartable from anywhere. */}
           <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line pt-5 text-xs">
             <button
               onClick={() => setTourOpen(true)}
@@ -465,8 +476,7 @@ export function DashboardView() {
               What do the words mean?
             </button>
             <span className="text-fgsubtle">
-              Studio runs analyses across many machines for you. You don&apos;t
-              need to know how that part works.
+              You can restart the tour any time from the account menu.
             </span>
           </div>
 
