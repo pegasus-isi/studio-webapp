@@ -56,8 +56,12 @@ somewhere the interface never looks.
 **Check yourself before reporting done**: `ls workflows/<name>` must list your
 files. If it does not, you wrote them somewhere else.
 
-`<workflow-name>` is kebab-case and describes what the workflow does. **Ask the
-user for it before creating anything** — do not invent one.
+`<workflow-name>` is `<pipeline-name>-workflow`: the kebab-case name the user
+gave the analysis, followed by a `-workflow` suffix. An analysis the user calls
+`sensor-summary` lives in `sensor-summary-workflow/`. **Ask the user for the
+name before creating anything** — do not invent one — but add the suffix
+yourself: it is what the `pegasus-scaffold` skill instructs and what every
+shipped example workflow is called.
 
 **Everything for that workflow lives inside that one directory**, including
 documents you write about it. A specification, README, notes, the generator,
