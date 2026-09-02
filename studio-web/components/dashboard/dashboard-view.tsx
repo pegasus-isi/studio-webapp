@@ -7,16 +7,18 @@
  * where the rail links. See `app/(studio)/home/page.tsx` for why the second
  * route exists.
  *
- * A centred welcome, four ways in, a gallery of things to ask, and a composer
- * docked at the bottom. The assistant is the point of the page, so the
- * composer is always in reach rather than behind a panel toggle.
+ * A centred welcome, four ways in, and a gallery of things to ask.
  *
- * The composer is a handoff, not a second chat implementation: submitting
- * opens the real chat panel with the text already in it. One conversation, one
- * place it lives.
+ * There is deliberately no composer here. One lived at the bottom of this page
+ * and all it did was open the docked chat panel with your text in it, so you
+ * typed into one box and your words appeared in another — two chat inputs
+ * where only one was real. The openers hand off to the same panel, but they
+ * are prompts rather than an input, so nothing pretends to be the
+ * conversation it is not.
  */
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { DashboardData } from "@/lib/api/client";
 import { useDashboard } from "@/lib/hooks/use-dashboard";
 import { usePanelStore } from "@/lib/stores/panel-store";
@@ -294,21 +296,28 @@ const TOUR: TourStep[] = [
     body: "Press ⌘K anywhere to jump to an analysis, an example, or a page.",
   },
   {
-    anchor: "home-composer",
+    anchor: "home-openers",
     title: "Start here",
-    body: "Describe the analysis you want in your own words. The assistant builds it, and you never have to write Pegasus by hand.",
+    body: "Pick whichever of these is closest to what you want. It opens the assistant with the question already written, and you can edit it before sending.",
   },
 ];
 
 export function DashboardView() {
   const { data } = useDashboard();
   const openChatWith = usePanelStore((s) => s.openChatWith);
-  const setChatOpen = usePanelStore((s) => s.setChatOpen);
-  const [draft, setDraft] = useState("");
   const { prefs, isLoading: prefsLoading } = useUIPreferences();
   const updatePrefs = useUpdateUIPreferences();
   const [tourOpen, setTourOpen] = useState(false);
   const [glossary, setGlossary] = useState(false);
+
+  // "Take a tour" in the account menu links here with ?tour=1, so the tour is
+  // restartable from any page rather than only from a link at the bottom of
+  // this one.
+  const searchParams = useSearchParams();
+  const tourRequested = searchParams.get("tour") === "1";
+  useEffect(() => {
+    if (tourRequested) setTourOpen(true);
+  }, [tourRequested]);
 
   // First visit runs the tour on its own. `welcome_dismissed` is the same
   // preference the old welcome card used, so anyone who already dismissed that
@@ -333,11 +342,11 @@ export function DashboardView() {
     (data?.projects.total ?? 0) > 0 || (data?.runs.total ?? 0) > 0;
   const openers = OPENERS.filter((o) => !o.needsRuns || hasWorkflows);
 
+  // Opens the docked chat panel with the text already in the input, so the
+  // user can edit before sending.
   const send = (text: string) => {
     const t = text.trim();
-    if (!t) return;
-    openChatWith(t);
-    setDraft("");
+    if (t) openChatWith(t);
   };
 
   const actionClass =
@@ -415,7 +424,10 @@ export function DashboardView() {
           <p className="mt-9 text-[11px] font-semibold uppercase tracking-[0.13em] text-fgsubtle">
             Try an example
           </p>
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div
+            data-tour="home-openers"
+            className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2"
+          >
             {openers.map((o) => (
               <button
                 key={o.title}
@@ -441,7 +453,8 @@ export function DashboardView() {
 
           {/* Onboarding, on demand. The old welcome card explained Studio on
               the one screen with nothing to point at, and was gone by the time
-              you reached the pages it described (#317). */}
+              you reached the pages it described (#317). The same tour is in
+              the account menu, so it is restartable from anywhere. */}
           <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line pt-5 text-xs">
             <button
               onClick={() => setTourOpen(true)}
@@ -457,8 +470,7 @@ export function DashboardView() {
               What do the words mean?
             </button>
             <span className="text-fgsubtle">
-              Studio runs analyses across many machines for you. You don&apos;t
-              need to know how that part works.
+              You can restart the tour any time from the account menu.
             </span>
           </div>
 
@@ -468,73 +480,6 @@ export function DashboardView() {
             </div>
           )}
         </div>
-      </div>
-
-      {/* Composer, docked. The assistant is the point of the page. */}
-      <div className="shrink-0 border-t border-line bg-base/80 px-6 py-4 backdrop-blur">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            send(draft);
-          }}
-          className="mx-auto max-w-3xl rounded-2xl border border-line bg-surface p-2.5 shadow-sm focus-within:border-pegasus-400"
-        >
-          <label htmlFor="home-composer" className="sr-only">
-            Describe what you want to build, run, or fix
-          </label>
-          <textarea
-            id="home-composer"
-            data-tour="home-composer"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (
-                e.key === "Enter" &&
-                !e.shiftKey &&
-                !(e.nativeEvent as { isComposing?: boolean }).isComposing
-              ) {
-                e.preventDefault();
-                send(draft);
-              }
-            }}
-            rows={2}
-            placeholder="Describe what you want to build, run, or fix…"
-            className="w-full resize-none border-0 bg-transparent px-1.5 py-1 text-sm text-fg outline-none placeholder:text-fgsubtle"
-          />
-          <div className="flex items-center gap-2 px-1.5">
-            <button
-              type="button"
-              onClick={() => setChatOpen(true)}
-              className="rounded-lg border border-line px-2 py-1 text-[11px] font-medium text-fgmuted hover:text-fg"
-              title="Pick an assistant, a skill, or a model in the chat panel"
-            >
-              Assistant options
-            </button>
-            <span className="text-[11px] text-fgsubtle">
-              Enter to send · Shift+Enter for a new line
-            </span>
-            <button
-              type="submit"
-              disabled={!draft.trim()}
-              className="ml-auto flex h-8 w-8 items-center justify-center rounded-xl bg-pegasus-600 text-white transition-colors hover:bg-pegasus-700 disabled:cursor-not-allowed disabled:bg-muted disabled:text-fgsubtle"
-              aria-label="Send"
-            >
-              <svg
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M12 19V5M5 12l7-7 7 7" />
-              </svg>
-            </button>
-          </div>
-        </form>
       </div>
 
       <GuidedTour steps={TOUR} open={tourOpen} onClose={endTour} />

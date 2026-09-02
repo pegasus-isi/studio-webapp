@@ -547,6 +547,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
           </summary>
           <div className="border-t border-line p-5 pt-4">
             <RunFlowPanel
+              embedded
               projectId={projectId}
               params={params}
               values={values}

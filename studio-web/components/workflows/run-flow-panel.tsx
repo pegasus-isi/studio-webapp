@@ -42,6 +42,10 @@ interface Props {
   onChange: (dest: string, value: string | boolean) => void;
   /** Called when a run reaches the cluster, so the page can refresh its runs. */
   onSubmitted?: () => void;
+  /** Rendered inside a disclosure that already supplies the card and the
+   *  heading. Without this the page showed "Set up your run" twice, once on
+   *  the summary and again on this panel, inside two nested bordered cards. */
+  embedded?: boolean;
 }
 
 const STAGE_ICON: Record<RunFlowStage["status"], string> = {
@@ -66,6 +70,7 @@ export function RunFlowPanel({
   values,
   onChange,
   onSubmitted,
+  embedded = false,
 }: Props) {
   const [flow, setFlow] = useState<RunFlowSnapshot | null>(null);
   const [starting, setStarting] = useState(false);
@@ -297,9 +302,15 @@ export function RunFlowPanel({
 
   return (
     <div className="space-y-4">
-      <section className="rounded-xl border border-line bg-surface p-5">
-        <h3 className="text-base font-semibold text-fg">Set up your run</h3>
-        <p className="mt-1 text-sm text-fgmuted">
+      <section
+        className={
+          embedded ? "" : "rounded-xl border border-line bg-surface p-5"
+        }
+      >
+        {!embedded && (
+          <h3 className="text-base font-semibold text-fg">Set up your run</h3>
+        )}
+        <p className={cn("text-sm text-fgmuted", !embedded && "mt-1")}>
           Fill in what your analysis needs, choose where it runs, then press
           Run. Studio prepares everything and starts it for you.
         </p>
