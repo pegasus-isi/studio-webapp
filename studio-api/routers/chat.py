@@ -1449,6 +1449,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
 
             # Names of tools invoked this turn, saved alongside the assistant msg.
             tools_used: list[str] = []
+            pending_deny_close = False
 
             for _ in range(_MAX_TOOL_ROUNDS):
                 if request_id not in _active_clients:
@@ -1551,6 +1552,21 @@ async def chat_stream(request: Request) -> StreamingResponse:
                 tot_out += usage.get("output", 0) or 0
 
                 tool_calls = result.get("tool_calls", [])
+                # B: graceful-close after deny — suppress auto-approved listings
+                if pending_deny_close:
+                    orig_len = len(tool_calls)
+                    filtered = [tc for tc in tool_calls if tc.get("name") not in ("list_directory", "read_file")]
+                    if len(filtered) < orig_len:
+                        for tc in tool_calls:
+                            if tc.get("name") in ("list_directory", "read_file"):
+                                conv_messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": "Listing skipped — verification was denied.",
+                                })
+                    tool_calls = filtered
+                    pending_deny_close = False
+
                 tool_count += len(tool_calls)
                 tools_used.extend(tc.get("name", "") for tc in tool_calls)
 
@@ -1610,11 +1626,19 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                 tool_result = ev["_final_result"]
                             else:
                                 yield f"data: {json.dumps(ev)}\n\n"
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tc["id"],
-                            "content": _clip_tool_result(tool_result),
-                        })
+                        if "denied by the user" in tool_result or "timed out" in tool_result:
+                            pending_deny_close = True
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": tc["id"],
+                                "content": "Shell verification was denied — do not retry shell or file listings; summarize what was written and ask if the user wants verification.",
+                            })
+                        else:
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": tc["id"],
+                                "content": _clip_tool_result(tool_result),
+                            })
                     conv_messages.append({"role": "user", "content": tool_results})
 
                 else:
@@ -1649,11 +1673,19 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                 tool_result = ev["_final_result"]
                             else:
                                 yield f"data: {json.dumps(ev)}\n\n"
-                        conv_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": _clip_tool_result(tool_result),
-                        })
+                        if "denied by the user" in tool_result or "timed out" in tool_result:
+                            pending_deny_close = True
+                            conv_messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": "Shell verification was denied — do not retry shell or file listings; summarize what was written and ask if the user wants verification.",
+                            })
+                        else:
+                            conv_messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": _clip_tool_result(tool_result),
+                            })
 
             # Reached the tool-round cap without a final text answer — tell the
             # user instead of ending on a silent spinner, and persist the notice
