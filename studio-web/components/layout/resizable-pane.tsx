@@ -125,12 +125,24 @@ export function ResizablePane({
       <div className="flex shrink-0 items-start border-r border-line bg-surface">
         <button
           onClick={toggleCollapsed}
-          title="Show the workflow list"
-          aria-label="Show the workflow list"
+          title="Show the list"
+          aria-label="Show the list"
           aria-expanded={false}
           className="px-2 py-3 text-fgsubtle hover:text-fg"
         >
-          ›
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
         </button>
       </div>
     );
@@ -142,18 +154,34 @@ export function ResizablePane({
       style={{ width }}
       className="relative flex shrink-0 flex-col border-r border-line bg-surface"
     >
-      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
-
-      {/* Collapse control sits at the bottom, out of the way of the list. */}
+      {/* Collapse control, top-right (#314).
+          It used to sit at the bottom of the pane, below the list — past a
+          scroll on any real workspace, which is the same as not being there.
+          Once you have picked a workflow the list is the least useful thing on
+          screen, so getting rid of it has to be the easiest thing to find. */}
       <button
         onClick={toggleCollapsed}
-        title="Hide the workflow list"
-        aria-label="Hide the workflow list"
+        title="Hide the list"
+        aria-label="Hide the list"
         aria-expanded
-        className="border-t border-line px-3 py-1.5 text-left text-xs text-fgsubtle hover:text-fg"
+        className="absolute right-1.5 top-1.5 z-10 rounded-md p-1 text-fgsubtle transition-colors hover:bg-muted hover:text-fg"
       >
-        ‹ Hide
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
       </button>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
 
       {/* Drag handle. Wider than it looks (-right-1 .. w-2) because a 1px
           target is a fine line to hit and this is not a precision task. */}

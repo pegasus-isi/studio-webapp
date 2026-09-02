@@ -32,6 +32,9 @@ REGISTRY_URL = os.environ.get(
 _FETCH_TIMEOUT = float(os.environ.get("STUDIO_MARKETPLACE_TIMEOUT", "10"))
 _CACHE_TTL = float(os.environ.get("STUDIO_MARKETPLACE_TTL", "3600"))
 _CLONE_TIMEOUT = float(os.environ.get("STUDIO_MARKETPLACE_CLONE_TIMEOUT", "180"))
+# Kill-switch for the GitHub description lookup. Off in tests, which must not
+# reach the network, and available to an operator behind a strict egress policy.
+_ENRICH = os.environ.get("STUDIO_MARKETPLACE_ENRICH", "1") not in ("0", "false", "")
 
 WORKSPACE_ROOT = os.environ.get(
     "STUDIO_WORKSPACE_DIR",
@@ -211,6 +214,76 @@ async def _fetch_registry() -> list[dict[str, Any]]:
     return out
 
 
+def _enrich_enabled() -> bool:
+    """Read at call time so a test can flip it with monkeypatch.setenv."""
+    return os.environ.get("STUDIO_MARKETPLACE_ENRICH", "1" if _ENRICH else "0") not in (
+        "0",
+        "false",
+        "",
+    )
+
+
+def _gh_api_url(repo: str) -> str | None:
+    """github.com/owner/name → api.github.com/repos/owner/name, else None."""
+    m = re.match(r"^github\.com/([^/]+)/([^/]+)$", _norm_repo(repo))
+    return f"https://api.github.com/repos/{m.group(1)}/{m.group(2)}" if m else None
+
+
+async def _enrich_descriptions(entries: list[dict[str, Any]]) -> None:
+    """Fill blank descriptions from each repo's GitHub metadata (#314).
+
+    Roughly half the registry omits `description`, which left the catalog as a
+    grid of names with nothing to choose between. The repo already has a
+    one-liner; we just were not asking for it.
+
+    Mutates in place, best-effort. Unauthenticated GitHub allows 60 requests an
+    hour per IP and the catalog is cached for `_CACHE_TTL` (an hour by default),
+    so a full refresh costs well under the budget — but a rate-limit, a timeout
+    or a private repo must degrade to "no description" rather than failing the
+    catalog. A card with no description is honest; a placeholder repeated down
+    the grid looks like content and carries none.
+    """
+    if not _enrich_enabled():
+        return
+    missing = [e for e in entries if not e.get("description")]
+    if not missing:
+        return
+
+    async def one(client: httpx.AsyncClient, entry: dict[str, Any]) -> None:
+        url = _gh_api_url(entry["repo_url"])
+        if not url:
+            return
+        try:
+            resp = await client.get(
+                url, headers={"Accept": "application/vnd.github+json"}
+            )
+            if resp.status_code != 200:
+                return
+            body = resp.json()
+        except (httpx.HTTPError, ValueError):
+            return
+        if not isinstance(body, dict):
+            return
+        desc = (body.get("description") or "").strip()
+        if desc:
+            entry["description"] = desc
+        # Repo topics are curated by the repo owner and are cleaner than the
+        # registry's free-text field, so they are worth folding in when the
+        # registry gave us nothing.
+        if not entry.get("topics"):
+            topics = [t for t in (body.get("topics") or []) if isinstance(t, str)]
+            folded = _topics(", ".join(topics))
+            if folded:
+                entry["topics"] = folded
+                entry["topic"] = folded[0]
+
+    try:
+        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
+            await asyncio.gather(*(one(client, e) for e in missing))
+    except Exception as e:  # noqa: BLE001 - enrichment must never break the catalog
+        log.warning("marketplace_description_enrich_failed", error=str(e))
+
+
 async def _catalog(force: bool = False) -> list[dict[str, Any]]:
     """Merged, deduped catalog (registry + curated), cached for _CACHE_TTL."""
     async with _lock:
@@ -235,6 +308,7 @@ async def _catalog(force: bool = False) -> list[dict[str, Any]]:
             merged[eid] = entry
             merged[key] = entry  # dedup marker
         catalog = [v for k, v in merged.items() if k == v["id"]]
+        await _enrich_descriptions(catalog)
         catalog.sort(key=_sort_key)
 
         _cache["ts"] = time.monotonic()

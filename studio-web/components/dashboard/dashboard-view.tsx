@@ -7,27 +7,126 @@
  * where the rail links. See `app/(studio)/home/page.tsx` for why the second
  * route exists.
  *
- * This used to be a grid of ~14 cards with the assistant behind a button. If
- * the assistant is how Studio is meant to be driven, that is backwards: the
- * conversation should be the surface and the cards should be things the
- * assistant hands you. So the page is a chat opening turn — your state arrives
- * as something to act on rather than a dashboard to read, and the suggestions
- * are full sentences you can actually finish reading before you send them.
+ * A centred welcome, four ways in, a gallery of things to ask, and a composer
+ * docked at the bottom. The assistant is the point of the page, so the
+ * composer is always in reach rather than behind a panel toggle.
  *
- * The composer here is a handoff, not a second chat implementation: submitting
- * opens the real chat panel with the text already in it. One conversation,
- * one place it lives.
+ * The composer is a handoff, not a second chat implementation: submitting
+ * opens the real chat panel with the text already in it. One conversation, one
+ * place it lives.
  */
 
 import { useState } from "react";
 import type { DashboardData } from "@/lib/api/client";
 import { useDashboard } from "@/lib/hooks/use-dashboard";
 import { usePanelStore } from "@/lib/stores/panel-store";
+import { jupyterUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
-import { WelcomeCard } from "@/components/dashboard/welcome-card";
 import { AppLink } from "@/components/layout/app-link";
+import { WelcomeCard } from "@/components/dashboard/welcome-card";
 
 type RecentRun = DashboardData["runs"]["recent"][number];
+
+/** Pastel icon tiles, one hue per kind of thing. Tailwind needs literals. */
+const TILE = {
+  sky: "bg-sky-50 text-sky-500 dark:bg-sky-400/10 dark:text-sky-300",
+  indigo: "bg-indigo-50 text-indigo-500 dark:bg-indigo-400/10 dark:text-indigo-300",
+  violet: "bg-violet-50 text-violet-500 dark:bg-violet-400/10 dark:text-violet-300",
+  mint: "bg-emerald-50 text-emerald-500 dark:bg-emerald-400/10 dark:text-emerald-300",
+  rose: "bg-rose-50 text-rose-500 dark:bg-rose-400/10 dark:text-rose-300",
+  sand: "bg-amber-50 text-amber-500 dark:bg-amber-400/10 dark:text-amber-300",
+} as const;
+
+type Tile = keyof typeof TILE;
+
+function Tile({
+  tone,
+  children,
+  size = "md",
+}: {
+  tone: Tile;
+  children: React.ReactNode;
+  size?: "md" | "sm";
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-xl",
+        size === "md" ? "h-10 w-10" : "h-8 w-8",
+        TILE[tone]
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Icon({ d }: { d: React.ReactNode }) {
+  return (
+    <svg
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {d}
+    </svg>
+  );
+}
+
+const I = {
+  workflow: (
+    <>
+      <circle cx="6" cy="18" r="2.2" />
+      <circle cx="18" cy="6" r="2.2" />
+      <path d="M6 15.8V9a3 3 0 0 1 3-3h6.8" />
+    </>
+  ),
+  notebook: (
+    <>
+      <path d="M4 4h7v16H4zM13 4h7v16h-7z" />
+    </>
+  ),
+  catalog: (
+    <>
+      <path d="M4 6h16v13H4z" />
+      <path d="M8 6V4h8v2" />
+    </>
+  ),
+  terminal: (
+    <>
+      <path d="M4 17l6-5-6-5M12 19h8" />
+    </>
+  ),
+  files: (
+    <>
+      <path d="M14 3v5h5" />
+      <path d="M19 8v12H5V4h9z" />
+    </>
+  ),
+  convert: (
+    <>
+      <path d="M4 8h13l-3-3M20 16H7l3 3" />
+    </>
+  ),
+  box: (
+    <>
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" />
+      <path d="M4 7.5l8 4.5 8-4.5M12 12v9" />
+    </>
+  ),
+  scale: (
+    <>
+      <path d="M4 19V5M4 19h16" />
+      <path d="M8 16v-4M12 16V9M16 16v-7" />
+    </>
+  ),
+} as const;
 
 /**
  * Openers, in the user's language rather than Pegasus's.
@@ -35,28 +134,43 @@ type RecentRun = DashboardData["runs"]["recent"][number];
  * The previous set taught slash commands, and the design prototype's set
  * assumed you already knew what a scatter-gather, a DAX or an Apptainer image
  * was — on the first screen a domain scientist ever sees. `needsRuns` keeps
- * "why did my run fail" off an empty workspace, where it cannot be answered.
+ * "review it before I scale up" off an empty workspace, where nothing exists
+ * to review.
  */
-const OPENERS: { title: string; prompt: string; needsRuns?: boolean }[] = [
+const OPENERS: {
+  title: string;
+  prompt: string;
+  tone: Tile;
+  icon: React.ReactNode;
+  needsRuns?: boolean;
+}[] = [
   {
-    title: "Run one analysis over a folder of files",
+    title: "Run one analysis over many files",
     prompt:
       "I have a folder of input files and I want to run the same analysis on every one of them. Help me build a workflow that does that.",
+    tone: "sky",
+    icon: I.files,
   },
   {
     title: "Bring an existing pipeline over",
     prompt:
       "I already have a Snakemake pipeline and I want to run it here instead. Can you convert it?",
+    tone: "indigo",
+    icon: I.convert,
   },
   {
     title: "Make my script portable",
     prompt:
       "Package my script so it runs the same way on every machine in the pool, and wire it into a workflow step.",
+    tone: "violet",
+    icon: I.box,
   },
   {
-    title: "Check it will survive scaling up",
+    title: "Check it survives scaling up",
     prompt:
       "My workflow runs fine on a handful of inputs. Review it and tell me what will break when I scale it to a few hundred.",
+    tone: "sand",
+    icon: I.scale,
     needsRuns: true,
   },
 ];
@@ -68,120 +182,83 @@ function statusTone(run: RecentRun): "bad" | "run" | "ok" | "idle" {
   return "idle";
 }
 
-const TONE_PILL: Record<string, string> = {
-  bad: "bg-red-50 text-red-700 dark:bg-rose-500/10 dark:text-rose-300",
-  run: "bg-pegasus-50 text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300",
-  ok: "bg-green-50 text-green-700 dark:bg-emerald-500/10 dark:text-emerald-300",
-  idle: "bg-muted text-fgmuted",
-};
-
-const TONE_WORD: Record<string, string> = {
-  bad: "needs attention",
-  run: "running",
-  ok: "finished",
-  idle: "ready",
-};
-
-/** One run, as the assistant would hand it to you: what happened, what to do. */
-function RunCard({
-  run,
+/**
+ * A single strip, and only when something actually wants the user.
+ *
+ * The prototype's welcome screen carries no state at all, which is right for a
+ * first visit and wrong on day 100 — a failed run should not need hunting for.
+ * One line keeps the page as calm as the prototype when there is nothing to
+ * say, which is most of the time.
+ */
+function AttentionStrip({
+  runs,
   onAsk,
 }: {
-  run: RecentRun;
+  runs: RecentRun[];
   onAsk: (prompt: string) => void;
 }) {
-  const tone = statusTone(run);
-  const done = run.completed_jobs;
-  const total = run.total_jobs;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  const label = run.run_name ? `${run.name} / ${run.run_name}` : run.name;
+  const bad = runs.filter((r) => statusTone(r) === "bad");
+  const running = runs.filter((r) => statusTone(r) === "run");
+  if (bad.length === 0 && running.length === 0) return null;
 
-  return (
-    <div
-      className={cn(
-        "rounded-xl border bg-surface p-3",
-        tone === "bad" ? "border-red-300 dark:border-rose-500/40" : "border-line"
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <span
-          className={cn(
-            "rounded-full px-2 py-0.5 text-[11px] font-semibold",
-            TONE_PILL[tone]
-          )}
+  const first = bad[0];
+  if (first) {
+    const label = first.run_name ? `${first.name} / ${first.run_name}` : first.name;
+    return (
+      <div className="mx-auto mb-6 flex w-full max-w-3xl flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-rose-200 bg-rose-50/70 px-3.5 py-2.5 text-sm dark:border-rose-500/30 dark:bg-rose-500/10">
+        <span className="font-semibold text-rose-700 dark:text-rose-300">
+          {first.name} needs attention
+        </span>
+        <span className="text-fgmuted">
+          {first.failed_jobs} of {first.total_jobs} tasks failed
+          {bad.length > 1 && ` · ${bad.length - 1} more`}
+        </span>
+        <button
+          onClick={() =>
+            onAsk(
+              `The run "${label}" failed — ${first.failed_jobs} of ${first.total_jobs} tasks did not complete. Explain what went wrong and how to fix it.`
+            )
+          }
+          className="ml-auto rounded-lg bg-pegasus-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-pegasus-700"
         >
-          {TONE_WORD[tone]}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">
-          {label}
-        </span>
-      </div>
-
-      {tone === "bad" && run.failed_jobs > 0 ? (
-        <p className="mt-1.5 text-xs text-fgmuted">
-          {run.failed_jobs} of {total} task{total !== 1 ? "s" : ""} failed.
-        </p>
-      ) : total > 0 ? (
-        <p className="mt-1.5 text-xs text-fgmuted">
-          {done} of {total} task{total !== 1 ? "s" : ""} finished.
-        </p>
-      ) : null}
-
-      {total > 0 && (
-        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className={cn(
-              "h-full rounded-full",
-              tone === "bad" ? "bg-red-500" : "bg-pegasus-600"
-            )}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      )}
-
-      <div className="mt-2.5 flex flex-wrap items-center gap-2">
-        {tone === "bad" && (
-          <button
-            onClick={() =>
-              onAsk(
-                `The run "${label}" failed — ${run.failed_jobs} of ${total} tasks did not complete. Explain what went wrong and how to fix it.`
-              )
-            }
-            className="rounded-md bg-pegasus-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-pegasus-700"
-          >
-            Ask what went wrong
-          </button>
-        )}
+          Ask what went wrong
+        </button>
         <AppLink
-          href={`/workflows?run=${encodeURIComponent(run.run_id)}`}
-          className="rounded-md border border-line px-2.5 py-1 text-xs font-medium text-fgmuted hover:bg-base hover:text-fg"
+          href={`/workflows?run=${encodeURIComponent(first.run_id)}`}
+          className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fgmuted hover:text-fg"
         >
-          {tone === "ok" ? "View results" : "Open"}
+          Open
         </AppLink>
       </div>
+    );
+  }
+
+  const r = running[0];
+  return (
+    <div className="mx-auto mb-6 flex w-full max-w-3xl flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm">
+      <span className="font-semibold text-fg">{r.name} is running</span>
+      <span className="text-fgmuted">
+        {r.completed_jobs} of {r.total_jobs} tasks finished
+        {running.length > 1 && ` · ${running.length - 1} more running`}
+      </span>
+      <AppLink
+        href={`/workflows?run=${encodeURIComponent(r.run_id)}`}
+        className="ml-auto rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-fgmuted hover:text-fg"
+      >
+        Watch it
+      </AppLink>
     </div>
   );
 }
 
 export function DashboardView() {
-  const { data, isLoading } = useDashboard();
+  const { data } = useDashboard();
   const openChatWith = usePanelStore((s) => s.openChatWith);
+  const setChatOpen = usePanelStore((s) => s.setChatOpen);
   const [draft, setDraft] = useState("");
 
   const hasWorkflows =
     (data?.projects.total ?? 0) > 0 || (data?.runs.total ?? 0) > 0;
-
-  // Runs worth putting in front of someone, most urgent first: anything that
-  // failed, then anything still going, then the most recent finish. Three at
-  // most — this is an opening turn, not a report.
-  const recent = data?.runs.recent ?? [];
-  const attention = recent.filter((r) => statusTone(r) === "bad");
-  const running = recent.filter((r) => statusTone(r) === "run");
-  const rest = recent.filter(
-    (r) => statusTone(r) !== "bad" && statusTone(r) !== "run"
-  );
-  const highlighted = [...attention, ...running, ...rest].slice(0, 3);
-
   const openers = OPENERS.filter((o) => !o.needsRuns || hasWorkflows);
 
   const send = (text: string) => {
@@ -191,62 +268,104 @@ export function DashboardView() {
     setDraft("");
   };
 
-  const greeting = attention.length
-    ? `${attention.length} ${attention.length === 1 ? "analysis needs" : "analyses need"} attention.`
-    : running.length
-      ? `${running.length} ${running.length === 1 ? "analysis is" : "analyses are"} running.`
-      : hasWorkflows
-        ? "Nothing is running right now."
-        : "Nothing here yet — describe what you want to analyse and I'll build it.";
+  const actionClass =
+    "flex flex-col items-center gap-2 rounded-2xl border border-line bg-surface px-3 py-5 text-center transition-colors hover:border-pegasus-300 hover:bg-pegasus-50/40 dark:hover:bg-pegasus-400/5";
+  const actionLabel = "text-[13px] font-medium text-fg";
 
   return (
-    <div className="h-full overflow-auto">
-      <div className="mx-auto flex min-h-full max-w-3xl flex-col px-6 py-8">
-        {/* First-run onboarding (#241, Phase 6) — shown once, then never. */}
-        <WelcomeCard />
+    <div className="flex h-full flex-col">
+      <div className="flex-1 overflow-auto">
+        <div className="mx-auto max-w-3xl px-6 pb-8 pt-12">
+          {/* First-run onboarding (#241, Phase 6). Shown once and then never,
+              so it costs a returning user nothing. Staying only until the
+              per-page guided tours replace it — deleting it before then would
+              leave Studio with no onboarding at all. */}
+          <WelcomeCard />
 
-        {/* The assistant's opening turn. Everything the old dashboard showed as
-            tiles is in here, as things to act on. */}
-        <div className="flex gap-3">
-          <span
-            aria-hidden="true"
-            className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-pegasus-50 text-[11px] font-bold text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300"
-          >
-            AI
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm leading-relaxed text-fg">
-              {isLoading ? "Checking your workspace…" : greeting}
+          <AttentionStrip runs={data?.runs.recent ?? []} onAsk={send} />
+
+          {/* Welcome */}
+          <div className="flex flex-col items-center text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-surface shadow-sm">
+              <img
+                src="pegasus-ai-logo-light.png"
+                alt=""
+                className="block h-8 w-auto dark:hidden"
+              />
+              <img
+                src="pegasus-ai-logo-dark.png"
+                alt=""
+                className="hidden h-8 w-auto dark:block"
+              />
+            </span>
+            <h1 className="mt-5 text-3xl font-semibold tracking-tight text-fg">
+              Welcome to{" "}
+              <span className="text-pegasus-600 dark:text-pegasus-300">
+                PegasusAI Studio
+              </span>
+            </h1>
+            <p className="mt-2 text-sm text-fgmuted">
+              Build, run, and monitor Pegasus workflows — with AI, in one
+              workspace.
             </p>
+          </div>
 
-            {highlighted.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {highlighted.map((r) => (
-                  <RunCard key={r.run_id} run={r} onAsk={send} />
-                ))}
-              </div>
-            )}
+          {/* Four ways in */}
+          <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <button
+              onClick={() =>
+                send(
+                  "Help me build a new Pegasus workflow. Ask me what the analysis needs to do."
+                )
+              }
+              className={actionClass}
+            >
+              <Tile tone="sky">
+                <Icon d={I.workflow} />
+              </Tile>
+              <span className={actionLabel}>New workflow</span>
+            </button>
+            <a
+              href={jupyterUrl("/lab")}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={actionClass}
+            >
+              <Tile tone="indigo">
+                <Icon d={I.notebook} />
+              </Tile>
+              <span className={actionLabel}>Open notebook</span>
+            </a>
+            <AppLink href="/marketplace" className={actionClass}>
+              <Tile tone="violet">
+                <Icon d={I.catalog} />
+              </Tile>
+              <span className={actionLabel}>Browse examples</span>
+            </AppLink>
+            <AppLink href="/workflows" className={actionClass}>
+              <Tile tone="mint">
+                <Icon d={I.scale} />
+              </Tile>
+              <span className={actionLabel}>My analyses</span>
+            </AppLink>
+          </div>
 
-            {recent.length > highlighted.length && (
-              <AppLink
-                href="/workflows"
-                className="mt-2 inline-block text-xs font-medium text-pegasus-700 hover:underline dark:text-pegasus-300"
+          {/* Openers */}
+          <p className="mt-9 text-[11px] font-semibold uppercase tracking-[0.13em] text-fgsubtle">
+            Try an example
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {openers.map((o) => (
+              <button
+                key={o.title}
+                onClick={() => send(o.prompt)}
+                className="flex items-start gap-3 rounded-2xl border border-line bg-surface p-3.5 text-left transition-colors hover:border-pegasus-300 hover:bg-pegasus-50/40 dark:hover:bg-pegasus-400/5"
               >
-                All analyses →
-              </AppLink>
-            )}
-
-            <p className="mt-5 text-sm text-fgmuted">
-              {hasWorkflows ? "Or start something new:" : "Try one of these:"}
-            </p>
-            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {openers.map((o) => (
-                <button
-                  key={o.title}
-                  onClick={() => send(o.prompt)}
-                  className="rounded-xl border border-line bg-surface p-3 text-left transition-colors hover:border-pegasus-500 hover:bg-base"
-                >
-                  <span className="block text-xs font-semibold text-fg">
+                <Tile tone={o.tone} size="sm">
+                  <Icon d={o.icon} />
+                </Tile>
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-semibold text-fg">
                     {o.title}
                   </span>
                   {/* Shown in full. A card that truncates the prompt asks you
@@ -254,81 +373,77 @@ export function DashboardView() {
                   <span className="mt-1 block text-xs leading-relaxed text-fgmuted">
                     {o.prompt}
                   </span>
-                </button>
-              ))}
-            </div>
-
-            {!hasWorkflows && (
-              <p className="mt-3 text-xs text-fgmuted">
-                Rather start from something ready-made?{" "}
-                <AppLink
-                  href="/marketplace"
-                  className="font-medium text-pegasus-700 hover:underline dark:text-pegasus-300"
-                >
-                  Browse examples
-                </AppLink>
-                .
-              </p>
-            )}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
+      </div>
 
-        {/* Composer. Hands off to the chat panel rather than reimplementing it. */}
-        <div className="mt-8">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              send(draft);
+      {/* Composer, docked. The assistant is the point of the page. */}
+      <div className="shrink-0 border-t border-line bg-base/80 px-6 py-4 backdrop-blur">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            send(draft);
+          }}
+          className="mx-auto max-w-3xl rounded-2xl border border-line bg-surface p-2.5 shadow-sm focus-within:border-pegasus-400"
+        >
+          <label htmlFor="home-composer" className="sr-only">
+            Describe what you want to build, run, or fix
+          </label>
+          <textarea
+            id="home-composer"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !(e.nativeEvent as { isComposing?: boolean }).isComposing
+              ) {
+                e.preventDefault();
+                send(draft);
+              }
             }}
-            className="rounded-xl border border-line bg-surface p-2.5 shadow-sm focus-within:border-pegasus-500"
-          >
-            <label htmlFor="home-composer" className="sr-only">
-              Describe what you want to build, run, or fix
-            </label>
-            <textarea
-              id="home-composer"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send(draft);
-                }
-              }}
-              rows={2}
-              placeholder="Describe what you want to build, run, or fix"
-              className="w-full resize-none border-0 bg-transparent px-1 py-1 text-sm text-fg outline-none placeholder:text-fgsubtle"
-            />
-            <div className="flex items-center gap-2 px-1">
-              <span className="text-[11px] text-fgsubtle">
-                Enter to send · Shift+Enter for a new line
-              </span>
-              <button
-                type="submit"
-                disabled={!draft.trim()}
-                className="ml-auto rounded-lg bg-pegasus-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-pegasus-700 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Send
-              </button>
-            </div>
-          </form>
-        </div>
-
-        {/* Resource pressure — only when something needs attention. */}
-        {(data?.resources?.pressure?.length ?? 0) > 0 && (
-          <AppLink
-            href="/provisioning"
-            className="mt-4 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
-          >
-            <span aria-hidden="true">⚠</span>
-            <span>
-              {data?.resources.pressure[0].title}
-              {(data?.resources.pressure.length ?? 0) > 1 &&
-                ` +${(data?.resources.pressure.length ?? 1) - 1} more`}{" "}
-              — check compute
+            rows={2}
+            placeholder="Describe what you want to build, run, or fix…"
+            className="w-full resize-none border-0 bg-transparent px-1.5 py-1 text-sm text-fg outline-none placeholder:text-fgsubtle"
+          />
+          <div className="flex items-center gap-2 px-1.5">
+            <button
+              type="button"
+              onClick={() => setChatOpen(true)}
+              className="rounded-lg border border-line px-2 py-1 text-[11px] font-medium text-fgmuted hover:text-fg"
+              title="Pick an assistant, a skill, or a model in the chat panel"
+            >
+              Assistant options
+            </button>
+            <span className="text-[11px] text-fgsubtle">
+              Enter to send · Shift+Enter for a new line
             </span>
-          </AppLink>
-        )}
+            <button
+              type="submit"
+              disabled={!draft.trim()}
+              className="ml-auto flex h-8 w-8 items-center justify-center rounded-xl bg-pegasus-600 text-white transition-colors hover:bg-pegasus-700 disabled:cursor-not-allowed disabled:bg-muted disabled:text-fgsubtle"
+              aria-label="Send"
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 19V5M5 12l7-7 7 7" />
+              </svg>
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

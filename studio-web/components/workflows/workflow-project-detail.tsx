@@ -12,6 +12,7 @@ import {
   useDeleteWorkflow,
   useDeleteWorkflowProject,
 } from "@/lib/hooks/use-workflows";
+import type { WorkflowProjectRun } from "@/lib/api/client";
 import { DagViewer } from "@/components/workflows/dag-viewer";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { RunFlowPanel } from "@/components/workflows/run-flow-panel";
@@ -506,6 +507,12 @@ export function WorkflowProjectDetail({ projectId }: Props) {
               onSubmitted={() => refetchProjects()}
             />
 
+            <GraphPane
+              projectId={projectId}
+              projectName={project.name}
+              runs={project.runs}
+            />
+
             {/* Everything Pegasus-shaped lives behind one disclosure. Open
                 state is a per-user preference, so a workflow engineer who
                 wants it doesn't reopen it on every visit. */}
@@ -529,7 +536,16 @@ export function WorkflowProjectDetail({ projectId }: Props) {
           </>
         )}
 
-        {!prefs.simple_run && advancedSections}
+        {!prefs.simple_run && (
+          <>
+            <GraphPane
+              projectId={projectId}
+              projectName={project.name}
+              runs={project.runs}
+            />
+            {advancedSections}
+          </>
+        )}
 
         {/* Submitted runs */}
         {project.runs.length > 0 && (
@@ -662,6 +678,105 @@ export function WorkflowProjectDetail({ projectId }: Props) {
           onConfirm={handleDeleteRun}
           onCancel={() => setRunToDelete(null)}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The graph, always on screen (#314).
+ *
+ * It used to live behind a "DAG" button that opened a full-page modal, so the
+ * shape of the thing you are running was something you had to go and ask for
+ * and then dismiss. It defaults to the most recent run — that is the one you
+ * came to look at — and falls back to the abstract graph before anything has
+ * been submitted, so the pane is never empty.
+ */
+function GraphPane({
+  projectId,
+  projectName,
+  runs,
+}: {
+  projectId: string;
+  projectName: string;
+  runs: WorkflowProjectRun[];
+}) {
+  // Newest first — the API returns runs oldest-first, and "most recent" is
+  // what someone opening this page means by "the run".
+  const ordered = useMemo(() => [...runs].reverse(), [runs]);
+  const [runId, setRunId] = useState<string | null>(null);
+  // Follow the newest run as it appears, until the user picks one themselves.
+  const [pinned, setPinned] = useState(false);
+  const newest = ordered[0]?.run_id ?? null;
+  const selected = pinned && runId ? runId : newest;
+  const run = ordered.find((r) => r.run_id === selected);
+
+  const [collapsed, setCollapsed] = useState(false);
+
+  const url = run
+    ? apiUrl(`workflows/${run.run_id}/graph.json`)
+    : apiUrl(`workflows/projects/${projectId}/graph.json`);
+  const title = run
+    ? `${run.run_name || run.run_id.slice(0, 12)}`
+    : `${projectName} — before it runs`;
+
+  const picker =
+    ordered.length > 0 ? (
+      <label className="flex items-center gap-1.5 text-xs text-fgmuted">
+        <span className="sr-only">Show the graph for</span>
+        <select
+          value={selected ?? ""}
+          onChange={(e) => {
+            setRunId(e.target.value || null);
+            setPinned(true);
+          }}
+          className="h-7 max-w-[180px] rounded-md border border-line bg-surface px-1.5 text-xs text-fg outline-none focus:border-pegasus-400"
+        >
+          {ordered.map((r, i) => (
+            <option key={r.run_id} value={r.run_id}>
+              {r.run_name || r.run_id.slice(0, 12)}
+              {i === 0 ? " (latest)" : ""} — {r.status}
+            </option>
+          ))}
+          <option value="">Before it runs</option>
+        </select>
+      </label>
+    ) : null;
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-line bg-surface">
+      <div className="flex items-center gap-2 border-b border-line px-4 py-2">
+        <button
+          onClick={() => setCollapsed((v) => !v)}
+          aria-expanded={!collapsed}
+          className="flex items-center gap-1.5 text-sm font-semibold text-fg"
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              "inline-block text-fgsubtle transition-transform",
+              collapsed && "-rotate-90"
+            )}
+          >
+            ▾
+          </span>
+          Graph
+        </button>
+        <span className="truncate text-xs text-fgsubtle">{title}</span>
+      </div>
+      {!collapsed && (
+        <div className="h-[420px]">
+          <DagViewer
+            // Remount on a different graph so the poll and the fit restart
+            // cleanly rather than animating between two unrelated shapes.
+            key={url}
+            graphUrl={url}
+            title={title}
+            live={!!run}
+            inline
+            headerExtra={picker}
+          />
+        </div>
       )}
     </div>
   );

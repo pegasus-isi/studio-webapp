@@ -6,8 +6,6 @@ import { jupyterUrl, stripAppBasePath } from "@/lib/urls";
 import { AppLink } from "@/components/layout/app-link";
 import { cn } from "@/lib/utils";
 import { usePanelStore } from "@/lib/stores/panel-store";
-import { useStudioVersion } from "@/lib/hooks/use-version";
-import { UserMenu } from "@/components/layout/user-menu";
 import {
   useUIPreferences,
   useUpdateUIPreferences,
@@ -16,17 +14,16 @@ import {
 /**
  * The left rail (#314).
  *
- * Previously a 224px sidebar of emoji and text. Emoji were the wrong material
- * for this: they render as a different glyph on every platform, they cannot
- * take a colour from state, and at nav size they read as a documentation site
- * rather than an instrument panel. These are stroke icons with a micro-label
- * underneath — the label costs 22px of width against an icons-only rail and
- * removes the guess-and-hover a bare icon rail forces on a first-time user.
+ * Icons only, 56px. Previously a 224px sidebar of emoji and text — emoji were
+ * the wrong material for this, since they render as a different glyph on every
+ * platform and cannot take a colour from state.
  *
- * Collapsed drops the labels rather than the rail, so the toggle still buys
- * the canvas back on the graph screen.
+ * The wordmark and the user menu moved to the top bar, which is what lets this
+ * be a rail at all. Every cell carries a `title`, so the label is a hover away
+ * rather than absent; the active cell is tinted, so where you are is legible
+ * without one.
  *
- * Settings is intentionally absent — it lives in the user menu at the bottom,
+ * Settings is intentionally absent — it lives in the top bar's user menu,
  * which is the tucked-away position Phase 7 wanted for it.
  */
 
@@ -142,11 +139,8 @@ export function Sidebar() {
   const activePathname = stripAppBasePath(pathname);
   const chatOpen = usePanelStore((s) => s.chatOpen);
   const terminalOpen = usePanelStore((s) => s.terminalOpen);
-  const collapsed = usePanelStore((s) => s.sidebarCollapsed);
   const toggleChat = usePanelStore((s) => s.toggleChat);
   const toggleTerminal = usePanelStore((s) => s.toggleTerminal);
-  const toggleSidebar = usePanelStore((s) => s.toggleSidebar);
-  const studioVersion = useStudioVersion();
   const { prefs } = useUIPreferences();
   const updatePrefs = useUpdateUIPreferences();
 
@@ -162,15 +156,10 @@ export function Sidebar() {
 
   const cellClass = (active: boolean) =>
     cn(
-      "flex w-full flex-col items-center gap-1 rounded-lg px-1 py-2 transition-colors",
+      "flex h-10 w-10 items-center justify-center rounded-xl transition-colors",
       active
         ? "bg-pegasus-50 text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300"
         : "text-fgsubtle hover:bg-muted hover:text-fg"
-    );
-
-  const cellLabel = (label: string) =>
-    collapsed ? null : (
-      <span className="text-[9px] font-semibold leading-none">{label}</span>
     );
 
   const renderItem = (item: NavItem) => {
@@ -182,10 +171,10 @@ export function Sidebar() {
           target="_blank"
           rel="noopener noreferrer"
           title={`${item.label} — opens in a new tab`}
+          aria-label={item.label}
           className={cellClass(false)}
         >
           <Glyph name={item.icon} />
-          {cellLabel(item.label)}
         </a>
       );
     }
@@ -201,11 +190,11 @@ export function Sidebar() {
         key={item.href}
         href={item.href}
         title={item.label}
+        aria-label={item.label}
         aria-current={active ? "page" : undefined}
         className={cellClass(active)}
       >
         <Glyph name={item.icon} />
-        {cellLabel(item.label)}
       </AppLink>
     );
   };
@@ -219,63 +208,17 @@ export function Sidebar() {
     <button
       onClick={onClick}
       title={label}
+      aria-label={label}
       aria-pressed={open}
       className={cellClass(open)}
     >
       <Glyph name={icon} />
-      {cellLabel(label)}
     </button>
   );
 
   return (
-    <aside
-      className={cn(
-        "flex flex-col border-r border-line bg-surface transition-[width] duration-150",
-        collapsed ? "w-[46px]" : "w-[68px]"
-      )}
-    >
-      {/* Mark + collapse toggle. The wordmark does not fit a rail and was
-          costing more width than it earned; the release string moves to the
-          toggle's tooltip so it is still reachable without a header. */}
-      <div className="flex flex-col items-center gap-1 border-b border-line px-1 py-2">
-        <img
-          src="pegasus-ai-logo-light.png"
-          alt="PegasusAI Studio"
-          className="block h-7 w-auto dark:hidden"
-        />
-        <img
-          src="pegasus-ai-logo-dark.png"
-          alt="PegasusAI Studio"
-          className="hidden h-7 w-auto dark:block"
-        />
-        <button
-          onClick={toggleSidebar}
-          title={
-            collapsed
-              ? `Show labels${studioVersion ? ` — Studio ${studioVersion}` : ""}`
-              : `Hide labels${studioVersion ? ` — Studio ${studioVersion}` : ""}`
-          }
-          aria-label={collapsed ? "Show rail labels" : "Hide rail labels"}
-          className="rounded p-0.5 text-fgsubtle transition-colors hover:bg-muted hover:text-fg"
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={cn("transition-transform", collapsed && "rotate-180")}
-            aria-hidden="true"
-          >
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-        </button>
-      </div>
-
-      <nav className="flex-1 space-y-0.5 overflow-y-auto p-1">
+    <aside className="flex w-14 shrink-0 flex-col items-center border-r border-line bg-surface py-2">
+      <nav className="flex flex-1 flex-col items-center gap-1">
         {primary.map(renderItem)}
 
         {/* Advanced — one click away rather than absent. Only split out in the
@@ -283,7 +226,7 @@ export function Sidebar() {
             Pegasus-literate user asked for by turning it off. */}
         {advanced.length > 0 && (
           <>
-            <div className="mx-2 my-1.5 border-t border-line" />
+            <div className="my-1 h-px w-6 bg-line" />
             {advancedOpen ? (
               advanced.map(renderItem)
             ) : (
@@ -292,16 +235,16 @@ export function Sidebar() {
                   updatePrefs.mutate({ ...prefs, nav_advanced_open: true })
                 }
                 title="More — resources and terminal"
+                aria-label="Show more destinations"
                 className={cellClass(false)}
               >
                 <Glyph name="more" />
-                {cellLabel("More")}
               </button>
             )}
           </>
         )}
 
-        <div className="mx-2 my-1.5 border-t border-line" />
+        <div className="my-1 h-px w-6 bg-line" />
 
         {panelButton("chat", "Chat", chatOpen, toggleChat)}
         {/* Terminal is an escape hatch, not a primary tool. In the simplified
@@ -310,13 +253,6 @@ export function Sidebar() {
         {(!simplified || advancedOpen) &&
           panelButton("terminal", "Terminal", terminalOpen, toggleTerminal)}
       </nav>
-
-      {/* Identity lives here rather than floating over the page (#276).
-          Always in its compact form — the username and chevron do not fit a
-          rail at either width, and the menu itself still carries the name. */}
-      <div className="border-t border-line p-1">
-        <UserMenu collapsed />
-      </div>
     </aside>
   );
 }
