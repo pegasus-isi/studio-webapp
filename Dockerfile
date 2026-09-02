@@ -33,10 +33,24 @@ RUN printf '%s\n' \
     'Acquire::ftp::Timeout "120";' \
     > /etc/apt/apt.conf.d/80-retries
 
-# ---- Remove default ubuntu user ----
+# ---- User accounts ----
 # The container runs as whatever UID KubeSpawner injects via the pod security
-# context — no fixed user is created here.
-RUN userdel -r ubuntu 2>/dev/null || true
+# context, and libnss-sss (see docker/nsswitch.conf, `passwd: files sss`) is what
+# resolves that UID to an account in production.
+#
+# The stock `ubuntu` user is removed because its /home/ubuntu collides with the
+# mounted HOME. A passwd entry for uid 1000 is then added in its place, because
+# deployments without an sssd socket — every local run, which is uid 1000 by way
+# of docker/local-test-instance.sh — otherwise resolve uid 1000 to nothing, and
+# anything that looks up the calling user fails. `apptainer build` is the one
+# that bites:
+#     FATAL: Couldn't determine user account information: user: unknown userid 1000
+# It exits before a single %post line runs, so no workflow container image can
+# ever be built. When a different UID is injected the entry is simply unused, so
+# the arbitrary-UID design is unchanged.
+RUN userdel -r ubuntu 2>/dev/null || true; \
+    groupadd -g 1000 studio && \
+    useradd -u 1000 -g 1000 -M -d /home/ubuntu -s /bin/bash studio
 
 # ---- System packages (no python3-pip — we bootstrap pip cleanly below) ----
 # Retry-with-recovery loop: under amd64 emulation a dpkg post-install can be
@@ -161,9 +175,18 @@ ENV PEGASUS_PYTHON=/usr/bin/python3
 # Pegasus workflows run jobs in Singularity containers (e.g. container_type
 # SINGULARITY, image "docker://python:3.11-slim"), so the studio needs a
 # runtime that can pull and execute docker:// images. Apptainer runs rootless
-# via user namespaces — which means the container must be started with
-# --privileged (see the Makefile `run` target); inside an unprivileged
-# container the kernel blocks unprivileged_userns_clone.
+# via user namespaces, which means the container must be started with
+# --privileged (see the Makefile `run` target).
+#
+# --privileged is necessary but not sufficient. Creating a user namespace with
+# UID mappings is also gated on the *host*: Ubuntu 24.04 ships
+# `kernel.apparmor_restrict_unprivileged_userns=1`, which blocks unconfined
+# unprivileged processes from doing it even inside a privileged container. Root
+# in the container builds; the UID the studio runs as does not, and reports
+#     ERROR: Failed to create mount namespace: mount namespace requires privileges
+# On such a host, set `kernel.apparmor_restrict_unprivileged_userns=0`.
+# apptainer-suid does not help: the setuid starter covers *running* a container,
+# while an unprivileged *build* needs the user namespace either way.
 #
 # Installed from the GitHub release .deb rather than the apptainer PPA: the
 # pip-bootstrap step above wipes /usr/lib/python3/dist-packages/*, which removes
