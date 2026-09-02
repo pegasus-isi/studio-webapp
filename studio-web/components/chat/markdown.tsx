@@ -29,12 +29,23 @@ function CodeBlock({ text }: { text: string }) {
     <div className="group relative my-2">
       <button
         onClick={copy}
-        className="absolute right-2 top-2 rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] text-fgmuted opacity-0 transition-opacity hover:text-fg group-hover:opacity-100"
+        className="absolute right-2 top-2 rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fgmuted opacity-0 transition-opacity hover:text-fg focus-visible:opacity-100 group-hover:opacity-100"
         title="Copy"
       >
         {copied ? "Copied" : "Copy"}
       </button>
-      <pre className="overflow-x-auto rounded-md bg-base p-3 text-xs leading-relaxed">
+      {/* `text-fg` is load-bearing, not decoration.
+          Tailwind Typography styles `pre` with `--tw-prose-pre-code`, a
+          near-white tuned for its own dark `--tw-prose-pre-bg`. Overriding
+          only the background — as this did — left that near-white text on a
+          near-white block: #e5e7eb on #f3f6ff measures 1.15:1 in light mode,
+          which is invisible rather than merely low-contrast. `pre code`
+          inherits its colour from `pre`, so setting it here is enough.
+
+          The block also needs to read *as* a block. `bg-base` against the
+          message's `bg-surface` is 1.06:1, so the fill alone did nothing; the
+          border is what separates it. */}
+      <pre className="overflow-x-auto rounded-lg border border-line bg-muted p-3 text-xs leading-relaxed text-fg">
         <code>{text}</code>
       </pre>
     </div>
@@ -51,7 +62,7 @@ const components: Components = {
     if (isBlock) return <CodeBlock text={text.replace(/\n$/, "")} />;
     return (
       <code
-        className="rounded bg-base px-1 py-0.5 text-[0.85em]"
+        className="rounded border border-line bg-muted px-1 py-0.5 text-[0.85em] text-fg"
         {...props}
       >
         {children}
