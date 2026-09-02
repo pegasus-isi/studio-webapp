@@ -1,10 +1,14 @@
 # Studio Interface Redesign — September 2026
 
-**Status:** revision 2 — the foundation is implemented in #314; the chat half is not
-**Date:** 2026-09-01 (rev. 2 — reframed around chat as the primary driver)
+**Status:** revision 3 — shipped across #315, #320, #323, #326, #327, #330. The
+chat half (operable replies) is still not built.
+**Date:** 2026-09-02 (rev. 3 — records what shipped, and two reversals)
 **Issue:** [#314](https://github.com/pegasus-isi/studio-webapp/issues/314)
 **Mocks:** `docs/ui-redesign-2026-09-mocks.html` (open in a browser; it has a
-light and a dark rendering of every screen)
+light and a dark rendering of every screen). **They show revision 2 and were
+not regenerated.** Two things in them are not what shipped: the rail is
+icons-only (labels came back in #323) and the landing carries a composer
+(removed in #327). Treat them as the argument, not the spec.
 **Inputs:** five screen captures of a design prototype (2026-09-01) and the
 project meeting recap (2026-08-28). Neither is committed — the captures are
 screen-shares of someone else's working tree and the recap is raw meeting
@@ -572,32 +576,71 @@ unbuilt.
 
 ## 5. Sequencing
 
-### Shipped in #314 — the foundation
+### Shipped
 
-| Change | Findings | Where |
+| Change | Findings | PR |
 |---|---|---|
-| Cornflower palette; filled actions darkened to clear AA | F34, R9 | `globals.css`, `tailwind.config.ts`, 3 progress fills |
-| Icon rail with micro-labels, emoji removed | F36 | `sidebar.tsx` |
-| Home becomes the assistant's opening turn | F1–F6 | `dashboard-view.tsx` |
-| DAG fan-out clustering, honest overflow notice, `minZoom` 0.1→0.04 | F14, F15 | `dag-viewer.tsx` |
-| Marketplace tag splitting/folding, slug→name, `topics[]` | F27–F29 | `marketplace.py`, `marketplace/page.tsx` |
-| Short-flag label fallback | F18 | `introspect_argparse.py` |
+| Cornflower palette; filled actions darkened to clear AA | F34, R9 | #315 |
+| Emoji replaced with stroke icons in the nav | F36 | #315 |
+| DAG fan-out clustering, honest overflow notice, `minZoom` 0.1→0.04 | F14, F15 | #315 |
+| Marketplace tag splitting/folding, slug→name, `topics[]` | F27–F29 | #315 |
+| Short-flag label fallback | F18 | #315 |
+| Top bar (wordmark, ⌘K palette, account menu) | — | #320 |
+| Landing rebuilt: welcome, four ways in, opener gallery | F1–F6 | #320 |
+| Graph pane always on screen, with a run picker | F14, F26 | #320 |
+| Workflow-list collapse control moved to the top | — | #320 |
+| Catalog: thumbnail dropped, descriptions from GitHub, search/source/sort | F28, F30, F31 | #320 |
+| Guided tour replaces the welcome card | F3, F4 | #323, #317 |
+| Rail labels restored; Settings cell; identity back on the rail | F36 | #323 |
+| Workflow picker in the detail header | — | #323 |
+| One run-setup surface, collapsible, no duplicated parameters | F19, F20 | #323 |
+| Notebooks framed in Studio, with "Open in new tab" | — | #326 |
+| Chat code blocks legible in light mode (was 1.15:1) | — | #330 |
+| Chat panel resizable; stale `pt-14` removed | — | (with the docs pass) |
+
+### Two reversals worth recording
+
+Both were mine, and both were called out by using the result rather than by
+reviewing it.
+
+1. **Icon-only rail → labelled rail.** Rev. 1 argued for labels, rev. 2
+   dropped them to match the prototype's density, and #323 put them back at
+   72px. The dashboard read the rail buys is real, and so is the cost of making
+   a first-time user hover seven unlabelled targets. Twelve pixels settles it;
+   there was never a reason to choose.
+2. **A composer on the landing page → none.** #320 docked one at the bottom
+   whose only behaviour was to open the chat panel with the text in *its*
+   input. Two chat inputs where one was real, and the one you had just used was
+   not it. #327 removed it. The landing is now chat-*adjacent*, not chat-first,
+   which is honest about what exists — and the fix is the operable-replies work
+   below, not another input.
+
+### What "chat-first" still needs
+
+Rendering the real chat inline on the landing — same conversation, same store,
+one input — rather than a proxy for it. Together with operable replies, that is
+what would make the thesis true. Neither is built.
 
 ### Still to do
 
 | # | Change | Findings | Depends on |
 |---|---|---|---|
 | 1 | **Operable assistant replies** — tools returning typed objects, one renderer per type | — | the thesis rests on this |
-| 2 | Parameters slide-over; required-first; section regrouping | F19, F20, F22 | — |
-| 3 | Chat context bar; split persona from `/` commands; name the model | F7–F10, F13 | needs `context-chip.tsx` from `main` |
-| 4 | Catalog card rebuild with Preview | F30, F31 | shipped taxonomy work |
-| 5 | Global search (⌘K), then the top bar that carries it | — | — |
-| 6 | Data ingress: URL sources and fetch-as-a-job | — | quota number |
-| 7 | Vocabulary and status ladder | F32, F33 | **terminology test must run first** |
+| 2 | The real chat inline on the landing page | — | 1 |
+| 3 | Chat context: widen what can be attached | F7, F8 | issue #319 |
+| 4 | Conversations, persona and skill selection | F10, F12, F13 | issue #318 |
+| 5 | Required-first ordering and section regrouping in the run form | F19, F22 | — |
+| 6 | Catalog Preview drawer (README, inputs, DAG shape) | F31 | shipped taxonomy work |
+| 7 | Data ingress: URL sources and fetch-as-a-job | — | quota number |
+| 8 | Vocabulary and status ladder | F32, F33 | **terminology test must run first** |
+| 9 | A contrast regression test for the token pairs the UI uses | — | see #329 |
 
 Item 1 is the one that decides whether any of this is what it claims to be.
-Item 7 is gated on research, not on code — which is why #314 left "Resources"
-alone in the rail rather than renaming it to "Compute" as the mocks show.
+Item 8 is gated on research, not on code — which is why the rail still says
+"Resources" rather than "Compute" as the mocks show. Item 9 exists because
+#329 was a 1.15:1 pair that a hand-checked palette missed: the offender was a
+third-party CSS variable interacting with one of our utilities, not a token of
+ours, so no amount of checking our own tokens would have caught it.
 
 ---
 

@@ -4,6 +4,7 @@ import { ChatPanel } from "@/components/chat/chat-panel";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ConversationBar } from "@/components/chat/conversation-bar";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
+import { ResizablePane } from "@/components/layout/resizable-pane";
 
 interface ChatSidebarProps {
   onClose: () => void;
@@ -11,10 +12,27 @@ interface ChatSidebarProps {
 
 export function ChatSidebar({ onClose }: ChatSidebarProps) {
   return (
-    <div className="flex w-[400px] flex-col border-l border-line bg-surface">
-      {/* Header — pt clears the fixed UserMenu pill (top-right) so the
-          conversation controls and close button aren't hidden under it. */}
-      <div className="flex items-center justify-between gap-2 border-b border-line px-3 pb-2.5 pt-14">
+    // Drag the left edge to resize. A fixed 400px was too narrow to read a
+    // tool result in and too wide when you only wanted the transcript beside
+    // a graph. `collapsible={false}` because the header already has a close
+    // button, and `scroll={false}` because the transcript scrolls itself
+    // under a pinned composer.
+    <ResizablePane
+      storageKey="chat"
+      side="right"
+      collapsible={false}
+      scroll={false}
+      label="the chat"
+      defaultWidth={400}
+      minWidth={320}
+      maxWidth={860}
+    >
+    <div className="flex h-full flex-col bg-surface">
+      {/* The header used to carry pt-14 to clear a user-menu pill that floated
+          over the top-right of the page. That menu moved into the nav in #276
+          and onto the rail in #314, so the padding was holding open 56px of
+          nothing. */}
+      <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5">
         <h2 className="flex shrink-0 items-center gap-1.5 text-sm font-semibold text-fg">
           <PegasusLogo size={20} />
           <span className="hidden sm:inline">PegasusAI</span>
@@ -50,5 +68,6 @@ export function ChatSidebar({ onClose }: ChatSidebarProps) {
       {/* Input */}
       <ChatInput />
     </div>
+    </ResizablePane>
   );
 }
