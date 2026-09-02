@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { jupyterUrl, stripAppBasePath } from "@/lib/urls";
 import { AppLink } from "@/components/layout/app-link";
+import { UserMenu } from "@/components/layout/user-menu";
 import { cn } from "@/lib/utils";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import {
@@ -14,17 +15,15 @@ import {
 /**
  * The left rail (#314).
  *
- * Icons only, 56px. Previously a 224px sidebar of emoji and text — emoji were
- * the wrong material for this, since they render as a different glyph on every
- * platform and cannot take a colour from state.
+ * Icons with a short label underneath. An unlabelled rail read as an
+ * instrument panel but made a first-time user hover seven targets to find out
+ * what they were, so the label earns its 12px back. Emoji are gone: they
+ * render as a different glyph on every platform and cannot take a colour from
+ * state.
  *
- * The wordmark and the user menu moved to the top bar, which is what lets this
- * be a rail at all. Every cell carries a `title`, so the label is a hover away
- * rather than absent; the active cell is tinted, so where you are is legible
- * without one.
- *
- * Settings is intentionally absent — it lives in the top bar's user menu,
- * which is the tucked-away position Phase 7 wanted for it.
+ * Settings sits here rather than only in the account menu — it is a place you
+ * go, not a property of your account — and identity stays pinned at the
+ * bottom, where it is always visible and costs the content area nothing.
  */
 
 const ICON = {
@@ -79,6 +78,12 @@ const ICON = {
       <path d="M5 12h.01M12 12h.01M19 12h.01" />
     </>
   ),
+  settings: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6" />
+    </>
+  ),
 } as const;
 
 function Glyph({ name }: { name: keyof typeof ICON }) {
@@ -104,6 +109,8 @@ interface NavItem {
   label: string;
   icon: keyof typeof ICON;
   external?: boolean;
+  /** Anchor for the guided tour (#317). */
+  tour?: string;
 }
 
 /**
@@ -115,14 +122,20 @@ interface NavItem {
  */
 const PRIMARY_NAV: NavItem[] = [
   // "/home", not "/" — see app/(studio)/home/page.tsx (#292).
-  { href: "/home", label: "Home", icon: "home" },
-  { href: "/workflows", label: "Analyses", icon: "analyses" },
+  { href: "/home", label: "Home", icon: "home", tour: "nav-home" },
+  { href: "/workflows", label: "Analyses", icon: "analyses", tour: "nav-analyses" },
   // Next to analyses because "add my data" and "run my analysis" are two
   // halves of one task (#241, Phase 2).
-  { href: "/data", label: "Data", icon: "data" },
-  { href: "/marketplace", label: "Examples", icon: "examples" },
+  { href: "/data", label: "Data", icon: "data", tour: "nav-data" },
+  { href: "/marketplace", label: "Examples", icon: "examples", tour: "nav-examples" },
   // Notebooks opens the prefix-aware JupyterLab in a new tab.
-  { href: "/jupyter/lab", label: "Notebooks", icon: "notebooks", external: true },
+  {
+    href: "/jupyter/lab",
+    label: "Notebooks",
+    icon: "notebooks",
+    external: true,
+    tour: "nav-notebooks",
+  },
 ];
 
 /**
@@ -156,11 +169,16 @@ export function Sidebar() {
 
   const cellClass = (active: boolean) =>
     cn(
-      "flex h-10 w-10 items-center justify-center rounded-xl transition-colors",
+      "flex w-full flex-col items-center gap-1 rounded-xl px-1 py-2 transition-colors",
       active
         ? "bg-pegasus-50 text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300"
         : "text-fgsubtle hover:bg-muted hover:text-fg"
     );
+
+  // Short enough to sit under a 18px glyph in a 72px rail without wrapping.
+  const cellLabel = (label: string) => (
+    <span className="text-[9.5px] font-semibold leading-none">{label}</span>
+  );
 
   const renderItem = (item: NavItem) => {
     if (item.external) {
@@ -171,10 +189,11 @@ export function Sidebar() {
           target="_blank"
           rel="noopener noreferrer"
           title={`${item.label} — opens in a new tab`}
-          aria-label={item.label}
+          data-tour={item.tour}
           className={cellClass(false)}
         >
           <Glyph name={item.icon} />
+          {cellLabel(item.label)}
         </a>
       );
     }
@@ -190,11 +209,12 @@ export function Sidebar() {
         key={item.href}
         href={item.href}
         title={item.label}
-        aria-label={item.label}
+        data-tour={item.tour}
         aria-current={active ? "page" : undefined}
         className={cellClass(active)}
       >
         <Glyph name={item.icon} />
+        {cellLabel(item.label)}
       </AppLink>
     );
   };
@@ -203,22 +223,27 @@ export function Sidebar() {
     icon: keyof typeof ICON,
     label: string,
     open: boolean,
-    onClick: () => void
+    onClick: () => void,
+    tour?: string
   ): ReactNode => (
     <button
       onClick={onClick}
       title={label}
-      aria-label={label}
+      data-tour={tour}
       aria-pressed={open}
       className={cellClass(open)}
     >
       <Glyph name={icon} />
+      {cellLabel(label)}
     </button>
   );
 
   return (
-    <aside className="flex w-14 shrink-0 flex-col items-center border-r border-line bg-surface py-2">
-      <nav className="flex flex-1 flex-col items-center gap-1">
+    <aside
+      data-tour="nav"
+      className="flex w-[72px] shrink-0 flex-col border-r border-line bg-surface"
+    >
+      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
         {primary.map(renderItem)}
 
         {/* Advanced — one click away rather than absent. Only split out in the
@@ -226,7 +251,7 @@ export function Sidebar() {
             Pegasus-literate user asked for by turning it off. */}
         {advanced.length > 0 && (
           <>
-            <div className="my-1 h-px w-6 bg-line" />
+            <div className="mx-auto my-1 h-px w-7 bg-line" />
             {advancedOpen ? (
               advanced.map(renderItem)
             ) : (
@@ -239,20 +264,37 @@ export function Sidebar() {
                 className={cellClass(false)}
               >
                 <Glyph name="more" />
+                {cellLabel("More")}
               </button>
             )}
           </>
         )}
 
-        <div className="my-1 h-px w-6 bg-line" />
+        <div className="mx-auto my-1 h-px w-7 bg-line" />
 
-        {panelButton("chat", "Chat", chatOpen, toggleChat)}
+        {panelButton("chat", "Chat", chatOpen, toggleChat, "nav-chat")}
         {/* Terminal is an escape hatch, not a primary tool. In the simplified
             interface it sits behind the same disclosure as Resources; with the
             interface off it stays where a power user expects it. */}
         {(!simplified || advancedOpen) &&
           panelButton("terminal", "Terminal", terminalOpen, toggleTerminal)}
+
+        {/* Settings is a place you go, not a property of your account, so it
+            gets a rail cell as well as its entry in the account menu. */}
+        <div className="mx-auto my-1 h-px w-7 bg-line" />
+        {renderItem({
+          href: "/settings",
+          label: "Settings",
+          icon: "settings",
+          tour: "nav-settings",
+        })}
       </nav>
+
+      {/* Identity, pinned. Always visible and it costs the content area
+          nothing, which is why it moved out of the top bar (#276). */}
+      <div className="border-t border-line p-1.5" data-tour="nav-account">
+        <UserMenu collapsed />
+      </div>
     </aside>
   );
 }

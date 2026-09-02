@@ -3,15 +3,13 @@
 /**
  * The application bar (#314).
  *
- * Full width above the rail, carrying the things that belong to the whole app
- * rather than to a page: identity, search, notifications, account. Moving the
- * wordmark and the user menu up here is what lets the left nav become a rail
- * of icons instead of a 224px sidebar.
+ * Full width above the rail, carrying what belongs to the whole app rather
+ * than to a page. Identity stays on the rail — always visible, and it costs
+ * the content area nothing — so this is the wordmark and search.
  */
 
 import { useEffect, useState } from "react";
 import { AppLink } from "@/components/layout/app-link";
-import { UserMenu } from "@/components/layout/user-menu";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { useStudioVersion } from "@/lib/hooks/use-version";
 
@@ -60,8 +58,9 @@ export function TopBar() {
         </AppLink>
 
         <button
+          data-tour="search"
           onClick={() => setPaletteOpen(true)}
-          className="flex h-8 w-full max-w-sm items-center gap-2 rounded-lg border border-line bg-base px-2.5 text-xs text-fgsubtle transition-colors hover:border-pegasus-300 hover:text-fgmuted"
+          className="ml-auto flex h-8 w-full max-w-sm items-center gap-2 rounded-lg border border-line bg-base px-2.5 text-xs text-fgsubtle transition-colors hover:border-pegasus-300 hover:text-fgmuted"
         >
           <svg
             width="13"
@@ -82,9 +81,6 @@ export function TopBar() {
           </kbd>
         </button>
 
-        <div className="ml-auto flex shrink-0 items-center">
-          <UserMenu />
-        </div>
       </header>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />

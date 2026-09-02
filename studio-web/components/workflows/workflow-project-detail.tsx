@@ -21,6 +21,7 @@ import { FailureCards } from "@/components/workflows/failure-cards";
 import {
   ParamField,
   buildArgs,
+  missingRequired,
   type ParamValues,
 } from "@/components/workflows/param-field";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
@@ -59,6 +60,10 @@ function outputHint(output: string | null): string | null {
 export function WorkflowProjectDetail({ projectId }: Props) {
   const { data, refetch: refetchProjects } = useWorkflowProjects();
   const project = data?.projects.find((p) => p.project_id === projectId);
+  const allProjects = data?.projects ?? [];
+  // Collapsing the run setup is the point of the disclosure, but a collapsed
+  // pane must not hide the fact that it is still incomplete.
+  const [configCollapsed, setConfigCollapsed] = useState(false);
   const { data: params } = useProjectParams(projectId);
 
   const generate = useGenerateWorkflow();
@@ -103,6 +108,10 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     [params]
   );
   const planParams = useMemo(() => params?.plan.params ?? [], [params]);
+  const requiredMissing = useMemo(
+    () => missingRequired([...genParams, ...planParams], values),
+    [genParams, planParams, values]
+  );
   const mutexGroups = params?.generator.mutex_required ?? [];
 
   // Initialize form values from discovered defaults once params load.
@@ -290,56 +299,42 @@ export function WorkflowProjectDetail({ projectId }: Props) {
           <FileCheck label="Apptainer def" exists={project.has_container_def} />
         </div>
       </div>
-      {/* Parameters (discovered per-workflow from the generator's argparse) */}
-      {(genParams.length > 0 || planParams.length > 0) && (
+      {/* Parameters are NOT repeated here (#314).
+          "Set up your run" above already renders every generate parameter —
+          the primary ones inline and the plumbing under "More options" — so
+          this section used to show all of them a second time, with different
+          headings, on the same page. Two editors for one value is worse than
+          an inconvenient one. What is left here is the machinery that has no
+          equivalent up there: the individual Pegasus steps, the plan/submit
+          flags the run flow does not expose, and the raw command output. */}
+      {planParams.length > 0 && (
         <div>
           <h3 className="mb-3 text-sm font-semibold text-fg">
-            Parameters
+            Plan and submit options
           </h3>
-
-          {genParams.length > 0 && (
-            <div className="mb-4 rounded-md border border-line p-4">
-              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-fgsubtle">
-                Generate
+          <div className="rounded-md border border-line p-4">
+            {mutexGroups.map((grp, i) => (
+              <p
+                key={i}
+                className="mb-2 text-xs text-amber-600 dark:text-amber-400"
+              >
+                Provide exactly one of:{" "}
+                {grp
+                  .map((d) => genParams.find((p) => p.dest === d)?.flag ?? d)
+                  .join(" or ")}
               </p>
-              {mutexGroups.map((grp, i) => (
-                <p key={i} className="mb-2 text-xs text-amber-600 dark:text-amber-400">
-                  Provide exactly one of:{" "}
-                  {grp
-                    .map((d) => genParams.find((p) => p.dest === d)?.flag ?? d)
-                    .join(" or ")}
-                </p>
+            ))}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {planParams.map((p) => (
+                <ParamField
+                  key={p.dest}
+                  param={p}
+                  value={values[p.dest]}
+                  onChange={(v) => setValue(p.dest, v)}
+                />
               ))}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {genParams.map((p) => (
-                  <ParamField
-                    key={p.dest}
-                    param={p}
-                    value={values[p.dest]}
-                    onChange={(v) => setValue(p.dest, v)}
-                  />
-                ))}
-              </div>
             </div>
-          )}
-
-          {planParams.length > 0 && (
-            <div className="rounded-md border border-line p-4">
-              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-fgsubtle">
-                Plan / Submit
-              </p>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {planParams.map((p) => (
-                  <ParamField
-                    key={p.dest}
-                    param={p}
-                    value={values[p.dest]}
-                    onChange={(v) => setValue(p.dest, v)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       )}
 
@@ -455,11 +450,28 @@ export function WorkflowProjectDetail({ projectId }: Props) {
       {/* Header */}
       <div className="border-b border-line bg-surface px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-fg">
-              {project.name}
-            </h2>
-            <p className="text-sm text-fgmuted">{project.project_dir}</p>
+          {/* A picker rather than a heading (#314). With the list pane
+              collapsed the heading was the only thing telling you which
+              workflow you were looking at, and nothing let you change it
+              without reopening the list. */}
+          <div className="min-w-0">
+            <label className="flex items-center gap-1.5">
+              <span className="sr-only">Selected workflow</span>
+              <select
+                value={project.project_id}
+                onChange={(e) => selectProject(e.target.value)}
+                className="max-w-full truncate rounded-lg border border-line bg-surface px-2 py-1 text-lg font-semibold text-fg outline-none focus:border-pegasus-400"
+              >
+                {(allProjects.length ? allProjects : [project]).map((p) => (
+                  <option key={p.project_id} value={p.project_id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="mt-0.5 truncate text-sm text-fgmuted">
+              {project.project_dir}
+            </p>
           </div>
           <span className="flex items-center gap-3">
             {/* Every workflow gets a way into its own folder: the files are
@@ -497,8 +509,44 @@ export function WorkflowProjectDetail({ projectId }: Props) {
       </div>
 
       <div className="p-6 space-y-6">
-        {prefs.simple_run && (
-          <>
+        {/* One run-setup surface, whatever the interface preference (#314).
+            It used to be either/or: the simplified interface got "Set up your
+            run" *plus* an Advanced block that rendered the same parameters
+            again, and turning the interface off replaced the run flow with
+            that raw block. So a parameter had two editors in one mode and a
+            different one in the other. Now the run flow always owns the
+            parameters, and Advanced is only the machinery that has no
+            equivalent in it — the individual steps and the raw output. */}
+        <details
+          open={!configCollapsed}
+          onToggle={(e) => {
+            const open = (e.currentTarget as HTMLDetailsElement).open;
+            if (open === configCollapsed) setConfigCollapsed(!open);
+          }}
+          className="rounded-xl border border-line bg-surface"
+        >
+          <summary className="cursor-pointer list-none px-5 py-3">
+            <span className="flex items-center gap-2">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "text-fgsubtle transition-transform",
+                  configCollapsed && "-rotate-90"
+                )}
+              >
+                ▾
+              </span>
+              <span className="text-base font-semibold text-fg">
+                Set up your run
+              </span>
+              {configCollapsed && requiredMissing.length > 0 && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
+                  {requiredMissing.length} still needed
+                </span>
+              )}
+            </span>
+          </summary>
+          <div className="border-t border-line p-5 pt-4">
             <RunFlowPanel
               projectId={projectId}
               params={params}
@@ -506,46 +554,36 @@ export function WorkflowProjectDetail({ projectId }: Props) {
               onChange={setValue}
               onSubmitted={() => refetchProjects()}
             />
+          </div>
+        </details>
 
-            <GraphPane
-              projectId={projectId}
-              projectName={project.name}
-              runs={project.runs}
-            />
+        <GraphPane
+          projectId={projectId}
+          projectName={project.name}
+          runs={project.runs}
+        />
 
-            {/* Everything Pegasus-shaped lives behind one disclosure. Open
-                state is a per-user preference, so a workflow engineer who
-                wants it doesn't reopen it on every visit. */}
-            <details
-              open={prefs.advanced_open}
-              onToggle={(e) => {
-                const open = (e.currentTarget as HTMLDetailsElement).open;
-                if (open !== prefs.advanced_open) {
-                  updatePrefs.mutate({ ...prefs, advanced_open: open });
-                }
-              }}
-              className="rounded-xl border border-line bg-surface"
-            >
-              <summary className="cursor-pointer px-5 py-3 text-sm font-medium text-fgmuted hover:text-fg">
-                Advanced — run the steps individually
-              </summary>
-              <div className="space-y-6 border-t border-line p-5">
-                {advancedSections}
-              </div>
-            </details>
-          </>
-        )}
-
-        {!prefs.simple_run && (
-          <>
-            <GraphPane
-              projectId={projectId}
-              projectName={project.name}
-              runs={project.runs}
-            />
+        {/* Everything Pegasus-shaped lives behind one disclosure. Open state is
+            a per-user preference, so a workflow engineer who wants it doesn't
+            reopen it on every visit — and turning the simplified interface off
+            opens it by default rather than replacing anything. */}
+        <details
+          open={prefs.advanced_open || !prefs.simple_run}
+          onToggle={(e) => {
+            const open = (e.currentTarget as HTMLDetailsElement).open;
+            if (open !== prefs.advanced_open) {
+              updatePrefs.mutate({ ...prefs, advanced_open: open });
+            }
+          }}
+          className="rounded-xl border border-line bg-surface"
+        >
+          <summary className="cursor-pointer px-5 py-3 text-sm font-medium text-fgmuted hover:text-fg">
+            Advanced — run the steps individually
+          </summary>
+          <div className="space-y-6 border-t border-line p-5">
             {advancedSections}
-          </>
-        )}
+          </div>
+        </details>
 
         {/* Submitted runs */}
         {project.runs.length > 0 && (
