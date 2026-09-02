@@ -16,14 +16,19 @@
  * place it lives.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { DashboardData } from "@/lib/api/client";
 import { useDashboard } from "@/lib/hooks/use-dashboard";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { jupyterUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 import { AppLink } from "@/components/layout/app-link";
-import { WelcomeCard } from "@/components/dashboard/welcome-card";
+import { GlossaryList } from "@/components/ui/glossary-term";
+import { GuidedTour, type TourStep } from "@/components/onboarding/guided-tour";
+import {
+  useUIPreferences,
+  useUpdateUIPreferences,
+} from "@/lib/hooks/use-ui-prefs";
 
 type RecentRun = DashboardData["runs"]["recent"][number];
 
@@ -251,11 +256,79 @@ function AttentionStrip({
   );
 }
 
+/**
+ * What a newcomer needs to be able to find (#317).
+ *
+ * Each step points at a real rail cell rather than describing it, and the tour
+ * skips any anchor that isn't on screen — Resources and Terminal sit behind
+ * the Advanced disclosure for most users, so their steps simply don't run.
+ */
+const TOUR: TourStep[] = [
+  {
+    anchor: "nav-analyses",
+    title: "Analyses",
+    body: "Everything you have built, and every run of it. The graph of the steps and the files a run produced both live here.",
+  },
+  {
+    anchor: "nav-data",
+    title: "Data",
+    body: "Your own input files. Drag them in here and an analysis can use them — no copying to a server yourself.",
+  },
+  {
+    anchor: "nav-examples",
+    title: "Examples",
+    body: "Ready-made analyses from the Pegasus community. Add one and it becomes yours to run and edit.",
+  },
+  {
+    anchor: "nav-chat",
+    title: "The assistant, anywhere",
+    body: "It follows you around the app. Open it on any page to ask about whatever you are looking at.",
+  },
+  {
+    anchor: "nav-settings",
+    title: "Settings",
+    body: "Which model answers you, which tools are installed, and where Studio looks for your workflows.",
+  },
+  {
+    anchor: "search",
+    title: "Find anything",
+    body: "Press ⌘K anywhere to jump to an analysis, an example, or a page.",
+  },
+  {
+    anchor: "home-composer",
+    title: "Start here",
+    body: "Describe the analysis you want in your own words. The assistant builds it, and you never have to write Pegasus by hand.",
+  },
+];
+
 export function DashboardView() {
   const { data } = useDashboard();
   const openChatWith = usePanelStore((s) => s.openChatWith);
   const setChatOpen = usePanelStore((s) => s.setChatOpen);
   const [draft, setDraft] = useState("");
+  const { prefs, isLoading: prefsLoading } = useUIPreferences();
+  const updatePrefs = useUpdateUIPreferences();
+  const [tourOpen, setTourOpen] = useState(false);
+  const [glossary, setGlossary] = useState(false);
+
+  // First visit runs the tour on its own. `welcome_dismissed` is the same
+  // preference the old welcome card used, so anyone who already dismissed that
+  // is not re-onboarded by the replacement.
+  const firstVisit = !prefsLoading && !prefs.welcome_dismissed;
+  useEffect(() => {
+    if (!firstVisit) return;
+    // A frame, so the rail and the composer are laid out before the tour
+    // measures them — a step whose anchor has no box gets skipped.
+    const t = requestAnimationFrame(() => setTourOpen(true));
+    return () => cancelAnimationFrame(t);
+  }, [firstVisit]);
+
+  const endTour = () => {
+    setTourOpen(false);
+    if (!prefs.welcome_dismissed) {
+      updatePrefs.mutate({ ...prefs, welcome_dismissed: true });
+    }
+  };
 
   const hasWorkflows =
     (data?.projects.total ?? 0) > 0 || (data?.runs.total ?? 0) > 0;
@@ -276,12 +349,6 @@ export function DashboardView() {
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-auto">
         <div className="mx-auto max-w-3xl px-6 pb-8 pt-12">
-          {/* First-run onboarding (#241, Phase 6). Shown once and then never,
-              so it costs a returning user nothing. Staying only until the
-              per-page guided tours replace it — deleting it before then would
-              leave Studio with no onboarding at all. */}
-          <WelcomeCard />
-
           <AttentionStrip runs={data?.runs.recent ?? []} onAsk={send} />
 
           {/* Welcome */}
@@ -377,6 +444,35 @@ export function DashboardView() {
               </button>
             ))}
           </div>
+
+          {/* Onboarding, on demand. The old welcome card explained Studio on
+              the one screen with nothing to point at, and was gone by the time
+              you reached the pages it described (#317). */}
+          <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line pt-5 text-xs">
+            <button
+              onClick={() => setTourOpen(true)}
+              className="font-semibold text-pegasus-700 hover:underline dark:text-pegasus-300"
+            >
+              Show me around
+            </button>
+            <button
+              onClick={() => setGlossary((v) => !v)}
+              aria-expanded={glossary}
+              className="text-fgmuted hover:text-fg"
+            >
+              What do the words mean?
+            </button>
+            <span className="text-fgsubtle">
+              Studio runs analyses across many machines for you. You don&apos;t
+              need to know how that part works.
+            </span>
+          </div>
+
+          {glossary && (
+            <div className="mt-3 rounded-xl border border-line bg-surface p-4">
+              <GlossaryList />
+            </div>
+          )}
         </div>
       </div>
 
@@ -394,6 +490,7 @@ export function DashboardView() {
           </label>
           <textarea
             id="home-composer"
+            data-tour="home-composer"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -445,6 +542,8 @@ export function DashboardView() {
           </div>
         </form>
       </div>
+
+      <GuidedTour steps={TOUR} open={tourOpen} onClose={endTour} />
     </div>
   );
 }
