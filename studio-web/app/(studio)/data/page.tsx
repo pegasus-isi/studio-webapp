@@ -16,7 +16,7 @@ import {
   formatBytes,
 } from "@/components/data/upload-drop-zone";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { jupyterUrl } from "@/lib/urls";
+import { appRelativePath } from "@/lib/urls";
 
 export default function DataPage() {
   const qc = useQueryClient();
@@ -91,10 +91,8 @@ export default function DataPage() {
               Your files
             </h2>
             <a
-              href={jupyterUrl("/lab")}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
+              href={appRelativePath("/notebooks")}
+                            className="text-xs font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
             >
               Browse everything in JupyterLab ↗
             </a>

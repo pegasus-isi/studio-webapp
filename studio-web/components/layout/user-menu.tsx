@@ -152,6 +152,19 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             >
               ⚙️ Settings
             </AppLink>
+            {/* The tour's only launcher used to be a link at the bottom of the
+                landing page, below the openers — findable if you already knew
+                it was there. The account menu is on every page, which is where
+                "show me that again" belongs. It goes to the landing page
+                because that is where the tour's steps are: the whole rail is
+                visible from there, so a nav tour needs no navigation. */}
+            <AppLink
+              href="/home?tour=1"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2 hover:bg-muted"
+            >
+              🧭 Take a tour
+            </AppLink>
             <a
               href="https://github.com/pegasus-isi/studio-webapp#readme"
               target="_blank"

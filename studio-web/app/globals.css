@@ -10,30 +10,41 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
-/* PegasusAI palette (from swarmourr.github.io/PegasusAI). Light is default;
-   .dark on <html> flips to the deep-navy dark theme. */
+/* PegasusAI palette — cornflower/periwinkle (#314).
+   Sampled from the interface redesign prototype: ground #f3f6ff, surfaces
+   #fcfdff, accent #6c9cde. Cooler and softer than the sky ramp it replaces.
+   Light is default; .dark on <html> flips to the periwinkle-navy dark theme.
+
+   The dark theme is *derived*, not sampled — the prototype captures are
+   light-mode only, so those values are ours and should be judged on their own
+   rather than assumed to match anything. */
 :root {
-  --c-base: #f8fafc;
-  --c-surface: #ffffff;
-  --c-muted: #f1f5f9;
-  --c-line: #e2e8f0;
-  --c-fg: #0f172a;
-  --c-fgmuted: #475569;
-  --c-fgsubtle: #94a3b8;
-  --c-accent: #0ea5e9;
+  --c-base: #f3f6ff;
+  --c-surface: #fcfdff;
+  --c-muted: #eef2fd;
+  --c-line: #dde5f5;
+  --c-fg: #131a2e;
+  --c-fgmuted: #4d5875;
+  --c-fgsubtle: #8d97b2;
+  /* Not the sampled #6c9cde: white-on-#6c9cde measures 2.82:1, under both the
+     4.5:1 AA text threshold and the 3:1 non-text floor, which is why the
+     prototype's primary buttons read as disabled. Two steps darker clears AA
+     at 5.03:1 and keeps the hue. #6c9cde survives as pegasus-500, for resting
+     fills and borders that are never the sole indicator. */
+  --c-accent: #3f6fb8;
   --c-accent-fg: #ffffff;
 }
 
 .dark {
-  --c-base: #0b162b;
-  --c-surface: #0f1e38;
-  --c-muted: #1a2b47;
-  --c-line: #24344f;
-  --c-fg: #f8fafc;
-  --c-fgmuted: #cbd5e1; /* lighter for readability on the navy base */
-  --c-fgsubtle: #94a3b8;
-  --c-accent: #38bdf8;
-  --c-accent-fg: #04121f;
+  --c-base: #0e1425;
+  --c-surface: #161e33;
+  --c-muted: #1e2740;
+  --c-line: #29334f;
+  --c-fg: #eef2fb;
+  --c-fgmuted: #b3bdd6; /* lighter for readability on the navy base */
+  --c-fgsubtle: #7c88a6;
+  --c-accent: #8fb4ee;
+  --c-accent-fg: #0b1120;
 }
 
 /* The app is a fixed shell: the sidebar, panels and status bar stay put and

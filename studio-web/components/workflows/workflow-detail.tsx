@@ -237,7 +237,7 @@ export function WorkflowDetail({ runId }: Props) {
               <div
                 className={cn(
                   "h-2 rounded-full transition-all",
-                  failedJobs > 0 ? "bg-red-500" : "bg-pegasus-500"
+                  failedJobs > 0 ? "bg-red-500" : "bg-pegasus-600"
                 )}
                 style={{ width: `${progress}%` }}
               />

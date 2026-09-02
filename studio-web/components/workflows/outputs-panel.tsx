@@ -16,7 +16,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { OutputFile } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
-import { jupyterUrl } from "@/lib/urls";
+import { appRelativePath } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 100;
@@ -84,10 +84,8 @@ export function OutputsPanel({
             doesn&apos;t declare an output location, so we don&apos;t know where
             to look. You can browse your workspace in{" "}
             <a
-              href={jupyterUrl("/lab")}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-pegasus-600 hover:underline dark:text-pegasus-300"
+              href={appRelativePath("/notebooks")}
+                            className="text-pegasus-600 hover:underline dark:text-pegasus-300"
             >
               JupyterLab
             </a>{" "}
@@ -124,7 +122,7 @@ export function OutputsPanel({
           {data.truncated && " (showing the first " + data.total + ")"}
         </p>
         <a
-          href={jupyterUrl("/lab")}
+          href={appRelativePath("/notebooks")}
           target="_blank"
           rel="noopener noreferrer"
           className="text-xs font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"

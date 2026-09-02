@@ -268,10 +268,10 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
             {msg.toolCalls.map((tc) => (
               <div
                 key={tc.id}
-                className="rounded bg-base px-2 py-1 text-xs text-fgmuted"
+                className="rounded border border-line bg-muted px-2 py-1 text-xs text-fgmuted"
               >
-                <span className="font-mono font-medium">{tc.name}</span>
-                <span className="ml-1 text-fgsubtle">called</span>
+                <span className="font-mono font-medium text-fg">{tc.name}</span>
+                <span className="ml-1">called</span>
               </div>
             ))}
           </div>
@@ -283,10 +283,12 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
             {msg.toolResults.map((tr) => (
               <details
                 key={tr.id}
-                className="rounded bg-base text-xs"
+                className="rounded border border-line bg-muted text-xs"
               >
                 <summary className="cursor-pointer px-2 py-1 text-fgmuted">
-                  <span className="font-mono font-medium">{tr.name}</span>{" "}
+                  <span className="font-mono font-medium text-fg">
+                    {tr.name}
+                  </span>{" "}
                   result
                 </summary>
                 <pre className="max-h-40 overflow-auto px-2 pb-1 text-fgmuted">
@@ -299,7 +301,7 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
 
         {/* Per-turn metadata footer (tokens, tool calls, duration) */}
         {!isUser && meta && (meta.tokens || meta.durationS) ? (
-          <div className="mt-2 border-t border-line pt-1.5 text-xs italic text-fgsubtle">
+          <div className="mt-2 border-t border-line pt-1.5 text-xs text-fgmuted">
             {formatMeta(meta)}
           </div>
         ) : null}
@@ -346,8 +348,11 @@ function ApprovalCard({
         </svg>
         Approve shell command?
       </div>
+      {/* Full contrast, deliberately. This is the command you are about to
+          authorise — the one string in the app that must not be rendered in a
+          muted grey. */}
       {req.summary && (
-        <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-base px-2 py-1 font-mono text-fgmuted [overflow-wrap:anywhere]">
+        <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap rounded border border-line bg-surface px-2 py-1 font-mono text-fg [overflow-wrap:anywhere]">
           {req.summary}
         </pre>
       )}
