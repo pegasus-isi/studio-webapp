@@ -186,7 +186,7 @@ export function UploadDropZone({
               {item.status === "uploading" && (
                 <div className="mt-1.5 h-1.5 w-full rounded-full bg-muted">
                   <div
-                    className="h-1.5 rounded-full bg-pegasus-500 transition-all"
+                    className="h-1.5 rounded-full bg-pegasus-600 transition-all"
                     style={{ width: `${Math.round(item.progress * 100)}%` }}
                   />
                 </div>

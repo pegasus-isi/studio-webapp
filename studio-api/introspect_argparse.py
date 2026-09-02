@@ -123,8 +123,24 @@ def _label_for(act: argparse.Action) -> str:
     first = re.split(r"(?<=[.!?])\s", help_text)[0].strip().rstrip(".")
     if first and len(first) <= 48:
         return first[0].upper() + first[1:]
-    flag = sorted(act.option_strings, key=len)[-1] if act.option_strings else act.dest
-    pretty = flag.lstrip("-").replace("-", " ").replace("_", " ")
+
+    # Fall back to the flag. Longest option string first, because `--num-subjects`
+    # says more than `-n`.
+    for candidate in sorted(act.option_strings, key=len, reverse=True) + [act.dest]:
+        pretty = candidate.lstrip("-").replace("-", " ").replace("_", " ").strip()
+        # A generator that declares only a short flag (`-s`) alongside help text
+        # too long to be a label produced the label "s" — and because
+        # `_is_advanced` never demotes a required parameter, that single letter
+        # was the name on the one field the user had to fill in (#314). Anything
+        # this short is a CLI identifier, not a name.
+        if len(pretty) > 2:
+            return pretty[:1].upper() + pretty[1:]
+
+    # Nothing usable anywhere: a truncated clause from the help beats a letter.
+    if first:
+        clipped = first[:45].rstrip()
+        return clipped[0].upper() + clipped[1:] + "…"
+    pretty = act.dest.replace("_", " ").strip() or act.dest
     return pretty[:1].upper() + pretty[1:]
 
 

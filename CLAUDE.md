@@ -36,7 +36,7 @@ npm run build
 
 ```sh
 # Backend (from repo root; assumes the studio-api venv is active with deps installed)
-(cd studio-api && pytest -q)                          # ~450 tests; no Pegasus/Condor/keys needed
+(cd studio-api && pytest -q)                          # ~500 tests; no Pegasus/Condor/keys needed
 
 # Frontend (needs `npm ci` first so node_modules/.bin/tsc exists)
 (cd studio-web && npm ci && node_modules/.bin/tsc --noEmit)   # strict mode
@@ -57,7 +57,7 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
 `docker/entrypoint.sh` runs `init_db.py` (first launch only) then `exec supervisord`.
 
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
-  migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 21 services
+  migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 23 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
   notifications, terminal/PTY sessions). Workflow runs are
   discovered by globbing `**/braindump.yml` under `$HOME` (`STUDIO_SCAN_DIR`),

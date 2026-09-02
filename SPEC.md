@@ -133,8 +133,8 @@ Router groups:
 | `terminal` | Browser bash PTY |
 | `ai_terminal` | AI tool PTYs |
 | `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate |
-| `chat` | PegasusAI SSE chat; pluggable engine — shared `opencode serve` proxy (default) or builtin loop (fallback); per-turn shell-command approval |
-| `jupyter` | Status only (JupyterLab is always-on) |
+| `chat` | PegasusAI SSE chat — the builtin agent loop (direct provider calls with tool use; Anthropic, OpenAI-compatible and Responses API). Per-turn shell-command approval. OpenCode was removed as a chat engine in #299 and remains only as a launchable terminal tool |
+| `jupyter` | Status only (JupyterLab is always-on; the `/notebooks` page frames it) |
 | `dashboard` | Aggregate landing-page data (projects, runs, resources, versions) |
 | `provisioning` | HTCondor pool inventory + queue demand + pressure + OSPool capacity (read-only) |
 | `notifications` | Notification feed + prefs; SSE stream for live toasts |

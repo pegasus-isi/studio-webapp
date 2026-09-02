@@ -1,6 +1,12 @@
 # Knowledge Single-Source & Deployment Profiles — Design
 
-Status: **Draft for review**
+Status: **Implemented** (verified 2026-09-02). The marketplace is the single
+source, the image checks it out to `/opt/pegasus-ai/marketplace` and the
+entrypoint clones it into `~/.local/share/pegasus-ai/marketplace`, per-tool
+adapters generate config into the user's workspace, and the CI guard that
+fails the build if a second copy reappears under `knowledge/{skills,agents,…}`
+is live in `.github/workflows/deploy.yml`. `CLAUDE.md` describes the shipped
+arrangement; this document is the reasoning behind it.
 Scope: studio-webapp (`knowledge/`, `studio-api/knowledge/`), pegasus-isi/claude-plugin-marketplace, the prospective OOD app
 Goal: **exactly one authored copy** of the Pegasus AI skills/agents/reference
 content, consumable by Claude Code and by every other tool Studio supports, on
