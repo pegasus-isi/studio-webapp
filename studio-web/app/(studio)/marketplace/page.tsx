@@ -59,6 +59,11 @@ export default function MarketplacePage() {
   });
 
   const [showAllTopics, setShowAllTopics] = useState(false);
+  const [query, setQuery] = useState("");
+  const [source, setSource] = useState<"all" | "Pegasus-ISI" | "PegasusHub">(
+    "all"
+  );
+  const [sort, setSort] = useState<"featured" | "name">("featured");
 
   const workflows = data?.workflows ?? [];
 
@@ -81,10 +86,36 @@ export default function MarketplacePage() {
   const restTags = tagCounts.filter(([, n]) => n <= 1);
   const visibleTags = showAllTopics ? tagCounts : primaryTags;
 
-  const shown =
-    topic === "all"
-      ? workflows
-      : workflows.filter((w) => topicsOf(w).includes(topic));
+  // Four filters that narrow together: free text, subject, where it came from,
+  // and ordering. Twenty entries was already too many to scan when nine of the
+  // subject chips matched a single workflow each (#314).
+  const needle = query.trim().toLowerCase();
+  const shown = useMemo(() => {
+    const out = workflows.filter((w) => {
+      if (topic !== "all" && !topicsOf(w).includes(topic)) return false;
+      if (source !== "all" && w.source !== source) return false;
+      if (
+        needle &&
+        !`${w.name} ${w.description} ${topicsOf(w).join(" ")}`
+          .toLowerCase()
+          .includes(needle)
+      )
+        return false;
+      return true;
+    });
+    // The API already returns featured-first, so only re-sort when asked —
+    // otherwise the gentle-onramp ordering is lost for no reason.
+    return sort === "name"
+      ? [...out].sort((a, b) => a.name.localeCompare(b.name))
+      : out;
+  }, [workflows, topic, source, needle, sort]);
+
+  const filtering = topic !== "all" || source !== "all" || !!needle;
+  const clearAll = () => {
+    setTopic("all");
+    setSource("all");
+    setQuery("");
+  };
 
   return (
     <div className="h-full overflow-auto">
@@ -109,6 +140,72 @@ export default function MarketplacePage() {
         {error && (
           <div className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-rose-500/10 dark:text-rose-400">
             Failed to load the marketplace: {(error as Error).message}
+          </div>
+        )}
+
+        {!isLoading && workflows.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <label className="relative min-w-[200px] flex-1 sm:max-w-xs">
+              <span className="sr-only">Search examples</span>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                aria-hidden="true"
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fgsubtle"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <path d="M20 20l-3.5-3.5" />
+              </svg>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by name, description, or subject"
+                className="h-8 w-full rounded-lg border border-line bg-surface pl-8 pr-2.5 text-xs text-fg outline-none placeholder:text-fgsubtle focus:border-pegasus-400"
+              />
+            </label>
+
+            <label className="flex items-center gap-1.5 text-xs text-fgmuted">
+              <span className="sr-only">Filter by source</span>
+              <select
+                value={source}
+                onChange={(e) =>
+                  setSource(e.target.value as typeof source)
+                }
+                className="h-8 rounded-lg border border-line bg-surface px-2 text-xs text-fg outline-none focus:border-pegasus-400"
+              >
+                <option value="all">Any source</option>
+                <option value="Pegasus-ISI">Pegasus-ISI</option>
+                <option value="PegasusHub">PegasusHub</option>
+              </select>
+            </label>
+
+            <label className="flex items-center gap-1.5 text-xs text-fgmuted">
+              <span className="sr-only">Sort</span>
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as typeof sort)}
+                className="h-8 rounded-lg border border-line bg-surface px-2 text-xs text-fg outline-none focus:border-pegasus-400"
+              >
+                <option value="featured">Suggested first</option>
+                <option value="name">Name A–Z</option>
+              </select>
+            </label>
+
+            <span className="ml-auto text-xs text-fgsubtle">
+              {shown.length} of {workflows.length}
+            </span>
+            {filtering && (
+              <button
+                onClick={clearAll}
+                className="rounded-lg border border-line px-2 py-1 text-xs font-medium text-fgmuted hover:text-fg"
+              >
+                Clear filters
+              </button>
+            )}
           </div>
         )}
 
@@ -146,7 +243,19 @@ export default function MarketplacePage() {
         {isLoading ? (
           <p className="text-sm text-fgmuted">Loading workflows…</p>
         ) : shown.length === 0 ? (
-          <p className="text-sm text-fgmuted">No workflows found.</p>
+          <div className="rounded-lg border border-dashed border-line p-8 text-center">
+            <p className="text-sm text-fgmuted">
+              Nothing matches those filters.
+            </p>
+            {filtering && (
+              <button
+                onClick={clearAll}
+                className="mt-2 text-xs font-semibold text-pegasus-700 hover:underline dark:text-pegasus-300"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {shown.map((w) => (
@@ -182,18 +291,13 @@ function WorkflowCard({
   pending: boolean;
   onAdd: () => void;
 }) {
-  const [imgOk, setImgOk] = useState(true);
+  // No thumbnail. The registry's `image` is a rendering of the workflow's DAG,
+  // which at 128px tall is an unreadable smudge that says only "this is a
+  // graph" — true of every entry — while taking the space the description
+  // needed. It stays in the API for a Preview drawer to use at a size where a
+  // graph is actually legible (#314).
   return (
     <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-surface">
-      {w.image && imgOk && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={w.image}
-          alt=""
-          onError={() => setImgOk(false)}
-          className="h-32 w-full bg-base object-contain p-2"
-        />
-      )}
       <div className="flex flex-1 flex-col p-4">
         <div className="flex items-start justify-between gap-2">
           <h2 className="text-sm font-semibold text-fg">{w.name}</h2>
@@ -216,9 +320,16 @@ function WorkflowCard({
             ))}
           </div>
         )}
-        <p className="mt-2 flex-1 text-xs leading-relaxed text-fgmuted">
-          {w.description || "Pegasus workflow."}
-        </p>
+        {/* No placeholder. A generic sentence repeated down the grid looks
+            like content and carries none — blank is more honest, and the
+            server now fills most of these from the repo's own metadata. */}
+        {w.description ? (
+          <p className="mt-2 flex-1 text-xs leading-relaxed text-fgmuted">
+            {w.description}
+          </p>
+        ) : (
+          <div className="flex-1" />
+        )}
         <div className="mt-3 flex items-center gap-3">
           {added ? (
             <>

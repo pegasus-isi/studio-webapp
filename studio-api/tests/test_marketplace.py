@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import routers.marketplace as mkt
 
 
@@ -225,6 +227,97 @@ def test_an_explicit_registry_name_is_never_overridden():
         "PegasusHub",
     )
     assert entry["name"] == "Orcasound workflow"
+
+
+async def _enrich(entries, monkeypatch, responses):
+    """Run _enrich_descriptions with GitHub stubbed out."""
+
+    class FakeResp:
+        def __init__(self, payload):
+            self.status_code = 200 if payload is not None else 404
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResp(responses.get(url))
+
+    monkeypatch.setenv("STUDIO_MARKETPLACE_ENRICH", "1")
+    monkeypatch.setattr(mkt.httpx, "AsyncClient", lambda **kw: FakeClient())
+    await mkt._enrich_descriptions(entries)
+
+
+def test_blank_descriptions_are_filled_from_github(monkeypatch):
+    """Roughly half the registry omits `description` (#314).
+
+    The repo already carries a one-liner — the catalog just was not asking.
+    """
+    entries = [
+        {
+            "repo_url": "https://github.com/pegasushub/1000genome-workflow",
+            "description": "",
+            "topics": [],
+        },
+        {
+            "repo_url": "https://github.com/pegasus-isi/quickstart-workflow",
+            "description": "Already has one, must not be overwritten.",
+            "topics": ["tutorial"],
+        },
+    ]
+    asyncio.run(
+        _enrich(
+            entries,
+            monkeypatch,
+            {
+                "https://api.github.com/repos/pegasushub/1000genome-workflow": {
+                    "description": "Population-scale variant analysis.",
+                    "topics": ["Bioinformatics", "Genomics"],
+                }
+            },
+        )
+    )
+    assert entries[0]["description"] == "Population-scale variant analysis."
+    # Repo topics are owner-curated and cleaner than the registry's free text.
+    assert entries[0]["topics"] == ["bioinformatics", "genomics"]
+    assert entries[1]["description"] == "Already has one, must not be overwritten."
+
+
+def test_enrichment_degrades_to_no_description_rather_than_failing(monkeypatch):
+    """A rate-limit, a timeout or a private repo must not break the catalog.
+
+    A card with no description is honest; a placeholder repeated down the grid
+    looks like content and carries none.
+    """
+    entries = [{"repo_url": "https://github.com/x/private", "description": ""}]
+    asyncio.run(_enrich(entries, monkeypatch, {}))  # every lookup 404s
+    assert entries[0]["description"] == ""
+
+
+def test_enrichment_is_skipped_when_disabled(monkeypatch):
+    entries = [{"repo_url": "https://github.com/x/y", "description": ""}]
+
+    def explode(**kw):
+        raise AssertionError("must not reach the network when disabled")
+
+    monkeypatch.setenv("STUDIO_MARKETPLACE_ENRICH", "0")
+    monkeypatch.setattr(mkt.httpx, "AsyncClient", explode)
+    asyncio.run(mkt._enrich_descriptions(entries))
+    assert entries[0]["description"] == ""
+
+
+def test_non_github_repos_are_left_alone(monkeypatch):
+    entries = [{"repo_url": "https://gitlab.com/x/y", "description": ""}]
+    asyncio.run(_enrich(entries, monkeypatch, {}))
+    assert entries[0]["description"] == ""
+    assert mkt._gh_api_url("https://gitlab.com/x/y") is None
 
 
 def test_add_refuses_non_http_repo_url(client, monkeypatch, tmp_path):
