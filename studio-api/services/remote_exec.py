@@ -12,7 +12,9 @@ local universe then execute on the AP against paths that only exist in the pod.
 On 2026-09-02 that made every workflow fail on its first node: the pod resolved
 ``pegasus-lite-local.sh`` under ``python3.12`` (Ubuntu noble) and the AP under
 ``python3.13`` (Debian trixie). See #334, and ``services/submit_host.py`` for
-the guardrail that detects it.
+the guardrail that detects it. The pod is Debian trixie now too, but that only
+removes one way for the paths to diverge — planning on the AP is what makes the
+paths right by definition, whatever either side is running.
 
 Planning on the AP fixes it at the source. Verified 2026-09-02 by driving this
 module against the live cluster: planning the earthquake workflow produced 14

@@ -54,7 +54,7 @@ _PING_INTERVAL_S = 10.0
 # The middle case is why "no flags" is wrong: with the fakeroot *command*
 # available, Apptainer preloads the HOST's libfakeroot.so into the container, so
 # any base older than the host fails before %post runs. ubuntu:22.04 (glibc 2.35)
-# under this 24.04 image (2.39) is the common case, not an edge one.
+# under this trixie image (2.41) is the common case, not an edge one.
 # --ignore-fakeroot-command declines that path; the kernel's root-mapped
 # namespace needs no such library.
 #
