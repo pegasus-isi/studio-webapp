@@ -81,6 +81,10 @@ RUN groupadd -g 1000 studio && \
     useradd -u 1000 -g 1000 -M -d /home/studio -s /bin/bash studio
 
 # ---- System packages (no python3-pip — we bootstrap pip cleanly below) ----
+# software-properties-common is deliberately absent: trixie does not ship it,
+# and it was already dead weight here — the pip bootstrap below wipes
+# /usr/lib/python3/dist-packages, which takes apt_pkg with it and leaves
+# add-apt-repository broken regardless (see the Apptainer step).
 # Retry-with-recovery loop: under amd64 emulation a dpkg post-install can be
 # killed mid-configure (exit 1) at a random package. Re-run dpkg --configure -a
 # + apt-get install -f to repair the half-configured state, then retry.
@@ -96,7 +100,6 @@ RUN ok=0; for i in 1 2 3 4 5; do \
         vim \
         poppler-utils \
         build-essential \
-        software-properties-common \
         python3 \
         python3-venv \
         python3-dev \
