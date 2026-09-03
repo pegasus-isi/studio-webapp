@@ -73,12 +73,27 @@ RUN printf '%s\n' \
 # ever be built. When a different UID is injected the entry is simply unused, so
 # the arbitrary-UID design is unchanged.
 #
-# The home path is nominal and deliberately not created (-M): the real HOME is
-# whatever the spawner mounts (`ap:/home/<user>` in production, a bind mount
-# locally) and is always exported in the environment. Debian, unlike Ubuntu,
-# ships no stock uid-1000 account, so there is nothing to delete first.
+# The home path is nominal: the real HOME is whatever the spawner mounts
+# (`ap:/home/<user>` in production, a bind mount locally) and is always exported
+# in the environment. Debian, unlike Ubuntu, ships no stock uid-1000 account, so
+# there is nothing to delete first.
+#
+# It is created empty anyway (-M plus an explicit mkdir, rather than -m, so no
+# skel files land in it and it stays obviously nominal). "HOME is always
+# exported" is true of everything that reads the environment — and `apptainer
+# build` does not. It reads the passwd entry, mounts that path to /root, and
+# dies before the definition is touched if it is missing:
+#
+#   FATAL: failed to mount /home/studio to /root: no such file or directory
+#
+# There is no way around it from the caller: `apptainer build` accepts neither
+# --home nor --no-home, and ignores APPTAINER_HOME and $HOME. So every workflow
+# container build failed on this image. In hosted mode sssd resolves the injected
+# UID to a real NFS home and this entry is never consulted, which is why the
+# directory can be empty and unused there at no cost.
 RUN groupadd -g 1000 studio && \
-    useradd -u 1000 -g 1000 -M -d /home/studio -s /bin/bash studio
+    useradd -u 1000 -g 1000 -M -d /home/studio -s /bin/bash studio && \
+    mkdir -p /home/studio && chown 1000:1000 /home/studio
 
 # ---- System packages (no python3-pip — we bootstrap pip cleanly below) ----
 # software-properties-common is deliberately absent: trixie does not ship it,
