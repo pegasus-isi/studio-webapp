@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -8,6 +8,7 @@ import {
   type Edge,
   type Node,
 } from "@xyflow/react";
+import { Download } from "lucide-react";
 import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
 
@@ -242,10 +243,38 @@ function breakdown(counts: Map<string, number>): string {
     .join(" · ");
 }
 
+/** Geometry + paint for one node, kept separately so the picture can be drawn
+ *  without reading it back out of the DOM (see `buildSvg`). */
+interface PictureNode {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  bg: string;
+  border: string;
+  fg: string;
+  dashed: boolean;
+  strokeWidth: number;
+  lines: string[];
+  status: string;
+}
+
+interface PictureEdge {
+  source: string;
+  target: string;
+  done: boolean;
+}
+
+/** Everything needed to draw the DAG as a standalone image. */
+interface Picture {
+  nodes: Map<string, PictureNode>;
+  edges: PictureEdge[];
+}
+
 function layout(display: {
   nodes: DisplayNode[];
   edges: { source: string; target: string }[];
-}): { nodes: Node[]; edges: Edge[] } {
+}): { nodes: Node[]; edges: Edge[]; picture: Picture } {
   const g = new dagre.graphlib.Graph();
   g.setGraph({ rankdir: "TB", nodesep: 30, ranksep: 60 });
   g.setDefaultEdgeLabel(() => ({}));
@@ -259,6 +288,8 @@ function layout(display: {
     g.setEdge(e.source, e.target);
   }
   dagre.layout(g);
+
+  const picture: Picture = { nodes: new Map(), edges: [] };
 
   const nodes: Node[] = display.nodes.map((n) => {
     const h = n.members.length > 1 ? GROUP_H : NODE_H;
@@ -280,9 +311,25 @@ function layout(display: {
         ? `${n.label} — ${count} tasks · ${breakdown(n.statusCounts)}`
         : `${single?.exec_job_id ?? n.id} — ${n.status}${aux ? " (Pegasus)" : ""}`;
 
+    const x = pos.x - NODE_W / 2;
+    const y = pos.y - h / 2;
+    picture.nodes.set(n.id, {
+      x,
+      y,
+      w: NODE_W,
+      h,
+      bg: s.bg,
+      border: s.border,
+      fg: s.fg,
+      dashed: aux,
+      strokeWidth: count > 1 ? 3 : 2,
+      lines: label.split("\n"),
+      status: n.status,
+    });
+
     return {
       id: n.id,
-      position: { x: pos.x - NODE_W / 2, y: pos.y - h / 2 },
+      position: { x, y },
       data: { label },
       style: {
         width: NODE_W,
@@ -308,6 +355,7 @@ function layout(display: {
   const edges: Edge[] = display.edges.map((e, i) => {
     const tgt = statusById.get(e.target) ?? "unsubmitted";
     const done = statusById.get(e.source) === "succeeded";
+    picture.edges.push({ source: e.source, target: e.target, done });
     return {
       id: `e${i}`,
       source: e.source,
@@ -320,7 +368,198 @@ function layout(display: {
     };
   });
 
-  return { nodes, edges };
+  return { nodes, edges, picture };
+}
+
+// ---------------------------------------------------------------------------
+// Saving the picture
+//
+// The image is drawn from `Picture` — the same geometry React Flow was handed —
+// rather than screenshotting the pane. Two reasons: what you want to keep is the
+// whole DAG, not the part that happened to be framed and at whatever zoom the
+// viewport was left at; and rasterising live DOM needs a helper library plus
+// every Tailwind rule inlined, which is a lot of machinery to reproduce nine
+// rectangles and some curves.
+// ---------------------------------------------------------------------------
+
+const PIC_PAD = 24;
+const PIC_TITLE_H = 34;
+const PIC_LEGEND_H = 26;
+const PIC_FONT =
+  "ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+// Browsers refuse canvases past ~16k on a side (and much less on iOS), so a
+// 36,000px "Show every task" graph has to give up resolution rather than
+// silently rasterise to nothing.
+const PIC_MAX_PX = 8192;
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** A light background always: these get pasted into papers and slides, where a
+ *  dark-mode screenshot is the wrong thing to have saved. */
+function buildSvg(
+  picture: Picture,
+  title: string
+): { svg: string; width: number; height: number } {
+  const nodes = Array.from(picture.nodes.values());
+  let minX = 0;
+  let minY = 0;
+  let maxX = NODE_W;
+  let maxY = NODE_H;
+  if (nodes.length > 0) {
+    minX = Math.min(...nodes.map((n) => n.x));
+    minY = Math.min(...nodes.map((n) => n.y));
+    maxX = Math.max(...nodes.map((n) => n.x + n.w));
+    maxY = Math.max(...nodes.map((n) => n.y + n.h));
+  }
+
+  const graphW = maxX - minX;
+  const graphH = maxY - minY;
+  const width = Math.round(Math.max(graphW + PIC_PAD * 2, 420));
+  const height = Math.round(
+    PIC_TITLE_H + graphH + PIC_PAD * 2 + PIC_LEGEND_H
+  );
+  const dx = PIC_PAD - minX;
+  const dy = PIC_TITLE_H + PIC_PAD - minY;
+
+  const parts: string[] = [];
+  parts.push(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+    `<rect width="${width}" height="${height}" fill="#ffffff"/>`,
+    `<text x="${PIC_PAD}" y="22" font-family="${PIC_FONT}" font-size="14" font-weight="600" fill="#111827">${escapeXml(
+      title
+    )}</text>`,
+    `<g transform="translate(${dx},${dy})">`
+  );
+
+  for (const e of picture.edges) {
+    const s = picture.nodes.get(e.source);
+    const t = picture.nodes.get(e.target);
+    if (!s || !t) continue;
+    const sx = s.x + s.w / 2;
+    const sy = s.y + s.h;
+    const tx = t.x + t.w / 2;
+    const ty = t.y;
+    // Mirrors React Flow's default bottom-to-top bezier closely enough that the
+    // saved picture reads as the same drawing.
+    const c = Math.max(Math.abs(ty - sy) / 2, 20);
+    parts.push(
+      `<path d="M${sx.toFixed(1)},${sy.toFixed(1)} C${sx.toFixed(1)},${(
+        sy + c
+      ).toFixed(1)} ${tx.toFixed(1)},${(ty - c).toFixed(1)} ${tx.toFixed(
+        1
+      )},${ty.toFixed(1)}" fill="none" stroke="${
+        e.done ? "#334155" : "#cbd5e1"
+      }" stroke-width="${e.done ? 2 : 1.5}"/>`
+    );
+  }
+
+  for (const n of nodes) {
+    parts.push(
+      `<rect x="${n.x.toFixed(1)}" y="${n.y.toFixed(1)}" width="${n.w}" height="${
+        n.h
+      }" rx="8" fill="${n.bg}" stroke="${n.border}" stroke-width="${
+        n.strokeWidth
+      }"${n.dashed ? ' stroke-dasharray="5 4"' : ""}/>`
+    );
+    const lh = 13;
+    const cx = n.x + n.w / 2;
+    const first = n.y + n.h / 2 - ((n.lines.length - 1) * lh) / 2 + 4;
+    n.lines.forEach((line, i) => {
+      parts.push(
+        `<text x="${cx.toFixed(1)}" y="${(first + i * lh).toFixed(
+          1
+        )}" text-anchor="middle" font-family="${PIC_FONT}" font-size="11" fill="${
+          n.fg
+        }">${escapeXml(line)}</text>`
+      );
+    });
+  }
+
+  parts.push(`</g>`);
+
+  // Legend: only the statuses this graph actually contains, so a finished run
+  // does not ship a swatch for "held".
+  const present = STATUS_PRECEDENCE.filter(
+    (s) => s !== "queued" && nodes.some((n) => n.status === s)
+  );
+  let lx = PIC_PAD;
+  const ly = height - PIC_PAD / 2 - 6;
+  for (const s of present) {
+    const style = STATUS_STYLE[s] ?? STATUS_STYLE.unsubmitted;
+    parts.push(
+      `<rect x="${lx}" y="${ly - 9}" width="10" height="10" rx="2" fill="${
+        style.bg
+      }" stroke="${style.border}" stroke-width="1.5"/>`,
+      `<text x="${lx + 15}" y="${ly}" font-family="${PIC_FONT}" font-size="11" fill="#4b5563">${s}</text>`
+    );
+    lx += 15 + s.length * 6.2 + 14;
+  }
+
+  parts.push(`</svg>`);
+  return { svg: parts.join(""), width, height };
+}
+
+async function svgToPngBlob(
+  svg: string,
+  width: number,
+  height: number
+): Promise<Blob> {
+  const scale = Math.min(2, PIC_MAX_PX / Math.max(width, height, 1));
+  const url = URL.createObjectURL(
+    new Blob([svg], { type: "image/svg+xml;charset=utf-8" })
+  );
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("the browser could not read the SVG"));
+      el.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no 2d canvas context");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.drawImage(img, 0, 0);
+    return await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error("the canvas came back empty"))),
+        "image/png"
+      )
+    );
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoking synchronously cancels the download in Safari; a delayed revoke
+  // still frees the blob.
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+function slugify(title: string): string {
+  const s = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return s || "workflow-dag";
 }
 
 /** Interactive workflow DAG (React Flow + dagre): zoom/pan, status-colored
@@ -341,6 +580,9 @@ export function DagViewer({
   // Grouping on by default: the unclustered view is unreadable for any real
   // scatter, so it is the escape hatch rather than the starting point.
   const [groupFanout, setGroupFanout] = useState(true);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveRef = useRef<HTMLDivElement | null>(null);
 
   const effectiveUrl = useMemo(() => {
     if (!showPegasus) return graphUrl;
@@ -408,13 +650,26 @@ export function DagViewer({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose, inline]);
 
+  useEffect(() => {
+    if (!saveOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!saveRef.current?.contains(e.target as globalThis.Node)) {
+        setSaveOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [saveOpen]);
+
   const display = useMemo(
     () => (data ? (groupFanout ? clusterGraph(data) : passthroughGraph(data)) : null),
     [data, groupFanout]
   );
 
   const flow = useMemo<
-    { nodes: Node[]; edges: Edge[] } | { layoutError: string } | null
+    | { nodes: Node[]; edges: Edge[]; picture: Picture }
+    | { layoutError: string }
+    | null
   >(() => {
     if (!display) return null;
     try {
@@ -425,6 +680,31 @@ export function DagViewer({
       return { layoutError: String(e instanceof Error ? e.message : e) };
     }
   }, [display]);
+
+  const picture = flow && !("layoutError" in flow) ? flow.picture : null;
+
+  const savePicture = useCallback(
+    async (format: "png" | "svg") => {
+      setSaveOpen(false);
+      if (!picture) return;
+      try {
+        setSaveError(null);
+        const { svg, width, height } = buildSvg(picture, title);
+        const name = slugify(title);
+        if (format === "svg") {
+          downloadBlob(
+            new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+            `${name}.svg`
+          );
+        } else {
+          downloadBlob(await svgToPngBlob(svg, width, height), `${name}.png`);
+        }
+      } catch (e) {
+        setSaveError(String(e instanceof Error ? e.message : e));
+      }
+    },
+    [picture, title]
+  );
 
   const taskCount = data?.nodes.length ?? 0;
   const drawnCount = display?.nodes.length ?? 0;
@@ -488,6 +768,41 @@ export function DagViewer({
                 Show Pegasus jobs
               </label>
             )}
+            <div className="relative" ref={saveRef}>
+              <button
+                onClick={() => setSaveOpen((v) => !v)}
+                disabled={!picture}
+                className="flex items-center gap-1 rounded border border-line px-2 py-1 text-xs text-fgmuted hover:bg-muted hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                title="Save the whole graph as an image — not just the part on screen"
+                aria-haspopup="menu"
+                aria-expanded={saveOpen}
+              >
+                <Download className="h-3.5 w-3.5" />
+                Save image
+              </button>
+              {saveOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-30 mt-1 min-w-[9rem] overflow-hidden rounded border border-line bg-surface py-1 shadow-lg"
+                >
+                  <button
+                    role="menuitem"
+                    onClick={() => savePicture("png")}
+                    className="block w-full px-3 py-1.5 text-left text-xs text-fgmuted hover:bg-muted hover:text-fg"
+                  >
+                    PNG
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => savePicture("svg")}
+                    className="block w-full px-3 py-1.5 text-left text-xs text-fgmuted hover:bg-muted hover:text-fg"
+                    title="Vector — scales without blurring, for papers and slides"
+                  >
+                    SVG
+                  </button>
+                </div>
+              )}
+            </div>
             {/* Nothing to dismiss when the graph is the pane. */}
             {!inline && onClose && (
               <button
@@ -571,6 +886,11 @@ export function DagViewer({
                 className="inline-block h-3 w-3 rounded border-2 border-dashed border-fgsubtle opacity-70"
               />
               ⚙ Pegasus job
+            </span>
+          )}
+          {saveError && (
+            <span className="text-red-600 dark:text-rose-400">
+              Could not save the image: {saveError}
             </span>
           )}
           {live && (
