@@ -58,7 +58,13 @@ def test_the_submit_file_never_inherits_the_pods_environment():
     point the submit host's planner back at the pod's Pegasus.
     """
     sub = rx._submit_text(
-        wrapper="/w.sh", out="/o", err="/e", logf="/l", home="/home/u", user="u"
+        wrapper="/w.sh",
+        out="/o",
+        err="/e",
+        logf="/l",
+        home="/home/u",
+        user="u",
+        initialdir="/home/u/proj/.studio/remote",
     )
     assert "getenv = false" in sub
     assert "universe = local" in sub
@@ -68,13 +74,66 @@ def test_the_submit_file_never_inherits_the_pods_environment():
     assert "should_transfer_files = NO" in sub
 
 
+def test_initialdir_is_always_set_to_shared_storage():
+    """Without it HTCondor inherits the submitting process's cwd.
+
+    studio-api runs from /opt/studio-api, which exists only in the pod, so
+    every job was held with "Cannot access initial working directory" (#341).
+    """
+    sub = rx._submit_text(
+        wrapper="/w.sh",
+        out="/o",
+        err="/e",
+        logf="/l",
+        home="/home/u",
+        user="u",
+        initialdir="/home/u/proj/.studio/remote",
+    )
+    assert "initialdir = /home/u/proj/.studio/remote" in sub
+
+
+def test_a_held_job_fails_fast_with_its_reason(tmp_path, monkeypatch):
+    """condor_wait returns on termination but not on hold.
+
+    A held job never terminates, so waiting on it burned the full 30-minute
+    timeout with no explanation — which is how #341 presented.
+    """
+
+    async def fake_run(cmd, timeout):
+        if cmd[0] == "condor_submit":
+            stamp = next(p for p in tmp_path.glob("remote-*.sub")).stem
+            (tmp_path / f"{stamp}.log").write_text(
+                "000 (55.000.000) Job submitted.\n012 (55.000.000) Job was held.\n"
+            )
+            return 0, "1 job(s) submitted to cluster 55.", ""
+        if cmd[0] == "condor_q":
+            return 0, 'Cannot access initial working directory "/opt/studio-api"\n', ""
+        return 0, "", ""
+
+    monkeypatch.setattr(rx, "_run", fake_run)
+    monkeypatch.setattr(rx, "available", lambda: True)
+    rc, out = asyncio.run(
+        rx.run_on_submit_host(
+            ["pegasus-plan"], cwd=str(tmp_path), scratch_dir=str(tmp_path), timeout=30
+        )
+    )
+    assert rc == 126
+    assert "refused to run" in out
+    # The schedd's own explanation is usually the whole answer.
+    assert "initial working directory" in out
+
+
 def test_a_missing_exit_code_file_is_a_failure_not_a_success(tmp_path, monkeypatch):
     """A held or evicted job leaves no rc file. Empty must not read as 0."""
 
     async def fake_run(cmd, timeout):
         if cmd[0] == "condor_submit":
+            # The job ran and terminated, but the wrapper never reached its
+            # last line — so there is no rc file.
+            stamp = next(p for p in tmp_path.glob("remote-*.sub")).stem
+            (tmp_path / f"{stamp}.log").write_text("005 (42.000.000) Job terminated.\n")
             return 0, "1 job(s) submitted to cluster 42.", ""
-        return 0, "", ""  # condor_wait "succeeds", but the wrapper never ran
+        return 0, "", ""
 
     monkeypatch.setattr(rx, "_run", fake_run)
     monkeypatch.setattr(rx, "available", lambda: True)
@@ -95,6 +154,7 @@ def test_exit_code_and_output_come_back(tmp_path, monkeypatch):
             (scratch / f"{stamp}.out").write_text("I have concretized your workflow\n")
             (scratch / f"{stamp}.err").write_text("a warning\n")
             (scratch / f"{stamp}.rc").write_text("0\n")
+            (scratch / f"{stamp}.log").write_text("005 (7.000.000) Job terminated.\n")
             return 0, "1 job(s) submitted to cluster 7.", ""
         return 0, "", ""
 
