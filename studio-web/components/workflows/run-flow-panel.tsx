@@ -140,6 +140,38 @@ export function RunFlowPanel({
     () => missingRequired(genParams, values),
     [genParams, values]
   );
+
+  /**
+   * Whether the settings can start collapsed (#361).
+   *
+   * Read off the parameter *metadata*, not the current values, and that is
+   * load-bearing: `values` is empty on the first render and filled from the
+   * defaults by an effect, so a values-based test would say "incomplete" for a
+   * frame and the form would flash open before collapsing. The question this
+   * asks — does every required parameter carry a default — is a property of the
+   * workflow and does not change while the form is being filled.
+   *
+   * A flag is never missing (unchecked is a real value), which is why
+   * `missingRequired` skips them and so does this.
+   */
+  const collapsible = useMemo(() => {
+    const everyRequiredHasDefault = genParams
+      .filter((p) => p.required && !p.is_flag)
+      .every((p) => String(p.default ?? "").trim() !== "");
+    // Below a few fields there is nothing to gain: two rows of form is ~180px,
+    // Run is on screen either way, and collapsing would only add a click and
+    // some hidden state. The threshold is where the grid starts costing more
+    // height than the rest of the panel put together.
+    const longEnoughToBeInTheWay = genParams.length >= 6;
+    return everyRequiredHasDefault && longEnoughToBeInTheWay;
+  }, [genParams]);
+  // null = follow the data; a click pins it either way for the rest of the
+  // visit. Someone who opened the settings to look at them should not have
+  // them shut again by a re-render.
+  const [paramsOpenOverride, setParamsOpenOverride] = useState<boolean | null>(
+    null
+  );
+  const paramsOpen = paramsOpenOverride ?? !collapsible;
   // Hidden site params are satisfied by the radio, which always has a value,
   // so they can never be what's missing — seed them on first render for the
   // case where the generator's default differs from the radio's.
@@ -310,40 +342,104 @@ export function RunFlowPanel({
         {!embedded && (
           <h3 className="text-base font-semibold text-fg">Set up your run</h3>
         )}
+        {/* "Fill in what your analysis needs" is an instruction to do
+            something, and telling someone to do it when there is nothing to
+            fill in sends them looking for the work. */}
         <p className={cn("text-sm text-fgmuted", !embedded && "mt-1")}>
-          Fill in what your analysis needs, choose where it runs, then press
-          Run. Studio prepares everything and starts it for you.
+          {collapsible
+            ? "This analysis already has everything it needs. Choose where it runs and press Run — Studio prepares the rest and starts it for you."
+            : "Fill in what your analysis needs, choose where it runs, then press Run. Studio prepares everything and starts it for you."}
         </p>
 
-        {primaryParams.length > 0 && (
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {primaryParams.map((p: WorkflowParam) => (
-              <ParamField
-                key={p.dest}
-                param={p}
-                value={values[p.dest]}
-                onChange={(v) => onChange(p.dest, v)}
-              />
-            ))}
-          </div>
-        )}
+        {/* The settings, collapsed when the workflow can already run without
+            them (#361).
+            The earthquake workflow has 20 parameters, every one of them with a
+            default from its own generator. Rendered open, that is ~700px of
+            filled-in form between the user and the Run button — so the first
+            thing Studio shows someone whose analysis is ready to run is a wall
+            of fields they do not have to touch, and the button is off screen.
+            Collapsed, Run is the first thing they see, and the summary line
+            says what the run will use. */}
+        {/* Guarded on both lists, not just the primary one: "More options" is
+            nested in here now, and a workflow whose every parameter is
+            plumbing would otherwise lose it. */}
+        {(primaryParams.length > 0 || plumbingParams.length > 0) && (
+          <div className="mt-4">
+            {collapsible && (
+              <button
+                type="button"
+                onClick={() => setParamsOpenOverride(!paramsOpen)}
+                aria-expanded={paramsOpen}
+                className="flex w-full items-center gap-2 rounded-lg border border-line px-3 py-2 text-left hover:bg-base"
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "text-fgsubtle transition-transform",
+                    !paramsOpen && "-rotate-90"
+                  )}
+                >
+                  ▾
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-fg">
+                    Settings ({primaryParams.length + plumbingParams.length})
+                  </span>
+                  <span className="block text-xs text-fgmuted">
+                    {missing.length > 0
+                      ? // Only reachable by clearing a field that had a value:
+                        // nothing is collapsed unless every required parameter
+                        // ships a default. Say it here anyway, because the
+                        // fields explaining it are hidden.
+                        `${missing.length} still needed — ${missing.join(", ")}`
+                      : paramsOpen
+                        ? "Every setting has a value from this analysis. Change what you need to."
+                        : "Every setting has a value from this analysis — open to change them."}
+                  </span>
+                </span>
+              </button>
+            )}
 
-        {plumbingParams.length > 0 && (
-          <details className="mt-3">
-            <summary className="cursor-pointer text-xs font-medium text-fgmuted hover:text-fg">
-              More options ({plumbingParams.length})
-            </summary>
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {plumbingParams.map((p: WorkflowParam) => (
-                <ParamField
-                  key={p.dest}
-                  param={p}
-                  value={values[p.dest]}
-                  onChange={(v) => onChange(p.dest, v)}
-                />
-              ))}
-            </div>
-          </details>
+            {paramsOpen && (
+              <>
+                {primaryParams.length > 0 && (
+                  <div
+                    className={cn(
+                      "grid grid-cols-1 gap-3 sm:grid-cols-2",
+                      collapsible && "mt-3"
+                    )}
+                  >
+                    {primaryParams.map((p: WorkflowParam) => (
+                      <ParamField
+                        key={p.dest}
+                        param={p}
+                        value={values[p.dest]}
+                        onChange={(v) => onChange(p.dest, v)}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {plumbingParams.length > 0 && (
+                  <details className="mt-3">
+                    <summary className="cursor-pointer text-xs font-medium text-fgmuted hover:text-fg">
+                      More options ({plumbingParams.length})
+                    </summary>
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {plumbingParams.map((p: WorkflowParam) => (
+                        <ParamField
+                          key={p.dest}
+                          param={p}
+                          value={values[p.dest]}
+                          onChange={(v) => onChange(p.dest, v)}
+                        />
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         <fieldset className="mt-5">
