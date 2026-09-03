@@ -212,3 +212,78 @@ def test_auto_plans_locally_without_condor(monkeypatch):
 def test_the_setting_can_force_either_way(monkeypatch):
     assert _mode(monkeypatch, setting="never", remote=True) == "local"
     assert _mode(monkeypatch, setting="always", remote=False) == "remote"
+
+
+# --- the preflight must not block what remote planning has fixed ----------
+
+
+def _execute_with(monkeypatch, *, compat_status, plan_mode):
+    """Drive run_flow._execute far enough to see whether it blocks."""
+    flow = rf.RunFlow(
+        flow_id="f1",
+        project_id="p1",
+        stages=[rf.Stage(key="plan", label="Checking the plan"),
+                rf.Stage(key="submit", label="Sending it to run")],
+    )
+
+    async def fake_check():
+        return rf.submit_host.Compat(
+            status=compat_status,
+            detail="different places",
+            local_share_dir="/x/python3.12/site-packages/Pegasus/data",
+            remote_share_dir="/x/python3.13/site-packages/Pegasus/data",
+            schedd="ap.pegasus-ai.org",
+        )
+
+    async def fake_mode():
+        return plan_mode
+
+    async def fake_plan(*a, **k):
+        return False  # stop right after the preflight
+
+    monkeypatch.setattr(rf.submit_host, "check", fake_check)
+    monkeypatch.setattr(rf, "_plan_mode", fake_mode)
+    monkeypatch.setattr(rf, "_run_plan", fake_plan)
+    asyncio.run(
+        rf._execute(
+            flow,
+            project_dir="/tmp",
+            generator_file=None,
+            generator_args=[],
+            site="condorpool",
+            output_site="local",
+            force_build=False,
+        )
+    )
+    return flow
+
+
+def test_a_mismatch_blocks_when_planning_happens_here(monkeypatch):
+    """Locally-planned submit files carry this pod's paths, so it is fatal."""
+    flow = _execute_with(monkeypatch, compat_status="mismatch", plan_mode="local")
+    assert flow.state == "failed"
+    assert flow.failure is not None
+    assert "different places" in flow.failure.cause
+
+
+def test_a_mismatch_does_not_block_when_planning_happens_on_the_submit_host(
+    monkeypatch,
+):
+    """The regression this guards against.
+
+    #335 blocks on a mismatch; #337 makes the mismatch harmless by planning
+    where the workflow is submitted. Left unconditional, the guardrail would
+    refuse every run on a deployment where runs work — turning a difference
+    that no longer matters into an outage.
+    """
+    flow = _execute_with(monkeypatch, compat_status="mismatch", plan_mode="remote")
+    # It stopped because the stubbed plan stage returned False, not because
+    # the preflight refused: a refusal sets `failure` before planning.
+    assert flow.failure is None or "different places" not in flow.failure.cause
+
+
+def test_an_unknown_verdict_never_blocks_either_way(monkeypatch):
+    for mode in ("local", "remote"):
+        flow = _execute_with(monkeypatch, compat_status="unknown", plan_mode=mode)
+        assert flow.failure is None or "different places" not in flow.failure.cause
+
