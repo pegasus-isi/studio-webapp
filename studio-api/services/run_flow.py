@@ -531,10 +531,10 @@ async def _execute(
         # Where the planner runs decides whether a Pegasus mismatch matters,
         # so resolve it once, up front, and reuse it for the plan stage.
         try:
-            plan_mode = await _plan_mode()
+            plan_mode, plan_mode_source = await _resolve_plan_mode()
         except Exception as e:  # noqa: BLE001 — detection must never block a run
             log.warning("plan_mode_detect_failed", error=str(e))
-            plan_mode = "local"
+            plan_mode, plan_mode_source = "local", "fallback"
 
         # Preflight before anything expensive. A mismatch between this
         # workspace and the submit host fails every workflow on its first
@@ -548,14 +548,29 @@ async def _execute(
         # refusing every run on a deployment where runs work.
         compat = await submit_host.check()
         if compat.blocks_run and plan_mode == "local":
-            flow.failure = Failure(
-                stage="plan",
-                cause=compat.detail,
-                action=(
+            # Whose decision put us on the local path changes the advice
+            # completely. If the user turned remote planning off to try local,
+            # the fix is one switch in their own Settings — telling them to
+            # find an administrator would be wrong and would strand them in a
+            # state they chose and can leave.
+            if plan_mode_source == "setting":
+                action = (
+                    "You have planning set to run in this workspace "
+                    "(Settings → Pegasus Options → Where planning runs). This "
+                    "workspace and the submit host disagree about Pegasus, so "
+                    "that cannot work here — set it back to Automatic to plan "
+                    "on the submit host."
+                )
+            else:
+                action = (
                     "This needs an administrator: the submit host and this "
                     "workspace have to agree on Pegasus. Nothing you change "
                     "here will fix it."
-                ),
+                )
+            flow.failure = Failure(
+                stage="plan",
+                cause=compat.detail,
+                action=action,
                 technical=(
                     f"workspace: {compat.local_version or '?'} at "
                     f"{compat.local_share_dir or '?'} · "
@@ -571,6 +586,7 @@ async def _execute(
             log.warning(
                 "run_flow_blocked_submit_host_mismatch",
                 flow_id=flow.flow_id,
+                plan_mode_source=plan_mode_source,
                 **compat.as_dict(),
             )
             return
@@ -761,8 +777,34 @@ def _parse_sse(chunk: str) -> dict[str, Any] | None:
     return None
 
 
-async def _plan_mode() -> str:
-    """"remote" or "local" — where pegasus-plan should run.
+#: What the user may set for `plan_mode`. "auto" is the shipped behaviour.
+PLAN_MODE_CHOICES = ("auto", "remote", "local")
+#: Where the answer came from, so a message can name it. A block on a mismatch
+#: reads very differently depending on whether the user chose local planning or
+#: the deployment did.
+PlanModeSource = Literal["setting", "env", "detected", "no-condor", "fallback"]
+
+
+async def _plan_mode_setting() -> str:
+    """The user's stored preference, or "auto".
+
+    Wrapped because this is consulted on the run path: a settings read that
+    fails must fall through to detection, not stop a run.
+    """
+    try:
+        from main import db
+
+        value = await db.get_setting("plan_mode", "auto")
+    except Exception as e:  # noqa: BLE001 — a settings read must never block a run
+        log.warning("plan_mode_setting_read_failed", error=str(e))
+        return "auto"
+    if isinstance(value, str) and value.strip().lower() in PLAN_MODE_CHOICES:
+        return value.strip().lower()
+    return "auto"
+
+
+async def _resolve_plan_mode() -> tuple[str, PlanModeSource]:
+    """("remote"|"local", why) — where pegasus-plan should run.
 
     Planning has to happen where the workflow will be submitted. The planner
     writes its own absolute paths into the submit files, and Pegasus's local
@@ -774,17 +816,35 @@ async def _plan_mode() -> str:
     OnDemand deployment runs the schedd on the same machine, which is the
     arrangement Pegasus expects, and remoting a job to yourself would add a
     queue round-trip for nothing.
+
+    Precedence is user setting, then deployment env var, then detection. The
+    user's own choice comes first on purpose: this is a single-user workspace,
+    and the reason to reach for the switch is to find out whether local
+    planning works here — an answer the deployment default cannot give you.
+    Since the image moved to Debian trixie the pod and the AP run the same
+    Pegasus tree, so local planning is expected to work again; that is exactly
+    the thing worth being able to try without an operator and a pod restart.
     """
+    chosen = await _plan_mode_setting()
+    if chosen in ("local", "remote"):
+        return chosen, "setting"
+
     setting = os.environ.get("STUDIO_PLAN_ON_SUBMIT_HOST", "auto").strip().lower()
     if setting in ("never", "0", "false", "local"):
-        return "local"
+        return "local", "env"
     if setting in ("always", "1", "true", "remote"):
-        return "remote"
+        return "remote", "env"
     if not remote_exec.available():
-        return "local"
+        return "local", "no-condor"
     remote = await submit_host.is_remote()
     # None means undetermined; keep today's behaviour rather than guessing.
-    return "remote" if remote else "local"
+    return ("remote" if remote else "local"), "detected"
+
+
+async def _plan_mode() -> str:
+    """`_resolve_plan_mode` without the provenance, for callers that don't need it."""
+    mode, _ = await _resolve_plan_mode()
+    return mode
 
 
 async def _plan_capture(

@@ -234,7 +234,11 @@ def test_missing_condor_is_unavailable(tmp_path, monkeypatch):
 # --- where to plan -------------------------------------------------------
 
 
-def _mode(monkeypatch, *, setting=None, remote, condor=True):
+def _mode(monkeypatch, *, setting=None, remote, condor=True, stored="auto"):
+    """Resolve the plan mode with everything it consults faked out.
+
+    `stored` is the user's setting, `setting` the deployment env var.
+    """
     if setting is None:
         monkeypatch.delenv("STUDIO_PLAN_ON_SUBMIT_HOST", raising=False)
     else:
@@ -243,9 +247,18 @@ def _mode(monkeypatch, *, setting=None, remote, condor=True):
     async def fake_is_remote():
         return remote
 
+    async def fake_stored():
+        return stored
+
     monkeypatch.setattr(rf.submit_host, "is_remote", fake_is_remote)
     monkeypatch.setattr(rf.remote_exec, "available", lambda: condor)
+    monkeypatch.setattr(rf, "_plan_mode_setting", fake_stored)
     return asyncio.run(rf._plan_mode())
+
+
+def _mode_with_source(monkeypatch, **kw):
+    _mode(monkeypatch, **kw)  # applies the same patches
+    return asyncio.run(rf._resolve_plan_mode())
 
 
 def test_auto_plans_remotely_when_the_schedd_is_elsewhere(monkeypatch):
@@ -274,10 +287,91 @@ def test_the_setting_can_force_either_way(monkeypatch):
     assert _mode(monkeypatch, setting="always", remote=False) == "remote"
 
 
+# --- the user's own setting (Settings > Pegasus Options) ------------------
+
+
+def test_the_user_setting_can_disable_remote_planning(monkeypatch):
+    """The point of the switch: try local planning against a remote schedd.
+
+    Detection says remote and would be right by default; the user asking for
+    local is asking a question detection cannot answer.
+    """
+    assert _mode(monkeypatch, stored="local", remote=True) == "local"
+
+
+def test_the_user_setting_can_force_remote_planning(monkeypatch):
+    assert _mode(monkeypatch, stored="remote", remote=False) == "remote"
+
+
+def test_the_user_setting_beats_the_deployment_env_var(monkeypatch):
+    """A single-user workspace: the person in it gets the last word.
+
+    An operator default of "always" must not make the switch a no-op, or
+    turning it off would silently do nothing.
+    """
+    assert _mode(monkeypatch, stored="local", setting="always", remote=True) == "local"
+    assert _mode(monkeypatch, stored="remote", setting="never", remote=True) == "remote"
+
+
+def test_auto_stored_falls_through_to_detection(monkeypatch):
+    assert _mode(monkeypatch, stored="auto", remote=True) == "remote"
+
+
+def test_the_resolver_reports_where_the_answer_came_from(monkeypatch):
+    """The source is what lets a failure name the right cause."""
+    assert _mode_with_source(monkeypatch, stored="local", remote=True) == (
+        "local",
+        "setting",
+    )
+    assert _mode_with_source(monkeypatch, setting="always", remote=False) == (
+        "remote",
+        "env",
+    )
+    assert _mode_with_source(monkeypatch, remote=True) == ("remote", "detected")
+    assert _mode_with_source(monkeypatch, remote=True, condor=False) == (
+        "local",
+        "no-condor",
+    )
+
+
+def test_an_unreadable_setting_does_not_stop_a_run(monkeypatch):
+    """A settings read is not worth failing a run over — fall back to auto."""
+
+    class Boom:
+        async def get_setting(self, *a, **k):
+            raise RuntimeError("database is locked")
+
+    import sys
+    import types
+
+    fake_main = types.ModuleType("main")
+    fake_main.db = Boom()
+    monkeypatch.setitem(sys.modules, "main", fake_main)
+    assert asyncio.run(rf._plan_mode_setting()) == "auto"
+
+
+def test_a_nonsense_stored_value_is_ignored(monkeypatch):
+    """A hand-edited DB must not resolve to a mode the resolver can't mean."""
+
+    class Weird:
+        async def get_setting(self, *a, **k):
+            return "sideways"
+
+    import sys
+    import types
+
+    fake_main = types.ModuleType("main")
+    fake_main.db = Weird()
+    monkeypatch.setitem(sys.modules, "main", fake_main)
+    assert asyncio.run(rf._plan_mode_setting()) == "auto"
+
+
 # --- the preflight must not block what remote planning has fixed ----------
 
 
-def _execute_with(monkeypatch, *, compat_status, plan_mode):
+def _execute_with(
+    monkeypatch, *, compat_status, plan_mode, plan_mode_source="detected"
+):
     """Drive run_flow._execute far enough to see whether it blocks."""
     flow = rf.RunFlow(
         flow_id="f1",
@@ -296,13 +390,13 @@ def _execute_with(monkeypatch, *, compat_status, plan_mode):
         )
 
     async def fake_mode():
-        return plan_mode
+        return plan_mode, plan_mode_source
 
     async def fake_plan(*a, **k):
         return False  # stop right after the preflight
 
     monkeypatch.setattr(rf.submit_host, "check", fake_check)
-    monkeypatch.setattr(rf, "_plan_mode", fake_mode)
+    monkeypatch.setattr(rf, "_resolve_plan_mode", fake_mode)
     monkeypatch.setattr(rf, "_run_plan", fake_plan)
     asyncio.run(
         rf._execute(
@@ -324,6 +418,28 @@ def test_a_mismatch_blocks_when_planning_happens_here(monkeypatch):
     assert flow.state == "failed"
     assert flow.failure is not None
     assert "different places" in flow.failure.cause
+    # Nobody chose this, so the advice is the operator one.
+    assert "administrator" in flow.failure.action
+
+
+def test_a_block_the_user_caused_points_at_their_own_setting(monkeypatch):
+    """Whose decision it was changes the only useful sentence in the failure.
+
+    Someone who switched planning to this workspace to test it can undo that
+    in Settings. Sending them to find an administrator would strand them in a
+    state they chose and can leave.
+    """
+    flow = _execute_with(
+        monkeypatch,
+        compat_status="mismatch",
+        plan_mode="local",
+        plan_mode_source="setting",
+    )
+    assert flow.state == "failed"
+    assert flow.failure is not None
+    assert "administrator" not in flow.failure.action
+    assert "Pegasus Options" in flow.failure.action
+    assert "Automatic" in flow.failure.action
 
 
 def test_a_mismatch_does_not_block_when_planning_happens_on_the_submit_host(

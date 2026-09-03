@@ -133,6 +133,77 @@ async def update_workflow_scan(req: WorkflowScanRequest) -> dict:
     return await _workflow_scan_response()
 
 
+class PlanModeRequest(BaseModel):
+    """Where `pegasus-plan` should run.
+
+    ``auto`` detects it (remote when the schedd is on another host), and is
+    what ships. The other two are overrides, and the reason they exist is that
+    the interesting question — does planning in this workspace produce a DAG
+    the submit host can execute — cannot be answered by reading anything. You
+    have to try it. Until now that meant editing STUDIO_PLAN_ON_SUBMIT_HOST in
+    the spawner profile and restarting the pod, which is not a thing a user can
+    do to their own session.
+    """
+
+    mode: str = "auto"
+
+
+async def _plan_mode_response() -> dict:
+    """The stored choice plus what the next run would actually do."""
+    from services import run_flow, submit_host
+
+    stored = await run_flow._plan_mode_setting()
+    effective, source = await run_flow._resolve_plan_mode()
+    return {
+        "mode": stored,
+        "choices": list(run_flow.PLAN_MODE_CHOICES),
+        # What the next run does, and why — with `auto` the answer is a
+        # detection result, and showing it is the difference between a switch
+        # you can reason about and one you have to experiment with.
+        "effective": effective,
+        "source": source,
+        # None when undetermined; the UI must not turn that into "co-located".
+        "submit_host_is_remote": await submit_host.is_remote(),
+        "env_default": os.environ.get(
+            "STUDIO_PLAN_ON_SUBMIT_HOST", "auto"
+        ).strip().lower(),
+    }
+
+
+@router.get("/planning")
+async def get_planning() -> dict:
+    """Planning location: the stored preference and the effective outcome."""
+    return await _plan_mode_response()
+
+
+@router.put("/planning")
+async def update_planning(req: PlanModeRequest) -> dict:
+    """Persist where planning runs.
+
+    Deliberately accepts "local" even when the submit host is remote and the
+    two Pegasus installs disagree. Refusing it would remove the only way to
+    check whether that is still true, and the run flow already catches the
+    mismatch in its preflight — where it can name this setting as the cause
+    and point at the switch that undoes it, rather than failing 25 nodes deep.
+    """
+    from main import db
+    from services import run_flow
+
+    mode = (req.mode or "").strip().lower()
+    if mode not in run_flow.PLAN_MODE_CHOICES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "mode must be one of "
+                f"{', '.join(run_flow.PLAN_MODE_CHOICES)}: {req.mode!r}"
+            ),
+        )
+
+    await db.set_setting("plan_mode", mode)
+    log.info("plan_mode_updated", mode=mode)
+    return await _plan_mode_response()
+
+
 class UIPreferences(BaseModel):
     """Per-user UI preferences for the non-specialist redesign (#241).
 

@@ -916,17 +916,171 @@ function PegasusOptionsTab() {
         <code>--submit</code>/<code>--cleanup</code>, and generator arguments —
         are set on each workflow&apos;s <strong>Plan</strong> /{" "}
         <strong>Run</strong> form, so they can differ per workflow. This tab
-        holds the container registry used when building workflow images.
+        holds the settings that apply to every workflow: where planning runs
+        and the container registry used when building workflow images.
       </p>
 
       {/* Simplified Run flow — the Phase 1 rollout flag (#241) */}
       <SimpleRunSection />
+
+      {/* Where pegasus-plan runs — remote by default when the schedd is
+          elsewhere, overridable to test local planning */}
+      <PlanningLocationSection />
 
       {/* Container registry — persisted; drives the Build Image action */}
       <RegistrySection />
 
       {/* Where runs are looked for — extra scan roots / excludes (#306) */}
       <WorkflowDiscoverySection />
+    </div>
+  );
+}
+
+/**
+ * Where `pegasus-plan` runs.
+ *
+ * Planning happens on the submit host when the schedd is on another machine,
+ * because the planner writes its own absolute paths into the submit files and
+ * Pegasus executes those on the schedd host (#334). That is the right default
+ * and stays the default.
+ *
+ * The override exists because whether local planning works is not a question
+ * anyone can answer by reading: it depends on the two machines agreeing about
+ * Pegasus, which changed when the image moved to Debian trixie. Before this it
+ * meant an env var in the spawner profile and a pod restart, which is not
+ * something a user can do to their own session.
+ */
+function PlanningLocationSection() {
+  const [settings, setSettings] = useState<api.PlanningSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getPlanningSettings()
+      .then(setSettings)
+      .catch((e) => setError((e as Error).message || String(e)));
+  }, []);
+
+  const choose = async (mode: api.PlanMode) => {
+    if (saving || settings?.mode === mode) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setSettings(await api.updatePlanningSettings(mode));
+    } catch (e) {
+      setError((e as Error).message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const OPTIONS: { value: api.PlanMode; label: string; hint: string }[] = [
+    {
+      value: "auto",
+      label: "Automatic (recommended)",
+      hint:
+        "Plan on the submit host when it is a different machine, here when it " +
+        "is not. This is what Pegasus expects.",
+    },
+    {
+      value: "remote",
+      label: "Always on the submit host",
+      hint:
+        "Plan through HTCondor on the machine that runs your workflows, whatever " +
+        "detection says.",
+    },
+    {
+      value: "local",
+      label: "Always in this workspace",
+      hint:
+        "Plan here. Use this to check whether local planning works against your " +
+        "submit host — it only does when both have Pegasus in the same place.",
+    },
+  ];
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <h2 className="text-sm font-semibold text-fg">Where planning runs</h2>
+      <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+        Preparing a workflow to run (<code>pegasus-plan</code>) writes file paths
+        into the instructions your submit host executes, so it normally happens
+        on that host. Override it here to try planning in this workspace
+        instead. Nothing else about your workflows changes.
+      </p>
+
+      {error && (
+        <p className="mt-2 text-xs text-red-600 dark:text-rose-400">{error}</p>
+      )}
+
+      <div className="mt-3 space-y-2">
+        {OPTIONS.map((o) => {
+          const selected = settings?.mode === o.value;
+          return (
+            <label
+              key={o.value}
+              className={cn(
+                "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+                selected
+                  ? "border-pegasus-400 bg-pegasus-50 dark:bg-pegasus-400/10"
+                  : "border-line hover:bg-base",
+                (!settings || saving) && "cursor-wait opacity-70"
+              )}
+            >
+              <input
+                type="radio"
+                name="plan-mode"
+                className="mt-0.5"
+                value={o.value}
+                checked={selected}
+                disabled={!settings || saving}
+                onChange={() => choose(o.value)}
+              />
+              <span>
+                <span className="block text-sm font-medium text-fg">
+                  {o.label}
+                </span>
+                <span className="block text-xs text-fgmuted">{o.hint}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
+      {/* What the next run will actually do. With "Automatic" the answer is a
+          detection result, and without showing it the setting is a switch you
+          have to experiment with to understand. */}
+      {settings && (
+        <p className="mt-3 text-xs text-fgsubtle">
+          Your next run will plan{" "}
+          <strong className="text-fgmuted">
+            {settings.effective === "remote"
+              ? "on the submit host"
+              : "in this workspace"}
+          </strong>
+          {settings.source === "detected" &&
+            (settings.submit_host_is_remote
+              ? " — the submit host is a different machine."
+              : " — the submit host is this machine.")}
+          {settings.source === "setting" && " — because you chose it above."}
+          {settings.source === "env" &&
+            ` — set for this deployment (STUDIO_PLAN_ON_SUBMIT_HOST=${settings.env_default}).`}
+          {settings.source === "no-condor" &&
+            " — HTCondor isn't available here to send the work anywhere else."}
+          {settings.source === "fallback" &&
+            " — the submit host could not be checked."}
+        </p>
+      )}
+
+      {settings?.effective === "local" &&
+        settings.submit_host_is_remote === true && (
+          <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+            Your submit host is a different machine, so this only works if it
+            has Pegasus installed in the same place as this workspace. If they
+            differ, the run stops before doing any work and says so — it will
+            not fail halfway through.
+          </p>
+        )}
     </div>
   );
 }
