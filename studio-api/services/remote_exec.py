@@ -84,13 +84,21 @@ def _wrapper_text(argv: list[str], cwd: str, rc_path: str) -> str:
     )
 
 
-def _submit_text(*, wrapper: str, out: str, err: str, logf: str, home: str, user: str) -> str:
+def _submit_text(
+    *, wrapper: str, out: str, err: str, logf: str, home: str, user: str, initialdir: str
+) -> str:
     # PATH is set explicitly rather than inherited: see the module docstring on
     # why getenv=false matters here.
     env = f"PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME={home} USER={user} LANG=C.UTF-8"
     return (
         "universe = local\n"
         f"executable = {wrapper}\n"
+        # Without this, HTCondor inherits the *submitting process's* working
+        # directory. studio-api runs from /opt/studio-api, which exists only
+        # inside the pod, so every job was held with "Cannot access initial
+        # working directory". Hand-testing from a $HOME path hid it exactly
+        # (#341).
+        f"initialdir = {initialdir}\n"
         f"output = {out}\n"
         f"error = {err}\n"
         f"log = {logf}\n"
@@ -121,6 +129,55 @@ async def _run(cmd: list[str], timeout: float) -> tuple[int, str, str]:
 def available() -> bool:
     """Whether the local-universe mechanism could be used at all."""
     return bool(shutil.which("condor_submit") and shutil.which("condor_wait"))
+
+
+
+_TIMED_OUT = "__timed_out__"
+
+# HTCondor user-log event codes. 005 = terminated, 009 = aborted,
+# 012 = held. Held is the one condor_wait ignores.
+_EV_TERMINATED = re.compile(r"^005 \(", re.MULTILINE)
+_EV_ABORTED = re.compile(r"^009 \(", re.MULTILINE)
+_EV_HELD = re.compile(r"^012 \(", re.MULTILINE)
+
+
+async def _hold_reason(cluster_id: str | None) -> str:
+    """The schedd's own explanation, which is usually the whole answer."""
+    if not cluster_id:
+        return "job held"
+    # _run returns (rc, stdout, stderr) — three values, unlike the two-value
+    # helper in submit_host.py.
+    _, out, _ = await _run(
+        ["condor_q", cluster_id, "-af", "HoldReason"], timeout=30
+    )
+    reason = (out or "").strip().splitlines()
+    return reason[0][:400] if reason and reason[0] != "undefined" else "job held"
+
+
+async def _await_completion(
+    log_f: Path, cluster: "re.Match[str] | None", budget: float
+) -> str | None:
+    """Wait for the job to finish. Returns None on completion, else why not.
+
+    Polls the user log because it is the one place that records a hold, and
+    because it is a local file on shared storage — no repeated queries to the
+    schedd for something that may take half an hour.
+    """
+    cluster_id = cluster.group(1) if cluster else None
+    deadline = time.monotonic() + budget
+    while time.monotonic() < deadline:
+        try:
+            text = log_f.read_text(errors="replace")
+        except OSError:
+            text = ""
+        if _EV_TERMINATED.search(text):
+            return None
+        if _EV_HELD.search(text):
+            return await _hold_reason(cluster_id)
+        if _EV_ABORTED.search(text):
+            return "the job was removed before it ran"
+        await asyncio.sleep(2)
+    return _TIMED_OUT
 
 
 async def run_on_submit_host(
@@ -164,6 +221,9 @@ async def run_on_submit_host(
             logf=str(log_f),
             home=home,
             user=user,
+            # The scratch dir is on shared storage by contract, so it is a
+            # directory the submit host can definitely chdir into.
+            initialdir=str(scratch),
         )
     )
 
@@ -175,17 +235,22 @@ async def run_on_submit_host(
         )
     cluster = _SUBMIT_RE.search(sub_out)
 
-    # condor_wait blocks until the log records the job finishing. Its own
-    # timeout is what bounds this, so no polling loop of ours.
-    try:
-        await _run(["condor_wait", "-wait", str(int(budget)), str(log_f)], timeout=budget + 60)
-    except asyncio.TimeoutError:
+    # Watch the job log rather than using `condor_wait`. condor_wait returns
+    # on termination but not on *hold*, and a held job never terminates — so a
+    # misconfigured submit sat there until the 30-minute timeout with no
+    # explanation, which is exactly how the initialdir bug presented (#341).
+    # Reading the log lets a hold fail immediately, carrying its own reason.
+    held_reason = await _await_completion(log_f, cluster, budget)
+    if held_reason is not None:
         if cluster:
-            # Don't leave a job running for something nobody is waiting on.
             await _run(["condor_rm", cluster.group(1)], timeout=60)
-        return 124, (
-            f"Timed out after {int(budget)}s waiting for the submit host to run "
-            f"{shlex.join(argv)}."
+        if held_reason == _TIMED_OUT:
+            return 124, (
+                f"Timed out after {int(budget)}s waiting for the submit host to "
+                f"run {shlex.join(argv)}."
+            )
+        return 126, (
+            f"The submit host refused to run {shlex.join(argv)}: {held_reason}"
         )
 
     def _read(p: Path) -> str:
