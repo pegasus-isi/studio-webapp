@@ -202,6 +202,70 @@ async def update_planning(req: PlanModeRequest) -> dict:
     await db.set_setting("plan_mode", mode)
     log.info("plan_mode_updated", mode=mode)
     return await _plan_mode_response()
+class WorkflowSecretRequest(BaseModel):
+    """One credential a workflow's generator reads from its environment."""
+
+    name: str
+    value: str
+
+
+async def _workflow_secrets_response() -> dict:
+    """Names and timestamps. Values are never returned, by design.
+
+    Write-only, like the LLM keys (SEC-3): a GET that echoed them would put
+    every credential in the workspace one request — or one devtools tab — away,
+    and nothing in the UI needs the value back.
+    """
+    from main import db
+    import secretbox
+
+    return {
+        "secrets": await db.list_workflow_secrets(),
+        # Whether the values are actually encrypted on disk. secretbox is
+        # fail-open by design, so the UI has to be able to say which.
+        "encrypted_at_rest": secretbox.is_active(),
+    }
+
+
+@router.get("/workflow-secrets")
+async def get_workflow_secrets() -> dict:
+    """Which credentials are set, and when they were last changed."""
+    return await _workflow_secrets_response()
+
+
+@router.put("/workflow-secrets")
+async def update_workflow_secret(req: WorkflowSecretRequest) -> dict:
+    """Store or replace one credential."""
+    from main import db
+    from services import workflow_secrets
+
+    try:
+        name = workflow_secrets.normalize_name(req.name)
+        value = workflow_secrets.validate_value(req.value)
+    except workflow_secrets.InvalidSecret as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    await db.set_workflow_secret(name, value)
+    # Name only. A log line carrying the value would outlive every other
+    # protection this feature has.
+    log.info("workflow_secret_set", name=name)
+    return await _workflow_secrets_response()
+
+
+@router.delete("/workflow-secrets/{name}")
+async def delete_workflow_secret(name: str) -> dict:
+    """Remove one credential."""
+    from main import db
+    from services import workflow_secrets
+
+    try:
+        canonical = workflow_secrets.normalize_name(name)
+    except workflow_secrets.InvalidSecret as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not await db.delete_workflow_secret(canonical):
+        raise HTTPException(status_code=404, detail=f"No secret named {canonical}")
+    log.info("workflow_secret_deleted", name=canonical)
+    return await _workflow_secrets_response()
 
 
 class UIPreferences(BaseModel):

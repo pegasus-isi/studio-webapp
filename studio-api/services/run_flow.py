@@ -656,9 +656,15 @@ async def _execute(
 
 
 async def _capture(
-    cmd: list[str], cwd: str, timeout: int = 300
+    cmd: list[str], cwd: str, timeout: int = 300,
+    env: dict[str, str] | None = None,
 ) -> tuple[int, str]:
-    """Run a command, returning (returncode, combined output)."""
+    """Run a command, returning (returncode, combined output).
+
+    `env` replaces the child's environment outright when given, so callers pass
+    a full environment (see services/workflow_secrets.subprocess_env) rather
+    than a handful of additions.
+    """
     from services.procutil import communicate_or_kill
 
     try:
@@ -667,6 +673,7 @@ async def _capture(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
+            env=env,
         )
         stdout, stderr = await communicate_or_kill(proc, timeout)
         out = stdout.decode("utf-8", errors="replace")
@@ -689,8 +696,17 @@ async def _run_generate(
     flow: RunFlow, *, project_dir: str, generator_file: str, args: list[str]
 ) -> bool:
     flow._begin("generate")
+    # The generator is the one step that reads credentials from its own
+    # environment — that is how a value gets baked into the workflow it writes
+    # (`add_env`), since HTCondor gives jobs a clean environment. Settings >
+    # Pegasus Options > Workflow secrets is where they come from; without this
+    # a workflow needing an API key could not run in Studio at all.
+    from services import workflow_secrets
+
     code, output = await _capture(
-        ["python3", generator_file, *args], cwd=project_dir
+        ["python3", generator_file, *args],
+        cwd=project_dir,
+        env=await workflow_secrets.subprocess_env(),
     )
     _emit_output(flow, "generate", output)
     if code != 0:

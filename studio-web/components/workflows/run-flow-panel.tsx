@@ -25,6 +25,7 @@ import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
 import { EXECUTION_SITES } from "@/lib/vocabulary";
 import { GlossaryTerm } from "@/components/ui/glossary-term";
+import { AppLink } from "@/components/layout/app-link";
 import { cn } from "@/lib/utils";
 import {
   ParamField,
@@ -172,6 +173,40 @@ export function RunFlowPanel({
     null
   );
   const paramsOpen = paramsOpenOverride ?? !collapsible;
+
+  /**
+   * Credentials this analysis reads from its environment, and whether they are
+   * set (#364).
+   *
+   * Five of the workflows in this corpus need one — an OpenAQ key, a NEON
+   * token, Kaggle credentials — and nothing in the UI said so. The run failed
+   * on a worker node with the data source's own error, which names the API and
+   * not the missing credential.
+   *
+   * A hint, not a gate: a variable appearing in the generator's source does not
+   * mean the options you picked need it (crophealth reads the Kaggle variables
+   * only for its kaggle data source), so this must not disable Run.
+   */
+  const envVars = useMemo(
+    () => params?.generator.env_vars ?? [],
+    [params]
+  );
+  const [secretNames, setSecretNames] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (envVars.length === 0) return;
+    api
+      .getWorkflowSecrets()
+      .then((r) => setSecretNames(r.secrets.map((s) => s.name)))
+      // A failed lookup must not invent a warning about missing keys.
+      .catch(() => setSecretNames(null));
+  }, [envVars.length]);
+  const missingSecrets = useMemo(
+    () =>
+      secretNames === null
+        ? []
+        : envVars.filter((name) => !secretNames.includes(name)),
+    [envVars, secretNames]
+  );
   // Hidden site params are satisfied by the radio, which always has a value,
   // so they can never be what's missing — seed them on first render for the
   // case where the generator's default differs from the radio's.
@@ -502,6 +537,33 @@ export function RunFlowPanel({
                 </div>
               ))}
             </dl>
+          </div>
+        )}
+
+        {missingSecrets.length > 0 && (
+          <div className="mt-5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+            <p className="font-medium">
+              This analysis reads {missingSecrets.length === 1 ? "a key" : "keys"}{" "}
+              you haven&apos;t set:{" "}
+              {missingSecrets.map((name, i) => (
+                <span key={name}>
+                  {i > 0 && ", "}
+                  <code>{name}</code>
+                </span>
+              ))}
+            </p>
+            <p className="mt-1 text-xs">
+              Add {missingSecrets.length === 1 ? "it" : "them"} under{" "}
+              <AppLink
+                href="/settings"
+                className="font-semibold underline"
+              >
+                Settings → Pegasus Options → Workflow secrets
+              </AppLink>
+              . You can still run without{" "}
+              {missingSecrets.length === 1 ? "it" : "them"} — some are only
+              needed for particular data sources.
+            </p>
           </div>
         )}
 
