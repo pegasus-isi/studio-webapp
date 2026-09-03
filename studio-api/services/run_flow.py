@@ -48,6 +48,8 @@ from typing import Any, AsyncGenerator, Literal
 
 import structlog
 
+from services import submit_host
+
 log = structlog.get_logger()
 
 StageKey = Literal["generate", "build", "plan", "submit"]
@@ -526,6 +528,43 @@ async def _execute(
     client able to learn why. Every exit path reaches `_terminal()`.
     """
     try:
+        # Preflight before anything expensive. A Pegasus mismatch between this
+        # workspace and the submit host fails every workflow on its first
+        # node, and the error names a missing file rather than the cause — so
+        # catch it here rather than after a ten-minute image build. Only a
+        # positively-identified mismatch blocks; see services/submit_host.py.
+        compat = await submit_host.check()
+        if compat.blocks_run:
+            flow.failure = Failure(
+                stage="plan",
+                cause=compat.detail,
+                action=(
+                    "This needs an administrator: the submit host and this "
+                    "workspace have to agree on Pegasus. Nothing you change "
+                    "here will fix it."
+                ),
+                technical=(
+                    f"workspace: {compat.local_version or '?'} at "
+                    f"{compat.local_share_dir or '?'} · "
+                    f"submit host {compat.schedd or '?'}: "
+                    f"{compat.remote_version or '?'} at "
+                    f"{compat.remote_share_dir or '?'}"
+                ),
+            )
+            flow.state = "failed"
+            for st in flow.stages:
+                if st.status == "pending":
+                    st.status = "skipped"
+            log.warning(
+                "run_flow_blocked_submit_host_mismatch",
+                flow_id=flow.flow_id,
+                **compat.as_dict(),
+            )
+            return
+        if compat.status != "ok":
+            # Worth recording, not worth stopping for.
+            log.info("run_flow_submit_host_uncertain", **compat.as_dict())
+
         if any(s.key == "generate" for s in flow.stages):
             if not await _run_generate(
                 flow, project_dir=project_dir,
