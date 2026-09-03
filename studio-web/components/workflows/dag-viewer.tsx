@@ -856,6 +856,15 @@ export function DagViewer({
                 minZoom={0.04}
                 nodesDraggable={false}
                 nodesConnectable={false}
+                // Inline, the graph sits inside the page's scroller, and React
+                // Flow's default is to `preventDefault()` every wheel event
+                // over its pane and zoom instead. That makes it a scroll trap:
+                // once the graph is under the pointer the page stops scrolling
+                // and the wheel silently zooms a graph you were only passing
+                // over. Zoom stays available on ctrl/⌘+wheel, trackpad pinch
+                // and the +/- controls. In the modal the graph *is* the
+                // surface, so wheel-zoom is what you want there.
+                preventScrolling={!inline}
                 proOptions={{ hideAttribution: true }}
               >
                 <Background gap={16} />
