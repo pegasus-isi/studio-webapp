@@ -48,7 +48,7 @@ from typing import Any, AsyncGenerator, Literal
 
 import structlog
 
-from services import submit_host
+from services import remote_exec, submit_host
 
 log = structlog.get_logger()
 
@@ -730,6 +730,69 @@ def _parse_sse(chunk: str) -> dict[str, Any] | None:
     return None
 
 
+async def _plan_mode() -> str:
+    """"remote" or "local" — where pegasus-plan should run.
+
+    Planning has to happen where the workflow will be submitted. The planner
+    writes its own absolute paths into the submit files, and Pegasus's local
+    universe then executes those on the schedd host, so planning in the pod
+    against a remote schedd produces a DAG that references files only the pod
+    has (#334).
+
+    `auto` is deliberate rather than defaulting to remote: a native or Open
+    OnDemand deployment runs the schedd on the same machine, which is the
+    arrangement Pegasus expects, and remoting a job to yourself would add a
+    queue round-trip for nothing.
+    """
+    setting = os.environ.get("STUDIO_PLAN_ON_SUBMIT_HOST", "auto").strip().lower()
+    if setting in ("never", "0", "false", "local"):
+        return "local"
+    if setting in ("always", "1", "true", "remote"):
+        return "remote"
+    if not remote_exec.available():
+        return "local"
+    remote = await submit_host.is_remote()
+    # None means undetermined; keep today's behaviour rather than guessing.
+    return "remote" if remote else "local"
+
+
+async def _plan_capture(
+    flow: RunFlow, argv: list[str], *, project_dir: str
+) -> tuple[int, str]:
+    """Run the planner, on the submit host when that is where it belongs."""
+    try:
+        mode = await _plan_mode()
+    except Exception as e:  # noqa: BLE001 — detection must never block a run
+        log.warning("plan_mode_detect_failed", error=str(e))
+        mode = "local"
+
+    if mode == "local":
+        return await _capture(argv, cwd=project_dir)
+
+    flow._line(
+        "plan",
+        "Planning on the submit host, so the plan refers to its files and not "
+        "this workspace's.",
+    )
+    scratch = os.path.join(project_dir, ".studio", "remote")
+    try:
+        return await remote_exec.run_on_submit_host(
+            argv, cwd=project_dir, scratch_dir=scratch
+        )
+    except remote_exec.RemoteExecUnavailable as e:
+        # Falling back is right: a broken mechanism should not stop a run that
+        # might well succeed, and on a matched pair of hosts it will. Say so
+        # in the output, because if it then fails on its first node this line
+        # is the explanation.
+        log.warning("remote_plan_unavailable", error=str(e))
+        flow._line(
+            "plan",
+            f"Couldn't plan on the submit host ({e}); planning here instead. "
+            "If the run fails on its first step, this is why.",
+        )
+        return await _capture(argv, cwd=project_dir)
+
+
 async def _run_plan(
     flow: RunFlow, *, project_dir: str, site: str, output_site: str
 ) -> bool:
@@ -741,9 +804,8 @@ async def _run_plan(
         flow._fail("plan", "No workflow YAML file found in the project.")
         return False
 
-    code, output = await _capture(
-        ["pegasus-plan", "-s", site, "-o", output_site, wf_file], cwd=project_dir
-    )
+    argv = ["pegasus-plan", "-s", site, "-o", output_site, wf_file]
+    code, output = await _plan_capture(flow, argv, project_dir=project_dir)
     _emit_output(flow, "plan", output)
     if code != 0:
         flow._fail("plan", output)

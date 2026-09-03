@@ -40,6 +40,7 @@ import asyncio
 import json
 import os
 import shutil
+import socket
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -169,6 +170,30 @@ async def remote_identity() -> tuple[str | None, str | None, str | None, str | N
         str(name) if name else None,
         None,
     )
+
+
+async def is_remote() -> bool | None:
+    """True when the schedd runs on a different machine than this process.
+
+    None when it cannot be determined, so callers can distinguish "the submit
+    host is elsewhere" from "we don't know" and default to the behaviour that
+    works today rather than guessing.
+
+    This is the condition that makes remote planning necessary: co-located
+    planner and schedd is what Pegasus assumes, and a native or Open OnDemand
+    deployment (docs/OOD-DEPLOYMENT-DESIGN.md) has exactly that, so it must
+    keep planning locally.
+    """
+    _, _, schedd, err = await remote_identity()
+    if err or not schedd:
+        return None
+    schedd = schedd.strip().lower()
+    names = {socket.gethostname().lower(), socket.getfqdn().lower()}
+    # A schedd Name can be "user@host" or a bare host.
+    host = schedd.rsplit("@", 1)[-1]
+    return host not in names and host.split(".")[0] not in {
+        n.split(".")[0] for n in names
+    }
 
 
 async def check() -> Compat:
