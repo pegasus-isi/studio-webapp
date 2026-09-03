@@ -31,7 +31,9 @@ def test_image_ref():
     assert ib.image_ref("kthare10", "x", "") == "docker.io/kthare10/x:latest"
 
 
-def test_build_command_ignores_the_fakeroot_command_but_never_uses_fakeroot():
+def test_build_command_ignores_the_fakeroot_command_and_needs_a_range_for_fakeroot(
+    monkeypatch,
+):
     """These two flags look like a pair and do opposite things here.
 
     Measured on real definitions in the same container:
@@ -45,11 +47,78 @@ def test_build_command_ignores_the_fakeroot_command_but_never_uses_fakeroot():
     Dropping both (the first attempt at fixing the empty-image bug) broke every
     build whose base image is older than the host, which is the ordinary case:
     ubuntu:22.04 carries glibc 2.35 and this image is 24.04.
+
+    The empty-image result was measured on a host with **no subuid range for
+    the running user**, which is why it happened: --fakeroot then has no
+    backend left, since --ignore-fakeroot-command refuses the libfakeroot one
+    and this image is not a setuid install. So the rule is not "never
+    --fakeroot" but "not without a range" — and whether a range exists is
+    deployment-specific (a VM running as `studio` has one; a KubeSpawner pod
+    running as a per-user LDAP uid does not).
     """
+    monkeypatch.setattr(ib, "subuid_range", lambda: None)
     cmd = ib.build_command("apptainer", "img.sif", "img.def")
     assert cmd[:4] == ["apptainer", "build", "--force", "--ignore-fakeroot-command"]
     assert cmd[-2:] == ["img.sif", "img.def"]
     assert "--fakeroot" not in cmd
+
+    # With a range, fakeroot has the one backend that works: many ids mapped
+    # through setuid newuidmap, so chown/chgrp succeed and no library is
+    # preloaded. --ignore-fakeroot-command still refuses the broken backend.
+    monkeypatch.setattr(
+        ib, "subuid_range", lambda: ("studio:100000:65536", "studio:100000:65536")
+    )
+    cmd = ib.build_command("apptainer", "img.sif", "img.def")
+    assert "--fakeroot" in cmd
+    assert "--ignore-fakeroot-command" in cmd
+
+
+def test_a_range_needs_both_subuid_and_subgid(tmp_path, monkeypatch):
+    """uids alone still leaves one gid mapped, so chgrp keeps failing."""
+    import pwd
+
+    name = pwd.getpwuid(os.geteuid()).pw_name
+    (tmp_path / "subuid").write_text(f"{name}:100000:65536\n")
+    (tmp_path / "subgid").write_text("someone-else:100000:65536\n")
+
+    real_open = open
+
+    def fake_open(path, *a, **k):
+        if path == "/etc/subuid":
+            return real_open(tmp_path / "subuid", *a, **k)
+        if path == "/etc/subgid":
+            return real_open(tmp_path / "subgid", *a, **k)
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    assert ib.subuid_range() is None
+
+
+def test_an_ownership_failure_is_explained_rather_than_left_as_a_dpkg_code():
+    """The visible error is a dpkg exit code; the cause is three lines earlier.
+
+    Reproduced on two real workflows: a package postinst ran chgrp, only one
+    gid is mapped into an unprivileged build, and the kernel returned EINVAL.
+    Nothing in the output says so, and the file it names exists on both
+    machines — so the next step someone takes is inspecting a definition that
+    is fine.
+    """
+    out = [
+        "Setting up openssh-client (1:8.4p1-5+deb11u7) ...",
+        "chgrp: changing group of '/usr/bin/ssh-agent': Invalid argument",
+        "dpkg: error processing package openssh-client (--configure):",
+        "FATAL:   While performing build: while running %post section: exit status 100",
+    ]
+    hint = "\n".join(ib.ownership_failure_hint(out))
+    assert "could not change file ownership" in hint
+    # Names the culprit, so nobody has to find it in 900 lines of apt output.
+    assert "openssh-client" in hint
+    # And says plainly where the fault is not.
+    assert "definition file is not at fault" in hint
+
+
+def test_no_ownership_hint_for_an_unrelated_failure():
+    assert ib.ownership_failure_hint(["Setting up curl ...", "done."]) == []
 
 
 def test_build_command_never_binds_an_apt_conf():
