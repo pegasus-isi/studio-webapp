@@ -1280,7 +1280,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
         return _error_sse("Invalid JSON body")
 
     messages = body.get("messages", [])
-    display_text = body.get("display_text")
+    display_text = body.get("display_text")  # lean last-user message for DB source (hybrid @ cache)
     model_override = body.get("model", "")
     provider_override = body.get("provider", "")
     max_tokens_override = body.get("max_tokens")

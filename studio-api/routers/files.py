@@ -56,7 +56,12 @@ def _safe_path(path: str) -> str:
     """
     if not path:
         return WORKSPACE_ROOT
-    resolved = os.path.realpath(os.path.expanduser(path))
+    p = path.strip()
+    if not os.path.isabs(p):
+        # tolerate relative paths like "workflows/..." — join to WORKSPACE_ROOT
+        # so "workflows/hello.py" → "/home/.../work/workflows/hello.py"
+        p = os.path.join(WORKSPACE_ROOT, p)
+    resolved = os.path.realpath(os.path.expanduser(p))
     root = os.path.realpath(WORKSPACE_ROOT)
     if not resolved.startswith(root + os.sep) and resolved != root:
         raise HTTPException(
@@ -230,6 +235,71 @@ async def list_files(path: str = Query("", description="Directory path")) -> Fil
             entries.append(FileEntry(name=name, type="unknown"))
 
     return FileListResponse(path=resolved, entries=entries)
+
+
+@router.get("/search")
+async def search_files(
+    q: str = Query("", max_length=100, description="Fuzzy search query"),
+    limit: int = Query(20, ge=1, le=50, description="Max results"),
+) -> list[dict]:
+    """Fuzzy file/dir search under WORKSPACE_ROOT for @ mentions.
+
+    Returns list of {path, type: file|dir} relative to WORKSPACE_ROOT,
+    capped and sorted. Respects .gitignore-ish ignores.
+    """
+    q = q.strip().lower()
+    results: list[dict] = []
+    ignore_dirs = {
+        ".git",
+        ".hg",
+        "node_modules",
+        ".pegasus",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        "site-packages",
+        ".opencode",
+        ".ipynb_checkpoints",
+        ".venv",
+        "venv",
+    }
+    for root, dirs, files in os.walk(WORKSPACE_ROOT):
+        # prune ignored dirs in-place
+        dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
+        rel_root = os.path.relpath(root, WORKSPACE_ROOT)
+        if rel_root == ".":
+            rel_root = ""
+        for name in dirs + files:
+            rel = os.path.join(rel_root, name) if rel_root else name
+            if q and q not in rel.lower():
+                continue
+            full = os.path.join(root, name)
+            try:
+                is_dir = os.path.isdir(full)
+            except OSError:
+                continue
+            # _safe_path check — reuse confinement
+            try:
+                _safe_path(rel)
+            except HTTPException:
+                continue
+            results.append({"path": rel, "type": "dir" if is_dir else "file"})
+            if len(results) >= limit * 3:
+                break
+        if len(results) >= limit * 3:
+            break
+    if q:
+        # prefix match first, then dirs before files, then alphabetical
+        results.sort(
+            key=lambda r: (
+                0 if r["path"].lower().startswith(q) else 1,
+                0 if r["type"] == "dir" else 1,
+                r["path"].lower(),
+            )
+        )
+    else:
+        results.sort(key=lambda r: (0 if r["type"] == "dir" else 1, r["path"].lower()))
+    return results[:limit]
 
 
 @router.get("/read", response_model=FileReadResponse)

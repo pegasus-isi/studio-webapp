@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import Fuse from "fuse.js";
 import { useChatStore, genId } from "@/lib/stores/chat-store";
 import { useConsumeChatStream } from "@/lib/hooks/use-chat-stream";
 import { usePanelStore } from "@/lib/stores/panel-store";
-import { useNotebookContextStore } from "@/lib/stores/notebook-context-store";
 import { useChatContextStore } from "@/lib/stores/chat-context-store";
 import { ChatContextChip } from "@/components/chat/context-chip";
 import {
@@ -20,6 +20,12 @@ export function ChatInput() {
   const [input, setInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionResults, setMentionResults] = useState<{ path: string; type: string }[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionCache, setMentionCache] = useState<Map<string, { type: string; snippet: string }>>(
+    () => new Map()
+  );
   const isStreaming = useChatStore((s) => s.isStreaming);
   const activeConvId = useChatStore((s) => s.activeId);
   const scopeFromStore = useChatContextStore(
@@ -96,38 +102,136 @@ export function ChatInput() {
     }
   }, [config, initialized, chatProvider, chatModel, setChatProvider, setChatModel]);
 
+  // @ mention handling — fetch search results when query changes
+  useEffect(() => {
+    if (mentionQuery === null) {
+      setMentionResults([]);
+      return;
+    }
+    let cancelled = false;
+    const q = mentionQuery;
+    fetch(apiUrl(`/files/search?q=${encodeURIComponent(q)}`))
+      .then((r) => r.json())
+      .then((data: { path: string; type: string }[]) => {
+        if (cancelled) return;
+        if (q && data.length > 0) {
+          const fuse = new Fuse(data, { keys: ["path"], threshold: 0.4 });
+          const ranked = fuse.search(q).map((r) => r.item);
+          const seen = new Set(ranked.map((r) => r.path));
+          const rest = data.filter((d) => !seen.has(d.path));
+          setMentionResults([...ranked, ...rest].slice(0, 20));
+        } else {
+          setMentionResults(data.slice(0, 20));
+        }
+        setMentionIndex(0);
+      })
+      .catch(() => {
+        if (!cancelled) setMentionResults([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mentionQuery]);
+
+  const updateMentionQuery = useCallback((value: string, cursorPos: number) => {
+    const before = value.slice(0, cursorPos);
+    const m = before.match(/@([^\s]*)$/);
+    if (m) setMentionQuery(m[1]);
+    else setMentionQuery(null);
+  }, []);
+
+  const insertMention = useCallback(
+    async (item: { path: string; type: string }) => {
+      const el = textareaRef.current;
+      const cursor = el?.selectionStart ?? input.length;
+      const before = input.slice(0, cursor);
+      const after = input.slice(cursor);
+      const m = before.match(/@([^\s]*)$/);
+      const start = m ? before.length - m[0].length : before.length;
+      const atText = `@${item.path} `;
+      const next = before.slice(0, start) + atText + after;
+      setInput(next);
+      setMentionQuery(null);
+      setMentionResults([]);
+      // fetch snippet for cache (visible @path stays lean, snippet attached invisibly at send)
+      let snippet = "";
+      try {
+        if (item.type === "dir") {
+          const res = await fetch(apiUrl(`/files?path=${encodeURIComponent(item.path)}`));
+          const data = await res.json();
+          const entries: { name: string; type: string }[] = data.entries ?? [];
+          snippet = entries.slice(0, 30).map((e) => `${e.type}\t${e.name}`).join("\n");
+          if (entries.length > 30) snippet += `\n[... ${entries.length - 30} more entries ...]`;
+        } else {
+          const res = await fetch(apiUrl(`/files/read?path=${encodeURIComponent(item.path)}`));
+          const data = await res.json();
+          const content: string = data.content ?? "";
+          snippet = content.slice(0, 4000);
+          if (content.length > 4000) snippet += "\n[... truncated, 4000 chars shown ...]";
+        }
+      } catch {}
+      setMentionCache((prev) => {
+        const nextMap = new Map(prev);
+        nextMap.set(item.path, { type: item.type, snippet });
+        return nextMap;
+      });
+      requestAnimationFrame(() => {
+        if (el) {
+          const pos = start + atText.length;
+          el.focus();
+          el.selectionStart = el.selectionEnd = pos;
+          updateMentionQuery(next, pos);
+        }
+      });
+    },
+    [input, updateMentionQuery]
+  );
+
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isStreaming) return;
 
+    // derive file context from final @ tokens (correct on delete, deduped)
+    const mentionPaths = [...text.matchAll(/(?<![\w`])@([^\s]+)/g)].map((m) =>
+      m[1].trim().replace(/[,.;:)]$/, "")
+    );
+    const deduped = [...new Set(mentionPaths)];
+    const attachmentsBlock = deduped
+      .filter((p) => mentionCache.has(p))
+      .map((p) => {
+        const cached = mentionCache.get(p)!;
+        return `\n\n--- @${p}\n\`\`\`${p}\n${cached.snippet}\n\`\`\``;
+      })
+      .join("");
+    const displayText = text;
+    const apiText = text + attachmentsBlock;
+
     setInput("");
+    // prune cache to only paths still mentioned (next turn lean)
+    setMentionCache((prev) => {
+      const next = new Map<string, { type: string; snippet: string }>();
+      for (const p of deduped) if (prev.has(p)) next.set(p, prev.get(p)!);
+      return next;
+    });
 
     // Pin the conversation this turn belongs to, so streamed tokens keep
     // landing here even if the user switches conversations mid-response.
     const convId = useChatStore.getState().activeId;
 
-    // Add user message to store
+    // Add user message to store — display lean @path only
     const userMsg = {
       id: genId(),
       role: "user" as const,
-      content: text,
+      content: displayText,
     };
     addMessage(userMsg);
-
-    // When embedded in JupyterLab with a focused notebook, ride its path along
-    // in the API copy of the message (not the displayed one). Provider-safe:
-    // it's user text, not a system role.
-    const { activeNotebookPath, include } =
-      useNotebookContextStore.getState();
-    const apiText =
-      activeNotebookPath && include
-        ? `${text}\n\n[Active Jupyter notebook: ${activeNotebookPath} — when I refer to "this notebook", read this file with your tools.]`
-        : text;
 
     // Build message history for the API. Skip empty-content messages (e.g. an
     // assistant bubble that only carried a transient error) and the local
     // context-switch dividers (system role, display-only) so neither becomes
     // part of the model-visible transcript.
+    // Note: file/dir context is now provided via @ mentions with inline
+    // snippets (opencode parity), not via the notebook checkbox.
     const apiMessages = [
       ...messages
         .filter((m) => m.role !== "system" && m.content.trim().length > 0)
@@ -144,6 +248,7 @@ export function ChatInput() {
     try {
       const body: Record<string, unknown> = {
         messages: apiMessages,
+        display_text: displayText,
         agent: agentId,
         request_id: requestId,
         conversation_id: convId,
@@ -217,6 +322,7 @@ export function ChatInput() {
     agentId,
     chatProvider,
     chatModel,
+    mentionCache,
     addMessage,
     setLastError,
     consumeStream,
@@ -245,6 +351,37 @@ export function ChatInput() {
   }, [chatDraft, setChatDraft]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // @ mention dropdown navigation
+    if (mentionQuery !== null && mentionResults.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((i) => (i + 1) % mentionResults.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((i) => (i - 1 + mentionResults.length) % mentionResults.length);
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        // if dropdown open, select instead of sending
+        e.preventDefault();
+        const item = mentionResults[mentionIndex];
+        if (item) void insertMention(item);
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const item = mentionResults[mentionIndex];
+        if (item) void insertMention(item);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionQuery(null);
+        return;
+      }
+    }
     // Don't send while an IME composition is active (CJK input commits with
     // Enter) — nativeEvent.isComposing is the reliable signal.
     if (
@@ -342,16 +479,43 @@ export function ChatInput() {
         </div>
 
         {/* Input area */}
-        <div className="flex items-end gap-2">
+        <div className="relative flex items-end gap-2">
+          {mentionQuery !== null && mentionResults.length > 0 && (
+            <div className="absolute bottom-full left-0 right-12 z-10 mb-1 max-h-48 overflow-auto rounded-md border border-line bg-surface shadow-lg">
+              {mentionResults.map((item, idx) => (
+                <button
+                  key={item.path}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    void insertMention(item);
+                  }}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted ${idx === mentionIndex ? "bg-muted text-fg" : "text-fgmuted"}`}
+                >
+                  <span className="font-mono truncate">{item.path}</span>
+                  <span className="ml-auto text-[10px] opacity-60">{item.type}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              updateMentionQuery(e.target.value, e.target.selectionStart ?? e.target.value.length);
+            }}
+            onSelect={(e) =>
+              updateMentionQuery(
+                (e.target as HTMLTextAreaElement).value,
+                (e.target as HTMLTextAreaElement).selectionStart ?? 0
+              )
+            }
             onKeyDown={handleKeyDown}
+            onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
             placeholder={
               activeScope
-                ? `Ask about ${activeScope.label}... (Shift+Enter for newline)`
-                : "Ask about Pegasus workflows... (Shift+Enter for newline)"
+                ? `Ask about ${activeScope.label}... (Shift+Enter for newline) — type @ for files`
+                : "Ask about Pegasus workflows... (Shift+Enter for newline) — type @ for files"
             }
             rows={3}
             className="min-h-[72px] max-h-56 flex-1 resize-none rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
