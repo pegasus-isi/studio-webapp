@@ -38,7 +38,8 @@ Your file tools take a path **relative to `$HOME/work`**, and they do **not** ex
 | `workflows/<name>/README.md` | `work/workflows/<name>/README.md` |
 | | `<name>/workflow_generator.py` |
 
-A real absolute path also works: `/home/ubuntu/work/workflows/<name>/...`.
+A real absolute path also works: `$HOME/work/workflows/<name>/...` — expand it
+rather than guessing the home directory's name.
 
 Every wrong form fails **silently** — the tool reports success and the transcript
 looks correct:
@@ -183,12 +184,12 @@ summary — those need OCR, which is not installed.
 
 ## Container base images
 
-This container runs **Ubuntu 24.04** (glibc 2.39), and workflow containers are
-built here, unprivileged, with Apptainer.
+This container runs **Debian 13 (trixie)** with glibc 2.41 and Python 3.13, and
+workflow containers are built here, unprivileged, with Apptainer.
 
-**Prefer a base image matching it** — `ubuntu:24.04`, or a `python:3.12`-era slim
-image. A base older than the host is the usual source of build failures that look
-like nothing to do with the definition:
+**Prefer a base image matching it** — `debian:trixie`, or a `python:3.13`-era
+slim image. A base older than the host is the usual source of build failures
+that look like nothing to do with the definition:
 
 ```
 /bin/sh: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found
@@ -196,9 +197,11 @@ like nothing to do with the definition:
 FATAL: while running %post section: exit status 1
 ```
 
-That is an `ubuntu:22.04` base (glibc 2.35) being handed this host's
+That is an older base (`ubuntu:22.04`, glibc 2.35) being handed this host's
 `libfakeroot.so`. It fails before a single `%post` command runs, so nothing in
-the definition is at fault and nothing in the log points at the base image.
+the definition is at fault and nothing in the log points at the base image. The
+host's glibc is 2.41, so anything built against 2.35 or 2.38 is in this
+category.
 
 Studio's Build Image button passes `--ignore-fakeroot-command`, which avoids it.
 A build run by hand in a terminal needs that flag too — and never `--fakeroot`,

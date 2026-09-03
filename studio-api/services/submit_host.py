@@ -19,6 +19,11 @@ resolved that file under ``python3.12`` (Ubuntu noble) and the AP under
 different distro, so one Python minor version made every run fail 25 nodes
 deep with an error about a missing file that was present on both machines.
 
+The pod image has since moved to Debian trixie, so that particular gap is
+closed at the source and the two agree by construction. This check stays
+anyway: the AP is salt-managed in a different repo and can move on its own, and
+the failure it produces is unreadable without it.
+
 This module turns that into a preflight. The AP advertises its Pegasus
 identity as schedd ClassAd attributes, which ``condor_status`` reads in
 milliseconds without submitting anything, so the check is cheap enough to run

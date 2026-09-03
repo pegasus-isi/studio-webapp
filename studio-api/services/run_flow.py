@@ -166,7 +166,7 @@ _RULES: dict[str, list[tuple[re.Pattern[str], str, str]]] = {
             "The software environment is built on a base image older than this "
             "system, which fails before any of your setup commands run.",
             "Edit the definition file to use a newer base (for example "
-            "`ubuntu:24.04`) and build again. Nothing in your own setup steps "
+            "`debian:trixie`) and build again. Nothing in your own setup steps "
             "is wrong.",
         ),
         (

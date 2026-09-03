@@ -38,7 +38,7 @@ def test_classify_explains_the_glibc_trap_without_blaming_the_definition():
         "FATAL: while running %post section: exit status 1",
     )
     assert "older than this system" in cause
-    assert "ubuntu:24.04" in action
+    assert "debian:trixie" in action
     assert "Nothing in your own setup steps" in action
 
 

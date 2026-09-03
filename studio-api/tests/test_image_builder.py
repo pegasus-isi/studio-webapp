@@ -46,7 +46,7 @@ def test_build_command_ignores_the_fakeroot_command_and_needs_a_range_for_fakero
 
     Dropping both (the first attempt at fixing the empty-image bug) broke every
     build whose base image is older than the host, which is the ordinary case:
-    ubuntu:22.04 carries glibc 2.35 and this image is 24.04.
+    ubuntu:22.04 carries glibc 2.35 and this image is Debian trixie (2.41).
 
     The empty-image result was measured on a host with **no subuid range for
     the running user**, which is why it happened: --fakeroot then has no
