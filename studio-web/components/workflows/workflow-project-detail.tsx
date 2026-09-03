@@ -29,6 +29,7 @@ import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { useUIPreferences, useUpdateUIPreferences } from "@/lib/hooks/use-ui-prefs";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUrl } from "@/lib/urls";
+import { usePaneSize } from "@/lib/hooks/use-pane-size";
 import { cn, statusColor } from "@/lib/utils";
 
 interface Props {
@@ -61,7 +62,6 @@ function outputHint(output: string | null): string | null {
 export function WorkflowProjectDetail({ projectId }: Props) {
   const { data, refetch: refetchProjects } = useWorkflowProjects();
   const project = data?.projects.find((p) => p.project_id === projectId);
-  const allProjects = data?.projects ?? [];
   // Collapsing the run setup is the point of the disclosure, but a collapsed
   // pane must not hide the fact that it is still incomplete.
   const [configCollapsed, setConfigCollapsed] = useState(false);
@@ -451,26 +451,15 @@ export function WorkflowProjectDetail({ projectId }: Props) {
       {/* Header */}
       <div className="border-b border-line bg-surface px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* A picker rather than a heading (#314). With the list pane
-              collapsed the heading was the only thing telling you which
-              workflow you were looking at, and nothing let you change it
-              without reopening the list. */}
+          {/* A heading, not a picker. Choosing which analysis moved up to the
+              page header (components/workflows/workflow-picker.tsx) — here it
+              was only reachable once you had already chosen, and it vanished
+              with this pane. */}
           <div className="min-w-0">
-            <label className="flex items-center gap-1.5">
-              <span className="sr-only">Selected workflow</span>
-              <select
-                value={project.project_id}
-                onChange={(e) => selectProject(e.target.value)}
-                className="max-w-full truncate rounded-lg border border-line bg-surface px-2 py-1 text-lg font-semibold text-fg outline-none focus:border-pegasus-400"
-              >
-                {(allProjects.length ? allProjects : [project]).map((p) => (
-                  <option key={p.project_id} value={p.project_id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="mt-0.5 truncate text-sm text-fgmuted">
+            <h2 className="truncate text-lg font-semibold text-fg">
+              {project.name}
+            </h2>
+            <p className="truncate text-sm text-fgmuted">
               {project.project_dir}
             </p>
           </div>
@@ -747,7 +736,27 @@ function GraphPane({
   const selected = pinned && runId ? runId : newest;
   const run = ordered.find((r) => r.run_id === selected);
 
-  const [collapsed, setCollapsed] = useState(false);
+  // Drag the bottom edge to resize; the graph is the thing you stare at, and
+  // 420px was a guess that suited neither a laptop nor a big monitor. Height
+  // persists per browser, like the other panes.
+  const {
+    size: height,
+    collapsed,
+    toggleCollapsed,
+    dragging,
+    startDrag,
+    onHandleKeyDown,
+    paneRef,
+  } = usePaneSize({
+    storageKey: "graph-pane",
+    defaultSize: 420,
+    minSize: 220,
+    maxSize: 1200,
+    axis: "y",
+  });
+  // Full screen for "I need the whole picture": the same viewer already has a
+  // modal mode, so this is a prop rather than a second implementation.
+  const [full, setFull] = useState(false);
 
   const url = run
     ? apiUrl(`workflows/${run.run_id}/graph.json`)
@@ -780,10 +789,13 @@ function GraphPane({
     ) : null;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-line bg-surface">
+    <div
+      ref={paneRef}
+      className="relative overflow-hidden rounded-xl border border-line bg-surface"
+    >
       <div className="flex items-center gap-2 border-b border-line px-4 py-2">
         <button
-          onClick={() => setCollapsed((v) => !v)}
+          onClick={toggleCollapsed}
           aria-expanded={!collapsed}
           className="flex items-center gap-1.5 text-sm font-semibold text-fg"
         >
@@ -799,20 +811,61 @@ function GraphPane({
           Graph
         </button>
         <span className="truncate text-xs text-fgsubtle">{title}</span>
+        {!collapsed && (
+          <button
+            onClick={() => setFull(true)}
+            title="Show the graph full screen"
+            className="ml-auto rounded-md border border-line px-2 py-0.5 text-xs font-medium text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
+          >
+            Full screen
+          </button>
+        )}
       </div>
       {!collapsed && (
-        <div className="h-[420px]">
-          <DagViewer
-            // Remount on a different graph so the poll and the fit restart
-            // cleanly rather than animating between two unrelated shapes.
-            key={url}
-            graphUrl={url}
-            title={title}
-            live={!!run}
-            inline
-            headerExtra={picker}
+        <>
+          <div style={{ height }}>
+            <DagViewer
+              // Remount on a different graph so the poll and the fit restart
+              // cleanly rather than animating between two unrelated shapes.
+              key={url}
+              graphUrl={url}
+              title={title}
+              live={!!run}
+              inline
+              headerExtra={picker}
+            />
+          </div>
+
+          {/* Drag handle on the bottom edge. Taller than it looks, because a
+              1px target is a fine line to hit and this is not a precision
+              task. */}
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize the graph"
+            tabIndex={0}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              startDrag();
+            }}
+            onKeyDown={onHandleKeyDown}
+            className={cn(
+              "h-2 w-full cursor-row-resize",
+              "hover:bg-pegasus-400/40 focus:bg-pegasus-400/60 focus:outline-none",
+              dragging && "bg-pegasus-400/60"
+            )}
           />
-        </div>
+        </>
+      )}
+
+      {full && (
+        <DagViewer
+          graphUrl={url}
+          title={title}
+          live={!!run}
+          headerExtra={picker}
+          onClose={() => setFull(false)}
+        />
       )}
     </div>
   );
