@@ -528,13 +528,26 @@ async def _execute(
     client able to learn why. Every exit path reaches `_terminal()`.
     """
     try:
-        # Preflight before anything expensive. A Pegasus mismatch between this
+        # Where the planner runs decides whether a Pegasus mismatch matters,
+        # so resolve it once, up front, and reuse it for the plan stage.
+        try:
+            plan_mode = await _plan_mode()
+        except Exception as e:  # noqa: BLE001 — detection must never block a run
+            log.warning("plan_mode_detect_failed", error=str(e))
+            plan_mode = "local"
+
+        # Preflight before anything expensive. A mismatch between this
         # workspace and the submit host fails every workflow on its first
         # node, and the error names a missing file rather than the cause — so
-        # catch it here rather than after a ten-minute image build. Only a
-        # positively-identified mismatch blocks; see services/submit_host.py.
+        # catch it here rather than after a ten-minute image build.
+        #
+        # It only blocks when planning happens *here*. Planning on the submit
+        # host makes the mismatch irrelevant: the paths baked into the submit
+        # files are then the submit host's own. Blocking anyway would take a
+        # difference that no longer matters and turn it into an outage —
+        # refusing every run on a deployment where runs work.
         compat = await submit_host.check()
-        if compat.blocks_run:
+        if compat.blocks_run and plan_mode == "local":
             flow.failure = Failure(
                 stage="plan",
                 cause=compat.detail,
@@ -563,7 +576,21 @@ async def _execute(
             return
         if compat.status != "ok":
             # Worth recording, not worth stopping for.
-            log.info("run_flow_submit_host_uncertain", **compat.as_dict())
+            log.info(
+                "run_flow_submit_host_uncertain",
+                plan_mode=plan_mode,
+                **compat.as_dict(),
+            )
+        if compat.blocks_run and plan_mode == "remote":
+            # Say it in the run's own output. The mismatch is real and someone
+            # should still fix it; it just isn't fatal while the planner runs
+            # where the workflow is submitted.
+            flow._line(
+                "plan",
+                "This workspace and the submit host have Pegasus in different "
+                "places. That no longer breaks runs, because planning happens "
+                "on the submit host — but it is worth fixing.",
+            )
 
         if any(s.key == "generate" for s in flow.stages):
             if not await _run_generate(
@@ -579,7 +606,11 @@ async def _execute(
                 return
 
         if not await _run_plan(
-            flow, project_dir=project_dir, site=site, output_site=output_site
+            flow,
+            project_dir=project_dir,
+            site=site,
+            output_site=output_site,
+            plan_mode=plan_mode,
         ):
             return
 
@@ -757,14 +788,19 @@ async def _plan_mode() -> str:
 
 
 async def _plan_capture(
-    flow: RunFlow, argv: list[str], *, project_dir: str
+    flow: RunFlow, argv: list[str], *, project_dir: str, mode: str | None = None
 ) -> tuple[int, str]:
-    """Run the planner, on the submit host when that is where it belongs."""
-    try:
-        mode = await _plan_mode()
-    except Exception as e:  # noqa: BLE001 — detection must never block a run
-        log.warning("plan_mode_detect_failed", error=str(e))
-        mode = "local"
+    """Run the planner, on the submit host when that is where it belongs.
+
+    `mode` is resolved once by the caller, because the preflight needs the same
+    answer and asking twice could get two — the detection is a network call.
+    """
+    if mode is None:
+        try:
+            mode = await _plan_mode()
+        except Exception as e:  # noqa: BLE001 — detection must never block a run
+            log.warning("plan_mode_detect_failed", error=str(e))
+            mode = "local"
 
     if mode == "local":
         return await _capture(argv, cwd=project_dir)
@@ -794,7 +830,12 @@ async def _plan_capture(
 
 
 async def _run_plan(
-    flow: RunFlow, *, project_dir: str, site: str, output_site: str
+    flow: RunFlow,
+    *,
+    project_dir: str,
+    site: str,
+    output_site: str,
+    plan_mode: str | None = None,
 ) -> bool:
     from services.workflow_submitter import _find_workflow_file
 
@@ -805,7 +846,9 @@ async def _run_plan(
         return False
 
     argv = ["pegasus-plan", "-s", site, "-o", output_site, wf_file]
-    code, output = await _plan_capture(flow, argv, project_dir=project_dir)
+    code, output = await _plan_capture(
+        flow, argv, project_dir=project_dir, mode=plan_mode
+    )
     _emit_output(flow, "plan", output)
     if code != 0:
         flow._fail("plan", output)
