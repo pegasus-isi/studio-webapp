@@ -114,6 +114,36 @@ export async function updateWorkflowScanSettings(data: {
   });
 }
 
+// --- Planning location ---
+
+export type PlanMode = "auto" | "remote" | "local";
+
+export interface PlanningSettings {
+  /** The stored preference. */
+  mode: PlanMode;
+  choices: PlanMode[];
+  /** What the next run will actually do — with `auto` this is a detection
+      result, so it is shown rather than left to be guessed at. */
+  effective: "remote" | "local";
+  /** Where `effective` came from: setting | env | detected | no-condor |
+      fallback. */
+  source: string;
+  /** null when undetermined — must not be rendered as "co-located". */
+  submit_host_is_remote: boolean | null;
+  env_default: string;
+}
+
+export async function getPlanningSettings() {
+  return request<PlanningSettings>("/settings/planning");
+}
+
+export async function updatePlanningSettings(mode: PlanMode) {
+  return request<PlanningSettings>("/settings/planning", {
+    method: "PUT",
+    body: JSON.stringify({ mode }),
+  });
+}
+
 // --- LLM ---
 
 export interface LLMConfig {
