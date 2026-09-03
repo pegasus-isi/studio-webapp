@@ -486,3 +486,58 @@ def test_build_uses_a_patched_copy_and_leaves_the_original_alone(monkeypatch, tm
     assert any("your .def is unchanged" in e.get("line", "") for e in events)
     # No temp file left behind.
     assert not list((proj / "Apptainer").glob(".studio-build-*"))
+
+
+def test_a_statoverride_is_injected_for_openssh_client():
+    """An unprivileged build cannot run openssh-client's postinst chgrp.
+
+    Debian guards it behind `dpkg-statoverride --list`, so registering one
+    first makes the package skip the step. Injected into a copy rather than
+    required of the definition, for the same reason as the apt setting: the
+    constraint belongs to the builder, not the author.
+    """
+    text = "Bootstrap: docker\nFrom: python:3.8-slim\n\n%post\n    apt-get install -y openssh-client\n"
+    assert ib.needs_build_fixes(text) is True
+    lines = ib.statoverride_lines(text)
+    assert len(lines) == 1
+    assert "/usr/bin/ssh-agent" in lines[0]
+    # No --update: that flag applies the ownership now, which is what fails.
+    assert "--update" not in lines[0]
+
+    out = ib.with_apt_fix(text)
+    assert "dpkg-statoverride --add root root 0755 /usr/bin/ssh-agent" in out
+    # And it lands before the install it has to precede.
+    assert out.index("statoverride") < out.index("apt-get install")
+
+
+def test_no_statoverride_when_the_package_is_absent():
+    text = "%post\n    apt-get install -y curl git\n"
+    assert ib.statoverride_lines(text) == []
+
+
+def test_an_author_who_handles_it_is_left_alone():
+    """Don't inject over a definition that already registers the override."""
+    text = (
+        "%post\n"
+        "    dpkg-statoverride --add root root 0755 /usr/bin/ssh-agent\n"
+        "    apt-get install -y openssh-client\n"
+    )
+    assert ib.statoverride_lines(text) == []
+
+
+def test_a_definition_needing_only_a_statoverride_still_gets_patched():
+    """apt is not mentioned, so the apt fix does not apply — but this does."""
+    text = "%post\n    dpkg -i /tmp/openssh-client.deb\n"
+    assert ib.needs_apt_fix(text) is False
+    assert ib.needs_build_fixes(text) is True
+    out = ib.with_apt_fix(text)
+    assert out is not None
+    assert "APT::Sandbox::User" not in out
+    assert "ssh-agent" in out
+
+
+def test_no_patch_at_all_when_nothing_is_needed():
+    text = "%post\n    pip install numpy\n"
+    assert ib.needs_build_fixes(text) is False
+    assert ib.with_apt_fix(text) is None
+

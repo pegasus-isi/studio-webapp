@@ -81,6 +81,50 @@ _APT_FIX_LINE = (
 )
 _POST_RE = re.compile(r"^\s*%post\b.*$", re.M)
 
+# An unprivileged build maps one user and one group, so a package's postinst
+# cannot chown or chgrp: the kernel returns EINVAL and dpkg fails the whole
+# build with an exit code that names neither the cause nor the package.
+#
+# Debian guards these steps behind a statoverride check. openssh-client's is
+#
+#     if ! dpkg-statoverride --list /usr/bin/ssh-agent >/dev/null; then
+#             chgrp ssh /usr/bin/ssh-agent
+#             chmod 2755 /usr/bin/ssh-agent
+#     fi
+#
+# so registering an override first makes the package skip what it cannot do.
+# Deliberately no --update: that flag applies the ownership immediately, which
+# is the operation that fails.
+#
+# Same reasoning as the apt setting above — the constraint belongs to the
+# builder, not to the definition's author, so it is injected into a copy rather
+# than required of every definition. It is a curated list rather than a general
+# fix; anything not on it still fails, but ownership_failure_hint() then names
+# the package and the remedy. The general fix is a subuid range for the running
+# user, which makes fakeroot real (see subuid_range()).
+#
+# The trade for ssh-agent is that it is not setgid ssh, losing a
+# ptrace-hardening measure for the agent — irrelevant in a workflow container,
+# and stated in the build log rather than left silent.
+_STATOVERRIDE_PATHS: tuple[tuple[str, str], ...] = (
+    ("openssh-client", "/usr/bin/ssh-agent"),
+)
+
+
+def statoverride_lines(text: str) -> list[str]:
+    """Statoverride registrations this definition needs, in %post order."""
+    lines = []
+    for package, path in _STATOVERRIDE_PATHS:
+        if not re.search(rf"\b{re.escape(package)}\b", text):
+            continue
+        if f"dpkg-statoverride" in text and path in text:
+            continue  # the author already handles it
+        lines.append(
+            f"dpkg-statoverride --list {path} >/dev/null 2>&1 || "
+            f"dpkg-statoverride --add root root 0755 {path}"
+        )
+    return lines
+
 
 def needs_apt_fix(text: str) -> bool:
     """True if the definition installs with apt and does not already set this."""
@@ -89,13 +133,30 @@ def needs_apt_fix(text: str) -> bool:
     return bool(re.search(r"^\s*(apt-get|apt|aptitude)\s", text, re.M))
 
 
+def needs_build_fixes(text: str) -> bool:
+    """True if this definition needs anything injected for the builder."""
+    return needs_apt_fix(text) or bool(statoverride_lines(text))
+
+
 def with_apt_fix(text: str) -> str | None:
-    """Return the definition with the apt setting as the first %post step."""
+    """Return the definition with the builder's own workarounds first in %post.
+
+    The apt setting and the statoverrides both exist because the *builder* is
+    unprivileged, not because the definition is wrong, so they are added to a
+    copy and reported in the log. The user's file is never touched.
+    """
     m = _POST_RE.search(text)
     if not m:
         return None
+    injected = []
+    if needs_apt_fix(text):
+        injected.append(_APT_FIX_LINE)
+    injected += statoverride_lines(text)
+    if not injected:
+        return None
     insert_at = m.end()
-    return text[:insert_at] + "\n    " + _APT_FIX_LINE + text[insert_at:]
+    block = "".join(f"\n    {line}" for line in injected)
+    return text[:insert_at] + block + text[insert_at:]
 
 
 def detect_builder() -> str | None:
@@ -548,14 +609,16 @@ async def stream_build(
 
     deadline = time.monotonic() + _BUILD_TIMEOUT_S
 
-    # Build from an augmented copy when apt would fail under an emulated root.
-    # Written beside the original so relative %files paths still resolve.
+    # Build from an augmented copy when the *builder* being unprivileged would
+    # otherwise fail the build: apt cannot drop privileges to _apt, and a
+    # package postinst cannot chown. Written beside the original so relative
+    # %files paths still resolve.
     build_def, temp_def = definition, None
     if _unprivileged_build():
         try:
             with open(definition) as fh:
                 text = fh.read()
-            if needs_apt_fix(text):
+            if needs_build_fixes(text):
                 patched = with_apt_fix(text)
                 if patched:
                     temp_def = os.path.join(
@@ -582,11 +645,15 @@ async def stream_build(
         yield _sse({"line": f"build tmpdir: {tmpdir} ({free:.1f} GiB free)"})
 
     if temp_def:
+        added = []
+        if needs_apt_fix(text):
+            added.append(_APT_FIX_LINE)
+        added += statoverride_lines(text)
         yield _sse({"line": (
-            "note: this build runs unprivileged, where apt cannot drop "
-            "privileges to _apt. Added to %post for this build only "
-            "(your .def is unchanged):\n"
-            f"    {_APT_FIX_LINE}"
+            "note: this build runs unprivileged, so apt cannot drop privileges "
+            "to _apt and package scripts cannot change file ownership. Added "
+            "to %post for this build only (your .def is unchanged):\n"
+            + "\n".join(f"    {line}" for line in added)
         )})
     yield _sse({"line": f"$ {' '.join(cmd)}"})
 
