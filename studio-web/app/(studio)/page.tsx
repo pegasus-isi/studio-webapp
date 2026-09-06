@@ -1,19 +1,13 @@
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
 
 /**
- * Root route — show the launch/welcome screen, or /login if no session.
+ * The app root — where a user lands when they open Studio.
+ *
+ * Sends them to the welcome page. There is deliberately no login step here:
+ * Studio has no auth of its own — JupyterHub and the ingress (studio-system)
+ * authenticate upstream and the container runs per user — so a sign-in screen
+ * inside the app would only be a dead end.
  */
-export default async function RootPage() {
-  const apiUrl = process.env.API_URL ?? "";
-  const isRemote = apiUrl !== "" && !apiUrl.includes("localhost") && !apiUrl.includes("127.0.0.1");
-
-  if (isRemote && !process.env.HUB_COOKIE) {
-    const cookieStore = await cookies();
-    if (!cookieStore.get("hub_session")) {
-      redirect("/login");
-    }
-  }
-
+export default function RootPage() {
   redirect("/welcome");
 }

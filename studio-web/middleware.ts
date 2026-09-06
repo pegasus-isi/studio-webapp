@@ -29,18 +29,16 @@ export function middleware(request: NextRequest) {
     return NextResponse.rewrite(rewrittenUrl, { request: { headers: requestHeaders } });
   }
 
-  // Local dev against a remote hub: inject the cookie for proxied API/WS/Jupyter calls.
-  // Priority: HUB_COOKIE env var (static, from .env.local) > hub_session browser cookie (set via /login).
-  const hubCookie = HUB_COOKIE || request.cookies.get("hub_session")?.value;
-  if (hubCookie && (
+  // Local dev against a remote hub: inject the cookie for proxied API/WS/Jupyter
+  // calls. Env var only — there is no in-app login (auth is upstream, in
+  // studio-system), so this is inert in the image and only ever set in .env.local.
+  if (HUB_COOKIE && (
     request.nextUrl.pathname.startsWith("/api/") ||
     request.nextUrl.pathname.startsWith("/ws/") ||
     request.nextUrl.pathname.startsWith("/jupyter/")
   )) {
-    // Don't intercept the auth management route itself
-    if (request.nextUrl.pathname.startsWith("/api/auth")) return NextResponse.next();
     const requestHeaders = new Headers(request.headers);
-    requestHeaders.set("Cookie", hubCookie);
+    requestHeaders.set("Cookie", HUB_COOKIE);
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 

@@ -113,7 +113,7 @@ export default function WelcomePage() {
         <div className="flex flex-col items-center gap-3" style={anim(0.22)}>
           <a href={appRelativePath("/home")}
             className="group inline-flex items-center gap-2.5 rounded-2xl bg-accent px-9 py-4 text-[15px] font-bold text-white shadow-2xl shadow-accent/25 transition-all hover:bg-accent/90 hover:-translate-y-0.5 hover:shadow-accent/35 active:scale-[0.97]">
-            Sign In
+            Open Studio
             <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
           </a>
           <p className="text-[11px] text-fgsubtle/50">Free · No setup · Ready in seconds</p>
@@ -217,7 +217,7 @@ export default function WelcomePage() {
             <p className="mb-7 text-sm text-fgmuted">Your workspace is provisioned automatically. No installation, no cluster configuration, no prior Pegasus experience required.</p>
             <a href={appRelativePath("/home")}
               className="group inline-flex items-center gap-2.5 rounded-2xl bg-accent px-8 py-4 text-[15px] font-bold text-white shadow-2xl shadow-accent/25 transition-all hover:bg-accent/90 hover:-translate-y-0.5 hover:shadow-accent/35 active:scale-[0.97]">
-              Sign In
+              Open Studio
               <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
             </a>
           </div>
