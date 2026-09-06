@@ -120,6 +120,36 @@ async def _with_heartbeat(
             pending.cancel()
 
 
+# How long the upstream LLM connection may stay silent before we give up on it.
+#
+# This was a flat 120s read timeout, which is a *token gap*, not a total budget —
+# so any model that thinks for two minutes in one burst was torn down mid-turn.
+# It surfaced as `ReadTimeout` and was reported to the user as a drop "from the
+# provider", which is the worst possible framing: the natural response is to
+# retry, and a retry often succeeds because the model happens to think in shorter
+# bursts the second time. A ceiling that presents as flakiness.
+#
+# Observed: a model produced 27 tool calls over 428s, then 16 over 335s on the
+# identical prompt — different points, same wall-clock wall — while the *same*
+# model ran 1628s on another task without trouble, because there it streamed
+# continuously. Reasoning models that buffer before emitting are the ones hit.
+#
+# 900s is deliberately generous: a silent connection costs one held socket, while
+# a premature teardown costs the whole turn and misattributes the failure.
+_LLM_READ_TIMEOUT_S = float(os.environ.get("STUDIO_LLM_READ_TIMEOUT", "900"))
+_LLM_CONNECT_TIMEOUT_S = float(os.environ.get("STUDIO_LLM_CONNECT_TIMEOUT", "30"))
+
+
+def _llm_timeout() -> httpx.Timeout:
+    """Timeouts for the upstream call to the model provider."""
+    return httpx.Timeout(
+        _LLM_READ_TIMEOUT_S,
+        connect=_LLM_CONNECT_TIMEOUT_S,
+        write=60.0,
+        pool=30.0,
+    )
+
+
 def _transport_error_message(
     exc: Exception, base_url: str, mid_stream: bool
 ) -> str:
@@ -132,6 +162,16 @@ def _transport_error_message(
     except Exception:
         pass
     detail = type(exc).__name__
+    if isinstance(exc, httpx.ReadTimeout):
+        # Ours, not theirs. Saying "transient provider drop" here sends people to
+        # retry a problem a retry cannot fix.
+        return (
+            f"The model at {host} went quiet for more than "
+            f"{_LLM_READ_TIMEOUT_S:.0f}s, so the connection was closed. Models "
+            "that reason for a long time before answering can hit this; raise "
+            "STUDIO_LLM_READ_TIMEOUT if it keeps happening. Some steps may "
+            "already have run."
+        )
     if mid_stream:
         return (
             f"Lost the connection to the LLM endpoint ({host}) partway through "
@@ -1231,7 +1271,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
     async def event_generator() -> AsyncGenerator[str, None]:
         import time
 
-        client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=30.0))
+        client = httpx.AsyncClient(timeout=_llm_timeout())
         _active_clients[request_id] = client
 
         # Read the approval posture once per turn (SEC-4): whether run_command

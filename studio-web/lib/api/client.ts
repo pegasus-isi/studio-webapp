@@ -114,6 +114,63 @@ export async function updateWorkflowScanSettings(data: {
   });
 }
 
+// --- Planning location ---
+
+export type PlanMode = "auto" | "remote" | "local";
+
+export interface PlanningSettings {
+  /** The stored preference. */
+  mode: PlanMode;
+  choices: PlanMode[];
+  /** What the next run will actually do — with `auto` this is a detection
+      result, so it is shown rather than left to be guessed at. */
+  effective: "remote" | "local";
+  /** Where `effective` came from: setting | env | detected | no-condor |
+      fallback. */
+  source: string;
+  /** null when undetermined — must not be rendered as "co-located". */
+  submit_host_is_remote: boolean | null;
+  env_default: string;
+}
+
+export async function getPlanningSettings() {
+  return request<PlanningSettings>("/settings/planning");
+}
+
+export async function updatePlanningSettings(mode: PlanMode) {
+  return request<PlanningSettings>("/settings/planning", {
+    method: "PUT",
+    body: JSON.stringify({ mode }),
+  });
+}
+
+// --- Workflow secrets (credentials a generator reads from its environment) ---
+
+export interface WorkflowSecretsSettings {
+  /** Names and timestamps only — values are write-only server-side. */
+  secrets: { name: string; updated_at: string }[];
+  /** False when no master key is configured, so values sit in plaintext. */
+  encrypted_at_rest: boolean;
+}
+
+export async function getWorkflowSecrets() {
+  return request<WorkflowSecretsSettings>("/settings/workflow-secrets");
+}
+
+export async function setWorkflowSecret(name: string, value: string) {
+  return request<WorkflowSecretsSettings>("/settings/workflow-secrets", {
+    method: "PUT",
+    body: JSON.stringify({ name, value }),
+  });
+}
+
+export async function deleteWorkflowSecret(name: string) {
+  return request<WorkflowSecretsSettings>(
+    `/settings/workflow-secrets/${encodeURIComponent(name)}`,
+    { method: "DELETE" }
+  );
+}
+
 // --- LLM ---
 
 export interface LLMConfig {
@@ -415,7 +472,14 @@ export interface WorkflowParam {
 
 export interface ProjectParams {
   project_id: string;
-  generator: { params: WorkflowParam[]; mutex_required: string[][] };
+  generator: {
+    params: WorkflowParam[];
+    mutex_required: string[][];
+    /** Environment variables the generator's source reads — the credentials it
+        wants, detected by scanning rather than declared, so a hint and not a
+        contract. Absent on a backend that predates the scan. */
+    env_vars?: string[];
+  };
   plan: { params: WorkflowParam[] };
 }
 

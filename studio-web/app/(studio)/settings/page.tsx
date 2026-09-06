@@ -916,17 +916,327 @@ function PegasusOptionsTab() {
         <code>--submit</code>/<code>--cleanup</code>, and generator arguments —
         are set on each workflow&apos;s <strong>Plan</strong> /{" "}
         <strong>Run</strong> form, so they can differ per workflow. This tab
-        holds the container registry used when building workflow images.
+        holds the settings that apply to every workflow: where planning runs,
+        the API keys your analyses need to download data, and the container
+        registry used when building workflow images.
       </p>
 
       {/* Simplified Run flow — the Phase 1 rollout flag (#241) */}
       <SimpleRunSection />
+
+      {/* Where pegasus-plan runs — remote by default when the schedd is
+          elsewhere, overridable to test local planning */}
+      <PlanningLocationSection />
+
+      {/* API keys a workflow's generator needs (#364) */}
+      <WorkflowSecretsSection />
 
       {/* Container registry — persisted; drives the Build Image action */}
       <RegistrySection />
 
       {/* Where runs are looked for — extra scan roots / excludes (#306) */}
       <WorkflowDiscoverySection />
+    </div>
+  );
+}
+
+/**
+ * Where `pegasus-plan` runs.
+ *
+ * Planning happens on the submit host when the schedd is on another machine,
+ * because the planner writes its own absolute paths into the submit files and
+ * Pegasus executes those on the schedd host (#334). That is the right default
+ * and stays the default.
+ *
+ * The override exists because whether local planning works is not a question
+ * anyone can answer by reading: it depends on the two machines agreeing about
+ * Pegasus, which changed when the image moved to Debian trixie. Before this it
+ * meant an env var in the spawner profile and a pod restart, which is not
+ * something a user can do to their own session.
+ */
+function PlanningLocationSection() {
+  const [settings, setSettings] = useState<api.PlanningSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getPlanningSettings()
+      .then(setSettings)
+      .catch((e) => setError((e as Error).message || String(e)));
+  }, []);
+
+  const choose = async (mode: api.PlanMode) => {
+    if (saving || settings?.mode === mode) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setSettings(await api.updatePlanningSettings(mode));
+    } catch (e) {
+      setError((e as Error).message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const OPTIONS: { value: api.PlanMode; label: string; hint: string }[] = [
+    {
+      value: "auto",
+      label: "Automatic (recommended)",
+      hint:
+        "Plan on the submit host when it is a different machine, here when it " +
+        "is not. This is what Pegasus expects.",
+    },
+    {
+      value: "remote",
+      label: "Always on the submit host",
+      hint:
+        "Plan through HTCondor on the machine that runs your workflows, whatever " +
+        "detection says.",
+    },
+    {
+      value: "local",
+      label: "Always in this workspace",
+      hint:
+        "Plan here. Use this to check whether local planning works against your " +
+        "submit host — it only does when both have Pegasus in the same place.",
+    },
+  ];
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <h2 className="text-sm font-semibold text-fg">Where planning runs</h2>
+      <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+        Preparing a workflow to run (<code>pegasus-plan</code>) writes file paths
+        into the instructions your submit host executes, so it normally happens
+        on that host. Override it here to try planning in this workspace
+        instead. Nothing else about your workflows changes.
+      </p>
+
+      {error && (
+        <p className="mt-2 text-xs text-red-600 dark:text-rose-400">{error}</p>
+      )}
+
+      <div className="mt-3 space-y-2">
+        {OPTIONS.map((o) => {
+          const selected = settings?.mode === o.value;
+          return (
+            <label
+              key={o.value}
+              className={cn(
+                "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+                selected
+                  ? "border-pegasus-400 bg-pegasus-50 dark:bg-pegasus-400/10"
+                  : "border-line hover:bg-base",
+                (!settings || saving) && "cursor-wait opacity-70"
+              )}
+            >
+              <input
+                type="radio"
+                name="plan-mode"
+                className="mt-0.5"
+                value={o.value}
+                checked={selected}
+                disabled={!settings || saving}
+                onChange={() => choose(o.value)}
+              />
+              <span>
+                <span className="block text-sm font-medium text-fg">
+                  {o.label}
+                </span>
+                <span className="block text-xs text-fgmuted">{o.hint}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
+      {/* What the next run will actually do. With "Automatic" the answer is a
+          detection result, and without showing it the setting is a switch you
+          have to experiment with to understand. */}
+      {settings && (
+        <p className="mt-3 text-xs text-fgsubtle">
+          Your next run will plan{" "}
+          <strong className="text-fgmuted">
+            {settings.effective === "remote"
+              ? "on the submit host"
+              : "in this workspace"}
+          </strong>
+          {settings.source === "detected" &&
+            (settings.submit_host_is_remote
+              ? " — the submit host is a different machine."
+              : " — the submit host is this machine.")}
+          {settings.source === "setting" && " — because you chose it above."}
+          {settings.source === "env" &&
+            ` — set for this deployment (STUDIO_PLAN_ON_SUBMIT_HOST=${settings.env_default}).`}
+          {settings.source === "no-condor" &&
+            " — HTCondor isn't available here to send the work anywhere else."}
+          {settings.source === "fallback" &&
+            " — the submit host could not be checked."}
+        </p>
+      )}
+
+      {settings?.effective === "local" &&
+        settings.submit_host_is_remote === true && (
+          <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+            Your submit host is a different machine, so this only works if it
+            has Pegasus installed in the same place as this workspace. If they
+            differ, the run stops before doing any work and says so — it will
+            not fail halfway through.
+          </p>
+        )}
+    </div>
+  );
+}
+
+/**
+ * Credentials a workflow's generator reads from its environment (#364).
+ *
+ * A generator gets a key to its jobs by reading it here and baking it in with
+ * `add_env` — HTCondor gives jobs a clean environment, so nothing else reaches
+ * them. That environment belongs to the server inside the pod, which is why a
+ * workflow needing an API key could not run in Studio at all: the only place to
+ * set one was the spawner profile, followed by a pod restart.
+ *
+ * Values are write-only. Once saved, the name and the date are all anyone can
+ * read back — including this UI.
+ */
+function WorkflowSecretsSection() {
+  const [settings, setSettings] =
+    useState<api.WorkflowSecretsSettings | null>(null);
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getWorkflowSecrets()
+      .then(setSettings)
+      .catch((e) => setError((e as Error).message || String(e)));
+  }, []);
+
+  const save = async () => {
+    if (!name.trim() || !value || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setSettings(await api.setWorkflowSecret(name.trim(), value));
+      setSaved(name.trim().toUpperCase());
+      setName("");
+      setValue("");
+      setTimeout(() => setSaved(null), 2500);
+    } catch (e) {
+      setError((e as Error).message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (secretName: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setSettings(await api.deleteWorkflowSecret(secretName));
+    } catch (e) {
+      setError((e as Error).message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <h2 className="text-sm font-semibold text-fg">Workflow secrets</h2>
+      <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+        API keys and tokens your analyses need to download data — a Kaggle key,
+        a data portal token. Each one is set as an environment variable when
+        Studio prepares a run, which is how the value reaches the steps that
+        need it. Use the exact name the workflow expects, for example{" "}
+        <code>KAGGLE_KEY</code>.
+      </p>
+
+      {error && (
+        <p className="mt-2 text-xs text-red-600 dark:text-rose-400">{error}</p>
+      )}
+
+      {settings && settings.secrets.length > 0 && (
+        <ul className="mt-3 divide-y divide-line rounded-md border border-line">
+          {settings.secrets.map((s) => (
+            <li
+              key={s.name}
+              className="flex items-center justify-between gap-3 px-3 py-2"
+            >
+              <span className="min-w-0">
+                <code className="text-sm text-fg">{s.name}</code>
+                {/* No value, ever — saying so is clearer than an empty gap
+                    where a masked value would be. */}
+                <span className="ml-2 text-xs text-fgsubtle">
+                  set {new Date(s.updated_at).toLocaleDateString()} · value
+                  hidden
+                </span>
+              </span>
+              <button
+                onClick={() => remove(s.name)}
+                disabled={busy}
+                className="shrink-0 rounded border border-line px-2 py-1 text-xs text-fgmuted hover:border-red-400 hover:text-red-600 disabled:opacity-50 dark:hover:text-red-400"
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-fgmuted">Name</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="KAGGLE_KEY"
+            spellCheck={false}
+            className="w-48 rounded-md border border-line bg-surface px-2 py-1 font-mono text-sm text-fg"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-fgmuted">Value</span>
+          <input
+            type="password"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="paste the key"
+            spellCheck={false}
+            autoComplete="off"
+            className="w-64 rounded-md border border-line bg-surface px-2 py-1 text-sm text-fg"
+          />
+        </label>
+        <button
+          onClick={save}
+          disabled={busy || !name.trim() || !value}
+          className="rounded-md bg-pegasus-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-pegasus-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+        {saved && (
+          <span className="text-xs text-green-600 dark:text-emerald-400">
+            {saved} saved
+          </span>
+        )}
+      </div>
+
+      {/* secretbox is fail-open: with no master key configured the values are
+          stored in plaintext on the volume. The user is the one deciding what
+          to paste in, so they get told which it is. */}
+      {settings && !settings.encrypted_at_rest && (
+        <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+          These are stored unencrypted in this workspace, because no encryption
+          key is configured for this deployment. They are as private as your
+          home directory — fine for a personal data-portal token, worth asking
+          your administrator about for anything more valuable.
+        </p>
+      )}
     </div>
   );
 }

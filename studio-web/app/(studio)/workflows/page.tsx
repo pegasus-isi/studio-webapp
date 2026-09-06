@@ -1,16 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect } from "react";
 import { useWorkflows, useWorkflowProjects } from "@/lib/hooks/use-workflows";
 import { WorkflowList } from "@/components/workflows/workflow-list";
+import { ResizablePane } from "@/components/layout/resizable-pane";
 import { WorkflowDetail } from "@/components/workflows/workflow-detail";
 import { WorkflowProjectDetail } from "@/components/workflows/workflow-project-detail";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
-
-const LIST_MIN = 180;
-const LIST_MAX = 520;
-const LIST_DEFAULT = 288;
+import { WorkflowPicker } from "@/components/workflows/workflow-picker";
 
 export default function WorkflowsPage() {
   const { data: runsData, isLoading: runsLoading, error: runsError } = useWorkflows();
@@ -19,106 +16,81 @@ export default function WorkflowsPage() {
   const selectedProjectId = useWorkflowStore((s) => s.selectedProjectId);
   const selectWorkflow = useWorkflowStore((s) => s.selectWorkflow);
 
-  // Deep-link support: `/workflows?run=<id>`
+  // Deep-link support: `/workflows?run=<id>` (e.g. from a notification) opens
+  // that run on arrival. Read from the URL once on mount so later manual
+  // selections aren't overridden.
   useEffect(() => {
     const run = new URLSearchParams(window.location.search).get("run");
     if (run) selectWorkflow(run);
   }, [selectWorkflow]);
 
-  // Resizable + collapsible sidebar
-  const [listWidth, setListWidth] = useState(LIST_DEFAULT);
-  const [isDragging, setIsDragging] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
-  const listWidthRef = useRef(LIST_DEFAULT);
-
-  const onDragStart = useCallback((e: React.MouseEvent) => {
-    const startX = e.clientX;
-    const startW = listWidthRef.current;
-    e.preventDefault();
-    setIsDragging(true);
-    const onMove = (ev: MouseEvent) => {
-      const next = Math.max(LIST_MIN, Math.min(LIST_MAX, startW + ev.clientX - startX));
-      listWidthRef.current = next;
-      setListWidth(next);
-    };
-    const onUp = () => {
-      setIsDragging(false);
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, []);
-
   const isLoading = runsLoading || projectsLoading;
   const projects = projectsData?.projects ?? [];
   const workflows = runsData?.workflows ?? [];
 
-  const projectRunIds = new Set(projects.flatMap((p) => p.runs.map((r) => r.run_id)));
+  // Count: projects + standalone runs (runs not already inside a project)
+  const projectRunIds = new Set(
+    projects.flatMap((p) => p.runs.map((r) => r.run_id))
+  );
   const standaloneRuns = workflows.filter((w) => !projectRunIds.has(w.run_id));
   const totalCount = projects.length + standaloneRuns.length;
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full flex-col">
+      {/* Which analysis, above both panes. In the detail header it only
+          appeared once something was selected — no use for selecting, and
+          gone entirely when the list is collapsed. */}
+      <div className="flex items-center gap-3 border-b border-line bg-surface px-4 py-2">
+        <WorkflowPicker
+          projects={projects}
+          standaloneRuns={standaloneRuns}
+          isLoading={isLoading}
+        />
+        <span className="truncate text-xs text-fgsubtle">
+          {isLoading
+            ? "Scanning your workspace…"
+            : `${totalCount} in this workspace`}
+        </span>
+      </div>
 
-      {/* ── Workflow list sidebar ── */}
-      {collapsed ? (
-        /* Collapsed strip — just a button to expand */
-        <div className="flex w-9 shrink-0 flex-col items-center border-r border-line bg-surface pt-2">
-          <button
-            onClick={() => setCollapsed(false)}
-            className="rounded-lg p-1.5 text-fgsubtle hover:bg-muted hover:text-fg transition-colors"
-            title="Expand sidebar"
-          >
-            <ChevronRight size={15} />
-          </button>
+      <div className="flex min-h-0 flex-1">
+      {/* Workflow list — resizable and collapsible. A fixed width was wrong in
+          both directions: too narrow for long workflow names, too wide once
+          you're watching a run and want the space for the run itself. */}
+      <ResizablePane storageKey="workflow-list">
+        <div className="border-b border-line px-4 py-3">
+          <h1 className="text-lg font-semibold text-fg">Workflows</h1>
+          <p className="text-sm text-fgmuted">
+            {isLoading
+              ? "Scanning..."
+              : `${totalCount} workflow${totalCount !== 1 ? "s" : ""} found`}
+          </p>
         </div>
-      ) : (
-        <>
-          <div style={{ width: listWidth }} className="flex min-w-0 shrink-0 flex-col overflow-hidden bg-surface">
-            <div className="shrink-0 flex items-center justify-between border-b border-line px-4 py-3.5">
-              <div>
-                <h1 className="text-sm font-semibold text-fg">Workflows</h1>
-                <p className="mt-0.5 text-xs text-fgmuted">
-                  {isLoading ? "Scanning…" : `${totalCount} workflow${totalCount !== 1 ? "s" : ""} found`}
-                </p>
-              </div>
-              <button
-                onClick={() => setCollapsed(true)}
-                className="rounded-lg p-1 text-fgsubtle hover:bg-muted hover:text-fg transition-colors"
-                title="Collapse sidebar"
-              >
-                <ChevronLeft size={15} />
-              </button>
-            </div>
 
-            {runsError && (
-              <div className="mx-3 mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-400">
-                Failed to load: {(runsError as Error).message}
-              </div>
-            )}
-
-            <div className="flex-1 overflow-hidden">
-              <WorkflowList projects={projects} workflows={standaloneRuns} />
-            </div>
+        {runsError && (
+          <div className="m-4 rounded-md bg-red-50 dark:bg-rose-500/10 p-3 text-sm text-red-700 dark:text-rose-400">
+            Failed to load workflows: {(runsError as Error).message}
           </div>
+        )}
 
-          {/* ── Drag handle ── */}
-          <div
-            onMouseDown={onDragStart}
-            className="group relative flex w-1.5 shrink-0 cursor-col-resize items-center justify-center bg-line/40 transition-colors hover:bg-accent/40"
-          >
-            <div className="h-10 w-px rounded-full bg-line/60 transition-colors group-hover:bg-accent/60" />
-          </div>
+        <WorkflowList
+          projects={projects}
+          workflows={standaloneRuns}
+        />
+      </ResizablePane>
 
-          {isDragging && <div className="fixed inset-0 z-50 cursor-col-resize" />}
-        </>
-      )}
-
-      {/* ── Detail panel ── */}
-      <div className="flex-1 overflow-hidden">
+      {/* Detail panel. min-w-0 so a wide list shrinks this rather than
+          pushing its content out of the viewport — flex items default to
+          min-width:auto, which refuses to go below their content's width. */}
+      <div className="min-w-0 flex-1">
         {selectedProjectId ? (
-          <WorkflowProjectDetail key={selectedProjectId} projectId={selectedProjectId} />
+          // key forces a fresh mount per project so per-workflow UI state
+          // (Output panel, planned run dir, selected run) doesn't leak from
+          // the previously selected workflow.
+          <WorkflowProjectDetail
+            key={selectedProjectId}
+            projectId={selectedProjectId}
+          />
         ) : selectedRunId ? (
           <WorkflowDetail runId={selectedRunId} />
         ) : (
@@ -132,6 +104,7 @@ export default function WorkflowsPage() {
             <p className="text-xs text-fgsubtle">Choose a project or run from the list</p>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

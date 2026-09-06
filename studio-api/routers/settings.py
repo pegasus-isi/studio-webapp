@@ -133,6 +133,141 @@ async def update_workflow_scan(req: WorkflowScanRequest) -> dict:
     return await _workflow_scan_response()
 
 
+class PlanModeRequest(BaseModel):
+    """Where `pegasus-plan` should run.
+
+    ``auto`` detects it (remote when the schedd is on another host), and is
+    what ships. The other two are overrides, and the reason they exist is that
+    the interesting question — does planning in this workspace produce a DAG
+    the submit host can execute — cannot be answered by reading anything. You
+    have to try it. Until now that meant editing STUDIO_PLAN_ON_SUBMIT_HOST in
+    the spawner profile and restarting the pod, which is not a thing a user can
+    do to their own session.
+    """
+
+    mode: str = "auto"
+
+
+async def _plan_mode_response() -> dict:
+    """The stored choice plus what the next run would actually do."""
+    from services import run_flow, submit_host
+
+    stored = await run_flow._plan_mode_setting()
+    effective, source = await run_flow._resolve_plan_mode()
+    return {
+        "mode": stored,
+        "choices": list(run_flow.PLAN_MODE_CHOICES),
+        # What the next run does, and why — with `auto` the answer is a
+        # detection result, and showing it is the difference between a switch
+        # you can reason about and one you have to experiment with.
+        "effective": effective,
+        "source": source,
+        # None when undetermined; the UI must not turn that into "co-located".
+        "submit_host_is_remote": await submit_host.is_remote(),
+        "env_default": os.environ.get(
+            "STUDIO_PLAN_ON_SUBMIT_HOST", "auto"
+        ).strip().lower(),
+    }
+
+
+@router.get("/planning")
+async def get_planning() -> dict:
+    """Planning location: the stored preference and the effective outcome."""
+    return await _plan_mode_response()
+
+
+@router.put("/planning")
+async def update_planning(req: PlanModeRequest) -> dict:
+    """Persist where planning runs.
+
+    Deliberately accepts "local" even when the submit host is remote and the
+    two Pegasus installs disagree. Refusing it would remove the only way to
+    check whether that is still true, and the run flow already catches the
+    mismatch in its preflight — where it can name this setting as the cause
+    and point at the switch that undoes it, rather than failing 25 nodes deep.
+    """
+    from main import db
+    from services import run_flow
+
+    mode = (req.mode or "").strip().lower()
+    if mode not in run_flow.PLAN_MODE_CHOICES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "mode must be one of "
+                f"{', '.join(run_flow.PLAN_MODE_CHOICES)}: {req.mode!r}"
+            ),
+        )
+
+    await db.set_setting("plan_mode", mode)
+    log.info("plan_mode_updated", mode=mode)
+    return await _plan_mode_response()
+class WorkflowSecretRequest(BaseModel):
+    """One credential a workflow's generator reads from its environment."""
+
+    name: str
+    value: str
+
+
+async def _workflow_secrets_response() -> dict:
+    """Names and timestamps. Values are never returned, by design.
+
+    Write-only, like the LLM keys (SEC-3): a GET that echoed them would put
+    every credential in the workspace one request — or one devtools tab — away,
+    and nothing in the UI needs the value back.
+    """
+    from main import db
+    import secretbox
+
+    return {
+        "secrets": await db.list_workflow_secrets(),
+        # Whether the values are actually encrypted on disk. secretbox is
+        # fail-open by design, so the UI has to be able to say which.
+        "encrypted_at_rest": secretbox.is_active(),
+    }
+
+
+@router.get("/workflow-secrets")
+async def get_workflow_secrets() -> dict:
+    """Which credentials are set, and when they were last changed."""
+    return await _workflow_secrets_response()
+
+
+@router.put("/workflow-secrets")
+async def update_workflow_secret(req: WorkflowSecretRequest) -> dict:
+    """Store or replace one credential."""
+    from main import db
+    from services import workflow_secrets
+
+    try:
+        name = workflow_secrets.normalize_name(req.name)
+        value = workflow_secrets.validate_value(req.value)
+    except workflow_secrets.InvalidSecret as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    await db.set_workflow_secret(name, value)
+    # Name only. A log line carrying the value would outlive every other
+    # protection this feature has.
+    log.info("workflow_secret_set", name=name)
+    return await _workflow_secrets_response()
+
+
+@router.delete("/workflow-secrets/{name}")
+async def delete_workflow_secret(name: str) -> dict:
+    """Remove one credential."""
+    from main import db
+    from services import workflow_secrets
+
+    try:
+        canonical = workflow_secrets.normalize_name(name)
+    except workflow_secrets.InvalidSecret as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not await db.delete_workflow_secret(canonical):
+        raise HTTPException(status_code=404, detail=f"No secret named {canonical}")
+    log.info("workflow_secret_deleted", name=canonical)
+    return await _workflow_secrets_response()
+
+
 class UIPreferences(BaseModel):
     """Per-user UI preferences for the non-specialist redesign (#241).
 

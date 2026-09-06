@@ -54,7 +54,7 @@ _PING_INTERVAL_S = 10.0
 # The middle case is why "no flags" is wrong: with the fakeroot *command*
 # available, Apptainer preloads the HOST's libfakeroot.so into the container, so
 # any base older than the host fails before %post runs. ubuntu:22.04 (glibc 2.35)
-# under this 24.04 image (2.39) is the common case, not an edge one.
+# under this trixie image (2.41) is the common case, not an edge one.
 # --ignore-fakeroot-command declines that path; the kernel's root-mapped
 # namespace needs no such library.
 #
@@ -81,6 +81,50 @@ _APT_FIX_LINE = (
 )
 _POST_RE = re.compile(r"^\s*%post\b.*$", re.M)
 
+# An unprivileged build maps one user and one group, so a package's postinst
+# cannot chown or chgrp: the kernel returns EINVAL and dpkg fails the whole
+# build with an exit code that names neither the cause nor the package.
+#
+# Debian guards these steps behind a statoverride check. openssh-client's is
+#
+#     if ! dpkg-statoverride --list /usr/bin/ssh-agent >/dev/null; then
+#             chgrp ssh /usr/bin/ssh-agent
+#             chmod 2755 /usr/bin/ssh-agent
+#     fi
+#
+# so registering an override first makes the package skip what it cannot do.
+# Deliberately no --update: that flag applies the ownership immediately, which
+# is the operation that fails.
+#
+# Same reasoning as the apt setting above — the constraint belongs to the
+# builder, not to the definition's author, so it is injected into a copy rather
+# than required of every definition. It is a curated list rather than a general
+# fix; anything not on it still fails, but ownership_failure_hint() then names
+# the package and the remedy. The general fix is a subuid range for the running
+# user, which makes fakeroot real (see subuid_range()).
+#
+# The trade for ssh-agent is that it is not setgid ssh, losing a
+# ptrace-hardening measure for the agent — irrelevant in a workflow container,
+# and stated in the build log rather than left silent.
+_STATOVERRIDE_PATHS: tuple[tuple[str, str], ...] = (
+    ("openssh-client", "/usr/bin/ssh-agent"),
+)
+
+
+def statoverride_lines(text: str) -> list[str]:
+    """Statoverride registrations this definition needs, in %post order."""
+    lines = []
+    for package, path in _STATOVERRIDE_PATHS:
+        if not re.search(rf"\b{re.escape(package)}\b", text):
+            continue
+        if f"dpkg-statoverride" in text and path in text:
+            continue  # the author already handles it
+        lines.append(
+            f"dpkg-statoverride --list {path} >/dev/null 2>&1 || "
+            f"dpkg-statoverride --add root root 0755 {path}"
+        )
+    return lines
+
 
 def needs_apt_fix(text: str) -> bool:
     """True if the definition installs with apt and does not already set this."""
@@ -89,13 +133,30 @@ def needs_apt_fix(text: str) -> bool:
     return bool(re.search(r"^\s*(apt-get|apt|aptitude)\s", text, re.M))
 
 
+def needs_build_fixes(text: str) -> bool:
+    """True if this definition needs anything injected for the builder."""
+    return needs_apt_fix(text) or bool(statoverride_lines(text))
+
+
 def with_apt_fix(text: str) -> str | None:
-    """Return the definition with the apt setting as the first %post step."""
+    """Return the definition with the builder's own workarounds first in %post.
+
+    The apt setting and the statoverrides both exist because the *builder* is
+    unprivileged, not because the definition is wrong, so they are added to a
+    copy and reported in the log. The user's file is never touched.
+    """
     m = _POST_RE.search(text)
     if not m:
         return None
+    injected = []
+    if needs_apt_fix(text):
+        injected.append(_APT_FIX_LINE)
+    injected += statoverride_lines(text)
+    if not injected:
+        return None
     insert_at = m.end()
-    return text[:insert_at] + "\n    " + _APT_FIX_LINE + text[insert_at:]
+    block = "".join(f"\n    {line}" for line in injected)
+    return text[:insert_at] + block + text[insert_at:]
 
 
 def detect_builder() -> str | None:
@@ -179,6 +240,10 @@ def build_command(builder: str, sif: str, definition: str) -> list[str]:
     to mksquashfs.
     """
     cmd = [builder, "build", "--force", "--ignore-fakeroot-command"]
+    # Only with a range behind it; see subuid_range() for why passing it
+    # unconditionally produces an empty image.
+    if _flag_enabled("STUDIO_BUILD_FAKEROOT", True) and subuid_range():
+        cmd.append("--fakeroot")
     extra = []
     if _MKSQUASHFS_MEM:
         extra += ["-mem", _MKSQUASHFS_MEM]
@@ -294,6 +359,99 @@ def squashfs_failure_hint(output: list[str], tmpdir: str) -> list[str]:
         "somewhere with more space.",
     ]
 
+
+def subuid_range() -> tuple[str, str] | None:
+    """The current user's (subuid, subgid) entries, or None if unmapped.
+
+    Apptainer's ``--fakeroot`` has three possible backends and only one of them
+    is wanted here:
+
+    * a **subuid/subgid range** mapped through setuid ``newuidmap`` — many ids
+      inside the build, so chown/chgrp work, and no library is preloaded;
+    * the **fakeroot command**, which preloads the host's ``libfakeroot.so``
+      into the container and breaks any base older than the host
+      ("GLIBC_2.38 not found" on a bullseye base). ``--ignore-fakeroot-command``
+      exists to refuse this one;
+    * a **setuid Apptainer install**, which this image is not
+      (``APPTAINER_SUID_INSTALL=0``, no ``starter-suid``).
+
+    So ``--fakeroot`` is only worth passing when a range exists. Without one it
+    has no backend left and produces an empty image — which is exactly the
+    "37,461 bytes, filesystem partition" measurement recorded above, taken on a
+    host with no range for the running user.
+
+    Whether a range exists is deployment-specific, not a property of the code:
+    on a VM where Studio runs as the ``studio`` user the image ships one, while
+    under KubeSpawner the pod runs as a per-user LDAP uid that no range names.
+    Hence detection rather than a hardcoded flag — and once a range does appear
+    for the runtime user, fakeroot starts working with no code change.
+    """
+    import pwd
+
+    try:
+        uid = os.geteuid()
+        name = pwd.getpwuid(uid).pw_name
+    except (KeyError, OSError):
+        return None
+    keys = {name, str(uid)}
+
+    def lookup(path: str) -> str | None:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    parts = line.strip().split(":")
+                    if len(parts) >= 3 and parts[0] in keys:
+                        return line.strip()
+        except OSError:
+            return None
+        return None
+
+    sub_u = lookup("/etc/subuid")
+    sub_g = lookup("/etc/subgid")
+    # Both are required: uids alone still leaves one gid, so chgrp keeps failing.
+    if sub_u and sub_g:
+        return sub_u, sub_g
+    return None
+
+
+def ownership_failure_hint(output: list[str]) -> list[str]:
+    """Lines to append when %post failed because it could not change ownership.
+
+    This is the single most confusing build failure in an unprivileged pod. The
+    visible error is a dpkg exit code, and the real cause is three lines
+    earlier: a package's post-install script ran chown or chgrp, and only one
+    uid and one gid are mapped into the build, so the kernel returned EINVAL.
+
+    Nothing about the message says so, and the file it names exists on both
+    machines. Without this hint the next step someone takes is to inspect a
+    definition file that is fine.
+    """
+    text = "\n".join(output)
+    if not re.search(r"(chown|chgrp).{0,80}Invalid argument", text, re.I | re.S):
+        return []
+    culprits = sorted(
+        set(re.findall(r"dpkg: error processing package (\S+)", text))
+    )
+    named = f" ({', '.join(culprits)})" if culprits else ""
+    lines = [
+        "",
+        "This build could not change file ownership. A package's post-install "
+        f"script{named} ran chown or chgrp, and only one user and one group are "
+        "mapped into an unprivileged build, so the kernel refused it with "
+        "\"Invalid argument\". The definition file is not at fault.",
+    ]
+    if subuid_range() is None:
+        lines += [
+            "Fixing it properly needs a subuid/subgid range for this user, "
+            "which this deployment does not have — see /etc/subuid. With one, "
+            "the build gets a real emulated root and ownership changes work.",
+        ]
+    lines += [
+        "Until then, the practical fix is in the definition: drop packages "
+        "whose install scripts change ownership. openssh-client is the usual "
+        "one, and workflow containers rarely need it.",
+    ]
+    return lines
 
 def find_definition(project_dir: str) -> tuple[str, str] | None:
     """(definition_path, sif_path) for a project, or None.
@@ -451,14 +609,16 @@ async def stream_build(
 
     deadline = time.monotonic() + _BUILD_TIMEOUT_S
 
-    # Build from an augmented copy when apt would fail under an emulated root.
-    # Written beside the original so relative %files paths still resolve.
+    # Build from an augmented copy when the *builder* being unprivileged would
+    # otherwise fail the build: apt cannot drop privileges to _apt, and a
+    # package postinst cannot chown. Written beside the original so relative
+    # %files paths still resolve.
     build_def, temp_def = definition, None
     if _unprivileged_build():
         try:
             with open(definition) as fh:
                 text = fh.read()
-            if needs_apt_fix(text):
+            if needs_build_fixes(text):
                 patched = with_apt_fix(text)
                 if patched:
                     temp_def = os.path.join(
@@ -485,11 +645,15 @@ async def stream_build(
         yield _sse({"line": f"build tmpdir: {tmpdir} ({free:.1f} GiB free)"})
 
     if temp_def:
+        added = []
+        if needs_apt_fix(text):
+            added.append(_APT_FIX_LINE)
+        added += statoverride_lines(text)
         yield _sse({"line": (
-            "note: this build runs unprivileged, where apt cannot drop "
-            "privileges to _apt. Added to %post for this build only "
-            "(your .def is unchanged):\n"
-            f"    {_APT_FIX_LINE}"
+            "note: this build runs unprivileged, so apt cannot drop privileges "
+            "to _apt and package scripts cannot change file ownership. Added "
+            "to %post for this build only (your .def is unchanged):\n"
+            + "\n".join(f"    {line}" for line in added)
         )})
     yield _sse({"line": f"$ {' '.join(cmd)}"})
 
@@ -512,6 +676,8 @@ async def stream_build(
             pass
 
     if rc != 0:
+        for line in ownership_failure_hint(output):
+            yield _sse({"line": line})
         for line in squashfs_failure_hint(output, tmpdir):
             yield _sse({"line": line})
         yield _sse({"status": "error", "image": sif,

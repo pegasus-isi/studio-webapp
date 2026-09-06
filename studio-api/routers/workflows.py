@@ -287,12 +287,20 @@ async def generate_workflow(
     project_dir = proj["project_dir"]
     cmd = ["python3", generator_file, *req.args]
 
+    # Same environment as the one-button Run flow gives the generator, so the
+    # Advanced "Generate" verb is not the one path where a workflow's API keys
+    # are missing (services/workflow_secrets.py).
+    from services import workflow_secrets
+
+    env = await workflow_secrets.subprocess_env()
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=project_dir,
+            env=env,
         )
         stdout, stderr = await communicate_or_kill(proc, _CMD_TIMEOUT)
         out = stdout.decode("utf-8", errors="replace")

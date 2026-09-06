@@ -29,7 +29,9 @@ JupyterLab is always on and opens in a separate browser tab.
 
 ## Architecture Notes
 
-- Runtime image: `ubuntu:24.04`, system Python 3.12, Node.js 20.
+- Runtime image: `debian:trixie-slim`, system Python 3.13, Node.js 20. The
+  distro matches the HTCondor access point, because Pegasus bakes its venv's
+  Python minor version into every submit file it writes (#334).
 - Pegasus WMS and HTCondor are installed from DEB packages.
 - Apptainer 1.5 provides Singularity-compatible `docker://` workflow execution.
 - JupyterLab runs in classic document mode. `jupyter-ai` and collaboration/RTC

@@ -51,9 +51,12 @@ container runtime.
 
 ## Container Stack
 
-- Base image: `ubuntu:24.04`.
+- Base image: `debian:trixie-slim` — the same distro as the HTCondor access
+  point, so the Pegasus venv path baked into submit files matches on both
+  sides (#334). Override with `--build-arg DEBIAN_SUITE=`.
 - Supported platform: `linux/amd64`.
-- Python: single system Python 3.12. No conda/Miniforge layer.
+- Python: single system Python 3.13 (whatever the suite ships). No
+  conda/Miniforge layer.
 - Node.js: 20.x for the Next.js server and npm-installed AI tools.
 - Pegasus WMS and HTCondor: installed from native DEB packages.
 - Apptainer: installed from the upstream `.deb`, with `singularity` compatibility.

@@ -48,6 +48,8 @@ from typing import Any, AsyncGenerator, Literal
 
 import structlog
 
+from services import remote_exec, submit_host
+
 log = structlog.get_logger()
 
 StageKey = Literal["generate", "build", "plan", "submit"]
@@ -164,7 +166,7 @@ _RULES: dict[str, list[tuple[re.Pattern[str], str, str]]] = {
             "The software environment is built on a base image older than this "
             "system, which fails before any of your setup commands run.",
             "Edit the definition file to use a newer base (for example "
-            "`ubuntu:24.04`) and build again. Nothing in your own setup steps "
+            "`debian:trixie`) and build again. Nothing in your own setup steps "
             "is wrong.",
         ),
         (
@@ -526,6 +528,86 @@ async def _execute(
     client able to learn why. Every exit path reaches `_terminal()`.
     """
     try:
+        # Where the planner runs decides whether a Pegasus mismatch matters,
+        # so resolve it once, up front, and reuse it for the plan stage.
+        try:
+            plan_mode, plan_mode_source = await _resolve_plan_mode()
+        except Exception as e:  # noqa: BLE001 — detection must never block a run
+            log.warning("plan_mode_detect_failed", error=str(e))
+            plan_mode, plan_mode_source = "local", "fallback"
+
+        # Preflight before anything expensive. A mismatch between this
+        # workspace and the submit host fails every workflow on its first
+        # node, and the error names a missing file rather than the cause — so
+        # catch it here rather than after a ten-minute image build.
+        #
+        # It only blocks when planning happens *here*. Planning on the submit
+        # host makes the mismatch irrelevant: the paths baked into the submit
+        # files are then the submit host's own. Blocking anyway would take a
+        # difference that no longer matters and turn it into an outage —
+        # refusing every run on a deployment where runs work.
+        compat = await submit_host.check()
+        if compat.blocks_run and plan_mode == "local":
+            # Whose decision put us on the local path changes the advice
+            # completely. If the user turned remote planning off to try local,
+            # the fix is one switch in their own Settings — telling them to
+            # find an administrator would be wrong and would strand them in a
+            # state they chose and can leave.
+            if plan_mode_source == "setting":
+                action = (
+                    "You have planning set to run in this workspace "
+                    "(Settings → Pegasus Options → Where planning runs). This "
+                    "workspace and the submit host disagree about Pegasus, so "
+                    "that cannot work here — set it back to Automatic to plan "
+                    "on the submit host."
+                )
+            else:
+                action = (
+                    "This needs an administrator: the submit host and this "
+                    "workspace have to agree on Pegasus. Nothing you change "
+                    "here will fix it."
+                )
+            flow.failure = Failure(
+                stage="plan",
+                cause=compat.detail,
+                action=action,
+                technical=(
+                    f"workspace: {compat.local_version or '?'} at "
+                    f"{compat.local_share_dir or '?'} · "
+                    f"submit host {compat.schedd or '?'}: "
+                    f"{compat.remote_version or '?'} at "
+                    f"{compat.remote_share_dir or '?'}"
+                ),
+            )
+            flow.state = "failed"
+            for st in flow.stages:
+                if st.status == "pending":
+                    st.status = "skipped"
+            log.warning(
+                "run_flow_blocked_submit_host_mismatch",
+                flow_id=flow.flow_id,
+                plan_mode_source=plan_mode_source,
+                **compat.as_dict(),
+            )
+            return
+        if compat.status != "ok":
+            # Worth recording, not worth stopping for.
+            log.info(
+                "run_flow_submit_host_uncertain",
+                plan_mode=plan_mode,
+                **compat.as_dict(),
+            )
+        if compat.blocks_run and plan_mode == "remote":
+            # Say it in the run's own output. The mismatch is real and someone
+            # should still fix it; it just isn't fatal while the planner runs
+            # where the workflow is submitted.
+            flow._line(
+                "plan",
+                "This workspace and the submit host have Pegasus in different "
+                "places. That no longer breaks runs, because planning happens "
+                "on the submit host — but it is worth fixing.",
+            )
+
         if any(s.key == "generate" for s in flow.stages):
             if not await _run_generate(
                 flow, project_dir=project_dir,
@@ -540,7 +622,11 @@ async def _execute(
                 return
 
         if not await _run_plan(
-            flow, project_dir=project_dir, site=site, output_site=output_site
+            flow,
+            project_dir=project_dir,
+            site=site,
+            output_site=output_site,
+            plan_mode=plan_mode,
         ):
             return
 
@@ -570,9 +656,15 @@ async def _execute(
 
 
 async def _capture(
-    cmd: list[str], cwd: str, timeout: int = 300
+    cmd: list[str], cwd: str, timeout: int = 300,
+    env: dict[str, str] | None = None,
 ) -> tuple[int, str]:
-    """Run a command, returning (returncode, combined output)."""
+    """Run a command, returning (returncode, combined output).
+
+    `env` replaces the child's environment outright when given, so callers pass
+    a full environment (see services/workflow_secrets.subprocess_env) rather
+    than a handful of additions.
+    """
     from services.procutil import communicate_or_kill
 
     try:
@@ -581,6 +673,7 @@ async def _capture(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
+            env=env,
         )
         stdout, stderr = await communicate_or_kill(proc, timeout)
         out = stdout.decode("utf-8", errors="replace")
@@ -603,8 +696,17 @@ async def _run_generate(
     flow: RunFlow, *, project_dir: str, generator_file: str, args: list[str]
 ) -> bool:
     flow._begin("generate")
+    # The generator is the one step that reads credentials from its own
+    # environment — that is how a value gets baked into the workflow it writes
+    # (`add_env`), since HTCondor gives jobs a clean environment. Settings >
+    # Pegasus Options > Workflow secrets is where they come from; without this
+    # a workflow needing an API key could not run in Studio at all.
+    from services import workflow_secrets
+
     code, output = await _capture(
-        ["python3", generator_file, *args], cwd=project_dir
+        ["python3", generator_file, *args],
+        cwd=project_dir,
+        env=await workflow_secrets.subprocess_env(),
     )
     _emit_output(flow, "generate", output)
     if code != 0:
@@ -691,8 +793,125 @@ def _parse_sse(chunk: str) -> dict[str, Any] | None:
     return None
 
 
+#: What the user may set for `plan_mode`. "auto" is the shipped behaviour.
+PLAN_MODE_CHOICES = ("auto", "remote", "local")
+#: Where the answer came from, so a message can name it. A block on a mismatch
+#: reads very differently depending on whether the user chose local planning or
+#: the deployment did.
+PlanModeSource = Literal["setting", "env", "detected", "no-condor", "fallback"]
+
+
+async def _plan_mode_setting() -> str:
+    """The user's stored preference, or "auto".
+
+    Wrapped because this is consulted on the run path: a settings read that
+    fails must fall through to detection, not stop a run.
+    """
+    try:
+        from main import db
+
+        value = await db.get_setting("plan_mode", "auto")
+    except Exception as e:  # noqa: BLE001 — a settings read must never block a run
+        log.warning("plan_mode_setting_read_failed", error=str(e))
+        return "auto"
+    if isinstance(value, str) and value.strip().lower() in PLAN_MODE_CHOICES:
+        return value.strip().lower()
+    return "auto"
+
+
+async def _resolve_plan_mode() -> tuple[str, PlanModeSource]:
+    """("remote"|"local", why) — where pegasus-plan should run.
+
+    Planning has to happen where the workflow will be submitted. The planner
+    writes its own absolute paths into the submit files, and Pegasus's local
+    universe then executes those on the schedd host, so planning in the pod
+    against a remote schedd produces a DAG that references files only the pod
+    has (#334).
+
+    `auto` is deliberate rather than defaulting to remote: a native or Open
+    OnDemand deployment runs the schedd on the same machine, which is the
+    arrangement Pegasus expects, and remoting a job to yourself would add a
+    queue round-trip for nothing.
+
+    Precedence is user setting, then deployment env var, then detection. The
+    user's own choice comes first on purpose: this is a single-user workspace,
+    and the reason to reach for the switch is to find out whether local
+    planning works here — an answer the deployment default cannot give you.
+    Since the image moved to Debian trixie the pod and the AP run the same
+    Pegasus tree, so local planning is expected to work again; that is exactly
+    the thing worth being able to try without an operator and a pod restart.
+    """
+    chosen = await _plan_mode_setting()
+    if chosen in ("local", "remote"):
+        return chosen, "setting"
+
+    setting = os.environ.get("STUDIO_PLAN_ON_SUBMIT_HOST", "auto").strip().lower()
+    if setting in ("never", "0", "false", "local"):
+        return "local", "env"
+    if setting in ("always", "1", "true", "remote"):
+        return "remote", "env"
+    if not remote_exec.available():
+        return "local", "no-condor"
+    remote = await submit_host.is_remote()
+    # None means undetermined; keep today's behaviour rather than guessing.
+    return ("remote" if remote else "local"), "detected"
+
+
+async def _plan_mode() -> str:
+    """`_resolve_plan_mode` without the provenance, for callers that don't need it."""
+    mode, _ = await _resolve_plan_mode()
+    return mode
+
+
+async def _plan_capture(
+    flow: RunFlow, argv: list[str], *, project_dir: str, mode: str | None = None
+) -> tuple[int, str]:
+    """Run the planner, on the submit host when that is where it belongs.
+
+    `mode` is resolved once by the caller, because the preflight needs the same
+    answer and asking twice could get two — the detection is a network call.
+    """
+    if mode is None:
+        try:
+            mode = await _plan_mode()
+        except Exception as e:  # noqa: BLE001 — detection must never block a run
+            log.warning("plan_mode_detect_failed", error=str(e))
+            mode = "local"
+
+    if mode == "local":
+        return await _capture(argv, cwd=project_dir)
+
+    flow._line(
+        "plan",
+        "Planning on the submit host, so the plan refers to its files and not "
+        "this workspace's.",
+    )
+    scratch = os.path.join(project_dir, ".studio", "remote")
+    try:
+        return await remote_exec.run_on_submit_host(
+            argv, cwd=project_dir, scratch_dir=scratch
+        )
+    except remote_exec.RemoteExecUnavailable as e:
+        # Falling back is right: a broken mechanism should not stop a run that
+        # might well succeed, and on a matched pair of hosts it will. Say so
+        # in the output, because if it then fails on its first node this line
+        # is the explanation.
+        log.warning("remote_plan_unavailable", error=str(e))
+        flow._line(
+            "plan",
+            f"Couldn't plan on the submit host ({e}); planning here instead. "
+            "If the run fails on its first step, this is why.",
+        )
+        return await _capture(argv, cwd=project_dir)
+
+
 async def _run_plan(
-    flow: RunFlow, *, project_dir: str, site: str, output_site: str
+    flow: RunFlow,
+    *,
+    project_dir: str,
+    site: str,
+    output_site: str,
+    plan_mode: str | None = None,
 ) -> bool:
     from services.workflow_submitter import _find_workflow_file
 
@@ -702,8 +921,9 @@ async def _run_plan(
         flow._fail("plan", "No workflow YAML file found in the project.")
         return False
 
-    code, output = await _capture(
-        ["pegasus-plan", "-s", site, "-o", output_site, wf_file], cwd=project_dir
+    argv = ["pegasus-plan", "-s", site, "-o", output_site, wf_file]
+    code, output = await _plan_capture(
+        flow, argv, project_dir=project_dir, mode=plan_mode
     )
     _emit_output(flow, "plan", output)
     if code != 0:

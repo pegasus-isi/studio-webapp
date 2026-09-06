@@ -7,14 +7,13 @@
  * narrow for a long workflow name (they truncate to uselessness) and too wide
  * once you are watching a run and want the space for the run itself.
  *
- * Width persists in localStorage rather than the settings DB. It is genuinely
- * a per-screen preference — a laptop and an external monitor want different
- * numbers — so unlike the interface preferences in `use-ui-prefs`, following
- * the user across devices would be the wrong behaviour here.
+ * Sizing and persistence live in `lib/hooks/use-pane-size.ts`, shared with the
+ * graph pane, which needed the same behaviour on the vertical axis. See there
+ * for why width is a localStorage preference rather than a settings-DB one.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { usePaneSize } from "@/lib/hooks/use-pane-size";
 
 interface Props {
   /** Stable key for persisting this pane's width. */
@@ -52,97 +51,25 @@ export function ResizablePane({
   label = "the list",
   children,
 }: Props) {
-  const [width, setWidth] = useState(defaultWidth);
-  const [collapsed, setCollapsed] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const paneRef = useRef<HTMLDivElement>(null);
-
-  // Read persisted state after mount, not during render: touching
-  // localStorage during SSR throws, and reading it in a lazy initializer
-  // produces a hydration mismatch when server and client disagree.
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(`pane:${storageKey}`);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (typeof parsed.width === "number") {
-          setWidth(Math.min(maxWidth, Math.max(minWidth, parsed.width)));
-        }
-        if (typeof parsed.collapsed === "boolean") setCollapsed(parsed.collapsed);
-      }
-    } catch {
-      /* unreadable or unparseable — the defaults are fine */
-    }
-  }, [storageKey, minWidth, maxWidth]);
-
-  const persist = useCallback(
-    (next: { width: number; collapsed: boolean }) => {
-      try {
-        localStorage.setItem(`pane:${storageKey}`, JSON.stringify(next));
-      } catch {
-        /* private mode / quota — resizing still works for this session */
-      }
-    },
-    [storageKey]
-  );
-
-  // Drag handling lives on the document, not the handle: a fast drag outruns
-  // the pointer and the handle stops receiving events, which would leave the
-  // pane stuck mid-resize.
-  useEffect(() => {
-    if (!dragging) return;
-
-    const onMove = (e: MouseEvent) => {
-      const box = paneRef.current?.getBoundingClientRect();
-      const raw =
-        side === "right"
-          ? (box?.right ?? 0) - e.clientX
-          : e.clientX - (box?.left ?? 0);
-      setWidth(Math.min(maxWidth, Math.max(minWidth, raw)));
-    };
-    const onUp = () => {
-      setDragging(false);
-      setWidth((w) => {
-        persist({ width: w, collapsed: false });
-        return w;
-      });
-    };
-
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-    // Stop the drag selecting text across the page while it is in progress.
-    const previousSelect = document.body.style.userSelect;
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
-    return () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.body.style.userSelect = previousSelect;
-      document.body.style.cursor = "";
-    };
-  }, [dragging, minWidth, maxWidth, persist, side]);
-
-  const toggleCollapsed = () => {
-    const next = !collapsed;
-    setCollapsed(next);
-    persist({ width, collapsed: next });
-  };
-
-  // Keyboard resizing, so the pane isn't mouse-only.
-  const onHandleKeyDown = (e: React.KeyboardEvent) => {
-    const step = e.shiftKey ? 64 : 16;
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-      e.preventDefault();
-      const grow = side === "right" ? e.key === "ArrowLeft" : e.key === "ArrowRight";
-      const delta = grow ? step : -step;
-      const next = Math.min(maxWidth, Math.max(minWidth, width + delta));
-      setWidth(next);
-      persist({ width: next, collapsed });
-    } else if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      toggleCollapsed();
-    }
-  };
+  // Drag/persist machinery is shared with the graph pane, which needed the
+  // same behaviour on the vertical axis (lib/hooks/use-pane-size.ts). The
+  // hook also reads the legacy `width` key, so saved widths survive.
+  const {
+    size: width,
+    collapsed,
+    toggleCollapsed,
+    dragging,
+    startDrag,
+    onHandleKeyDown,
+    paneRef,
+  } = usePaneSize({
+    storageKey,
+    defaultSize: defaultWidth,
+    minSize: minWidth,
+    maxSize: maxWidth,
+    axis: "x",
+    invert: side === "right",
+  });
 
   if (collapsed && collapsible) {
     return (
@@ -235,7 +162,7 @@ export function ResizablePane({
         tabIndex={0}
         onMouseDown={(e) => {
           e.preventDefault();
-          setDragging(true);
+          startDrag();
         }}
         onKeyDown={onHandleKeyDown}
         className={cn(
