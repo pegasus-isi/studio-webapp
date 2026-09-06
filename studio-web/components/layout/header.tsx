@@ -10,7 +10,7 @@ import { NotificationCenter } from "@/components/notifications/notification-cent
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 
 const STEPS = [
-  { label: "Ask AI",    href: "/dashboard"   },
+  { label: "Ask AI",    href: "/home"        },
   { label: "Run Jobs",  href: "/workflows"   },
   { label: "Notebooks", href: "/notebooks"   },
   { label: "Resources", href: "/provisioning"},
@@ -130,7 +130,7 @@ export function Header() {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 flex h-14 items-center justify-between border-b border-line bg-surface/80 px-4 backdrop-blur-md">
       {/* Logo — click to go home */}
-      <a href={appRelativePath("/dashboard")} className="flex items-center gap-2.5 select-none min-w-0 rounded-lg p-1 transition-opacity hover:opacity-80">
+      <a href={appRelativePath("/home")} className="flex items-center gap-2.5 select-none min-w-0 rounded-lg p-1 transition-opacity hover:opacity-80">
         <PegasusLogo size={26} />
         <div className="flex flex-col leading-none">
           <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-accent">

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
+import { appPushPath, appRelativePath } from "@/lib/urls";
 
 export default function LoginPage() {
   const [cookie, setCookie] = useState("");
@@ -15,7 +16,7 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/auth", {
+      const res = await fetch(appRelativePath("/api/auth"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cookie: value }),
@@ -24,7 +25,7 @@ export default function LoginPage() {
         const d = await res.json().catch(() => ({}));
         throw new Error((d as { error?: string }).error || `Error ${res.status}`);
       }
-      window.location.href = "/dashboard";
+      window.location.href = appPushPath("/home");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save session");
       setLoading(false);

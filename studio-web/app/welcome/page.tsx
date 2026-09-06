@@ -111,7 +111,7 @@ export default function WelcomePage() {
 
         {/* CTA */}
         <div className="flex flex-col items-center gap-3" style={anim(0.22)}>
-          <a href={appRelativePath("/login")}
+          <a href={appRelativePath("/home")}
             className="group inline-flex items-center gap-2.5 rounded-2xl bg-accent px-9 py-4 text-[15px] font-bold text-white shadow-2xl shadow-accent/25 transition-all hover:bg-accent/90 hover:-translate-y-0.5 hover:shadow-accent/35 active:scale-[0.97]">
             Sign In
             <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
@@ -215,7 +215,7 @@ export default function WelcomePage() {
           <div className="rounded-3xl border border-accent/20 bg-accent/5 px-6 py-10 text-center sm:px-12">
             <h2 className="mb-2 text-xl font-black text-fg sm:text-2xl">Start your first pipeline today</h2>
             <p className="mb-7 text-sm text-fgmuted">Your workspace is provisioned automatically. No installation, no cluster configuration, no prior Pegasus experience required.</p>
-            <a href={appRelativePath("/login")}
+            <a href={appRelativePath("/home")}
               className="group inline-flex items-center gap-2.5 rounded-2xl bg-accent px-8 py-4 text-[15px] font-bold text-white shadow-2xl shadow-accent/25 transition-all hover:bg-accent/90 hover:-translate-y-0.5 hover:shadow-accent/35 active:scale-[0.97]">
               Sign In
               <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
