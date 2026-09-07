@@ -57,26 +57,49 @@ export function useUIPreferences() {
 const MUTATION_KEY = ["ui-preferences", "update"];
 
 /**
+ * One PUT at a time, app-wide. Module-level so every component's hook instance
+ * shares it.
+ *
+ * Merging on the client fixes what each request *contains*, not the order the
+ * server *applies* them in: two PUTs in flight can arrive reversed, and then
+ * the older body (missing the newer toggle) is what gets stored. Chaining the
+ * requests removes the concurrency — each waits for the previous to settle,
+ * and by then the cache already holds every patch made in the meantime, so
+ * the body it sends is the merged result of all of them. Whether the previous
+ * request failed or not does not matter to the next one.
+ */
+let inFlight: Promise<unknown> = Promise.resolve();
+
+/**
  * Save a change to one or more preferences.
  *
- * Takes a *partial* and merges it into the latest cached preferences at call
- * time, rather than having callers spread the object they rendered with. The
- * endpoint is a wholesale PUT, so a caller sending `{ ...prefs, x }` from a
- * render that predates another toggle's response would put that other toggle
- * back the way it was — easy to hit with two checkboxes on one Settings tab.
+ * Takes a *partial* and merges it into the latest cached preferences when the
+ * request is actually sent, rather than having callers spread the object they
+ * rendered with. The endpoint is a wholesale PUT, so a caller sending
+ * `{ ...prefs, x }` from a render that predates another toggle's response
+ * would put that other toggle back the way it was — easy to hit with two
+ * checkboxes on one Settings tab.
  *
  * The cache is updated optimistically so a second toggle merges on top of the
  * first before the first has round-tripped, and a response only overwrites
- * the cache when it is the last request in flight; an earlier response landing
- * after a later optimistic update would otherwise undo it.
+ * the cache when it is the last request queued; an earlier response landing
+ * while a later patch is still pending would otherwise undo that patch.
  */
 export function useUpdateUIPreferences() {
   const qc = useQueryClient();
   return useMutation({
     mutationKey: MUTATION_KEY,
     mutationFn: (patch: Partial<api.UIPreferences>) => {
-      const current = qc.getQueryData<api.UIPreferences>(KEY) ?? FALLBACK;
-      return api.updateUIPreferences({ ...current, ...patch });
+      const send = () => {
+        // Read the cache *now*, not when mutate() was called: it has absorbed
+        // every optimistic patch queued behind the previous request. The patch
+        // is re-applied on top in case an error invalidation reset the cache.
+        const current = qc.getQueryData<api.UIPreferences>(KEY) ?? FALLBACK;
+        return api.updateUIPreferences({ ...current, ...patch });
+      };
+      const request = inFlight.then(send, send);
+      inFlight = request.catch(() => undefined);
+      return request;
     },
     onMutate: (patch) => {
       const current = qc.getQueryData<api.UIPreferences>(KEY) ?? FALLBACK;
