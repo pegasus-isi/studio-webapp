@@ -116,17 +116,23 @@ export function useUpdateUIPreferences() {
       }
     },
     onError: () => {
-      // The optimistic value may be wrong now. Resync with the server only if
-      // this was the last request queued: with others still pending, a refetch
-      // could land after their responses and overwrite the cache with state
-      // that predates every one of them, wiping toggles that succeeded. Those
-      // requests read the cache when they send, so the failed patch rides
-      // along with them — a retry of what the user asked for — and the last
-      // of them either seeds the cache from its response or, if it too fails,
-      // is the one that resyncs.
-      if (qc.isMutating({ mutationKey: MUTATION_KEY }) <= 1) {
-        void qc.invalidateQueries({ queryKey: KEY });
-      }
+      // The optimistic value may be wrong now, but a plain invalidate would
+      // refetch outside the queue: a save started after the GET was issued
+      // could succeed first, and the stale GET landing afterwards would
+      // overwrite it. So the resync is itself a step in the chain — every
+      // later save waits for it — and it gives up if any save is pending when
+      // it runs or when the GET returns, since that save's response is the
+      // fresher truth. Pending saves read the cache when they send, so the
+      // failed patch travels with them as a retry of what the user asked for.
+      if (qc.isMutating({ mutationKey: MUTATION_KEY }) > 1) return;
+      const resync = async () => {
+        if (qc.isMutating({ mutationKey: MUTATION_KEY }) > 0) return;
+        const fresh = await api.getUIPreferences();
+        if (qc.isMutating({ mutationKey: MUTATION_KEY }) === 0) {
+          qc.setQueryData(KEY, fresh);
+        }
+      };
+      inFlight = inFlight.then(resync, resync).catch(() => undefined);
     },
   });
 }
