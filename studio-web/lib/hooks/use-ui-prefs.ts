@@ -71,6 +71,17 @@ const MUTATION_KEY = ["ui-preferences", "update"];
 let inFlight: Promise<unknown> = Promise.resolve();
 
 /**
+ * Saves queued and not yet settled. Kept by hand rather than read from
+ * `isMutating`: TanStack still reports a mutation as pending while its
+ * onError/onSuccess callbacks run and for a few ticks afterwards, so a resync
+ * scheduled from onError would see the failed save itself as "pending" and
+ * cancel — an isolated failed save would never resync at all. This counter
+ * drops the moment the request settles, before anything chained behind it
+ * runs.
+ */
+let queued = 0;
+
+/**
  * Save a change to one or more preferences.
  *
  * Takes a *partial* and merges it into the latest cached preferences when the
@@ -97,8 +108,17 @@ export function useUpdateUIPreferences() {
         const current = qc.getQueryData<api.UIPreferences>(KEY) ?? FALLBACK;
         return api.updateUIPreferences({ ...current, ...patch });
       };
+      queued += 1;
       const request = inFlight.then(send, send);
-      inFlight = request.catch(() => undefined);
+      const settled = request.then(
+        () => {
+          queued -= 1;
+        },
+        () => {
+          queued -= 1;
+        }
+      );
+      inFlight = settled;
       return request;
     },
     onMutate: (patch) => {
@@ -108,10 +128,12 @@ export function useUpdateUIPreferences() {
     onSuccess: (saved) => {
       // Seed the cache from the response rather than invalidating, so the
       // toggle doesn't visibly bounce while a refetch is in flight — but only
-      // if nothing newer is pending, or this (older) response would clobber
-      // the newer optimistic state. The last response in flight carries the
-      // merged result of everything before it.
-      if (qc.isMutating({ mutationKey: MUTATION_KEY }) <= 1) {
+      // if nothing newer is queued, or this (older) response would clobber
+      // the newer optimistic state. The last response carries the merged
+      // result of everything before it. This request has already left the
+      // count by the time onSuccess runs (its decrement is registered on the
+      // request promise before TanStack attaches its own handler).
+      if (queued === 0) {
         qc.setQueryData(KEY, saved);
       }
     },
@@ -120,17 +142,14 @@ export function useUpdateUIPreferences() {
       // refetch outside the queue: a save started after the GET was issued
       // could succeed first, and the stale GET landing afterwards would
       // overwrite it. So the resync is itself a step in the chain — every
-      // later save waits for it — and it gives up if any save is pending when
+      // later save waits for it — and it gives up if any save is queued when
       // it runs or when the GET returns, since that save's response is the
-      // fresher truth. Pending saves read the cache when they send, so the
+      // fresher truth. Queued saves read the cache when they send, so the
       // failed patch travels with them as a retry of what the user asked for.
-      if (qc.isMutating({ mutationKey: MUTATION_KEY }) > 1) return;
       const resync = async () => {
-        if (qc.isMutating({ mutationKey: MUTATION_KEY }) > 0) return;
+        if (queued > 0) return;
         const fresh = await api.getUIPreferences();
-        if (qc.isMutating({ mutationKey: MUTATION_KEY }) === 0) {
-          qc.setQueryData(KEY, fresh);
-        }
+        if (queued === 0) qc.setQueryData(KEY, fresh);
       };
       inFlight = inFlight.then(resync, resync).catch(() => undefined);
     },
