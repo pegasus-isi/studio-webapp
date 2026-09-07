@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
 import "./globals.css";
 import { Providers } from "./providers";
-import { normalizeBasePath } from "@/lib/urls";
+import { requestBasePath } from "@/lib/server/base-path";
 
 export const metadata: Metadata = {
   title: "PegasusAI Studio",
@@ -17,12 +16,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const requestHeaders = await headers();
-  const basePath = normalizeBasePath(
-    requestHeaders.get("x-forwarded-prefix") ||
-      requestHeaders.get("x-script-name") ||
-      process.env.NEXT_PUBLIC_BASE_PATH
-  );
+  const basePath = await requestBasePath();
   const baseHref = `${basePath || ""}/`;
 
   return (
