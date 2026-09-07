@@ -333,7 +333,7 @@ export function DashboardView() {
   const endTour = () => {
     setTourOpen(false);
     if (!prefs.welcome_dismissed) {
-      updatePrefs.mutate({ ...prefs, welcome_dismissed: true });
+      updatePrefs.mutate({ welcome_dismissed: true });
     }
   };
 

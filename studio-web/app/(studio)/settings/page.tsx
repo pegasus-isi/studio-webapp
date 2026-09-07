@@ -1406,7 +1406,7 @@ function SimpleRunSection() {
           checked={prefs.simple_run}
           disabled={update.isPending}
           onChange={(e) =>
-            update.mutate({ ...prefs, simple_run: e.target.checked })
+            update.mutate({ simple_run: e.target.checked })
           }
         />
         Use the simplified Run flow
@@ -1452,7 +1452,7 @@ function WelcomePageSection() {
           checked={prefs.skip_welcome}
           disabled={update.isPending}
           onChange={(e) =>
-            update.mutate({ ...prefs, skip_welcome: e.target.checked })
+            update.mutate({ skip_welcome: e.target.checked })
           }
         />
         Skip the welcome page and open Home directly

@@ -136,7 +136,7 @@ export default function WelcomePage() {
               checked={prefs.skip_welcome}
               disabled={updatePrefs.isPending}
               onChange={(e) =>
-                updatePrefs.mutate({ ...prefs, skip_welcome: e.target.checked })
+                updatePrefs.mutate({ skip_welcome: e.target.checked })
               }
             />
             Skip this page next time and open Studio directly
