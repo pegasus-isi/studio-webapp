@@ -259,7 +259,7 @@ export function Sidebar() {
             ) : (
               <button
                 onClick={() =>
-                  updatePrefs.mutate({ ...prefs, nav_advanced_open: true })
+                  updatePrefs.mutate({ nav_advanced_open: true })
                 }
                 title="More — resources and terminal"
                 aria-label="Show more destinations"

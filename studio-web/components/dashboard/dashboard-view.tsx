@@ -139,16 +139,16 @@ const I = {
  *
  * The previous set taught slash commands, and the design prototype's set
  * assumed you already knew what a scatter-gather, a DAX or an Apptainer image
- * was — on the first screen a domain scientist ever sees. `needsRuns` keeps
- * "review it before I scale up" off an empty workspace, where nothing exists
- * to review.
+ * was — on the first screen a domain scientist ever sees. All four show on
+ * an empty workspace too: "check it survives scaling up" used to wait for a
+ * first run, but the question is one people arrive with, and hiding it made
+ * the set look incomplete next to the mockups.
  */
 const OPENERS: {
   title: string;
   prompt: string;
   tone: Tile;
   icon: React.ReactNode;
-  needsRuns?: boolean;
 }[] = [
   {
     title: "Run one analysis over many files",
@@ -177,7 +177,6 @@ const OPENERS: {
       "My workflow runs fine on a handful of inputs. Review it and tell me what will break when I scale it to a few hundred.",
     tone: "sand",
     icon: I.scale,
-    needsRuns: true,
   },
 ];
 
@@ -334,13 +333,9 @@ export function DashboardView() {
   const endTour = () => {
     setTourOpen(false);
     if (!prefs.welcome_dismissed) {
-      updatePrefs.mutate({ ...prefs, welcome_dismissed: true });
+      updatePrefs.mutate({ welcome_dismissed: true });
     }
   };
-
-  const hasWorkflows =
-    (data?.projects.total ?? 0) > 0 || (data?.runs.total ?? 0) > 0;
-  const openers = OPENERS.filter((o) => !o.needsRuns || hasWorkflows);
 
   // Opens the docked chat panel with the text already in the input, so the
   // user can edit before sending.
@@ -428,7 +423,7 @@ export function DashboardView() {
             data-tour="home-openers"
             className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2"
           >
-            {openers.map((o) => (
+            {OPENERS.map((o) => (
               <button
                 key={o.title}
                 onClick={() => send(o.prompt)}

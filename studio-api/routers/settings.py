@@ -303,6 +303,12 @@ class UIPreferences(BaseModel):
     # necessarily want a terminal in their sidebar, and coupling two unrelated
     # disclosures to one flag makes both surprising.
     nav_advanced_open: bool = False
+    # Skip the landing page at `/` and open Home directly. Distinct from
+    # `welcome_dismissed`, which records that the first-run tour has been
+    # shown: the landing page is a marketing-style introduction that a
+    # returning user may never want to see again, and the Next server reads
+    # this flag when deciding where the app root redirects.
+    skip_welcome: bool = False
 
 
 _UI_PREFS_KEY = "ui_preferences"

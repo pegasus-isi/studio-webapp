@@ -94,8 +94,14 @@ export default function WorkflowsPage() {
         ) : selectedRunId ? (
           <WorkflowDetail runId={selectedRunId} />
         ) : (
-          <div className="flex h-full items-center justify-center text-fgsubtle">
-            Select a workflow to view details
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="text-fgsubtle">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 8 12 12 14 14"/>
+              </svg>
+            </div>
+            <p className="text-sm font-medium text-fgmuted">Select a workflow</p>
+            <p className="text-xs text-fgsubtle">Choose a project or run from the list</p>
           </div>
         )}
       </div>

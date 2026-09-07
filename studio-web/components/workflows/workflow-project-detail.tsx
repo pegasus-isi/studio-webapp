@@ -561,7 +561,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
           onToggle={(e) => {
             const open = (e.currentTarget as HTMLDetailsElement).open;
             if (open !== prefs.advanced_open) {
-              updatePrefs.mutate({ ...prefs, advanced_open: open });
+              updatePrefs.mutate({ advanced_open: open });
             }
           }}
           className="rounded-xl border border-line bg-surface"
