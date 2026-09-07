@@ -21,6 +21,7 @@ def test_simple_run_is_on_by_default(client):
         "advanced_open": False,
         "welcome_dismissed": False,
         "nav_advanced_open": False,
+        "skip_welcome": False,
     }
 
 
@@ -30,6 +31,7 @@ def test_preferences_round_trip(client):
         "advanced_open": True,
         "welcome_dismissed": True,
         "nav_advanced_open": True,
+        "skip_welcome": True,
     }
     saved = client.put("/api/settings/ui", json=payload)
     assert saved.status_code == 200
@@ -58,6 +60,7 @@ def test_unknown_keys_in_stored_settings_are_ignored(client, monkeypatch):
         "advanced_open": False,
         "welcome_dismissed": False,
         "nav_advanced_open": False,
+        "skip_welcome": False,
     }
 
 
@@ -78,6 +81,7 @@ def test_corrupt_stored_settings_fall_back_to_defaults(client, monkeypatch):
         "advanced_open": False,
         "welcome_dismissed": False,
         "nav_advanced_open": False,
+        "skip_welcome": False,
     }
 
 

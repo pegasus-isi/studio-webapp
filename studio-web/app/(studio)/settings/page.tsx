@@ -19,6 +19,7 @@ import { ToolCard } from "@/components/tools/tool-card";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { cn } from "@/lib/utils";
+import { appRelativePath } from "@/lib/urls";
 import type { ProviderConfig } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 
@@ -924,6 +925,9 @@ function PegasusOptionsTab() {
       {/* Simplified Run flow — the Phase 1 rollout flag (#241) */}
       <SimpleRunSection />
 
+      {/* Whether the app root shows the landing page or goes to Home (#370) */}
+      <WelcomePageSection />
+
       {/* Where pegasus-plan runs — remote by default when the schedd is
           elsewhere, overridable to test local planning */}
       <PlanningLocationSection />
@@ -1402,10 +1406,56 @@ function SimpleRunSection() {
           checked={prefs.simple_run}
           disabled={update.isPending}
           onChange={(e) =>
-            update.mutate({ ...prefs, simple_run: e.target.checked })
+            update.mutate({ simple_run: e.target.checked })
           }
         />
         Use the simplified Run flow
+      </label>
+      {update.isError && (
+        <p className="mt-2 text-xs text-red-600 dark:text-rose-400">
+          Couldn&apos;t save: {(update.error as Error).message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Whether opening Studio shows the welcome page first.
+ *
+ * The welcome page introduces the product; someone who opens Studio every day
+ * does not need the introduction each time. The checkbox on the page itself
+ * sets this, and this section is where it gets turned back off — a preference
+ * that can only be set from the page it hides needs a second home.
+ */
+function WelcomePageSection() {
+  const { prefs } = useUIPreferences();
+  const update = useUpdateUIPreferences();
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <h2 className="text-sm font-semibold text-fg">Welcome page</h2>
+      <p className="mt-1 text-xs text-fgmuted">
+        Studio opens on a welcome page that introduces the product. Skip it to
+        land on Home directly. The page stays available at{" "}
+        <a
+          href={appRelativePath("/welcome")}
+          className="font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
+        >
+          Welcome
+        </a>
+        .
+      </p>
+      <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-fg">
+        <input
+          type="checkbox"
+          checked={prefs.skip_welcome}
+          disabled={update.isPending}
+          onChange={(e) =>
+            update.mutate({ skip_welcome: e.target.checked })
+          }
+        />
+        Skip the welcome page and open Home directly
       </label>
       {update.isError && (
         <p className="mt-2 text-xs text-red-600 dark:text-rose-400">
