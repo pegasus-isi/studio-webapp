@@ -2,9 +2,10 @@
    PegasusAI Studio — JupyterLab homogeneous theme
    Sky-blue accent · slate text · clean surfaces · no Jupyter orange
 
-   Applied by the Dockerfile on top of the default light theme:
-     RUN cat /docker/jupyter/studio-overrides.css \
-         >> /opt/conda/share/jupyter/lab/themes/@jupyterlab/theme-light-extension/index.css
+   Applied by the Dockerfile on top of the default light theme: appended to
+   <jupyter lab app dir>/themes/@jupyterlab/theme-light-extension/index.css
+   (see "JupyterLab theme" in the Dockerfile). Light-theme variables only,
+   so the dark theme is left alone.
    ═══════════════════════════════════════════════════════════ */
 
 :root {
