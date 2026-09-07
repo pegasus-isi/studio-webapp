@@ -32,6 +32,9 @@ const FALLBACK: api.UIPreferences = {
   // moment late to someone genuinely new.
   welcome_dismissed: true,
   nav_advanced_open: false,
+  // Only read by the checkbox on the welcome page and in Settings; the
+  // redirect itself is decided server-side from the stored value.
+  skip_welcome: false,
 };
 
 export function useUIPreferences() {

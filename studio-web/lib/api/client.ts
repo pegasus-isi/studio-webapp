@@ -605,6 +605,8 @@ export interface UIPreferences {
   welcome_dismissed: boolean;
   /** Sidebar's Advanced group (Resources, Terminal). */
   nav_advanced_open: boolean;
+  /** Skip the landing page at `/` and open Home directly (#370). */
+  skip_welcome: boolean;
 }
 
 export async function getUIPreferences() {

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 import { appRelativePath } from "@/lib/urls";
+import { useUIPreferences, useUpdateUIPreferences } from "@/lib/hooks/use-ui-prefs";
 import { ArrowRight, ChevronDown, Check } from "lucide-react";
 
 const HOW = [
@@ -49,6 +50,8 @@ const FEATURES = [
 export default function WelcomePage() {
   const [m, setM] = useState(false);
   const detailsRef = useRef<HTMLDivElement>(null);
+  const { prefs } = useUIPreferences();
+  const updatePrefs = useUpdateUIPreferences();
 
   useEffect(() => {
     const t = setTimeout(() => setM(true), 80);
@@ -61,8 +64,13 @@ export default function WelcomePage() {
     transition: `opacity 0.55s ease ${d}s, transform 0.55s ease ${d}s`,
   });
 
+  // This page owns its own scrolling. globals.css pins <html>/<body> to the
+  // viewport (overflow: hidden) so the app shell is authoritative, which means
+  // a route outside the shell gets no scrollbar at all: "Learn more" could
+  // still scrollIntoView (that ignores overflow: hidden) but the wheel could
+  // not bring the page back up (#370).
   return (
-    <div className="bg-base">
+    <div className="h-screen overflow-y-auto bg-base">
 
       {/* Dot grid */}
       <div className="pointer-events-none fixed inset-0"
@@ -117,6 +125,22 @@ export default function WelcomePage() {
             <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
           </a>
           <p className="text-[11px] text-fgsubtle/50">Free · No setup · Ready in seconds</p>
+          {/* Saved server-side the moment it is ticked, so it holds even if
+              the user leaves through the browser rather than the button. The
+              app root reads it and sends them to Home instead; Settings →
+              Pegasus Options turns it back off. */}
+          <label className="mt-3 flex cursor-pointer items-center gap-2 text-[12px] text-fgsubtle/70 transition-colors hover:text-fgmuted">
+            <input
+              type="checkbox"
+              className="accent-accent"
+              checked={prefs.skip_welcome}
+              disabled={updatePrefs.isPending}
+              onChange={(e) =>
+                updatePrefs.mutate({ ...prefs, skip_welcome: e.target.checked })
+              }
+            />
+            Skip this page next time and open Studio directly
+          </label>
         </div>
 
         {/* Scroll arrow */}
