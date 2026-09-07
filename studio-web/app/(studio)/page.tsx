@@ -1,11 +1,13 @@
-import { DashboardView } from "@/components/dashboard/dashboard-view";
+import { redirect } from "next/navigation";
 
 /**
  * The app root — where a user lands when they open Studio.
  *
- * The Home *nav link* points at `/home` instead, which renders the same view;
- * see that route for why. This one stays so the bare workspace URL works.
+ * Sends them to the welcome page. There is deliberately no login step here:
+ * Studio has no auth of its own — JupyterHub and the ingress (studio-system)
+ * authenticate upstream and the container runs per user — so a sign-in screen
+ * inside the app would only be a dead end.
  */
 export default function RootPage() {
-  return <DashboardView />;
+  redirect("/welcome");
 }

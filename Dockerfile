@@ -187,6 +187,20 @@ RUN python3 -m pip uninstall -y \
 # ---- Jupyter server configuration ----
 COPY docker/jupyter/jupyter_server_config.py /etc/jupyter/jupyter_server_config.py
 
+# ---- JupyterLab theme: match Studio ----
+# The overrides are light-theme variables (sky accent, slate text, Studio
+# surfaces), so they are appended to the light theme's own stylesheet rather
+# than loaded as global custom CSS — global CSS would also clobber the dark
+# theme's variables the moment someone picked it. Nothing later rebuilds the
+# lab app (labextension builds are prebuilt bundles), so the append sticks.
+# `test -f` makes a move of the theme directory fail the build instead of
+# silently shipping an unthemed JupyterLab.
+COPY docker/jupyter/studio-overrides.css /opt/pegasus-ai/jupyter/studio-overrides.css
+RUN THEME="$(jupyter lab path | awk -F': *' '/Application directory/{print $2}')/themes/@jupyterlab/theme-light-extension/index.css" \
+    && test -f "$THEME" \
+    && printf '\n\n/* ---- PegasusAI Studio overrides (docker/jupyter/studio-overrides.css) ---- */\n' >> "$THEME" \
+    && cat /opt/pegasus-ai/jupyter/studio-overrides.css >> "$THEME"
+
 # ---- supervisord (process supervisor) ----
 RUN pip install --no-cache-dir supervisor
 
