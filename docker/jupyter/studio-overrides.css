@@ -184,18 +184,6 @@
   padding: 0 2px !important;
 }
 
-/* ── Hide the activity spinner / busy indicator ── */
-#jp-top-panel .jp-BusyIndicator,
-#jp-top-panel .jp-Spinner,
-#jp-top-panel [class*="busy"],
-#jp-top-panel [class*="Busy"],
-#jp-top-panel [class*="spinner"],
-#jp-top-panel [class*="Spinner"],
-.jp-Activity-busyIndicator,
-[data-jp-item-name="busy"] {
-  display: none !important;
-}
-
 /* ── Top panel ── */
 #jp-top-panel {
   background: transparent !important;
