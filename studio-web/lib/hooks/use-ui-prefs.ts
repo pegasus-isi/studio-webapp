@@ -116,8 +116,17 @@ export function useUpdateUIPreferences() {
       }
     },
     onError: () => {
-      // The optimistic value may be wrong now; fetch what the server holds.
-      void qc.invalidateQueries({ queryKey: KEY });
+      // The optimistic value may be wrong now. Resync with the server only if
+      // this was the last request queued: with others still pending, a refetch
+      // could land after their responses and overwrite the cache with state
+      // that predates every one of them, wiping toggles that succeeded. Those
+      // requests read the cache when they send, so the failed patch rides
+      // along with them — a retry of what the user asked for — and the last
+      // of them either seeds the cache from its response or, if it too fails,
+      // is the one that resyncs.
+      if (qc.isMutating({ mutationKey: MUTATION_KEY }) <= 1) {
+        void qc.invalidateQueries({ queryKey: KEY });
+      }
     },
   });
 }
