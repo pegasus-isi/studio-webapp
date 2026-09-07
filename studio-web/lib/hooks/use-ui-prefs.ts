@@ -71,13 +71,20 @@ const MUTATION_KEY = ["ui-preferences", "update"];
 let inFlight: Promise<unknown> = Promise.resolve();
 
 /**
- * Saves queued and not yet settled. Kept by hand rather than read from
- * `isMutating`: TanStack still reports a mutation as pending while its
- * onError/onSuccess callbacks run and for a few ticks afterwards, so a resync
- * scheduled from onError would see the failed save itself as "pending" and
- * cancel — an isolated failed save would never resync at all. This counter
- * drops the moment the request settles, before anything chained behind it
- * runs.
+ * Saves requested and not yet settled.
+ *
+ * Counted from onMutate to onSettled — the whole life of the intent — rather
+ * than from mutationFn: TanStack pauses a mutation while the browser is
+ * offline *before* calling mutationFn, so a count that starts there misses
+ * paused saves, and a resync or another save's response would then overwrite
+ * their optimistic patch as if nothing were pending.
+ *
+ * Kept by hand rather than read from `isMutating`, which still reports a
+ * mutation as pending while its own callbacks run and for a few ticks after,
+ * so a check made from those callbacks cannot tell "me" from "someone else".
+ * Here the accounting is explicit: inside onSuccess this save is still
+ * counted (its onSettled has not run yet); inside anything scheduled from
+ * onSettled, after the decrement, it is not.
  */
 let queued = 0;
 
@@ -93,8 +100,8 @@ let queued = 0;
  *
  * The cache is updated optimistically so a second toggle merges on top of the
  * first before the first has round-tripped, and a response only overwrites
- * the cache when it is the last request queued; an earlier response landing
- * while a later patch is still pending would otherwise undo that patch.
+ * the cache when nothing newer is queued; an earlier response landing while a
+ * later patch is still pending would otherwise undo that patch.
  */
 export function useUpdateUIPreferences() {
   const qc = useQueryClient();
@@ -104,40 +111,32 @@ export function useUpdateUIPreferences() {
       const send = () => {
         // Read the cache *now*, not when mutate() was called: it has absorbed
         // every optimistic patch queued behind the previous request. The patch
-        // is re-applied on top in case an error invalidation reset the cache.
+        // is re-applied on top in case a resync reset the cache meanwhile.
         const current = qc.getQueryData<api.UIPreferences>(KEY) ?? FALLBACK;
         return api.updateUIPreferences({ ...current, ...patch });
       };
-      queued += 1;
       const request = inFlight.then(send, send);
-      const settled = request.then(
-        () => {
-          queued -= 1;
-        },
-        () => {
-          queued -= 1;
-        }
-      );
-      inFlight = settled;
+      inFlight = request.catch(() => undefined);
       return request;
     },
     onMutate: (patch) => {
+      queued += 1;
       const current = qc.getQueryData<api.UIPreferences>(KEY) ?? FALLBACK;
       qc.setQueryData<api.UIPreferences>(KEY, { ...current, ...patch });
     },
     onSuccess: (saved) => {
       // Seed the cache from the response rather than invalidating, so the
       // toggle doesn't visibly bounce while a refetch is in flight — but only
-      // if nothing newer is queued, or this (older) response would clobber
-      // the newer optimistic state. The last response carries the merged
-      // result of everything before it. This request has already left the
-      // count by the time onSuccess runs (its decrement is registered on the
-      // request promise before TanStack attaches its own handler).
-      if (queued === 0) {
+      // if nothing newer is queued (this save is still counted here), or this
+      // older response would clobber the newer optimistic state. The last
+      // response carries the merged result of everything before it.
+      if (queued <= 1) {
         qc.setQueryData(KEY, saved);
       }
     },
-    onError: () => {
+    onSettled: (_saved, error) => {
+      queued -= 1;
+      if (!error) return;
       // The optimistic value may be wrong now, but a plain invalidate would
       // refetch outside the queue: a save started after the GET was issued
       // could succeed first, and the stale GET landing afterwards would
