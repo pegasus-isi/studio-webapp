@@ -200,15 +200,20 @@ export function useOpenCodeChat() {
         if (!cancelled) setSessionDirectory(session.directory);
       })
       .catch(() => {
-        // Leaving it undefined means the catalogs fall back to the engine's
-        // own default directory, which is a worse answer than the session's
-        // but a better one than none.
+        // Undefined means the catalogs fall back to the engine's own default
+        // directory — a worse answer than the session's, but a usable one.
+        //
+        // Retried on `attempt` for the same reason session creation is: the
+        // likeliest time for this to fail is a panel opening while the engine
+        // is still starting, and without a retry the mistake is permanent —
+        // every capability list would describe $HOME for the rest of the
+        // session, quietly and plausibly.
         if (!cancelled) setSessionDirectory(undefined);
       });
     return () => {
       cancelled = true;
     };
-  }, [sessionID]);
+  }, [sessionID, attempt]);
 
   const load = useCallback(
     async (id: string) => {

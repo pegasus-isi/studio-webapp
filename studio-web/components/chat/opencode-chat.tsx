@@ -275,7 +275,13 @@ export function OpenCodeChat() {
               {chat.error}
             </p>
             <button
-              onClick={() => chat.retry()}
+              onClick={() => {
+                // Whatever stopped the session from being created stopped the
+                // catalogs too, so recovery reloads both rather than leaving
+                // the capability lists stale behind a working chat.
+                chat.retry();
+                setCatalogAttempt((n) => n + 1);
+              }}
               className="mt-2 rounded-md border border-line px-2.5 py-1 font-medium text-fgmuted hover:bg-muted"
             >
               Try again
@@ -422,6 +428,14 @@ export function OpenCodeChat() {
             <CapabilitiesPanel
               agents={agents}
               directory={chat.sessionDirectory}
+              attempt={catalogAttempt}
+              onRetry={() => {
+                // Re-resolves the session's directory as well as the lists:
+                // if that lookup was what failed, refetching the catalogs
+                // alone would just ask about the wrong directory again.
+                chat.retry();
+                setCatalogAttempt((n) => n + 1);
+              }}
             />
           )}
 
@@ -513,9 +527,13 @@ type Catalog<T> =
 function CapabilitiesPanel({
   agents,
   directory,
+  attempt,
+  onRetry,
 }: {
   agents: oc.AgentInfo[] | null;
   directory?: string;
+  attempt: number;
+  onRetry: () => void;
 }) {
   const [skills, setSkills] = useState<Catalog<oc.SkillInfo>>({
     status: "loading",
@@ -542,7 +560,10 @@ function CapabilitiesPanel({
     return () => {
       cancelled = true;
     };
-  }, [directory]);
+    // `attempt` as well as `directory`: recovering the engine has to clear an
+    // error state here too, or the panel keeps saying it could not check long
+    // after it could.
+  }, [directory, attempt]);
 
   const delegates = agents ? oc.subagents(agents) : [];
   // A skill is also offered as a command of the same name, so listing both in
@@ -555,8 +576,21 @@ function CapabilitiesPanel({
       ? commands.items.filter((c) => !skillNames.has(c.name))
       : [];
 
+  const failed =
+    skills.status === "error" ||
+    commands.status === "error" ||
+    (agents?.length ?? 0) === 0;
+
   return (
     <div className="max-h-56 space-y-3 overflow-auto rounded-md border border-line bg-muted p-2.5 text-xs">
+      {failed && (
+        <button
+          onClick={onRetry}
+          className="w-full rounded border border-line bg-surface px-2 py-1 font-medium text-fgmuted hover:text-fg"
+        >
+          Check again
+        </button>
+      )}
       <Capability
         title="Subagents"
         status={agents === null ? "loading" : "ok"}
