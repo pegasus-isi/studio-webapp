@@ -99,7 +99,9 @@ export function useOpenCodeChat() {
   const convId = useChatStore((s) => s.activeId);
   const scope = useChatContextStore((s) => s.scopeByConv[convId] ?? null);
   const sessionID = useOpenCodeStore((s) => s.sessionByConv[convId]);
+  const agent = useOpenCodeStore((s) => s.agentByConv[convId]);
   const setSession = useOpenCodeStore((s) => s.setSession);
+  const setAgentForConv = useOpenCodeStore((s) => s.setAgent);
   const clearSession = useOpenCodeStore((s) => s.clearSession);
   const { data: projectData, isPending: projectsPending } =
     useWorkflowProjects();
@@ -423,6 +425,11 @@ export function useOpenCodeChat() {
     [state]
   );
 
+  const setAgent = useCallback(
+    (next: string) => setAgentForConv(convId, next),
+    [convId, setAgentForConv]
+  );
+
   const send = useCallback(
     async (text: string, model?: { providerID: string; modelID: string }) => {
       const id = sessionRef.current;
@@ -471,7 +478,10 @@ export function useOpenCodeChat() {
       }
 
       try {
-        await oc.promptAsync(id, { parts, model });
+        // The agent is read at send time rather than captured, so switching to
+        // plan mode applies to the next turn without re-rendering anything.
+        const selected = useOpenCodeStore.getState().agentByConv[convId];
+        await oc.promptAsync(id, { parts, model, agent: selected || undefined });
       } catch (e) {
         dispatch({ kind: "error", error: (e as Error).message });
         dispatch({ kind: "busy", busy: false });
@@ -545,6 +555,8 @@ export function useOpenCodeChat() {
     permissions: state.permissions,
     questions: state.questions,
     connection: state.connection,
+    agent,
+    setAgent,
     retry,
     send,
     stop,

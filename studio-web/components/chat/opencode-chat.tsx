@@ -49,6 +49,8 @@ export function OpenCodeChat() {
   const chat = useOpenCodeChat();
   const [input, setInput] = useState("");
   const [models, setModels] = useState<ModelChoice[] | null>(null);
+  const [agents, setAgents] = useState<oc.AgentInfo[] | null>(null);
+  const [showCapabilities, setShowCapabilities] = useState(false);
   const [picked, setPicked] = useState<string>("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -82,6 +84,21 @@ export function OpenCodeChat() {
         setModels(choices);
       })
       .catch(() => setModels([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogAttempt]);
+
+  // The agents this engine offers. Read from the server rather than hardcoded,
+  // so an agent added by a marketplace update or by the user's own config
+  // appears without a change here.
+  useEffect(() => {
+    let cancelled = false;
+    oc.listAgents()
+      .then((list) => {
+        if (!cancelled) setAgents(list);
+      })
+      .catch(() => setAgents([]));
     return () => {
       cancelled = true;
     };
@@ -199,6 +216,14 @@ export function OpenCodeChat() {
   // step-start and an empty text part — several seconds of a blank bubble
   // where the "Thinking" dots had been, on any model that pauses before its
   // first token.
+  const selectable = useMemo(
+    () => (agents ? oc.selectableAgents(agents) : []),
+    [agents]
+  );
+  const activeAgent = useMemo(
+    () => selectable.find((a) => a.name === chat.agent),
+    [selectable, chat.agent]
+  );
   const turns = useMemo(() => groupTurns(chat.messages), [chat.messages]);
   const lastMessage = chat.messages[chat.messages.length - 1];
   const showThinking =
@@ -314,9 +339,35 @@ export function OpenCodeChat() {
 
       <div className="border-t border-line bg-surface p-4">
         <div className="mx-auto max-w-3xl space-y-2">
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <ChatContextChip />
-            <label className="ml-1 text-fgmuted" htmlFor="opencode-model">
+
+            {/* Plan mode is an agent, and OpenCode enforces it: the `plan`
+                agent denies every edit tool server-side, so this is a real
+                guarantee rather than an instruction the model may ignore. */}
+            {selectable.length > 1 && (
+              <>
+                <label className="text-fgmuted" htmlFor="opencode-agent">
+                  Mode:
+                </label>
+                <select
+                  id="opencode-agent"
+                  value={chat.agent ?? ""}
+                  onChange={(e) => chat.setAgent(e.target.value)}
+                  title={activeAgent?.description || "Which agent answers"}
+                  className="rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
+                >
+                  <option value="">Default</option>
+                  {selectable.map((a) => (
+                    <option key={a.name} value={a.name}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
+            <label className="text-fgmuted" htmlFor="opencode-model">
               Model:
             </label>
             <select
@@ -337,12 +388,37 @@ export function OpenCodeChat() {
                 </option>
               ))}
             </select>
+            <button
+              onClick={() => setShowCapabilities((v) => !v)}
+              title="Skills, subagents and commands this session can use"
+              aria-expanded={showCapabilities}
+              className={cn(
+                "ml-auto rounded border px-2 py-1 transition-colors",
+                showCapabilities
+                  ? "border-pegasus-400 text-pegasus-700 dark:text-pegasus-300"
+                  : "border-line text-fgmuted hover:border-pegasus-300 hover:text-fg"
+              )}
+            >
+              What it can do
+            </button>
             {chat.connection === "retrying" && (
-              <span className="ml-auto text-amber-600 dark:text-amber-400">
+              <span className="w-full text-amber-600 dark:text-amber-400">
                 Reconnecting…
               </span>
             )}
           </div>
+
+          {/* Why this is a panel and not a set of controls: skills and
+              subagents are not chosen, they are *matched* — the agent picks a
+              skill by its description and delegates to a subagent through its
+              task tool. So the useful thing to show is what is loaded and
+              where it came from, which is also the fastest way to answer "are
+              my Pegasus skills actually here?". */}
+          {showCapabilities && <CapabilitiesPanel agents={agents} />}
+
+          {activeAgent?.description && (
+            <p className="text-xs text-fgmuted">{activeAgent.description}</p>
+          )}
 
           <div className="flex items-end gap-2">
             <textarea
@@ -407,6 +483,130 @@ function hasRenderableContent(message: RenderedMessage): boolean {
     }
     return true;
   });
+}
+
+/**
+ * What the engine has loaded: subagents, skills, commands.
+ *
+ * Read-only on purpose. None of these are things a user invokes from here — a
+ * skill is matched by the agent against its description, and a subagent is
+ * delegated to through the task tool — so a picker would misrepresent how they
+ * work. What is genuinely useful is knowing they are *there*, and where they
+ * came from: Studio's own skills arrive from a marketplace checkout that has
+ * gone missing before (#179), and "is my Pegasus skill loaded?" was previously
+ * only answerable from a terminal.
+ */
+function CapabilitiesPanel({ agents }: { agents: oc.AgentInfo[] | null }) {
+  const [skills, setSkills] = useState<oc.SkillInfo[] | null>(null);
+  const [commands, setCommands] = useState<oc.CommandInfo[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void oc
+      .listSkills()
+      .then((list) => !cancelled && setSkills(list))
+      .catch(() => !cancelled && setSkills([]));
+    void oc
+      .listCommands()
+      .then((list) => !cancelled && setCommands(list))
+      .catch(() => !cancelled && setCommands([]));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const delegates = agents ? oc.subagents(agents) : [];
+  // A skill is also offered as a command of the same name, so listing both in
+  // full would show everything twice.
+  const skillNames = new Set((skills ?? []).map((s) => s.name));
+  const ownCommands = (commands ?? []).filter((c) => !skillNames.has(c.name));
+
+  return (
+    <div className="max-h-56 space-y-3 overflow-auto rounded-md border border-line bg-muted p-2.5 text-xs">
+      <Capability
+        title="Subagents"
+        empty="None — this engine runs every step itself."
+        items={delegates.map((a) => ({
+          name: a.name,
+          detail: a.description,
+        }))}
+        note="The assistant delegates to these on its own; you don't pick one."
+      />
+      <Capability
+        title="Skills"
+        loading={skills === null}
+        empty="No skills loaded."
+        items={(skills ?? []).map((s) => ({
+          name: s.name,
+          detail: s.description,
+          // "<built-in>" or the SKILL.md path — which is the answer to "is the
+          // marketplace checkout actually being read?".
+          source: s.location,
+        }))}
+        note="Matched by description when they apply; ask in plain language."
+      />
+      <Capability
+        title="Commands"
+        loading={commands === null}
+        empty="No commands."
+        items={ownCommands.map((c) => ({ name: c.name, detail: c.description }))}
+      />
+    </div>
+  );
+}
+
+function Capability({
+  title,
+  items,
+  empty,
+  note,
+  loading = false,
+}: {
+  title: string;
+  items: { name: string; detail?: string; source?: string }[];
+  empty: string;
+  note?: string;
+  loading?: boolean;
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline gap-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
+          {title}
+        </h4>
+        {!loading && <span className="text-fgsubtle">{items.length}</span>}
+      </div>
+      {note && <p className="mt-0.5 text-fgsubtle">{note}</p>}
+      {loading ? (
+        <p className="mt-1 text-fgsubtle">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="mt-1 text-fgsubtle">{empty}</p>
+      ) : (
+        <ul className="mt-1 space-y-1">
+          {items.map((item) => (
+            <li key={item.name}>
+              <span className="font-mono font-medium text-fg">{item.name}</span>
+              {item.detail && (
+                <span className="ml-1.5 text-fgmuted">
+                  {item.detail.length > 140
+                    ? `${item.detail.slice(0, 140)}…`
+                    : item.detail}
+                </span>
+              )}
+              {item.source && (
+                <span
+                  className="ml-1.5 block truncate text-[10px] text-fgsubtle"
+                  title={item.source}
+                >
+                  {item.source}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /**

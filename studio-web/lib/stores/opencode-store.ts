@@ -60,12 +60,26 @@ interface OpenCodeStore {
   setSession: (convId: string, sessionID: string) => void;
   /** Forget the pairing (the session itself is left alone on the server). */
   clearSession: (convId: string) => void;
+
+  /**
+   * Studio conversation id -> the primary agent answering it.
+   *
+   * Per conversation and persisted, because it is a property of what the
+   * conversation is *for*: a chat opened to think through an approach should
+   * still be in plan mode tomorrow. Absent means the engine's default.
+   */
+  agentByConv: Record<string, string>;
+  setAgent: (convId: string, agent: string) => void;
 }
 
 export const useOpenCodeStore = create<OpenCodeStore>()(
   persist(
     (set) => ({
       sessionByConv: {},
+      agentByConv: {},
+
+      setAgent: (convId, agent) =>
+        set((s) => ({ agentByConv: { ...s.agentByConv, [convId]: agent } })),
 
       setSession: (convId, sessionID) =>
         set((s) => ({

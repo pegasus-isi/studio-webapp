@@ -67,6 +67,41 @@ export interface QuestionRequest {
   questions: QuestionInfo[];
 }
 
+/**
+ * An agent the engine can run.
+ *
+ * `mode` is the distinction that matters to the UI. A **primary** agent is one
+ * the user chooses — `build` executes, `plan` is OpenCode's plan mode and
+ * denies every edit tool server-side, so it is a real guarantee rather than a
+ * prompt asking nicely. A **subagent** is delegated to by the primary agent
+ * through its task tool and is never selected directly.
+ *
+ * `compaction`, `summary` and `title` are also primary but are the server's own
+ * machinery; they are distinguishable only by carrying no description, which is
+ * what `selectableAgents` filters on.
+ */
+export interface AgentInfo {
+  name: string;
+  description?: string;
+  mode: "primary" | "subagent";
+  model?: { providerID: string; modelID: string };
+}
+
+/** A skill the engine has loaded, and where it came from. */
+export interface SkillInfo {
+  name: string;
+  description?: string;
+  /** "<built-in>", or the absolute path of the SKILL.md it was read from. */
+  location?: string;
+}
+
+/** A command the engine offers. `source` is "command" or "skill". */
+export interface CommandInfo {
+  name: string;
+  description?: string;
+  source?: string;
+}
+
 export interface ProviderCatalog {
   providers: {
     id: string;
@@ -168,6 +203,7 @@ export function promptAsync(
   body: {
     parts: { type: "text"; text: string; synthetic?: boolean }[];
     model?: { providerID: string; modelID: string };
+    /** Which primary agent answers this turn — "build", "plan", or a custom one. */
     agent?: string;
   }
 ): Promise<void> {
@@ -249,6 +285,33 @@ export function rejectQuestion(requestID: string): Promise<void> {
   return call<void>(`question/${encodeURIComponent(requestID)}/reject`, {
     method: "POST",
   });
+}
+
+export function listAgents(): Promise<AgentInfo[]> {
+  return call<AgentInfo[]>("agent");
+}
+
+export function listSkills(): Promise<SkillInfo[]> {
+  return call<SkillInfo[]>("skill");
+}
+
+export function listCommands(): Promise<CommandInfo[]> {
+  return call<CommandInfo[]>("command");
+}
+
+/**
+ * The agents worth offering as a mode: primary, and not the server's own.
+ *
+ * Filtering on a missing description rather than on a hardcoded name list, so
+ * an agent added by a future OpenCode release, or by a user's own config, shows
+ * up without a change here.
+ */
+export function selectableAgents(agents: AgentInfo[]): AgentInfo[] {
+  return agents.filter((a) => a.mode === "primary" && !!a.description);
+}
+
+export function subagents(agents: AgentInfo[]): AgentInfo[] {
+  return agents.filter((a) => a.mode === "subagent");
 }
 
 export function getProviders(): Promise<ProviderCatalog> {
