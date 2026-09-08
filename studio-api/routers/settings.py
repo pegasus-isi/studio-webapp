@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from models import LLMConfigRequest, SettingsResponse
 
@@ -309,6 +310,19 @@ class UIPreferences(BaseModel):
     # returning user may never want to see again, and the Next server reads
     # this flag when deciding where the app root redirects.
     skip_welcome: bool = False
+    # Which agent engine the chat panel talks to (#367).
+    #
+    # "opencode" makes the panel a client of the supervised `opencode serve`
+    # process, which brings context compaction, cross-session memory,
+    # subagents, MCP and skills — none of which the builtin loop has. It is
+    # opt-in while it is being tried in a real pod: the builtin loop is what
+    # every existing conversation was written against, and a per-user
+    # preference means switching back is a toggle rather than a rollback.
+    #
+    # A string rather than a boolean because the intended end state is one
+    # engine, not two (the builtin loop is to be deleted once this is proven),
+    # and a retired value should read as a stale name, not an inverted flag.
+    chat_engine: Literal["builtin", "opencode"] = "builtin"
 
 
 _UI_PREFS_KEY = "ui_preferences"
@@ -322,9 +336,23 @@ async def get_ui_preferences() -> UIPreferences:
     stored = await db.get_setting(_UI_PREFS_KEY, {}) or {}
     if not isinstance(stored, dict):
         stored = {}
-    return UIPreferences(**{
-        k: v for k, v in stored.items() if k in UIPreferences.model_fields
-    })
+    known = {k: v for k, v in stored.items() if k in UIPreferences.model_fields}
+    try:
+        return UIPreferences(**known)
+    except ValidationError:
+        # A stored *value* that no longer validates — a retired `chat_engine`
+        # name, a string where a bool belongs — must not 500 this endpoint and
+        # take every other preference down with it. Keep the fields that stand
+        # on their own and default the rest.
+        safe: dict[str, object] = {}
+        for key, value in known.items():
+            try:
+                UIPreferences(**{key: value})
+            except ValidationError:
+                log.warning("ui_preference_invalid", key=key, value=value)
+                continue
+            safe[key] = value
+        return UIPreferences(**safe)
 
 
 @router.put("/ui", response_model=UIPreferences)

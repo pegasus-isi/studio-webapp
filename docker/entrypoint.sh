@@ -140,6 +140,42 @@ if ! grep -qs '^pegasus\.agent\.url' "${PEGASUS_CONF}"; then
     echo "[studio] Wrote pegasus.agent.url to ${PEGASUS_CONF}"
 fi
 
+# ---- OpenCode server password ----
+# The chat panel is a client of `opencode serve` (#367), which runs on loopback
+# with the user's full file and shell authority. Basic auth is the only thing
+# between it and anything else running in the pod (a workflow job, say), so a
+# password is generated per user rather than shared or omitted.
+#
+# Written to a 0600 file under $STUDIO_DIR — not minted per boot — so a restart
+# does not invalidate the credential studio-api and the wrapper script are
+# both reading, and exported so supervisord's children inherit it.
+#
+# python3 rather than openssl: openssl is not guaranteed in this image, and a
+# missing binary here would take the whole entrypoint down under `set -e`.
+OPENCODE_PW_FILE="${STUDIO_DIR}/opencode-password"
+if [ ! -s "${OPENCODE_PW_FILE}" ]; then
+    # Per-process temp name, not a fixed ".tmp": the home directory is NFS and
+    # shared, so two pods first-booting at once would write the same path and
+    # the losing rename would leave studio-api reading a password the engine
+    # never saw — a 401 nothing in the UI can clear.
+    OPENCODE_PW_TMP="${OPENCODE_PW_FILE}.$$"
+    if ( umask 077 && "${PYTHON}" -c 'import secrets,sys; sys.stdout.write(secrets.token_urlsafe(32))' \
+         > "${OPENCODE_PW_TMP}" ) 2>/dev/null; then
+        chmod 600 "${OPENCODE_PW_TMP}"
+        mv "${OPENCODE_PW_TMP}" "${OPENCODE_PW_FILE}"
+        echo "[studio] Generated OpenCode server password at ${OPENCODE_PW_FILE}"
+    else
+        rm -f "${OPENCODE_PW_TMP}"
+        echo "[studio] WARNING: could not generate an OpenCode server password —" \
+             "the chat engine will not start" >&2
+    fi
+fi
+if [ -s "${OPENCODE_PW_FILE}" ]; then
+    chmod 600 "${OPENCODE_PW_FILE}" 2>/dev/null || true
+    OPENCODE_SERVER_PASSWORD="$(cat "${OPENCODE_PW_FILE}")"
+    export OPENCODE_SERVER_PASSWORD
+fi
+
 # Propagate saved LLM config to installed tool adapters. Run in the background
 # with a hard timeout so it can NEVER gate supervisord startup: this touches the
 # NFS-backed SQLite DB, and a blocked write here would otherwise stall the

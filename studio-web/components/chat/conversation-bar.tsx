@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useChatStore } from "@/lib/stores/chat-store";
+import { forgetOpenCodeSession } from "@/lib/stores/opencode-store";
 
 /**
  * Conversation controls for the chat header: a "New" button plus a dropdown
@@ -50,8 +51,14 @@ export function ConversationBar() {
       </button>
       <button
         onClick={() => {
-          if (window.confirm("Clear all messages in this conversation?"))
-            clearMessages();
+          if (!window.confirm("Clear all messages in this conversation?")) return;
+          clearMessages();
+          // On the OpenCode engine the transcript is the session's, not this
+          // store's, so clearing only the local messages left the same
+          // conversation on screen and made the control look broken. The
+          // session itself is left on the server — it is the user's history,
+          // and clearing a Studio conversation is not a destructive act on it.
+          forgetOpenCodeSession(activeId);
         }}
         title="Clear conversation"
         className="rounded px-1.5 py-1 text-fgmuted hover:bg-muted hover:text-fg"
@@ -112,7 +119,12 @@ export function ConversationBar() {
                 ✎
               </button>
               <button
-                onClick={() => deleteConversation(c.id)}
+                onClick={() => {
+                  deleteConversation(c.id);
+                  // Otherwise the pairing outlives the conversation and the
+                  // persisted map grows for the life of the browser profile.
+                  forgetOpenCodeSession(c.id);
+                }}
                 title="Delete"
                 className="rounded p-0.5 text-fgsubtle opacity-0 group-hover:opacity-100 hover:text-rose-500"
               >

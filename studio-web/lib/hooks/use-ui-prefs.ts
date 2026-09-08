@@ -35,6 +35,10 @@ const FALLBACK: api.UIPreferences = {
   // Only read by the checkbox on the welcome page and in Settings; the
   // redirect itself is decided server-side from the stored value.
   skip_welcome: false,
+  // Matches the server default (#367). The builtin loop is what every existing
+  // conversation was written against, so a slow or failed preference fetch
+  // must not silently swap the chat engine underneath someone mid-sentence.
+  chat_engine: "builtin",
 };
 
 export function useUIPreferences() {

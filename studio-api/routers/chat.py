@@ -18,6 +18,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from llm.model_limits import FLOOR_MAX_TOKENS, anthropic_max_tokens
 from models import ChatHistoryResponse, ChatMessage
 
 log = structlog.get_logger()
@@ -195,9 +196,14 @@ _MAX_UI_RESULT_CHARS = 2000        # per tool result shown in the UI
 _TRUNCATED_STOP_REASONS = {"length", "max_tokens", "incomplete"}
 
 # Only the Anthropic Messages API makes max_tokens mandatory; the OpenAI
-# transports omit it and let the model decide. 8192 is the ceiling every
-# Messages-API model accepts — override per provider via extra_config.max_tokens.
-_ANTHROPIC_DEFAULT_MAX_TOKENS = 8192
+# transports omit it and let the model decide.
+#
+# The ceiling for that one transport is resolved from the selected model rather
+# than fixed here (llm/model_limits.py): a constant 8192 was the value every
+# Messages-API model accepts, which truncated every current model at a
+# sixteenth of its real 128K capacity — and on a reasoning model, whose
+# thinking is billed against the same budget, the cap could be spent before any
+# visible content appeared. `extra_config.max_tokens` still overrides it.
 
 
 def _coerce_max_tokens(value: Any, provider: str) -> int | None:
@@ -611,10 +617,13 @@ async def _anthropic_stream(
     calls and usage (same shape the tool-calling loop expects).
 
     Unlike the OpenAI transports, the Messages API *requires* ``max_tokens``,
-    so this is the one path that cannot defer the ceiling to the model. When
-    ``extra_config.max_tokens`` is unset we send ``_ANTHROPIC_DEFAULT_MAX_TOKENS``
-    — the ceiling every Messages-API model accepts. Raise it per provider for
-    models that allow more.
+    so this is the one path that cannot defer the ceiling to the model. The
+    caller resolves it from the selected model (llm/model_limits.py); the floor
+    here is only for a direct call that passes nothing.
+
+    Streaming, which this is, is also what makes a large ceiling safe: the SDKs
+    require it above ~16K because a non-streamed response that big outruns the
+    HTTP timeout.
     """
     url = f"{base_url}/v1/messages"
     headers = {
@@ -624,7 +633,7 @@ async def _anthropic_stream(
     }
     body = {
         "model": model,
-        "max_tokens": max_tokens or _ANTHROPIC_DEFAULT_MAX_TOKENS,
+        "max_tokens": max_tokens or FLOOR_MAX_TOKENS,
         "system": system_prompt,
         "messages": messages,
         "tools": TOOL_DEFINITIONS_ANTHROPIC,
@@ -1250,6 +1259,12 @@ async def chat_stream(request: Request) -> StreamingResponse:
         else (config.get("extra_config") or {}).get("max_tokens"),
         provider,
     )
+    # Nothing configured, and this is the transport that must send a number:
+    # ask the model what it allows instead of assuming the lowest common
+    # denominator. Cached per model, and it falls back to that same floor if
+    # the provider cannot answer, so a turn is never held up by this.
+    if max_tokens is None and is_anthropic:
+        max_tokens = await anthropic_max_tokens(base_url, api_key, model)
 
     system_prompt = _load_system_prompt(agent_id)
 
@@ -1622,6 +1637,19 @@ async def set_command_approval(request: Request) -> dict:
         body = {}
     value = bool(body.get("require_approval", True))
     await chat_permissions.set_require_approval(db, value)
+
+    # The OpenCode engine enforces this setting as a `permission` rule in its
+    # generated config (#367), so storing it is only half the job: without
+    # propagating, Settings said "commands are confirmed" while the engine kept
+    # whatever rule it was last given — including `allow` — for the rest of the
+    # pod's life. The builtin loop reads the setting per turn and does not care.
+    try:
+        from llm.propagator import LLMPropagator
+
+        await LLMPropagator().propagate(db)
+    except Exception as e:
+        log.warning("command_approval_propagate_failed", error=str(e))
+
     return {"require_approval": value}
 
 
@@ -1660,6 +1688,29 @@ async def list_agents() -> dict:
     from routers.knowledge import list_agents
 
     return await list_agents()
+
+
+@router.get("/scope-block")
+async def scope_block(type: str, id: str) -> dict[str, str | None]:
+    """The Active Context block for a workflow or run, as plain text.
+
+    The builtin loop appends this to its own system prompt, where the browser
+    never sees it. The OpenCode engine has no such seam: the agent loop is not
+    ours, so the caller that knows which workflow the conversation is about is
+    the panel, and it sends the block as a synthetic prompt part — visible to
+    the model, hidden by the renderer, and re-resolved every turn so a
+    finished run stops being described as running.
+
+    Returns ``{"block": null}`` for an id that resolves to nothing, which is
+    the same "no context, carry on" outcome the builtin path already has.
+    """
+    from services.chat_scope import SCOPE_TYPES, build_scope_block
+
+    if type not in SCOPE_TYPES:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown scope type: {type}"
+        )
+    return {"block": await build_scope_block(type, id)}
 
 
 @router.get("/history", response_model=ChatHistoryResponse)

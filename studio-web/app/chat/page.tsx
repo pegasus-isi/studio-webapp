@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { ChatPanel } from "@/components/chat/chat-panel";
-import { ChatInput } from "@/components/chat/chat-input";
+import { ChatEngine } from "@/components/chat/chat-engine";
 import { ConversationBar } from "@/components/chat/conversation-bar";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 import { useThemeStore, applyTheme } from "@/lib/stores/theme-store";
@@ -55,11 +54,11 @@ export default function ChatEmbedPage() {
         </span>
         <ConversationBar />
       </div>
-      <div className="flex-1 overflow-hidden">
-        <ChatPanel />
-      </div>
+      {/* Above the transcript, not between it and the composer: the engine now
+          owns both halves (#367), so a strip rendered after it would sit under
+          the composer instead of over it. */}
       {notebookName && (
-        <div className="flex items-center gap-2 border-t border-line bg-muted px-4 py-1.5 text-xs">
+        <div className="flex items-center gap-2 border-b border-line bg-muted px-4 py-1.5 text-xs">
           <input
             type="checkbox"
             checked={include}
@@ -76,7 +75,7 @@ export default function ChatEmbedPage() {
           </span>
         </div>
       )}
-      <ChatInput />
+      <ChatEngine />
     </div>
   );
 }
