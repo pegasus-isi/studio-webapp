@@ -107,6 +107,15 @@ export function useOpenCodeChat() {
     useWorkflowProjects();
 
   const [state, dispatch] = useReducer(reduce, EMPTY);
+  /**
+   * The directory this session is rooted in, as the server reports it.
+   *
+   * Not the same as the directory we asked for at creation: a session made
+   * before the workflow scope was known keeps the directory it was created
+   * with. Agents, skills and commands all resolve per directory, so anything
+   * describing what this session can use has to ask about *this* one.
+   */
+  const [sessionDirectory, setSessionDirectory] = useState<string | undefined>();
 
   // The session the effects are allowed to act on. Read from a ref inside the
   // stream handler so a session switch can't have events from the old session
@@ -179,6 +188,27 @@ export function useOpenCodeChat() {
   // a resolved approval's card back on screen.
   const syncSeq = useRef(0);
   const statusSeq = useRef(0);
+
+  useEffect(() => {
+    if (!sessionID) {
+      setSessionDirectory(undefined);
+      return;
+    }
+    let cancelled = false;
+    oc.getSession(sessionID)
+      .then((session) => {
+        if (!cancelled) setSessionDirectory(session.directory);
+      })
+      .catch(() => {
+        // Leaving it undefined means the catalogs fall back to the engine's
+        // own default directory, which is a worse answer than the session's
+        // but a better one than none.
+        if (!cancelled) setSessionDirectory(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionID]);
 
   const load = useCallback(
     async (id: string) => {
@@ -555,6 +585,7 @@ export function useOpenCodeChat() {
     permissions: state.permissions,
     questions: state.questions,
     connection: state.connection,
+    sessionDirectory,
     agent,
     setAgent,
     retry,

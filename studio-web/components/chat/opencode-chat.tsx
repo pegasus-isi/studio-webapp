@@ -94,15 +94,19 @@ export function OpenCodeChat() {
   // appears without a change here.
   useEffect(() => {
     let cancelled = false;
-    oc.listAgents()
+    oc.listAgents(chat.sessionDirectory)
       .then((list) => {
         if (!cancelled) setAgents(list);
       })
-      .catch(() => setAgents([]));
+      .catch(() => {
+        if (!cancelled) setAgents([]);
+      });
     return () => {
       cancelled = true;
     };
-  }, [catalogAttempt]);
+    // Re-read when the session moves: a workflow project can define its own
+    // agents under .opencode/, and the picker should offer them.
+  }, [catalogAttempt, chat.sessionDirectory]);
 
   // Why the panel is empty, when it is. A failed fetch alone leaves the user
   // looking at a blank transcript with nothing to act on; "the engine isn't
@@ -414,7 +418,12 @@ export function OpenCodeChat() {
               task tool. So the useful thing to show is what is loaded and
               where it came from, which is also the fastest way to answer "are
               my Pegasus skills actually here?". */}
-          {showCapabilities && <CapabilitiesPanel agents={agents} />}
+          {showCapabilities && (
+            <CapabilitiesPanel
+              agents={agents}
+              directory={chat.sessionDirectory}
+            />
+          )}
 
           {activeAgent?.description && (
             <p className="text-xs text-fgmuted">{activeAgent.description}</p>
@@ -496,35 +505,61 @@ function hasRenderableContent(message: RenderedMessage): boolean {
  * gone missing before (#179), and "is my Pegasus skill loaded?" was previously
  * only answerable from a terminal.
  */
-function CapabilitiesPanel({ agents }: { agents: oc.AgentInfo[] | null }) {
-  const [skills, setSkills] = useState<oc.SkillInfo[] | null>(null);
-  const [commands, setCommands] = useState<oc.CommandInfo[] | null>(null);
+type Catalog<T> =
+  | { status: "loading" }
+  | { status: "ok"; items: T[] }
+  | { status: "error" };
+
+function CapabilitiesPanel({
+  agents,
+  directory,
+}: {
+  agents: oc.AgentInfo[] | null;
+  directory?: string;
+}) {
+  const [skills, setSkills] = useState<Catalog<oc.SkillInfo>>({
+    status: "loading",
+  });
+  const [commands, setCommands] = useState<Catalog<oc.CommandInfo>>({
+    status: "loading",
+  });
 
   useEffect(() => {
     let cancelled = false;
+    setSkills({ status: "loading" });
+    setCommands({ status: "loading" });
     void oc
-      .listSkills()
-      .then((list) => !cancelled && setSkills(list))
-      .catch(() => !cancelled && setSkills([]));
+      .listSkills(directory)
+      .then((items) => !cancelled && setSkills({ status: "ok", items }))
+      // A failed lookup is not an empty one. This panel exists to answer "are
+      // my skills loaded?", so reporting "none" when we could not ask is the
+      // one wrong answer it must never give.
+      .catch(() => !cancelled && setSkills({ status: "error" }));
     void oc
-      .listCommands()
-      .then((list) => !cancelled && setCommands(list))
-      .catch(() => !cancelled && setCommands([]));
+      .listCommands(directory)
+      .then((items) => !cancelled && setCommands({ status: "ok", items }))
+      .catch(() => !cancelled && setCommands({ status: "error" }));
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [directory]);
 
   const delegates = agents ? oc.subagents(agents) : [];
   // A skill is also offered as a command of the same name, so listing both in
   // full would show everything twice.
-  const skillNames = new Set((skills ?? []).map((s) => s.name));
-  const ownCommands = (commands ?? []).filter((c) => !skillNames.has(c.name));
+  const skillNames = new Set(
+    skills.status === "ok" ? skills.items.map((s) => s.name) : []
+  );
+  const ownCommands =
+    commands.status === "ok"
+      ? commands.items.filter((c) => !skillNames.has(c.name))
+      : [];
 
   return (
     <div className="max-h-56 space-y-3 overflow-auto rounded-md border border-line bg-muted p-2.5 text-xs">
       <Capability
         title="Subagents"
+        status={agents === null ? "loading" : "ok"}
         empty="None — this engine runs every step itself."
         items={delegates.map((a) => ({
           name: a.name,
@@ -534,20 +569,24 @@ function CapabilitiesPanel({ agents }: { agents: oc.AgentInfo[] | null }) {
       />
       <Capability
         title="Skills"
-        loading={skills === null}
+        status={skills.status}
         empty="No skills loaded."
-        items={(skills ?? []).map((s) => ({
-          name: s.name,
-          detail: s.description,
-          // "<built-in>" or the SKILL.md path — which is the answer to "is the
-          // marketplace checkout actually being read?".
-          source: s.location,
-        }))}
+        items={
+          skills.status === "ok"
+            ? skills.items.map((s) => ({
+                name: s.name,
+                detail: s.description,
+                // "<built-in>" or the SKILL.md path — the answer to "is the
+                // marketplace checkout actually being read?".
+                source: s.location,
+              }))
+            : []
+        }
         note="Matched by description when they apply; ask in plain language."
       />
       <Capability
         title="Commands"
-        loading={commands === null}
+        status={commands.status}
         empty="No commands."
         items={ownCommands.map((c) => ({ name: c.name, detail: c.description }))}
       />
@@ -560,24 +599,31 @@ function Capability({
   items,
   empty,
   note,
-  loading = false,
+  status,
 }: {
   title: string;
   items: { name: string; detail?: string; source?: string }[];
   empty: string;
   note?: string;
-  loading?: boolean;
+  status: "loading" | "ok" | "error";
 }) {
+  const loading = status === "loading";
   return (
     <div>
       <div className="flex items-baseline gap-2">
         <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
           {title}
         </h4>
-        {!loading && <span className="text-fgsubtle">{items.length}</span>}
+        {status === "ok" && (
+          <span className="text-fgsubtle">{items.length}</span>
+        )}
       </div>
       {note && <p className="mt-0.5 text-fgsubtle">{note}</p>}
-      {loading ? (
+      {status === "error" ? (
+        <p className="mt-1 text-amber-600 dark:text-amber-400">
+          Could not check — the engine did not answer.
+        </p>
+      ) : loading ? (
         <p className="mt-1 text-fgsubtle">Loading…</p>
       ) : items.length === 0 ? (
         <p className="mt-1 text-fgsubtle">{empty}</p>

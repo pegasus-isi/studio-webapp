@@ -74,7 +74,9 @@ export interface QuestionRequest {
  * the user chooses — `build` executes, `plan` is OpenCode's plan mode and
  * denies every edit tool server-side, so it is a real guarantee rather than a
  * prompt asking nicely. A **subagent** is delegated to by the primary agent
- * through its task tool and is never selected directly.
+ * through its task tool and is never selected directly. **all** is both: it can
+ * be chosen *and* delegated to, so it belongs in both lists rather than
+ * neither, which is where a `mode === "primary"` test would leave it.
  *
  * `compaction`, `summary` and `title` are also primary but are the server's own
  * machinery; they are distinguishable only by carrying no description, which is
@@ -83,7 +85,7 @@ export interface QuestionRequest {
 export interface AgentInfo {
   name: string;
   description?: string;
-  mode: "primary" | "subagent";
+  mode: "primary" | "subagent" | "all";
   model?: { providerID: string; modelID: string };
 }
 
@@ -287,16 +289,29 @@ export function rejectQuestion(requestID: string): Promise<void> {
   });
 }
 
-export function listAgents(): Promise<AgentInfo[]> {
-  return call<AgentInfo[]>("agent");
+/**
+ * Agents, skills and commands are resolved **per directory**.
+ *
+ * A project carries its own under `.opencode/`, and the engine answers for
+ * whichever directory it is asked about — defaulting to the one it was started
+ * in, which in a pod is $HOME. Asking without one therefore describes a
+ * directory the session is not in: a workflow's own agents and skills would be
+ * missing from a panel whose whole job is saying what this session can use.
+ */
+function scoped(path: string, directory?: string): string {
+  return directory ? `${path}?directory=${encodeURIComponent(directory)}` : path;
 }
 
-export function listSkills(): Promise<SkillInfo[]> {
-  return call<SkillInfo[]>("skill");
+export function listAgents(directory?: string): Promise<AgentInfo[]> {
+  return call<AgentInfo[]>(scoped("agent", directory));
 }
 
-export function listCommands(): Promise<CommandInfo[]> {
-  return call<CommandInfo[]>("command");
+export function listSkills(directory?: string): Promise<SkillInfo[]> {
+  return call<SkillInfo[]>(scoped("skill", directory));
+}
+
+export function listCommands(directory?: string): Promise<CommandInfo[]> {
+  return call<CommandInfo[]>(scoped("command", directory));
 }
 
 /**
@@ -307,11 +322,13 @@ export function listCommands(): Promise<CommandInfo[]> {
  * up without a change here.
  */
 export function selectableAgents(agents: AgentInfo[]): AgentInfo[] {
-  return agents.filter((a) => a.mode === "primary" && !!a.description);
+  return agents.filter(
+    (a) => (a.mode === "primary" || a.mode === "all") && !!a.description
+  );
 }
 
 export function subagents(agents: AgentInfo[]): AgentInfo[] {
-  return agents.filter((a) => a.mode === "subagent");
+  return agents.filter((a) => a.mode === "subagent" || a.mode === "all");
 }
 
 export function getProviders(): Promise<ProviderCatalog> {
