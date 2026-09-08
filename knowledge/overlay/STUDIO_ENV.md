@@ -155,6 +155,17 @@ produced this, verbatim, in the chat window:
 
 which the user has to read as JSON and answer by guessing what it wanted.
 
+## Conversation History
+
+Previous user messages and assistant replies are completed context for
+understanding the ongoing conversation. They have already been executed and
+their tool outputs are already applied.
+
+Only execute the instructions in the current user request — the last message
+with role "user". Do not re-run, re-create, or re-verify files, directories,
+or workflow steps from earlier turns unless the current request explicitly
+asks to redo them.
+
 ## Reading PDFs
 
 Your file-reading tool returns text. Handed a PDF it gets binary and you will

@@ -7,7 +7,7 @@ import { useConsumeChatStream } from "@/lib/hooks/use-chat-stream";
 import { apiUrl } from "@/lib/urls";
 import { ChatMarkdown } from "@/components/chat/markdown";
 import * as api from "@/lib/api/client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 // Openers phrased as a scientist would say them. Each maps to a skill the
@@ -69,6 +69,10 @@ export function ChatPanel() {
   const loadHistory = useChatStore((s) => s.loadHistory);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const prevLenRef = useRef(messages.length);
+  const prevStreamingRef = useRef(isStreaming);
   // Conversations we've already tried to hydrate from the server this session.
   const syncedRef = useRef<Set<string>>(new Set());
 
@@ -119,20 +123,49 @@ export function ChatPanel() {
   const last = messages[messages.length - 1];
   const showThinking = isStreaming && (!last || last.role === "user");
 
-  // Only auto-scroll when the user is already near the bottom, so a token burst
-  // doesn't yank them away while they're reading earlier output.
-  useEffect(() => {
+  // Keep isAtBottom in sync with manual scroll — respected at end-of-turn
+  const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    const nearBottom =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (nearBottom) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    setIsAtBottom(atBottom);
+  };
+
+  // Instant bottom on mount / conversation switch (most recent visible)
+  useLayoutEffect(() => {
+    setIsAtBottom(true);
+    bottomRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior, block: "end" });
+    prevLenRef.current = messages.length;
+    prevStreamingRef.current = isStreaming;
+  }, [activeId]);
+
+  // On user send — even if not at bottom, go to bottom for incoming assistant
+  useEffect(() => {
+    if (messages.length > prevLenRef.current) {
+      const last = messages[messages.length - 1];
+      if (last?.role === "user") {
+        setIsAtBottom(true);
+        bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      }
     }
-  }, [messages, showThinking]);
+    prevLenRef.current = messages.length;
+  }, [messages]);
+
+  // On assistant finished — if still at bottom, scroll to top of new assistant bubble
+  useEffect(() => {
+    const wasStreaming = prevStreamingRef.current;
+    const nowStreaming = isStreaming;
+    prevStreamingRef.current = nowStreaming;
+    if (wasStreaming && !nowStreaming && isAtBottom) {
+      const last = messages[messages.length - 1];
+      if (last?.role === "assistant") {
+        msgRefs.current.get(last.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+  }, [isStreaming, messages, isAtBottom]);
 
   return (
-    <div ref={scrollRef} className="h-full overflow-auto p-4">
+    <div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-auto p-4">
       {messages.length === 0 ? (
         <div className="flex h-full items-center justify-center">
           <div className="text-center text-fgsubtle">
@@ -167,7 +200,15 @@ export function ChatPanel() {
             msg.role === "system" ? (
               <ContextDivider key={msg.id} label={msg.content} />
             ) : (
-              <MessageBubble key={msg.id} msg={msg} />
+              <div
+                key={msg.id}
+                ref={(el) => {
+                  if (el) msgRefs.current.set(msg.id, el);
+                  else msgRefs.current.delete(msg.id);
+                }}
+              >
+                <MessageBubble msg={msg} />
+              </div>
             )
           )}
           {showThinking && <ThinkingIndicator />}
