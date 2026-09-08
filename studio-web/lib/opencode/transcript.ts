@@ -28,6 +28,12 @@ import type {
   QuestionRequest,
 } from "@/lib/opencode/client";
 
+/**
+ * Part fields a delta must never touch: they say what the part *is*, and the
+ * renderer registry and the ordering both key off them.
+ */
+const IDENTITY_FIELDS = new Set(["id", "type", "sessionID", "messageID"]);
+
 export interface RenderedMessage {
   info: Message;
   parts: Part[];
@@ -43,6 +49,14 @@ export interface State {
   error: string | null;
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
+  /**
+   * When each pending request was first held, by request id.
+   *
+   * Only used to reconcile against a server snapshot: a request that arrived
+   * *after* the snapshot was asked for is not missing from it, it is newer
+   * than it, and must survive the reconciliation.
+   */
+  pendingSince: Record<string, number>;
   connection: Connection;
 }
 
@@ -66,6 +80,17 @@ export type Action =
   | { kind: "permission-done"; id: string }
   | { kind: "question"; request: QuestionRequest }
   | { kind: "question-done"; id: string }
+  /**
+   * The server's full set of pending requests for this session, as of
+   * `since`. Replaces what we hold rather than adding to it, so a request
+   * resolved while the stream was down stops being offered.
+   */
+  | {
+      kind: "permissions-synced";
+      requests: PermissionRequest[];
+      since: number;
+    }
+  | { kind: "questions-synced"; requests: QuestionRequest[]; since: number }
   | { kind: "connection"; connection: Connection };
 
 export const EMPTY: State = {
@@ -75,6 +100,7 @@ export const EMPTY: State = {
   error: null,
   permissions: [],
   questions: [],
+  pendingSince: {},
   connection: "connecting",
 };
 
@@ -131,6 +157,11 @@ export function reduce(state: State, action: Action): State {
       // the turn instead of inventing a part with no type.
       const held = state.parts[action.messageID]?.[action.partID];
       if (!held) return state;
+      // A part's identity is not something a delta may grow. `field` names a
+      // field to append to and today is always "text", but these are strings
+      // too: a delta naming `type` would rewrite it to "text!" and the part
+      // would fall out of the renderer registry as unsupported content.
+      if (IDENTITY_FIELDS.has(action.field)) return state;
       const current = (held as unknown as Record<string, unknown>)[action.field];
       if (typeof current !== "string") return state;
       const next = { ...held, [action.field]: current + action.delta } as Part;
@@ -170,21 +201,55 @@ export function reduce(state: State, action: Action): State {
     case "permission":
       return state.permissions.some((p) => p.id === action.request.id)
         ? state
-        : { ...state, permissions: [...state.permissions, action.request] };
+        : {
+            ...state,
+            permissions: [...state.permissions, action.request],
+            pendingSince: {
+              ...state.pendingSince,
+              [action.request.id]: Date.now(),
+            },
+          };
     case "permission-done":
       return {
         ...state,
         permissions: state.permissions.filter((p) => p.id !== action.id),
+        pendingSince: without(state.pendingSince, action.id),
       };
     case "question":
       return state.questions.some((q) => q.id === action.request.id)
         ? state
-        : { ...state, questions: [...state.questions, action.request] };
+        : {
+            ...state,
+            questions: [...state.questions, action.request],
+            pendingSince: {
+              ...state.pendingSince,
+              [action.request.id]: Date.now(),
+            },
+          };
     case "question-done":
       return {
         ...state,
         questions: state.questions.filter((q) => q.id !== action.id),
+        pendingSince: without(state.pendingSince, action.id),
       };
+    case "permissions-synced": {
+      const [permissions, pendingSince] = reconcile(
+        state.permissions,
+        action.requests,
+        state.pendingSince,
+        action.since
+      );
+      return { ...state, permissions, pendingSince };
+    }
+    case "questions-synced": {
+      const [questions, pendingSince] = reconcile(
+        state.questions,
+        action.requests,
+        state.pendingSince,
+        action.since
+      );
+      return { ...state, questions, pendingSince };
+    }
     case "connection":
       return { ...state, connection: action.connection };
   }
@@ -198,6 +263,54 @@ export function selectMessages(state: State): RenderedMessage[] {
       info,
       parts: Object.values(state.parts[info.id] ?? {}).sort(byId),
     }));
+}
+
+function without(
+  map: Record<string, number>,
+  id: string
+): Record<string, number> {
+  if (!(id in map)) return map;
+  const next = { ...map };
+  delete next[id];
+  return next;
+}
+
+/**
+ * Reconcile held pending requests against the server's snapshot.
+ *
+ * Appending the snapshot is not enough: a request answered while the stream
+ * was down is gone from the server and its `replied` event was never seen, so
+ * a card for it would stay on screen and do nothing when clicked. Replacing
+ * outright is not enough either — a request raised *after* the snapshot was
+ * asked for is newer than it, not absent from it, and dropping it would block
+ * the turn with no dialog at all.
+ *
+ * So: the snapshot is the truth for everything that existed when it was taken,
+ * and anything held since then is kept.
+ */
+function reconcile<T extends { id: string }>(
+  held: T[],
+  snapshot: T[],
+  pendingSince: Record<string, number>,
+  since: number
+): [T[], Record<string, number>] {
+  const snapshotIds = new Set(snapshot.map((r) => r.id));
+  const newer = held.filter(
+    (r) => !snapshotIds.has(r.id) && (pendingSince[r.id] ?? 0) >= since
+  );
+  const next = [...snapshot, ...newer];
+  const nextSince: Record<string, number> = {};
+  for (const request of next) {
+    nextSince[request.id] = pendingSince[request.id] ?? since;
+  }
+  // Ids belonging to the other kind of request are left alone: one map serves
+  // both, and a permission sync must not forget when a question arrived.
+  for (const [id, at] of Object.entries(pendingSince)) {
+    const wasOurs =
+      held.some((r) => r.id === id) || snapshotIds.has(id);
+    if (!wasOurs) nextSince[id] = at;
+  }
+  return [next, nextSince];
 }
 
 function byId(a: { id: string }, b: { id: string }): number {

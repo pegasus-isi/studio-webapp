@@ -40,13 +40,19 @@ npm run build
 
 # Frontend (needs `npm ci` first so node_modules/.bin/tsc exists)
 (cd studio-web && npm ci && node_modules/.bin/tsc --noEmit)   # strict mode
+(cd studio-web && npm test)                                   # vitest, lib/ only
 ```
 
-- `.github/workflows/deploy.yml` now runs both gates (pytest + tsc) as a `test`
-  job that gates build/push, and builds without pushing on `pull_request` (added
-  in PR #57). Run them locally anyway before pushing to avoid a red PR.
-- On the frontend use `tsc`, **not** `npm run lint` (eslint isn't installed) or `npm test`
-  (zero test files exist). Single backend test: `pytest tests/test_workflows.py::test_x -q`
+- `.github/workflows/deploy.yml` runs all three gates (pytest, tsc, vitest) as a
+  `test` job that gates build/push, and builds without pushing on
+  `pull_request` (added in PR #57). Run them locally anyway before pushing to
+  avoid a red PR.
+- On the frontend `npm run lint` is still not a gate (eslint isn't installed).
+  `npm test` is: vitest over `lib/**/*.test.ts`, node environment, no DOM —
+  added in #367 for `lib/opencode/transcript.ts`, the chat transcript state
+  machine, whose rules come from measured server behaviour and which three
+  review rounds found ordering and reconciliation bugs in. Components are still
+  covered only by `tsc`. Single backend test: `pytest tests/test_workflows.py::test_x -q`
   (run from `studio-api/`).
 
 ## Architecture

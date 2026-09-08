@@ -197,6 +197,68 @@ export function useOpenCodeChat() {
     [convId, clearSession]
   );
 
+  /**
+   * Reconcile what the engine is blocked on against what we are showing.
+   *
+   * Permissions and questions are only announced through events, so anything
+   * raised while the stream was down has no card, and anything resolved while
+   * it was down has a card that no longer means anything. Both strand the
+   * user: the first leaves a turn stopped with nothing to click, the second
+   * leaves a button that does nothing.
+   *
+   * The lists are the truth, so this replaces rather than adds — see
+   * `reconcile` in transcript.ts for how a request raised *after* the snapshot
+   * survives it.
+   *
+   * A failure here used to be swallowed, which is the worst of the three
+   * outcomes: the turn is blocked, no card is shown, and nothing says so. So
+   * it retries, and then reports.
+   */
+  const syncPending = useCallback(
+    async (id: string, signal: AbortSignal) => {
+      const stillOurs = () => !signal.aborted && sessionRef.current === id;
+
+      for (let attemptNumber = 0; attemptNumber < 3; attemptNumber += 1) {
+        const since = Date.now();
+        try {
+          const [permissions, questions] = await Promise.all([
+            oc.listPermissions(),
+            oc.listQuestions(),
+          ]);
+          if (!stillOurs()) return;
+          dispatch({
+            kind: "permissions-synced",
+            requests: permissions.filter((r) => r.sessionID === id),
+            since,
+          });
+          dispatch({
+            kind: "questions-synced",
+            requests: questions.filter((r) => r.sessionID === id),
+            since,
+          });
+          return;
+        } catch {
+          if (!stillOurs()) return;
+          // 300ms, 600ms. The engine restarting is the common cause and it
+          // comes back quickly; a longer wait would just extend the window in
+          // which a pending dialog is invisible.
+          await new Promise((resolve) =>
+            setTimeout(resolve, 300 * 2 ** attemptNumber)
+          );
+        }
+      }
+
+      if (!stillOurs()) return;
+      dispatch({
+        kind: "error",
+        error:
+          "Could not check whether the assistant is waiting on an approval. " +
+          "If the reply seems stuck, reload or restart the engine.",
+      });
+    },
+    []
+  );
+
   // Load the transcript, then follow it. Re-reading on every (re)connection is
   // what makes a dropped stream harmless: whatever happened while we were
   // disconnected is in OpenCode, and this asks for it.
@@ -228,42 +290,7 @@ export function useOpenCodeChat() {
           })
           .catch(() => undefined);
 
-        // Anything the engine is blocked on. Both are asked through events, so
-        // one raised while the stream was down leaves the turn stopped with no
-        // dialog on screen and no way for the user to know why. Questions were
-        // missed here at first, which made a question asked during a
-        // navigation strand the turn permanently.
-        //
-        // Both re-check after the await: a conversation switch during the round
-        // trip would otherwise drop the old session's dialog into the
-        // transcript now on screen, and answering it would resume a turn the
-        // user cannot see.
-        const stillOurs = () =>
-          !controller.signal.aborted && sessionRef.current === sessionID;
-
-        void oc
-          .listPermissions()
-          .then((pending) => {
-            if (!stillOurs()) return;
-            for (const request of pending) {
-              if (request.sessionID === sessionID) {
-                dispatch({ kind: "permission", request });
-              }
-            }
-          })
-          .catch(() => undefined);
-
-        void oc
-          .listQuestions()
-          .then((pending) => {
-            if (!stillOurs()) return;
-            for (const request of pending) {
-              if (request.sessionID === sessionID) {
-                dispatch({ kind: "question", request });
-              }
-            }
-          })
-          .catch(() => undefined);
+        void syncPending(sessionID, controller.signal);
       },
       onError: () => dispatch({ kind: "connection", connection: "retrying" }),
       onEvent: (event) => {
@@ -371,7 +398,7 @@ export function useOpenCodeChat() {
     });
 
     return () => controller.abort();
-  }, [sessionID, load]);
+  }, [sessionID, load, syncPending]);
 
   const messages: RenderedMessage[] = useMemo(
     () => selectMessages(state),
