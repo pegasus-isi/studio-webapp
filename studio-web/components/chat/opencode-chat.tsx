@@ -428,6 +428,7 @@ export function OpenCodeChat() {
             <CapabilitiesPanel
               agents={agents}
               directory={chat.sessionDirectory}
+              directoryStatus={chat.directoryStatus}
               attempt={catalogAttempt}
               onRetry={() => {
                 // Re-resolves the session's directory as well as the lists:
@@ -527,11 +528,13 @@ type Catalog<T> =
 function CapabilitiesPanel({
   agents,
   directory,
+  directoryStatus,
   attempt,
   onRetry,
 }: {
   agents: oc.AgentInfo[] | null;
   directory?: string;
+  directoryStatus: "none" | "loading" | "ok" | "error";
   attempt: number;
   onRetry: () => void;
 }) {
@@ -576,13 +579,25 @@ function CapabilitiesPanel({
       ? commands.items.filter((c) => !skillNames.has(c.name))
       : [];
 
+  // A failed *directory* lookup counts as a failure even when every list came
+  // back, because those lists then describe the engine's default directory
+  // rather than this session's — the case that reads as perfectly normal and
+  // is simply wrong.
   const failed =
+    directoryStatus === "error" ||
     skills.status === "error" ||
     commands.status === "error" ||
     (agents?.length ?? 0) === 0;
 
   return (
     <div className="max-h-56 space-y-3 overflow-auto rounded-md border border-line bg-muted p-2.5 text-xs">
+      {directoryStatus === "error" && (
+        <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-amber-700 dark:text-amber-400">
+          Could not tell which folder this chat is working in, so this list may
+          be for the wrong one — anything the workflow itself defines would be
+          missing.
+        </p>
+      )}
       {failed && (
         <button
           onClick={onRetry}

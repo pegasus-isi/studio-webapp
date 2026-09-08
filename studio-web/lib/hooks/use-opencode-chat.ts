@@ -116,6 +116,18 @@ export function useOpenCodeChat() {
    * describing what this session can use has to ask about *this* one.
    */
   const [sessionDirectory, setSessionDirectory] = useState<string | undefined>();
+  /**
+   * Whether we know the session's directory.
+   *
+   * Tracked separately from the value, because "we could not ask" and "the
+   * engine's default" are indistinguishable once both are `undefined` — and
+   * that is the state where the capability lists are wrong while looking
+   * entirely normal, describing $HOME instead of the workflow. A caller that
+   * cannot see the difference cannot warn about it or offer to retry.
+   */
+  const [directoryStatus, setDirectoryStatus] = useState<
+    "none" | "loading" | "ok" | "error"
+  >("none");
 
   // The session the effects are allowed to act on. Read from a ref inside the
   // stream handler so a session switch can't have events from the old session
@@ -192,12 +204,16 @@ export function useOpenCodeChat() {
   useEffect(() => {
     if (!sessionID) {
       setSessionDirectory(undefined);
+      setDirectoryStatus("none");
       return;
     }
     let cancelled = false;
+    setDirectoryStatus("loading");
     oc.getSession(sessionID)
       .then((session) => {
-        if (!cancelled) setSessionDirectory(session.directory);
+        if (cancelled) return;
+        setSessionDirectory(session.directory);
+        setDirectoryStatus("ok");
       })
       .catch(() => {
         // Undefined means the catalogs fall back to the engine's own default
@@ -208,7 +224,9 @@ export function useOpenCodeChat() {
         // is still starting, and without a retry the mistake is permanent —
         // every capability list would describe $HOME for the rest of the
         // session, quietly and plausibly.
-        if (!cancelled) setSessionDirectory(undefined);
+        if (cancelled) return;
+        setSessionDirectory(undefined);
+        setDirectoryStatus("error");
       });
     return () => {
       cancelled = true;
@@ -591,6 +609,7 @@ export function useOpenCodeChat() {
     questions: state.questions,
     connection: state.connection,
     sessionDirectory,
+    directoryStatus,
     agent,
     setAgent,
     retry,
