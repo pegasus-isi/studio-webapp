@@ -101,7 +101,8 @@ export function useOpenCodeChat() {
   const sessionID = useOpenCodeStore((s) => s.sessionByConv[convId]);
   const setSession = useOpenCodeStore((s) => s.setSession);
   const clearSession = useOpenCodeStore((s) => s.clearSession);
-  const { data: projectData } = useWorkflowProjects();
+  const { data: projectData, isPending: projectsPending } =
+    useWorkflowProjects();
 
   const [state, dispatch] = useReducer(reduce, EMPTY);
 
@@ -131,8 +132,12 @@ export function useOpenCodeChat() {
   // learning the directory a moment later — which is what happens with a
   // TanStack query on first render — reliably rooted the session at the
   // server's default directory instead of at the workflow.
-  const waitingForDirectory =
-    scope?.type === "workflow" && projectData === undefined;
+  // Only while the query is still pending. Keyed on `isPending` rather than on
+  // `data === undefined` so a *failed* project list doesn't block session
+  // creation for good — the session then roots at the server's default
+  // directory, which is worse than the workflow's folder but far better than a
+  // chat panel that never starts.
+  const waitingForDirectory = scope?.type === "workflow" && projectsPending;
 
   // Ensure this conversation has a session. The workflow's own folder becomes
   // the session directory, which is what roots OpenCode's file tools, its

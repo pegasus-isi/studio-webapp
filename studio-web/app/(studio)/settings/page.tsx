@@ -15,7 +15,7 @@ import {
   useUIPreferences,
   useUpdateUIPreferences,
 } from "@/lib/hooks/use-ui-prefs";
-import { announceEngineChange } from "@/components/chat/chat-engine";
+import { announceEngineChange } from "@/lib/chat-engine-channel";
 import { ToolCard } from "@/components/tools/tool-card";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { usePanelStore } from "@/lib/stores/panel-store";

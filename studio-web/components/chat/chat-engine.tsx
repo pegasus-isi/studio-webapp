@@ -33,42 +33,19 @@ import { ChatPanel } from "@/components/chat/chat-panel";
 import { ChatInput } from "@/components/chat/chat-input";
 import { OpenCodeChat } from "@/components/chat/opencode-chat";
 import { useUIPreferences } from "@/lib/hooks/use-ui-prefs";
-
-/**
- * Broadcast name for "the chat engine preference changed".
- *
- * BroadcastChannel rather than `storage`, because the preference is stored
- * server-side: there is no localStorage write to observe.
- */
-export const ENGINE_CHANNEL = "studio-chat-engine";
-
-/** Tell every mounted chat panel, in any document, to re-read the preference. */
-export function announceEngineChange(): void {
-  try {
-    const channel = new BroadcastChannel(ENGINE_CHANNEL);
-    channel.postMessage("changed");
-    channel.close();
-  } catch {
-    /* unsupported or blocked — the panel picks it up on its next mount */
-  }
-}
+import { subscribeEngineChange } from "@/lib/chat-engine-channel";
 
 export function ChatEngine() {
   const { prefs, isLoading } = useUIPreferences();
   const queryClient = useQueryClient();
 
-  useEffect(() => {
-    let channel: BroadcastChannel;
-    try {
-      channel = new BroadcastChannel(ENGINE_CHANNEL);
-    } catch {
-      return;
-    }
-    channel.onmessage = () => {
-      void queryClient.invalidateQueries({ queryKey: ["ui-preferences"] });
-    };
-    return () => channel.close();
-  }, [queryClient]);
+  useEffect(
+    () =>
+      subscribeEngineChange(() => {
+        void queryClient.invalidateQueries({ queryKey: ["ui-preferences"] });
+      }),
+    [queryClient]
+  );
 
   if (isLoading) {
     return (
