@@ -861,13 +861,18 @@ function ChatEngineSection() {
           value={prefs.chat_engine}
           disabled={update.isPending}
           onChange={(e) => {
-            update.mutate({
-              chat_engine: e.target.value as "builtin" | "opencode",
-            });
-            // Reaches the chat panel inside JupyterLab, which is a separate
-            // document with its own query cache and would otherwise keep
-            // running the engine the user just switched away from.
-            announceEngineChange();
+            update.mutate(
+              { chat_engine: e.target.value as "builtin" | "opencode" },
+              {
+                // Announced only once the save has landed. Another document
+                // responds by refetching the preference, so announcing first
+                // raced the PUT: it could read the old value and then never
+                // hear again, leaving the notebook chat on the engine the user
+                // had just switched away from. This document doesn't wait —
+                // its cache is updated optimistically by the hook.
+                onSuccess: () => announceEngineChange(),
+              }
+            );
           }}
           className="mt-0.5 shrink-0 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:opacity-50"
         >

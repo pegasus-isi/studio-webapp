@@ -222,6 +222,18 @@ export function replyPermission(
   });
 }
 
+/**
+ * Questions the engine is currently waiting on.
+ *
+ * The counterpart to `listPermissions`, and needed for the same reason: a
+ * question asked while the stream was down leaves the turn blocked with no
+ * dialog on screen and nothing to bring it back. Verified against the pinned
+ * server's own API document and a live instance.
+ */
+export function listQuestions(): Promise<QuestionRequest[]> {
+  return call<QuestionRequest[]>("question");
+}
+
 /** One array of chosen option labels per question, in order. */
 export function replyQuestion(
   requestID: string,

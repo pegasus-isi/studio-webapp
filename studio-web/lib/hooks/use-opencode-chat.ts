@@ -228,21 +228,38 @@ export function useOpenCodeChat() {
           })
           .catch(() => undefined);
 
-        // Permissions asked while we were away are still pending and their
-        // event is long gone; the turn stays stopped until one is answered.
+        // Anything the engine is blocked on. Both are asked through events, so
+        // one raised while the stream was down leaves the turn stopped with no
+        // dialog on screen and no way for the user to know why. Questions were
+        // missed here at first, which made a question asked during a
+        // navigation strand the turn permanently.
+        //
+        // Both re-check after the await: a conversation switch during the round
+        // trip would otherwise drop the old session's dialog into the
+        // transcript now on screen, and answering it would resume a turn the
+        // user cannot see.
+        const stillOurs = () =>
+          !controller.signal.aborted && sessionRef.current === sessionID;
+
         void oc
           .listPermissions()
           .then((pending) => {
-            // Re-check after the await: a conversation switch during this
-            // round trip would otherwise drop the old session's dialog into
-            // the transcript now on screen, and answering it would resume a
-            // turn the user cannot see.
-            if (controller.signal.aborted || sessionRef.current !== sessionID) {
-              return;
-            }
+            if (!stillOurs()) return;
             for (const request of pending) {
               if (request.sessionID === sessionID) {
                 dispatch({ kind: "permission", request });
+              }
+            }
+          })
+          .catch(() => undefined);
+
+        void oc
+          .listQuestions()
+          .then((pending) => {
+            if (!stillOurs()) return;
+            for (const request of pending) {
+              if (request.sessionID === sessionID) {
+                dispatch({ kind: "question", request });
               }
             }
           })

@@ -231,6 +231,28 @@ export function OpenCodeChat() {
           </div>
         )}
 
+        {/* A failure that leaves the panel with no session, while the engine
+            itself reports healthy — a transient 500 on create, a network blip.
+            The engine-down card above does not apply, the transcript is empty
+            so the error box below never renders, and Send is disabled for want
+            of a session: without this the panel is simply dead and silent. */}
+        {!engineDown && chat.error && !chat.sessionID && (
+          <div className="mx-auto mb-3 max-w-3xl rounded-md border border-rose-500/40 bg-rose-500/10 p-3 text-xs">
+            <div className="font-medium text-rose-700 dark:text-rose-400">
+              Could not start a chat session
+            </div>
+            <p className="mt-1 text-fgmuted [overflow-wrap:anywhere]">
+              {chat.error}
+            </p>
+            <button
+              onClick={() => chat.retry()}
+              className="mt-2 rounded-md border border-line px-2.5 py-1 font-medium text-fgmuted hover:bg-muted"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
         {chat.messages.length === 0 && !engineDown ? (
           <div className="flex h-full items-center justify-center">
             <div className="text-center text-fgsubtle">
