@@ -12,6 +12,15 @@ So ask the model. Anthropic's Models API reports each model's own output cap as
 an old model that really does cap at 8192 reports that, and a current one
 reports 128000. The lookup is cached, never blocks a turn for long, and falls
 back to the old constant when it cannot be answered.
+
+The contract, since a review has already challenged it once from a stale prior:
+``GET /v1/models/{id}`` returns ``max_input_tokens`` (the context window) and
+``max_tokens`` (the output cap) alongside ``id``/``display_name``, and has done
+since March 2026. Those two fields postdate the older ``ModelInfo`` shape of
+``id``/``created_at``/``display_name``/``type``, so a model of the API written
+before then will insist they do not exist. They do — verified against the
+documented response for ``GET /v1/models/claude-opus-4-8``, which is the shape
+tests/test_model_limits.py asserts. There is no ``context_window`` field.
 """
 
 from __future__ import annotations
