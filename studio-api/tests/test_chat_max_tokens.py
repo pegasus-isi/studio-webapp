@@ -3,7 +3,11 @@
 A fixed ceiling truncates reasoning models — their thinking tokens are billed
 against the same budget, so the cap can be spent before any content or tool
 call is emitted. The OpenAI transports therefore omit the field unless it is
-configured; the Anthropic Messages API requires it and falls back to a default.
+configured; the Anthropic Messages API requires one, and resolves it from the
+selected model (llm/model_limits.py, tests/test_model_limits.py) rather than
+from a constant. What is asserted here is the precedence: an explicit setting
+wins over anything discovered, and the transport itself still has a floor for a
+direct call that passes nothing.
 """
 
 from __future__ import annotations
@@ -56,9 +60,15 @@ def test_responses_sends_configured_max_tokens():
 
 # ── Anthropic Messages (max_tokens is required by the API) ───────────────
 
-def test_anthropic_falls_back_to_default():
+def test_anthropic_transport_has_a_floor_of_its_own():
+    """The transport must always send a number, even called with none.
+
+    The ceiling normally arrives resolved from the model. This is the guard for
+    a direct call that resolved nothing: the Messages API rejects a request
+    without max_tokens, so a None here would be a failed turn.
+    """
     sent = _capture(chat._anthropic_stream)
-    assert sent["max_tokens"] == chat._ANTHROPIC_DEFAULT_MAX_TOKENS
+    assert sent["max_tokens"] == chat.FLOOR_MAX_TOKENS
 
 
 def test_anthropic_sends_configured_max_tokens():
@@ -123,3 +133,58 @@ def test_no_ceiling_when_neither_is_set(monkeypatch):
 
 def test_bad_request_max_tokens_falls_back_to_no_ceiling(monkeypatch):
     assert _stream_body(monkeypatch, {"max_tokens": "lots"}, stored={})["max_tokens"] is None
+
+
+# ── the turn resolves the ceiling from the model ─────────────────────────
+
+def _anthropic_turn(monkeypatch, stored: dict | None = None, resolved: int = 128000):
+    """Run one Anthropic turn, returning the max_tokens the transport was given."""
+    import main
+    from fastapi.testclient import TestClient
+
+    seen: dict = {}
+
+    async def fake_resolver(base_url, api_key, model):
+        seen["resolver"] = {"base_url": base_url, "model": model}
+        return resolved
+
+    async def fake_stream(client, base_url, api_key, model, messages, system_prompt,
+                          max_tokens=None):
+        seen["max_tokens"] = max_tokens
+        yield {"type": "result", "result": {"content": "ok", "tool_calls": [],
+                                            "usage_in": 1, "usage_out": 1,
+                                            "stop_reason": "end_turn"}}
+
+    monkeypatch.setattr(chat, "anthropic_max_tokens", fake_resolver)
+    monkeypatch.setattr(chat, "_anthropic_stream", fake_stream)
+
+    async def fake_config():
+        return {"provider": "anthropic", "model": "claude-opus-5", "api_key": "k",
+                "base_url": "", "extra_config": stored or {}}
+
+    monkeypatch.setattr(main.db, "get_llm_config", fake_config)
+
+    with TestClient(main.app) as client:
+        client.post("/api/chat/stream", json={
+            "messages": [{"role": "user", "content": "hi"}]})
+    return seen
+
+
+def test_turn_asks_the_model_for_its_ceiling(monkeypatch):
+    """With nothing configured, the ceiling is the selected model's own.
+
+    This is the whole point: 8192 never errored, it just cut every current
+    model off at a sixteenth of what it can produce.
+    """
+    seen = _anthropic_turn(monkeypatch)
+    assert seen["max_tokens"] == 128000
+    assert seen["resolver"]["model"] == "claude-opus-5"
+    # Resolved against the provider's own endpoint, defaulted for Anthropic.
+    assert seen["resolver"]["base_url"] == "https://api.anthropic.com"
+
+
+def test_configured_ceiling_wins_over_the_models_own(monkeypatch):
+    """An operator who set a number meant it — don't discover over the top."""
+    seen = _anthropic_turn(monkeypatch, stored={"max_tokens": 4096})
+    assert seen["max_tokens"] == 4096
+    assert "resolver" not in seen
