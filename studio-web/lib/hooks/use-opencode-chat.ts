@@ -172,6 +172,11 @@ export function useOpenCodeChat() {
   // transcript reads in flight, and the older one resolving last would apply an
   // older snapshot over a newer one.
   const loadSeq = useRef(0);
+  // The same ordering problem for the pending-approval snapshots: two
+  // reconnects can put two in flight, and an older one landing last would put
+  // a resolved approval's card back on screen.
+  const syncSeq = useRef(0);
+  const statusSeq = useRef(0);
 
   const load = useCallback(
     async (id: string) => {
@@ -220,6 +225,10 @@ export function useOpenCodeChat() {
 
       for (let attemptNumber = 0; attemptNumber < 3; attemptNumber += 1) {
         const since = Date.now();
+        // Numbered per fetch, not per call: a retry issued after a later call
+        // started is still the newest request for the data, and the reducer
+        // drops whichever snapshot is overtaken.
+        const seq = (syncSeq.current += 1);
         try {
           const [permissions, questions] = await Promise.all([
             oc.listPermissions(),
@@ -230,11 +239,13 @@ export function useOpenCodeChat() {
             kind: "permissions-synced",
             requests: permissions.filter((r) => r.sessionID === id),
             since,
+            seq,
           });
           dispatch({
             kind: "questions-synced",
             requests: questions.filter((r) => r.sessionID === id),
             since,
+            seq,
           });
           return;
         } catch {
@@ -281,10 +292,17 @@ export function useOpenCodeChat() {
         // so a turn that finished while the stream was down leaves nothing to
         // observe: without this the composer stays on Stop and refuses to send
         // for the rest of the session. Absent from the map means idle.
+        //
+        // Sequenced for the same reason the transcript read and the pending
+        // snapshots are: two reconnects put two reads in flight, and an older
+        // one landing last would reinstate a "busy" the turn has since left —
+        // which is the stuck composer this call exists to prevent.
+        const statusRequest = (statusSeq.current += 1);
         void oc
           .getSessionStatus()
           .then((statuses) => {
             if (controller.signal.aborted) return;
+            if (statusRequest !== statusSeq.current) return;
             const status = statuses?.[sessionID];
             dispatch({ kind: "busy", busy: (status?.type ?? "idle") !== "idle" });
           })

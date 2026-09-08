@@ -57,6 +57,16 @@ export interface State {
    * than it, and must survive the reconciliation.
    */
   pendingSince: Record<string, number>;
+  /**
+   * Sequence number of the most recent pending-request snapshot applied.
+   *
+   * Snapshots are ordered by hand because two reconnects in quick succession
+   * put two of them in flight: without this, a newer snapshot that correctly
+   * cleared a resolved request could be followed by an older one that still
+   * listed it, putting the dead card back on screen. Permissions and questions
+   * are always fetched together and share the counter.
+   */
+  syncSeq: number;
   connection: Connection;
 }
 
@@ -88,9 +98,17 @@ export type Action =
   | {
       kind: "permissions-synced";
       requests: PermissionRequest[];
+      /** When the snapshot was asked for, to date requests against. */
       since: number;
+      /** Monotonic per fetch, so an older snapshot cannot land last. */
+      seq: number;
     }
-  | { kind: "questions-synced"; requests: QuestionRequest[]; since: number }
+  | {
+      kind: "questions-synced";
+      requests: QuestionRequest[];
+      since: number;
+      seq: number;
+    }
   | { kind: "connection"; connection: Connection };
 
 export const EMPTY: State = {
@@ -101,6 +119,7 @@ export const EMPTY: State = {
   permissions: [],
   questions: [],
   pendingSince: {},
+  syncSeq: 0,
   connection: "connecting",
 };
 
@@ -233,22 +252,36 @@ export function reduce(state: State, action: Action): State {
         pendingSince: without(state.pendingSince, action.id),
       };
     case "permissions-synced": {
+      // An overtaken snapshot is not news. Applying it would resurrect a card
+      // a newer snapshot had already cleared.
+      if (action.seq < state.syncSeq) return state;
       const [permissions, pendingSince] = reconcile(
         state.permissions,
         action.requests,
         state.pendingSince,
         action.since
       );
-      return { ...state, permissions, pendingSince };
+      return {
+        ...state,
+        permissions,
+        pendingSince,
+        syncSeq: Math.max(state.syncSeq, action.seq),
+      };
     }
     case "questions-synced": {
+      if (action.seq < state.syncSeq) return state;
       const [questions, pendingSince] = reconcile(
         state.questions,
         action.requests,
         state.pendingSince,
         action.since
       );
-      return { ...state, questions, pendingSince };
+      return {
+        ...state,
+        questions,
+        pendingSince,
+        syncSeq: Math.max(state.syncSeq, action.seq),
+      };
     }
     case "connection":
       return { ...state, connection: action.connection };

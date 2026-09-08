@@ -229,8 +229,8 @@ describe("reconciling what the engine is blocked on", () => {
 
     const after = apply(
       held,
-      { kind: "permissions-synced", requests: [], since: Date.now() + 10 },
-      { kind: "questions-synced", requests: [], since: Date.now() + 10 }
+      { kind: "permissions-synced", requests: [], since: Date.now() + 10, seq: 1 },
+      { kind: "questions-synced", requests: [], since: Date.now() + 10, seq: 1 }
     );
 
     expect(after.permissions).toEqual([]);
@@ -245,7 +245,7 @@ describe("reconciling what the engine is blocked on", () => {
     const state = apply(
       EMPTY,
       { kind: "permission", request: permission("per_new") },
-      { kind: "permissions-synced", requests: [], since: asked }
+      { kind: "permissions-synced", requests: [], since: asked, seq: 1 }
     );
 
     expect(state.permissions.map((p) => p.id)).toEqual(["per_new"]);
@@ -259,6 +259,7 @@ describe("reconciling what the engine is blocked on", () => {
         kind: "permissions-synced",
         requests: [permission("per_known"), permission("per_missed")],
         since: Date.now() + 10,
+        seq: 1,
       }
     );
 
@@ -276,6 +277,7 @@ describe("reconciling what the engine is blocked on", () => {
       kind: "permissions-synced",
       requests: [],
       since: Date.now() + 10,
+      seq: 1,
     });
 
     expect(after.questions.map((q) => q.id)).toEqual(["que_1"]);
@@ -314,5 +316,81 @@ describe("turn state", () => {
     );
     expect(state.connection).toBe("open");
     expect(selectMessages(state)).toEqual([]);
+  });
+});
+
+describe("overlapping snapshots", () => {
+  it("ignores a snapshot overtaken by a newer one", () => {
+    // Two reconnects in quick succession put two snapshots in flight. The
+    // newer one clears an approval that was answered during the outage; the
+    // older one, still listing it, must not put the dead card back.
+    const held = apply(EMPTY, {
+      kind: "permission",
+      request: permission("per_stale"),
+    });
+
+    const newer = reduce(held, {
+      kind: "permissions-synced",
+      requests: [],
+      since: Date.now() + 10,
+      seq: 7,
+    });
+    expect(newer.permissions).toEqual([]);
+
+    const olderLandsLast = reduce(newer, {
+      kind: "permissions-synced",
+      requests: [permission("per_stale")],
+      since: Date.now(),
+      seq: 6,
+    });
+
+    expect(olderLandsLast.permissions).toEqual([]);
+    expect(olderLandsLast).toBe(newer);
+  });
+
+  it("applies a later snapshot from the same fetch pair", () => {
+    // Permissions and questions are fetched together and dispatched with the
+    // same seq, so the second must not be rejected as stale.
+    const state = apply(
+      EMPTY,
+      {
+        kind: "permissions-synced",
+        requests: [permission("per_1")],
+        since: Date.now(),
+        seq: 3,
+      },
+      {
+        kind: "questions-synced",
+        requests: [question("que_1")],
+        since: Date.now(),
+        seq: 3,
+      }
+    );
+
+    expect(state.permissions.map((p) => p.id)).toEqual(["per_1"]);
+    expect(state.questions.map((q) => q.id)).toEqual(["que_1"]);
+  });
+
+  it("starts a new session with no snapshot history", () => {
+    // Otherwise a high seq from the previous session would reject the first
+    // snapshot of the next one.
+    const state = apply(
+      EMPTY,
+      {
+        kind: "permissions-synced",
+        requests: [permission("per_1")],
+        since: Date.now(),
+        seq: 9,
+      },
+      { kind: "reset" },
+      {
+        kind: "permissions-synced",
+        requests: [permission("per_2")],
+        since: Date.now(),
+        seq: 1,
+      }
+    );
+
+    expect(state.permissions.map((p) => p.id)).toEqual(["per_2"]);
   });
 });
