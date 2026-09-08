@@ -199,6 +199,7 @@ export function OpenCodeChat() {
   // step-start and an empty text part — several seconds of a blank bubble
   // where the "Thinking" dots had been, on any model that pauses before its
   // first token.
+  const turns = useMemo(() => groupTurns(chat.messages), [chat.messages]);
   const lastMessage = chat.messages[chat.messages.length - 1];
   const showThinking =
     chat.busy &&
@@ -279,8 +280,8 @@ export function OpenCodeChat() {
           </div>
         ) : (
           <div className="mx-auto max-w-3xl space-y-4">
-            {chat.messages.map((message) => (
-              <MessageBubble key={message.info.id} message={message} />
+            {turns.map((turn) => (
+              <TurnBubble key={turn.key} turn={turn} />
             ))}
 
             {chat.permissions.map((request) => (
@@ -408,22 +409,77 @@ function hasRenderableContent(message: RenderedMessage): boolean {
   });
 }
 
-// Memoized on the message object. Every one of the ~284 deltas in a long reply
-// produces new state, and without this React reconciles every bubble in the
-// transcript on each one; the reducer only replaces the parts of the message
-// that changed, so the others compare equal and skip.
-const MessageBubble = memo(function MessageBubble({
-  message,
-}: {
-  message: RenderedMessage;
-}) {
-  const isUser = message.info.role === "user";
-  const assistant =
-    message.info.role === "assistant" ? (message.info as AssistantMessage) : null;
+/**
+ * One visual turn: a user prompt, or every assistant step that answered it.
+ *
+ * OpenCode starts a **new assistant message per step**, so a reply that calls
+ * three tools arrives as four messages. Rendered one bubble each, a single
+ * answer became a stack of cards that each repeated the "AI" label and its own
+ * token footer — the transcript read as four separate replies rather than one
+ * train of thought. Consecutive user messages are *not* merged: those are
+ * separate things the person said.
+ */
+interface Turn {
+  key: string;
+  role: "user" | "assistant";
+  messages: RenderedMessage[];
+}
 
-  // A step-boundary-only message (a model switch, an empty step) has nothing
-  // to show. Rendering an empty bubble for it makes the transcript look broken.
-  if (!hasRenderableContent(message) && !assistant?.error) return null;
+function groupTurns(messages: RenderedMessage[]): Turn[] {
+  const turns: Turn[] = [];
+  for (const message of messages) {
+    const role = message.info.role === "user" ? "user" : "assistant";
+    const open = turns[turns.length - 1];
+    if (open && role === "assistant" && open.role === "assistant") {
+      open.messages.push(message);
+    } else {
+      turns.push({ key: message.info.id, role, messages: [message] });
+    }
+  }
+  return turns;
+}
+
+function assistantError(message: RenderedMessage) {
+  return message.info.role === "assistant"
+    ? (message.info as AssistantMessage).error
+    : undefined;
+}
+
+/**
+ * True when two turns hold the same messages and the same parts.
+ *
+ * Needed because the transcript selector rebuilds its wrapper objects on every
+ * state change — and a delta is a state change — so an identity check on the
+ * prop would never match and the memo would never hit. The `info` and `part`
+ * objects inside *are* stable (the reducer replaces only what changed), which
+ * is what makes this comparison both cheap and effective.
+ */
+function sameTurn(a: { turn: Turn }, b: { turn: Turn }): boolean {
+  const left = a.turn.messages;
+  const right = b.turn.messages;
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i].info !== right[i].info) return false;
+    const lp = left[i].parts;
+    const rp = right[i].parts;
+    if (lp.length !== rp.length) return false;
+    for (let j = 0; j < lp.length; j += 1) {
+      if (lp[j] !== rp[j]) return false;
+    }
+  }
+  return true;
+}
+
+const TurnBubble = memo(function TurnBubble({ turn }: { turn: Turn }) {
+  const isUser = turn.role === "user";
+  const shown = turn.messages.filter(
+    (m) => hasRenderableContent(m) || assistantError(m)
+  );
+  if (shown.length === 0) return null;
+
+  const assistants = turn.messages
+    .map((m) => m.info)
+    .filter((info): info is AssistantMessage => info.role === "assistant");
 
   return (
     <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
@@ -438,45 +494,77 @@ const MessageBubble = memo(function MessageBubble({
             : "border border-line bg-surface text-fg"
         )}
       >
-        {message.parts.map((part) => (
-          <PartView key={part.id} part={part} />
+        {shown.map((message) => (
+          <div key={message.info.id} className="space-y-2">
+            {message.parts.map((part) => (
+              <PartView key={part.id} part={part} />
+            ))}
+            {/* A stop the user asked for is not a failure. OpenCode records it
+                as MessageAbortedError, so without this a red "Error:" box is
+                the reward for pressing the Stop button. */}
+            {assistantError(message) && isAbortError(assistantError(message)) && (
+              <div className="text-xs text-fgsubtle">Stopped</div>
+            )}
+            {assistantError(message) && !isAbortError(assistantError(message)) && (
+              <div className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1.5 text-xs text-rose-600 dark:text-rose-400">
+                <span className="font-semibold">Error:</span>
+                <span className="[overflow-wrap:anywhere]">
+                  {errorMessage(assistantError(message))}
+                </span>
+              </div>
+            )}
+          </div>
         ))}
 
-        {/* A stop the user asked for is not a failure. OpenCode records it as
-            MessageAbortedError, so without this a red "Error:" box is the
-            reward for pressing the Stop button. */}
-        {assistant?.error && isAbortError(assistant.error) && (
-          <div className="text-xs text-fgsubtle">Stopped</div>
-        )}
-        {assistant?.error && !isAbortError(assistant.error) && (
-          <div className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1.5 text-xs text-rose-600 dark:text-rose-400">
-            <span className="font-semibold">Error:</span>
-            <span className="[overflow-wrap:anywhere]">
-              {errorMessage(assistant.error)}
-            </span>
-          </div>
-        )}
-
-        {assistant && assistant.tokens.output > 0 && (
-          <div className="border-t border-line pt-1.5 text-xs text-fgmuted">
-            {formatUsage(assistant)}
-          </div>
-        )}
+        {/* One footer for the whole turn, summed across its steps. Per-step
+            footers turned a three-tool answer into three token counts. */}
+        {assistants.length > 0 && <UsageFooter messages={assistants} />}
       </div>
     </div>
   );
-});
+}, sameTurn);
 
-function formatUsage(message: AssistantMessage): string {
-  const { input, output, cache } = message.tokens;
-  const total = input + output + (cache?.read ?? 0) + (cache?.write ?? 0);
-  const parts = [`~${total.toLocaleString()} tokens`];
-  if (message.cost > 0) parts.push(`$${message.cost.toFixed(4)}`);
-  if (message.time.completed) {
-    const seconds = (message.time.completed - message.time.created) / 1000;
-    parts.push(`${seconds.toFixed(1)}s`);
+function UsageFooter({ messages }: { messages: AssistantMessage[] }) {
+  const summary = formatTurnUsage(messages);
+  if (!summary) return null;
+  return (
+    <div className="border-t border-line pt-1.5 text-xs text-fgmuted">
+      {summary}
+    </div>
+  );
+}
+
+/**
+ * Tokens, cost and wall-clock for a whole turn.
+ *
+ * Tokens are summed across steps, which is what the turn actually cost; the
+ * elapsed time spans the first step's start to the last one's completion, so it
+ * includes the gaps where a tool was running rather than only model time.
+ */
+function formatTurnUsage(messages: AssistantMessage[]): string | null {
+  let tokens = 0;
+  let cost = 0;
+  for (const message of messages) {
+    const { input, output, cache } = message.tokens;
+    tokens += input + output + (cache?.read ?? 0) + (cache?.write ?? 0);
+    cost += message.cost;
   }
-  if (message.modelID) parts.push(message.modelID);
+  if (tokens === 0) return null;
+
+  const parts = [`~${tokens.toLocaleString()} tokens`];
+  if (messages.length > 1) {
+    parts.push(`${messages.length} steps`);
+  }
+  if (cost > 0) parts.push(`$${cost.toFixed(4)}`);
+
+  const started = messages[0].time.created;
+  const finished = messages[messages.length - 1].time.completed;
+  if (finished && finished > started) {
+    parts.push(`${((finished - started) / 1000).toFixed(1)}s`);
+  }
+
+  const model = messages[messages.length - 1].modelID;
+  if (model) parts.push(model);
   return parts.join(", ");
 }
 
