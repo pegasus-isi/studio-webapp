@@ -64,6 +64,11 @@ _HOP_BY_HOP = frozenset({
 # reaching a local agent process.
 _DROP_REQUEST = _HOP_BY_HOP | {"host", "content-length", "authorization", "cookie"}
 
+# Dropped on the way out: these describe *this* response, and the ASGI server
+# sets its own. Forwarding the upstream's produced two Date headers on every
+# reply, which is a protocol wart at best.
+_DROP_RESPONSE = _HOP_BY_HOP | {"content-length", "date", "server"}
+
 # No read timeout: the event stream is open for the length of a session, and a
 # turn can think for minutes before its first byte. The connect timeout is what
 # turns "engine is down" into a fast 502 instead of a hung panel.
@@ -103,12 +108,15 @@ def _forward_headers(incoming: Mapping[str, str], auth: dict[str, str]) -> dict[
     server's default directory instead — except the ones that belong to this
     hop rather than to the request.
 
-    `Accept-Encoding` is set to `identity` only when the caller offered none.
-    httpx would otherwise add `gzip, deflate` on the caller's behalf, which is
-    not what a verbatim proxy does: the upstream then compresses a response
-    nobody asked to have compressed, and a compressed event stream is one of
-    the ways SSE stalls behind a proxy, because a compressor holds bytes until
-    it flushes.
+    `Accept-Encoding` is set to `identity` only when the caller offered none,
+    so that httpx does not add `gzip, deflate` on the caller's behalf and have
+    the upstream compress a response nobody asked to have compressed. Note the
+    limit of that: a browser always sends an Accept-Encoding and JavaScript
+    cannot suppress it, so for the chat panel this line never fires and the
+    browser's own offer is what goes upstream. OpenCode declines to compress
+    `text/event-stream` (verified in the spike), which is what actually keeps
+    the stream flowing — a compressor holds bytes until it flushes, and that is
+    one of the ways SSE stalls behind a proxy.
     """
     headers = dict(auth)
     for name, value in incoming.items():
@@ -194,22 +202,32 @@ async def proxy(path: str, request: Request) -> Response:
             await upstream.aclose()
             await client.aclose()
 
-    response_headers = {
-        name: value
-        for name, value in upstream.headers.items()
-        # Content-Length would describe the pre-relay body; Starlette sets the
-        # framing for a streamed response itself.
-        if name.lower() not in _HOP_BY_HOP and name.lower() != "content-length"
-    }
-    # SSE only survives nginx unbuffered. The agent server already sets this;
-    # asserting it here means a future upstream that forgets does not silently
-    # turn streaming into a stall behind the proxy.
+    # multi_items, not items: a repeated header name is comma-joined by a
+    # mapping view, which turns two Set-Cookie headers into one malformed one.
+    # Nothing OpenCode sends today repeats a header, but "verbatim" should not
+    # have an exception in it that the next endpoint discovers.
+    forwarded = [
+        (name, value)
+        for name, value in upstream.headers.multi_items()
+        if name.lower() not in _DROP_RESPONSE
+    ]
+    # SSE only survives nginx unbuffered. The agent server already sets both of
+    # these, so this is the case where it stops: a future upstream that forgets
+    # must not silently turn streaming into a stall behind the proxy. Added
+    # only when absent — appending a second, differently-valued Cache-Control
+    # beside the upstream's is not an improvement.
     if upstream.headers.get("content-type", "").startswith("text/event-stream"):
-        response_headers["X-Accel-Buffering"] = "no"
-        response_headers["Cache-Control"] = "no-cache"
+        present = {name.lower() for name, _ in forwarded}
+        if "x-accel-buffering" not in present:
+            forwarded.append(("x-accel-buffering", "no"))
+        if "cache-control" not in present:
+            forwarded.append(("cache-control", "no-cache"))
 
-    return StreamingResponse(
-        relay(),
-        status_code=upstream.status_code,
-        headers=response_headers,
-    )
+    response = StreamingResponse(relay(), status_code=upstream.status_code)
+    # Set after construction so repeated names survive: the headers argument is
+    # a mapping, and a mapping cannot hold two values for one name.
+    response.raw_headers = [
+        (name.lower().encode("latin-1"), value.encode("latin-1"))
+        for name, value in forwarded
+    ]
+    return response

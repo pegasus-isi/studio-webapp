@@ -9,13 +9,16 @@
  * without a change here — and it is why the fallback is a real renderer with
  * the raw payload in it, not a silent `return null`.
  *
- * Parts arrive whole (see docs/OPENCODE-CHAT-SPIKE.md): each `message.part.updated`
- * event carries the entire part, so a live turn and a transcript re-read from
- * the server produce the same objects and these components need no notion of
- * streaming.
+ * A part always arrives whole — each `message.part.updated` carries the entire
+ * part — but text does NOT arrive that way in practice: the full part lands
+ * once, at the end, and the reply is built from `message.part.delta` events in
+ * between (see docs/OPENCODE-CHAT-SPIKE.md). `lib/opencode/transcript.ts`
+ * applies those deltas, so by the time a part reaches a renderer here it is a
+ * complete object either way. Do not conclude from that that the delta path is
+ * redundant; deleting it makes every reply appear only when it finishes.
  */
 
-import { useState } from "react";
+import { Component, useState } from "react";
 import type { Part } from "@opencode-ai/sdk";
 import { ChatMarkdown } from "@/components/chat/markdown";
 import { cn } from "@/lib/utils";
@@ -69,18 +72,25 @@ function json(value: unknown): string {
 }
 
 function TextPartView({ part }: { part: PartOf<"text"> }) {
-  // A synthetic part is context Studio injected (the Active Context block), and
-  // `ignored` marks a part the server excluded from the model's view. Both are
-  // real parts of the transcript; neither is something the user wrote or the
-  // model said, so neither is shown as prose.
-  if (part.synthetic) {
+  // A synthetic part is context Studio injected (the Active Context block);
+  // `ignored` marks a part the server left out of the model's view. Both are
+  // real parts of the transcript, and neither is something the user wrote or
+  // the model said, so neither is shown as prose — an ignored part rendered as
+  // conversation is text presented as part of an exchange it was never in.
+  if (!part.text.trim()) return null;
+  if (part.synthetic || part.ignored) {
     return (
-      <Collapsed label="Context sent with this message">
+      <Collapsed
+        label={
+          part.synthetic
+            ? "Context sent with this message"
+            : "Not sent to the model"
+        }
+      >
         <Pre>{part.text}</Pre>
       </Collapsed>
     );
   }
-  if (!part.text.trim()) return null;
   return <ChatMarkdown content={part.text} />;
 }
 
@@ -242,7 +252,7 @@ const RENDERERS: Record<string, PartRenderer> = {
   snapshot: Invisible,
 };
 
-export function PartView({ part }: { part: Part }) {
+function RawPartView({ part }: { part: Part }) {
   const Renderer = RENDERERS[part.type];
   if (Renderer) return <Renderer part={part} />;
   // An OpenCode version newer than this UI. Show that something happened and
@@ -252,5 +262,49 @@ export function PartView({ part }: { part: Part }) {
     <Collapsed label={`Unsupported content (${part.type})`}>
       <Pre>{json(part)}</Pre>
     </Collapsed>
+  );
+}
+
+/**
+ * Contains a render failure to the one part that caused it.
+ *
+ * The registry's fallback covers a part type this UI has never seen. It does
+ * nothing for a *known* type whose shape changed — a renderer dereferencing a
+ * field that is suddenly absent throws during render, and with no boundary
+ * anywhere in Studio that takes down the whole page, not just the transcript.
+ * The promise this file makes is that an unrecognised part still renders and
+ * the turn completes; this is what makes that true of malformed parts too.
+ */
+class PartBoundary extends Component<
+  { part: Part; children: React.ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error) {
+    // Reported once per part, not swallowed: a part that stopped rendering is
+    // a version mismatch worth seeing in the console.
+    console.error("opencode part failed to render", this.props.part, error);
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <Collapsed label={`Could not display this ${this.props.part.type}`}>
+        <Pre>{json(this.props.part)}</Pre>
+      </Collapsed>
+    );
+  }
+}
+
+export function PartView({ part }: { part: Part }) {
+  return (
+    <PartBoundary part={part}>
+      <RawPartView part={part} />
+    </PartBoundary>
   );
 }

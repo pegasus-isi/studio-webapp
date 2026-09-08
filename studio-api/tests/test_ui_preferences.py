@@ -99,3 +99,54 @@ def test_partial_payload_falls_back_to_defaults(client):
     assert body["advanced_open"] is True
     # Omitted key takes the model default rather than erroring.
     assert body["simple_run"] is True
+
+
+def test_a_retired_preference_value_does_not_break_the_endpoint(client, monkeypatch):
+    """A stale *value* must degrade like a stale key, not 500.
+
+    `chat_engine` is a Literal (#367), and the intended end state is one
+    engine — so a value stored today can be retired tomorrow. Rejecting the
+    whole payload would lose every other preference with it and make Settings
+    unopenable, which is the opposite of what the field's comment promises.
+    """
+    import main
+
+    async def stored(key, default=None):
+        if key == "ui_preferences":
+            return {"chat_engine": "retired-engine", "skip_welcome": True}
+        return default
+
+    monkeypatch.setattr(main.db, "get_setting", stored)
+
+    res = client.get("/api/settings/ui")
+    assert res.status_code == 200
+    body = res.json()
+    # The unusable value falls back to the default...
+    assert body["chat_engine"] == "builtin"
+    # ...and the preferences beside it survive.
+    assert body["skip_welcome"] is True
+
+
+def test_command_approval_reaches_the_engine_config(client, monkeypatch):
+    """Saving the shell-approval setting must propagate it.
+
+    Under the OpenCode engine this setting *is* a `permission` rule in the
+    generated config, so persisting it without propagating left Settings
+    claiming commands were confirmed while the engine kept running them — for
+    the rest of the pod's life, since a restart only re-reads the file that was
+    never rewritten.
+    """
+    calls = []
+
+    from llm import propagator
+
+    class FakePropagator:
+        async def propagate(self, db):
+            calls.append("propagated")
+
+    monkeypatch.setattr(propagator, "LLMPropagator", FakePropagator)
+
+    res = client.put("/api/chat/command-approval", json={"require_approval": False})
+    assert res.status_code == 200
+    assert res.json()["require_approval"] is False
+    assert calls == ["propagated"]

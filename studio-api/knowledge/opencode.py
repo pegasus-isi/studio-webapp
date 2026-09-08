@@ -278,17 +278,31 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 # Compare before writing. Propagation runs on every startup and
                 # every provider save, and a write that changed nothing must
                 # not cost the chat panel a server restart mid-conversation.
+                #
+                # Compared as bytes, deliberately. Reading as text raises
+                # UnicodeDecodeError on a file with one bad byte, and that is
+                # not an OSError: it escaped this method, the config was never
+                # rewritten, config_changed stayed False so the engine was
+                # never restarted, and every later propagation failed the same
+                # way. A damaged config used to heal itself on the next write.
                 try:
-                    with open(path) as f:
-                        unchanged = f.read() == blob
-                except OSError:
+                    with open(path, "rb") as f:
+                        unchanged = f.read() == blob.encode()
+                except (OSError, ValueError):
                     unchanged = False
                 if unchanged:
                     log.info("opencode_config_unchanged", path=path)
                     continue
                 os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w") as f:
+                # Written via a temp file and renamed, because the engine reads
+                # this file at startup and the propagator that writes it runs
+                # under a hard timeout in the entrypoint. A SIGTERM between
+                # truncate and flush would otherwise leave a half-written
+                # config for a starting engine to read.
+                tmp = f"{path}.{os.getpid()}.tmp"
+                with open(tmp, "w") as f:
                     f.write(blob)
+                os.replace(tmp, path)
                 self.config_changed = True
                 log.info("opencode_config_written", path=path)
             except OSError as e:

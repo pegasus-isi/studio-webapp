@@ -154,13 +154,18 @@ fi
 # missing binary here would take the whole entrypoint down under `set -e`.
 OPENCODE_PW_FILE="${STUDIO_DIR}/opencode-password"
 if [ ! -s "${OPENCODE_PW_FILE}" ]; then
-    if "${PYTHON}" -c 'import secrets,sys; sys.stdout.write(secrets.token_urlsafe(32))' \
-         > "${OPENCODE_PW_FILE}.tmp" 2>/dev/null; then
-        chmod 600 "${OPENCODE_PW_FILE}.tmp"
-        mv "${OPENCODE_PW_FILE}.tmp" "${OPENCODE_PW_FILE}"
+    # Per-process temp name, not a fixed ".tmp": the home directory is NFS and
+    # shared, so two pods first-booting at once would write the same path and
+    # the losing rename would leave studio-api reading a password the engine
+    # never saw — a 401 nothing in the UI can clear.
+    OPENCODE_PW_TMP="${OPENCODE_PW_FILE}.$$"
+    if ( umask 077 && "${PYTHON}" -c 'import secrets,sys; sys.stdout.write(secrets.token_urlsafe(32))' \
+         > "${OPENCODE_PW_TMP}" ) 2>/dev/null; then
+        chmod 600 "${OPENCODE_PW_TMP}"
+        mv "${OPENCODE_PW_TMP}" "${OPENCODE_PW_FILE}"
         echo "[studio] Generated OpenCode server password at ${OPENCODE_PW_FILE}"
     else
-        rm -f "${OPENCODE_PW_FILE}.tmp"
+        rm -f "${OPENCODE_PW_TMP}"
         echo "[studio] WARNING: could not generate an OpenCode server password —" \
              "the chat engine will not start" >&2
     fi

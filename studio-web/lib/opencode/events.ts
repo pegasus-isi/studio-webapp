@@ -122,7 +122,6 @@ export function subscribeEvents(opts: {
         if (!res.ok || !res.body) {
           throw new Error(`Event stream failed (${res.status})`);
         }
-        attempt = 0;
         onOpen?.();
 
         const reader = res.body.getReader();
@@ -131,24 +130,43 @@ export function subscribeEvents(opts: {
         while (!signal.aborted) {
           const { done, value } = await reader.read();
           if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+          // Reset the backoff only once the connection has actually carried
+          // something. Doing it on the response headers instead means a peer
+          // that accepts the connection and immediately closes the body —
+          // an engine restarting, a proxy hiccup — reconnects every second
+          // forever, and each attempt re-reads the whole transcript from
+          // `onOpen`.
+          attempt = 0;
+          // CRLF line endings would otherwise never match the "\n\n" frame
+          // separator: no events, and a buffer that grows without bound.
+          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
           // Frames are separated by a blank line; a partial frame stays in the
           // buffer. Splitting on "\n" instead would hand half a JSON object to
           // JSON.parse on every large tool result.
           const frames = buffer.split("\n\n");
           buffer = frames.pop() ?? "";
           for (const frame of frames) {
-            for (const line of frame.split("\n")) {
-              // ": heartbeat" comments keep the connection open through
-              // proxies and carry no data.
-              if (!line.startsWith("data:")) continue;
-              const data = line.slice(5).trim();
-              if (!data) continue;
-              try {
-                onEvent(JSON.parse(data) as RawEvent);
-              } catch {
-                /* a frame we can't parse is not worth killing the stream for */
-              }
+            // One event per frame, its payload being every `data:` line joined
+            // by a newline — which is what SSE specifies and what OpenCode's
+            // own client does. Parsing each line as its own event happens to
+            // work today only because JSON.stringify emits no newlines; a
+            // single event that ever spans two data lines would then fail to
+            // parse twice instead of parsing once.
+            //
+            // Lines that are not `data:` are skipped: ": heartbeat" comments
+            // keep the connection open through proxies and carry nothing, and
+            // `id:`/`retry:` are not used here.
+            const payload = frame
+              .split("\n")
+              .filter((line) => line.startsWith("data:"))
+              .map((line) => line.slice(5).replace(/^ /, ""))
+              .join("\n")
+              .trim();
+            if (!payload) continue;
+            try {
+              onEvent(JSON.parse(payload) as RawEvent);
+            } catch {
+              /* an unparseable frame is not worth killing the stream for */
             }
           }
         }
@@ -161,7 +179,17 @@ export function subscribeEvents(opts: {
       // engine, a proxy timeout), so this is a routine path, not an incident.
       attempt += 1;
       const delay = Math.min(1000 * 2 ** (attempt - 1), 15000);
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      // Abortable: a torn-down subscription should not hold a timer for up to
+      // 15 seconds after the panel is gone.
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(finish, delay);
+        function finish() {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", finish);
+          resolve();
+        }
+        signal.addEventListener("abort", finish);
+      });
     }
   };
 

@@ -67,6 +67,42 @@ async def _attach_model_lists(providers: list[dict[str, Any]]) -> None:
     await asyncio.gather(*(one(p) for p in providers))
 
 
+# Restart tasks in flight, kept referenced so the event loop cannot garbage
+# collect a task nobody is awaiting.
+_restart_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _schedule_engine_restart(adapter: Any) -> None:
+    """Restart the chat engine, in the background, if its config changed.
+
+    OpenCode reads opencode.json once at startup and no endpoint reloads it
+    (docs/OPENCODE-CHAT-SPIKE.md), so a provider change reaches the engine only
+    through a restart — which is what the previous adapter surfaced as "Model
+    not found".
+
+    Only when the file actually changed: propagation also runs at every startup,
+    and restarting on every boot would drop a chat panel that had just
+    reattached.
+
+    Never awaited. `supervisorctl restart` blocks for the stop *and* the start
+    of the process, so awaiting it here would hold up studio-api's own startup
+    — the thing the entrypoint goes out of its way to keep unblocked — and
+    would make a provider save in Settings hang for as long as the engine takes
+    to come back.
+    """
+    if not getattr(adapter, "config_changed", False):
+        return
+    from services import opencode_server
+
+    try:
+        task = asyncio.ensure_future(opencode_server.restart())
+    except RuntimeError as e:  # no running loop (a CLI propagation)
+        log.info("opencode_restart_not_scheduled", error=str(e))
+        return
+    _restart_tasks.add(task)
+    task.add_done_callback(_restart_tasks.discard)
+
+
 class LLMPropagator:
     """Propagates LLM config to all installed AI tools via their adapters."""
 
@@ -101,9 +137,7 @@ class LLMPropagator:
             pass  # default posture (prompt) is applied by the adapter
 
         installed = await db.list_tools()
-        if not installed:
-            log.info("llm_propagate_skip", reason="no tools installed")
-            return
+        opencode_written = False
 
         for tool in installed:
             tool_id = tool["tool_id"]
@@ -120,16 +154,22 @@ class LLMPropagator:
                 )
                 continue
 
-            # OpenCode's config is read once, at startup: the chat engine keeps
-            # answering with the old provider until the process restarts, which
-            # is what the previous adapter surfaced as "Model not found". Only
-            # when the file actually changed — propagation also runs at every
-            # startup, and restarting the engine each boot would drop a chat
-            # panel that had just reattached.
-            if tool_id == "opencode" and getattr(adapter, "config_changed", False):
-                try:
-                    from services import opencode_server
+            if tool_id == "opencode":
+                opencode_written = True
+                _schedule_engine_restart(adapter)
 
-                    await opencode_server.restart()
+        if not opencode_written:
+            # The chat engine's config is not optional the way a terminal
+            # tool's is: `opencode serve` runs unconditionally, so if the
+            # opencode *tool* row is absent — never seeded, or uninstalled
+            # through Settings → Tools — the engine would keep running and
+            # never be given a provider again, and the next restart would leave
+            # it with no config at all.
+            adapter = get_adapter("opencode")
+            if adapter is not None:
+                try:
+                    adapter.update_llm_config(config_root(), config)
+                    log.info("llm_propagated", tool_id="opencode", reason="engine")
+                    _schedule_engine_restart(adapter)
                 except Exception as e:
-                    log.warning("opencode_restart_error", error=str(e))
+                    log.warning("llm_propagate_failed", tool_id="opencode", error=str(e))

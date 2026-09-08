@@ -1622,6 +1622,19 @@ async def set_command_approval(request: Request) -> dict:
         body = {}
     value = bool(body.get("require_approval", True))
     await chat_permissions.set_require_approval(db, value)
+
+    # The OpenCode engine enforces this setting as a `permission` rule in its
+    # generated config (#367), so storing it is only half the job: without
+    # propagating, Settings said "commands are confirmed" while the engine kept
+    # whatever rule it was last given — including `allow` — for the rest of the
+    # pod's life. The builtin loop reads the setting per turn and does not care.
+    try:
+        from llm.propagator import LLMPropagator
+
+        await LLMPropagator().propagate(db)
+    except Exception as e:
+        log.warning("command_approval_propagate_failed", error=str(e))
+
     return {"require_approval": value}
 
 

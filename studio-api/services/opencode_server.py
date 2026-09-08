@@ -111,7 +111,9 @@ async def health() -> dict[str, object]:
             "reason": "no_password",
             "detail": f"No server password at {password_file()}",
         }
-    if not listening():
+    if not await asyncio.to_thread(listening):
+        # Off the event loop: connect_ex blocks, and on loopback that is
+        # instant only while packets are being refused rather than dropped.
         return {"running": False, "reason": "not_listening", "detail": None}
     try:
         async with httpx.AsyncClient(timeout=_HEALTH_TIMEOUT_S) as client:
@@ -165,6 +167,10 @@ async def restart() -> bool:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=_RESTART_TIMEOUT_S)
     except asyncio.TimeoutError:
         proc.kill()
+        # Reaped so the child does not linger as a zombie. Note that killing
+        # supervisorctl does not cancel the restart — supervisord owns it and
+        # will finish — so this reports "we stopped waiting", not "it failed".
+        await proc.wait()
         log.warning("opencode_restart_timeout", timeout=_RESTART_TIMEOUT_S)
         return False
     ok = proc.returncode == 0

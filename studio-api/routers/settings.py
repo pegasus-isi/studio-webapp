@@ -7,7 +7,7 @@ from typing import Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from models import LLMConfigRequest, SettingsResponse
 
@@ -336,9 +336,23 @@ async def get_ui_preferences() -> UIPreferences:
     stored = await db.get_setting(_UI_PREFS_KEY, {}) or {}
     if not isinstance(stored, dict):
         stored = {}
-    return UIPreferences(**{
-        k: v for k, v in stored.items() if k in UIPreferences.model_fields
-    })
+    known = {k: v for k, v in stored.items() if k in UIPreferences.model_fields}
+    try:
+        return UIPreferences(**known)
+    except ValidationError:
+        # A stored *value* that no longer validates — a retired `chat_engine`
+        # name, a string where a bool belongs — must not 500 this endpoint and
+        # take every other preference down with it. Keep the fields that stand
+        # on their own and default the rest.
+        safe: dict[str, object] = {}
+        for key, value in known.items():
+            try:
+                UIPreferences(**{key: value})
+            except ValidationError:
+                log.warning("ui_preference_invalid", key=key, value=value)
+                continue
+            safe[key] = value
+        return UIPreferences(**safe)
 
 
 @router.put("/ui", response_model=UIPreferences)

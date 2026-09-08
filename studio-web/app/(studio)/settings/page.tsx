@@ -15,6 +15,7 @@ import {
   useUIPreferences,
   useUpdateUIPreferences,
 } from "@/lib/hooks/use-ui-prefs";
+import { announceEngineChange } from "@/components/chat/chat-engine";
 import { ToolCard } from "@/components/tools/tool-card";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
@@ -859,11 +860,15 @@ function ChatEngineSection() {
         <select
           value={prefs.chat_engine}
           disabled={update.isPending}
-          onChange={(e) =>
+          onChange={(e) => {
             update.mutate({
               chat_engine: e.target.value as "builtin" | "opencode",
-            })
-          }
+            });
+            // Reaches the chat panel inside JupyterLab, which is a separate
+            // document with its own query cache and would otherwise keep
+            // running the engine the user just switched away from.
+            announceEngineChange();
+          }}
           className="mt-0.5 shrink-0 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:opacity-50"
         >
           <option value="builtin">Built-in</option>

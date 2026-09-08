@@ -42,7 +42,7 @@ cd "$ROOT"
 # The npm prefix that `npm install -g` writes to for this user comes first, so
 # a user-upgraded opencode wins over the image-baked one — same precedence the
 # interactive shells get from /etc/profile.d/10-studio-tools.sh.
-export PATH="${HOME}/.npm-global/bin:${HOME}/.local/bin:/opt/npm-global/bin:${PATH}"
+export PATH="${ROOT}/.npm-global/bin:${ROOT}/.local/bin:/opt/npm-global/bin:${PATH}"
 
 exec opencode serve \
     --hostname 127.0.0.1 \

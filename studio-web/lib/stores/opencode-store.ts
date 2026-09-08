@@ -42,6 +42,18 @@ const safeLocalStorage = {
   },
 };
 
+/**
+ * Drop a conversation's pairing from outside React.
+ *
+ * The conversation controls (New / Clear / Delete) are engine-agnostic and
+ * live in `chat-store`, so they need a way to say "this conversation is
+ * starting over" without knowing which engine is active. Harmless under the
+ * builtin engine, which has no pairing to forget.
+ */
+export function forgetOpenCodeSession(convId: string): void {
+  useOpenCodeStore.getState().clearSession(convId);
+}
+
 interface OpenCodeStore {
   /** Studio conversation id -> OpenCode session id. */
   sessionByConv: Record<string, string>;

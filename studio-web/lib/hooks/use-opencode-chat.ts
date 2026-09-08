@@ -16,7 +16,14 @@
  * replayed event lands in the right place instead of at the end.
  */
 
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import type { Message, Part } from "@opencode-ai/sdk";
 import * as oc from "@/lib/opencode/client";
 import type {
@@ -45,15 +52,32 @@ function props(event: RawEvent): Record<string, unknown> {
   return (event.properties ?? {}) as Record<string, unknown>;
 }
 
-function errorMessage(value: unknown): string {
+/**
+ * A human-readable message from one of OpenCode's error objects.
+ *
+ * Every variant is `{ name, data: { message } }` — verified against a live
+ * 1.18.29 server, where a deliberate stop yields
+ * `{"name":"MessageAbortedError","data":{"message":"Aborted"}}`. Reading a
+ * top-level `.message` (which the type does not have) silently produced the
+ * generic fallback for every real failure: a gateway 401, a context-length
+ * error, all of them.
+ */
+export function errorMessage(value: unknown): string {
   if (!value) return "The model returned an error";
   if (typeof value === "string") return value;
   const obj = value as { message?: unknown; name?: unknown; data?: unknown };
-  if (typeof obj.message === "string") return obj.message;
   const data = obj.data as { message?: unknown } | undefined;
   if (data && typeof data.message === "string") return data.message;
+  // Tolerated for the other direction: OpenCode's v2 payloads put `message` at
+  // the top level, and this reader is cheap insurance if the v1 shape follows.
+  if (typeof obj.message === "string") return obj.message;
   if (typeof obj.name === "string") return obj.name;
   return "The model returned an error";
+}
+
+/** True for the error a user's own Stop button produces. */
+export function isAbortError(value: unknown): boolean {
+  return (value as { name?: unknown } | null)?.name === "MessageAbortedError";
 }
 
 /**
@@ -87,18 +111,35 @@ export function useOpenCodeChat() {
   const sessionRef = useRef<string | undefined>(sessionID);
   sessionRef.current = sessionID;
 
+  // Bumped to ask for another attempt at creating a session. The effect below
+  // has no other reason to re-run once it has failed, so without this a panel
+  // that opened while the engine was still starting stayed dead until a full
+  // page reload — including after the "Restart the engine" button had brought
+  // it back.
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+
   const projectDir = useMemo(() => {
     if (scope?.type !== "workflow") return undefined;
     return projectData?.projects.find((p) => p.project_id === scope.id)
       ?.project_dir;
   }, [scope, projectData]);
 
+  // A workflow-scoped conversation must wait for the project list before its
+  // session exists: the directory is fixed at creation and roots OpenCode's
+  // file tools, AGENTS.md lookup and skill discovery. Creating first and
+  // learning the directory a moment later — which is what happens with a
+  // TanStack query on first render — reliably rooted the session at the
+  // server's default directory instead of at the workflow.
+  const waitingForDirectory =
+    scope?.type === "workflow" && projectData === undefined;
+
   // Ensure this conversation has a session. The workflow's own folder becomes
   // the session directory, which is what roots OpenCode's file tools, its
   // AGENTS.md lookup and its skill discovery — a chat about a workflow should
   // be able to read that workflow without being told where it lives.
   useEffect(() => {
-    if (sessionID) return;
+    if (sessionID || waitingForDirectory) return;
     let cancelled = false;
     let pending = creating.get(convId);
     if (!pending) {
@@ -109,9 +150,10 @@ export function useOpenCodeChat() {
       creating.set(convId, pending);
     }
     pending.then(
-      (id) => {
-        if (!cancelled) setSession(convId, id);
-      },
+      // Recorded even if this component is gone: the pairing belongs to the
+      // conversation, not to a mounted panel, and dropping it on unmount left
+      // an unused session behind and made the next mount create another.
+      (id) => setSession(convId, id),
       (e: Error) => {
         if (!cancelled) dispatch({ kind: "error", error: e.message });
       }
@@ -119,13 +161,19 @@ export function useOpenCodeChat() {
     return () => {
       cancelled = true;
     };
-  }, [sessionID, convId, projectDir, setSession]);
+  }, [sessionID, convId, projectDir, waitingForDirectory, setSession, attempt]);
+
+  // Reads are ordered by hand. Two reconnects in quick succession put two
+  // transcript reads in flight, and the older one resolving last would apply an
+  // older snapshot over a newer one.
+  const loadSeq = useRef(0);
 
   const load = useCallback(
     async (id: string) => {
+      const seq = (loadSeq.current += 1);
       try {
         const messages = await oc.getMessages(id);
-        if (sessionRef.current !== id) return;
+        if (sessionRef.current !== id || seq !== loadSeq.current) return;
         dispatch({ kind: "loaded", messages });
       } catch (e) {
         // A session id that no longer exists on the server (a cleared OpenCode
@@ -148,8 +196,12 @@ export function useOpenCodeChat() {
   // what makes a dropped stream harmless: whatever happened while we were
   // disconnected is in OpenCode, and this asks for it.
   useEffect(() => {
-    if (!sessionID) return;
+    // Reset first: switching to a conversation that has no session yet used to
+    // return here and leave the previous conversation's transcript rendered
+    // under the new one's title, for as long as it took to create a session —
+    // or forever, if that failed.
     dispatch({ kind: "reset" });
+    if (!sessionID) return;
     const controller = new AbortController();
 
     subscribeEvents({
@@ -157,11 +209,32 @@ export function useOpenCodeChat() {
       onOpen: () => {
         dispatch({ kind: "connection", connection: "open" });
         void load(sessionID);
+
+        // Whether this session is busy right now. `session.idle` is an event,
+        // so a turn that finished while the stream was down leaves nothing to
+        // observe: without this the composer stays on Stop and refuses to send
+        // for the rest of the session. Absent from the map means idle.
+        void oc
+          .getSessionStatus()
+          .then((statuses) => {
+            if (controller.signal.aborted) return;
+            const status = statuses?.[sessionID];
+            dispatch({ kind: "busy", busy: (status?.type ?? "idle") !== "idle" });
+          })
+          .catch(() => undefined);
+
         // Permissions asked while we were away are still pending and their
         // event is long gone; the turn stays stopped until one is answered.
         void oc
           .listPermissions()
           .then((pending) => {
+            // Re-check after the await: a conversation switch during this
+            // round trip would otherwise drop the old session's dialog into
+            // the transcript now on screen, and answering it would resume a
+            // turn the user cannot see.
+            if (controller.signal.aborted || sessionRef.current !== sessionID) {
+              return;
+            }
             for (const request of pending) {
               if (request.sessionID === sessionID) {
                 dispatch({ kind: "permission", request });
@@ -351,41 +424,51 @@ export function useOpenCodeChat() {
     dispatch({ kind: "busy", busy: false });
   }, []);
 
+  // Each reply clears its card first, so a live-looking dialog can't be
+  // clicked twice while the request settles — and puts it back if the request
+  // failed, because the engine is still blocked on that answer and a card the
+  // user can no longer see is a turn that never resumes.
   const answerPermission = useCallback(
     async (requestID: string, reply: PermissionReply) => {
-      // Clear the card immediately: the reply endpoint is idempotent enough
-      // that a duplicate is harmless, and leaving a live-looking dialog up
-      // while the request settles invites a second click.
+      const request = state.permissions.find((p) => p.id === requestID);
       dispatch({ kind: "permission-done", id: requestID });
       try {
         await oc.replyPermission(requestID, reply);
       } catch (e) {
         dispatch({ kind: "error", error: (e as Error).message });
+        if (request) dispatch({ kind: "permission", request });
       }
     },
-    []
+    [state.permissions]
   );
 
   const answerQuestion = useCallback(
     async (requestID: string, answers: string[][]) => {
+      const request = state.questions.find((q) => q.id === requestID);
       dispatch({ kind: "question-done", id: requestID });
       try {
         await oc.replyQuestion(requestID, answers);
       } catch (e) {
         dispatch({ kind: "error", error: (e as Error).message });
+        if (request) dispatch({ kind: "question", request });
       }
     },
-    []
+    [state.questions]
   );
 
-  const rejectQuestion = useCallback(async (requestID: string) => {
-    dispatch({ kind: "question-done", id: requestID });
-    try {
-      await oc.rejectQuestion(requestID);
-    } catch (e) {
-      dispatch({ kind: "error", error: (e as Error).message });
-    }
-  }, []);
+  const rejectQuestion = useCallback(
+    async (requestID: string) => {
+      const request = state.questions.find((q) => q.id === requestID);
+      dispatch({ kind: "question-done", id: requestID });
+      try {
+        await oc.rejectQuestion(requestID);
+      } catch (e) {
+        dispatch({ kind: "error", error: (e as Error).message });
+        if (request) dispatch({ kind: "question", request });
+      }
+    },
+    [state.questions]
+  );
 
   return {
     sessionID,
@@ -395,6 +478,7 @@ export function useOpenCodeChat() {
     permissions: state.permissions,
     questions: state.questions,
     connection: state.connection,
+    retry,
     send,
     stop,
     answerPermission,

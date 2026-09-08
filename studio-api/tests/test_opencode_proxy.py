@@ -319,9 +319,148 @@ def test_traversal_and_injection_cannot_leave_the_loopback_engine(
     assert res.status_code == 200
     assert seen[-1].host == "127.0.0.1"
     assert seen[-1].port == 4096
+    # httpx normalises the traversal away, which is the outcome that matters:
+    # it resolves *within* the engine's origin rather than escaping it.
+    assert seen[-1].path == "/etc/passwd"
 
     res = client.get("/api/opencode/x%0d%0aX-Injected:%201")
     # Either the framework refuses the path or the proxy does, but it must not
     # be a 500 and must not reach the engine.
     assert res.status_code in (400, 404)
     assert all(url.host == "127.0.0.1" for url in seen)
+
+
+class _SlowStream(httpx.AsyncByteStream):
+    """Yields chunks only as the consumer asks, recording when each was read."""
+
+    def __init__(self, chunks: list[bytes], seen: list[str]):
+        self.chunks = chunks
+        self.seen = seen
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            self.seen.append(f"upstream:{chunk.decode()}")
+            yield chunk
+
+
+def test_relay_streams_each_chunk_instead_of_buffering(monkeypatch):
+    """The relay must yield a chunk as it arrives, not read to completion.
+
+    Asserted against the response object rather than through `TestClient`,
+    which buffers a whole body and so cannot tell the two apart. It matters
+    because `/event` is a stream that never ends: a proxy that read the
+    upstream to completion first would hang the chat panel forever while every
+    byte-for-byte assertion still passed.
+    """
+    import asyncio
+
+    from starlette.requests import Request
+    from starlette.responses import StreamingResponse
+
+    monkeypatch.setenv("OPENCODE_SERVER_PASSWORD", "stream-secret")
+    monkeypatch.delenv("STUDIO_OPENCODE_PORT", raising=False)
+
+    order: list[str] = []
+    chunks = [
+        b'data: {"type":"server.connected"}\n\n',
+        b'data: {"type":"message.part.delta","properties":{"delta":"hi"}}\n\n',
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_SlowStream(chunks, order),
+        )
+
+    _mock_upstream(monkeypatch, handler)
+
+    async def drive():
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/api/opencode/event",
+            "raw_path": b"/api/opencode/event",
+            "root_path": "",
+            "query_string": b"",
+            "headers": [(b"accept", b"text/event-stream")],
+            "client": ("127.0.0.1", 1234),
+            "server": ("127.0.0.1", 8080),
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        response = await opencode_router.proxy("event", Request(scope, receive))
+        assert isinstance(response, StreamingResponse)
+        assert response.headers["x-accel-buffering"] == "no"
+        async for chunk in response.body_iterator:
+            body = chunk if isinstance(chunk, bytes) else str(chunk).encode()
+            order.append(f"client:{body.decode()}")
+
+    asyncio.run(drive())
+
+    # Interleaved: each chunk reaches the consumer before the next is produced
+    # upstream. Buffering would put both "upstream" entries first.
+    labels = [entry.split(":", 1)[0] for entry in order]
+    assert labels == ["upstream", "client", "upstream", "client"], order
+
+
+def test_repeated_response_headers_survive_the_relay(monkeypatch):
+    """Two headers with one name must not be collapsed into one value.
+
+    Nothing OpenCode sends today repeats a header, but "verbatim" should not
+    have an exception in it for the next endpoint to discover.
+    """
+    import asyncio
+
+    from starlette.requests import Request
+
+    monkeypatch.setenv("OPENCODE_SERVER_PASSWORD", "hdr-secret")
+    monkeypatch.delenv("STUDIO_OPENCODE_PORT", raising=False)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers=[
+                ("content-type", "application/json"),
+                ("set-cookie", "a=1"),
+                ("set-cookie", "b=2"),
+            ],
+            stream=_AsyncBytes(b"{}"),
+        )
+
+    _mock_upstream(monkeypatch, handler)
+
+    async def drive():
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/api/opencode/session",
+            "raw_path": b"/api/opencode/session",
+            "root_path": "",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+            "server": ("127.0.0.1", 8080),
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        response = await opencode_router.proxy("session", Request(scope, receive))
+        cookies = [
+            value.decode()
+            for name, value in response.raw_headers
+            if name == b"set-cookie"
+        ]
+        # Drain so the relay closes its client rather than warning on GC.
+        async for _ in response.body_iterator:
+            pass
+        assert cookies == ["a=1", "b=2"], response.raw_headers
+
+    asyncio.run(drive())

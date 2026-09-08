@@ -83,16 +83,25 @@ export function reduce(state: State, action: Action): State {
     case "reset":
       return { ...EMPTY, connection: state.connection };
     case "loaded": {
-      const infos: Record<string, Message> = {};
-      const parts: Record<string, Record<string, Part>> = {};
+      // Merge, never replace.
+      //
+      // A read is a snapshot taken before it landed, so anything created while
+      // it was in flight is missing from it — most obviously the prompt the
+      // user sent a moment ago. Replacing `infos` with the response deleted
+      // that message, and OpenCode does not re-announce a settled one, so it
+      // stayed gone for the rest of the session and the reply read as an
+      // answer to nothing. Removals arrive as `message.removed` events and on
+      // the next reset, so merging does not leave deleted messages behind.
+      const infos = { ...state.infos };
+      const parts = { ...state.parts };
       for (const m of action.messages) {
         infos[m.info.id] = m.info;
-        parts[m.info.id] = Object.fromEntries(m.parts.map((p) => [p.id, p]));
-      }
-      // A re-read is the truth, but it can race a live event that arrived
-      // first, so keep parts we already hold for messages the read also has.
-      for (const [messageID, held] of Object.entries(state.parts)) {
-        if (parts[messageID]) parts[messageID] = { ...held, ...parts[messageID] };
+        const held = parts[m.info.id] ?? {};
+        const merged: Record<string, Part> = { ...held };
+        for (const part of m.parts) {
+          merged[part.id] = mergePart(held[part.id], part);
+        }
+        parts[m.info.id] = merged;
       }
       return { ...state, infos, parts, error: null };
     }
@@ -193,4 +202,27 @@ export function selectMessages(state: State): RenderedMessage[] {
 
 function byId(a: { id: string }, b: { id: string }): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * Reconcile a part we hold against the same part from a re-read.
+ *
+ * The read is authoritative except for text still streaming: reconnecting five
+ * seconds into a twenty-second reply gives a snapshot shorter than what the
+ * deltas have already built, and taking it wholesale makes the reply jump
+ * backwards and then lose the characters the next delta appends past the
+ * shorter value. Keeping the longer text is right in both directions — the
+ * finished part from the server is always at least as long as what we have.
+ */
+function mergePart(held: Part | undefined, read: Part): Part {
+  if (!held || held.type !== read.type) return read;
+  if (
+    (read.type === "text" || read.type === "reasoning") &&
+    "text" in held &&
+    typeof held.text === "string" &&
+    held.text.length > read.text.length
+  ) {
+    return { ...read, text: held.text };
+  }
+  return read;
 }

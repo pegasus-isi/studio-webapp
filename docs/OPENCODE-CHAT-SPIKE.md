@@ -111,6 +111,41 @@ offer "allow `echo *` from now on" without Studio inventing the pattern.
 Questions are the same shape: `POST /question/{id}/reply` with
 `{"answers":[["label"]]}`, one array of chosen labels per question.
 
+## The SDK's types are not the server's API
+
+Worth knowing before trusting either. The generated v1 client at 1.18.29 trails
+its own server: it has no method for `POST /permission/{id}/reply`, nothing for
+the question endpoints, and its `Event` union still names `permission.updated`
+where the server emits `permission.asked`. Its `Permission` type describes
+`type`/`pattern`/`title`, while the running server sends
+`permission`/`patterns`/`always`/`tool`.
+
+`GET /permission`, `GET /session/status` and the reply endpoints are all in the
+server's own `/doc` output and were exercised live. So: read `/doc` from a
+running server, not the SDK's types, when checking whether an endpoint exists.
+The types are still the right thing to build against for the payloads they do
+describe — `Part`, `Message`, `Session` match exactly — which is why Studio uses
+the package for types and calls the API through its own thin layer.
+
+Two shapes the types get right and a reader might not expect:
+
+- `GET /session/status` is a **map** of session id to status, not a status for
+  one session. Absent from the map means idle.
+- An assistant message's `error` is `{name, data: {message}}`. There is no
+  top-level `message`. A user pressing Stop produces
+  `{"name":"MessageAbortedError","data":{"message":"Aborted"}}` — an error
+  object for something that is not a failure, so the UI has to name it.
+
+## Config is read once, and a plugin that throws is invisible
+
+Both worth repeating because they cost time:
+
+- Editing `opencode.json` under a running server has no effect, and neither
+  dispose endpoint reloads it. The propagator restarts the process instead —
+  in the background, because `supervisorctl restart` blocks for the engine's
+  whole stop and start.
+- A plugin that throws while being imported fails silently at any log level.
+
 ## Streaming through the proxy
 
 The event stream sets `x-accel-buffering: no` and sends a heartbeat comment, so

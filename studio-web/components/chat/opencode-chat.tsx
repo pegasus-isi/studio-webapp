@@ -14,12 +14,14 @@
  * event type still renders and still completes the turn.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { AssistantMessage } from "@opencode-ai/sdk";
 import { PartView } from "@/components/chat/opencode-parts";
 import { ChatContextChip } from "@/components/chat/context-chip";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 import {
+  errorMessage,
+  isAbortError,
   useOpenCodeChat,
   type RenderedMessage,
 } from "@/lib/hooks/use-opencode-chat";
@@ -54,6 +56,11 @@ export function OpenCodeChat() {
   const [engineDown, setEngineDown] = useState<oc.EngineStatus | null>(null);
   const [restarting, setRestarting] = useState(false);
 
+  // Bumped by the recovery button so the catalog is re-fetched after a restart;
+  // without it the picker stayed on "Configured default" alone for the life of
+  // the page once the first fetch had failed.
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
+
   // Model list from the engine's own provider catalog, so the picker offers
   // exactly what the generated config declared — no second source of truth
   // about which models exist.
@@ -78,7 +85,7 @@ export function OpenCodeChat() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [catalogAttempt]);
 
   // Why the panel is empty, when it is. A failed fetch alone leaves the user
   // looking at a blank transcript with nothing to act on; "the engine isn't
@@ -101,13 +108,30 @@ export function OpenCodeChat() {
 
   // Only follow the tail when already near it, so a burst of tool output
   // doesn't yank someone away from what they were reading.
+  //
+  // Coalesced to one scroll per frame, and instant rather than smooth while a
+  // reply streams: a long answer produces hundreds of state updates, and
+  // restarting a smooth animation on each one meant the proximity test below
+  // was reading a scrollTop that the previous animation had not finished
+  // moving — so auto-follow would quietly give up partway through.
+  const followRef = useRef<number | null>(null);
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
+    if (followRef.current !== null) return;
+    followRef.current = requestAnimationFrame(() => {
+      followRef.current = null;
+      const el = scrollRef.current;
+      if (!el) return;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
   }, [chat.messages, chat.busy]);
+  useEffect(
+    () => () => {
+      if (followRef.current !== null) cancelAnimationFrame(followRef.current);
+    },
+    []
+  );
 
   // A one-shot draft handed over from elsewhere in the app (a dashboard card).
   const chatDraft = usePanelStore((s) => s.chatDraft);
@@ -153,18 +177,35 @@ export function OpenCodeChat() {
     setRestarting(true);
     try {
       await oc.restartEngine();
+      // Give supervisord time to bring it back before anything re-probes, so
+      // the retry below doesn't just fail against a process still starting.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
     } catch {
-      /* the status line below reports the outcome on its next poll */
+      /* the status line reports the outcome on the next probe */
     } finally {
       setRestarting(false);
+      // Restarting the engine is only half a recovery: if this panel never got
+      // a session (the engine was down when it mounted), nothing else would
+      // ever try again and the card would keep offering a button that fixed
+      // the server and left the panel dead.
+      chat.retry();
+      setCatalogAttempt((n) => n + 1);
     }
   };
 
+  // Keyed on whether anything is actually rendered yet, not on the last
+  // message's role: an assistant message exists as soon as the turn starts, so
+  // a role test hid the indicator while the only parts were an invisible
+  // step-start and an empty text part — several seconds of a blank bubble
+  // where the "Thinking" dots had been, on any model that pauses before its
+  // first token.
+  const lastMessage = chat.messages[chat.messages.length - 1];
   const showThinking =
     chat.busy &&
     chat.permissions.length === 0 &&
     chat.questions.length === 0 &&
-    chat.messages[chat.messages.length - 1]?.info.role !== "assistant";
+    (lastMessage?.info.role !== "assistant" ||
+      !hasRenderableContent(lastMessage));
 
   return (
     <>
@@ -322,17 +363,45 @@ export function OpenCodeChat() {
   );
 }
 
-function MessageBubble({ message }: { message: RenderedMessage }) {
+/**
+ * Whether a message has anything to draw yet.
+ *
+ * Turn bookkeeping (`step-start`, `step-finish`, `snapshot`) is invisible, and
+ * a text part exists before its first delta lands, so "has parts" is not the
+ * same question as "has content".
+ */
+function hasRenderableContent(message: RenderedMessage): boolean {
+  return message.parts.some((part) => {
+    if (
+      part.type === "step-start" ||
+      part.type === "step-finish" ||
+      part.type === "snapshot"
+    ) {
+      return false;
+    }
+    if (part.type === "text" || part.type === "reasoning") {
+      return part.text.trim().length > 0;
+    }
+    return true;
+  });
+}
+
+// Memoized on the message object. Every one of the ~284 deltas in a long reply
+// produces new state, and without this React reconciles every bubble in the
+// transcript on each one; the reducer only replaces the parts of the message
+// that changed, so the others compare equal and skip.
+const MessageBubble = memo(function MessageBubble({
+  message,
+}: {
+  message: RenderedMessage;
+}) {
   const isUser = message.info.role === "user";
   const assistant =
     message.info.role === "assistant" ? (message.info as AssistantMessage) : null;
 
   // A step-boundary-only message (a model switch, an empty step) has nothing
   // to show. Rendering an empty bubble for it makes the transcript look broken.
-  const visible = message.parts.filter(
-    (p) => p.type !== "step-start" && p.type !== "step-finish" && p.type !== "snapshot"
-  );
-  if (visible.length === 0 && !assistant?.error) return null;
+  if (!hasRenderableContent(message) && !assistant?.error) return null;
 
   return (
     <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
@@ -351,12 +420,17 @@ function MessageBubble({ message }: { message: RenderedMessage }) {
           <PartView key={part.id} part={part} />
         ))}
 
-        {assistant?.error && (
+        {/* A stop the user asked for is not a failure. OpenCode records it as
+            MessageAbortedError, so without this a red "Error:" box is the
+            reward for pressing the Stop button. */}
+        {assistant?.error && isAbortError(assistant.error) && (
+          <div className="text-xs text-fgsubtle">Stopped</div>
+        )}
+        {assistant?.error && !isAbortError(assistant.error) && (
           <div className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1.5 text-xs text-rose-600 dark:text-rose-400">
             <span className="font-semibold">Error:</span>
             <span className="[overflow-wrap:anywhere]">
-              {(assistant.error as { message?: string }).message ??
-                "The model returned an error"}
+              {errorMessage(assistant.error)}
             </span>
           </div>
         )}
@@ -369,7 +443,7 @@ function MessageBubble({ message }: { message: RenderedMessage }) {
       </div>
     </div>
   );
-}
+});
 
 function formatUsage(message: AssistantMessage): string {
   const { input, output, cache } = message.tokens;
@@ -492,6 +566,11 @@ function QuestionCard({
   const [chosen, setChosen] = useState<string[][]>(
     request.questions.map(() => [])
   );
+  // Free-text answers, for a question flagged `custom`. Without these a
+  // custom question with no preset options could not be answered at all: the
+  // only enabled control was Skip, which rejects the question and derails the
+  // turn the agent was asking about.
+  const [typed, setTyped] = useState<string[]>(request.questions.map(() => ""));
   const [busy, setBusy] = useState(false);
 
   const toggle = (index: number, label: string, multiple?: boolean) => {
@@ -506,7 +585,14 @@ function QuestionCard({
     );
   };
 
-  const complete = chosen.every((answer) => answer.length > 0);
+  // An answer is whatever was picked, plus anything typed for a custom
+  // question.
+  const answers = chosen.map((picked, index) => {
+    const extra = typed[index]?.trim();
+    return extra ? [...picked, extra] : picked;
+  });
+  const complete =
+    request.questions.length > 0 && answers.every((answer) => answer.length > 0);
 
   return (
     <div className="rounded-md border border-pegasus-400/60 bg-pegasus-50 p-2.5 text-xs dark:bg-pegasus-400/10">
@@ -530,13 +616,26 @@ function QuestionCard({
               </button>
             ))}
           </div>
+          {question.custom && (
+            <input
+              type="text"
+              value={typed[index] ?? ""}
+              onChange={(e) =>
+                setTyped((current) =>
+                  current.map((v, i) => (i === index ? e.target.value : v))
+                )
+              }
+              placeholder="Or type your own answer"
+              className="mt-1.5 w-full rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
+            />
+          )}
         </div>
       ))}
       <div className="flex items-center gap-2">
         <button
           onClick={() => {
             setBusy(true);
-            void onAnswer(request.id, chosen);
+            void onAnswer(request.id, answers);
           }}
           disabled={busy || !complete}
           className="rounded-md bg-pegasus-600 px-3 py-1 font-medium text-white hover:bg-pegasus-700 disabled:opacity-50"

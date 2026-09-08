@@ -183,6 +183,31 @@ export function abortSession(sessionID: string): Promise<unknown> {
   });
 }
 
+/**
+ * Which sessions are busy right now, keyed by session id.
+ *
+ * Absent from the map means idle. Needed on reconnect: `session.idle` is an
+ * event, so a turn that finished while the stream was down leaves nothing to
+ * observe, and a panel that only tracks events would show a composer stuck on
+ * Stop for the rest of the session.
+ */
+export function getSessionStatus(): Promise<
+  Record<string, { type: "idle" | "busy" | "retry" }>
+> {
+  return call<Record<string, { type: "idle" | "busy" | "retry" }>>(
+    "session/status"
+  );
+}
+
+/**
+ * Permissions the engine is currently waiting on.
+ *
+ * `GET /permission` is in the pinned server's own OpenAPI document and its
+ * payload was exercised live (docs/OPENCODE-CHAT-SPIKE.md). Note that the
+ * SDK's *generated types* describe an older shape for this — `type`/`pattern`
+ * where the server sends `permission`/`patterns`/`always` — which is why
+ * `PermissionRequest` above is declared here rather than imported.
+ */
 export function listPermissions(): Promise<PermissionRequest[]> {
   return call<PermissionRequest[]>("permission");
 }
