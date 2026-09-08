@@ -55,9 +55,25 @@ function Collapsed({
   );
 }
 
-function Pre({ children }: { children: string }) {
+function Pre({
+  children,
+  height = "tall",
+}: {
+  children: string;
+  height?: "tall" | "short";
+}) {
   return (
-    <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-fgmuted [overflow-wrap:anywhere]">
+    <pre
+      className={cn(
+        "overflow-auto whitespace-pre-wrap text-fgmuted [overflow-wrap:anywhere]",
+        // The panel is ~400px wide and shares its height with the composer, so
+        // a scroll region has to leave room for the conversation around it.
+        // Reasoning is the long one — model monologue, hundreds of lines — and
+        // at the tall setting an expanded block filled the whole pane, leaving
+        // the answer it belongs to off screen behind two nested scrollbars.
+        height === "short" ? "max-h-40" : "max-h-64"
+      )}
+    >
       {children}
     </pre>
   );
@@ -98,7 +114,7 @@ function ReasoningPartView({ part }: { part: PartOf<"reasoning"> }) {
   if (!part.text.trim()) return null;
   return (
     <Collapsed label="Reasoning">
-      <Pre>{part.text}</Pre>
+      <Pre height="short">{part.text}</Pre>
     </Collapsed>
   );
 }
@@ -142,7 +158,15 @@ function ToolPartView({ part }: { part: PartOf<"tool"> }) {
         </button>
       </div>
       {title && (
-        <div className="mt-0.5 truncate text-fgmuted" title={title}>
+        <div
+          // Wrapped, not truncated. The title of a bash call *is* the command,
+          // and `mkdir -p $HOME/work/workflows/…` cut off at the pane's width
+          // hid the part that says what it actually did. Capped at three lines
+          // so a pathological one-liner still can't take over the transcript;
+          // the full text is in the tooltip and in `args`.
+          className="mt-0.5 line-clamp-3 font-mono text-[11px] leading-snug text-fgmuted [overflow-wrap:anywhere]"
+          title={title}
+        >
           {title}
         </div>
       )}
