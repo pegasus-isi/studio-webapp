@@ -111,7 +111,17 @@ def _link_agents_into_global() -> int:
 
 
 class OpenCodeAdapter(KnowledgeAdapter):
-    """Translates canonical knowledge into OpenCode's native format."""
+    """Translates canonical knowledge into OpenCode's native format.
+
+    This config is read by two things now: the terminal tool, and the
+    supervised ``opencode serve`` process that backs the chat panel (#367).
+    The server reads it once at startup and no endpoint reloads it, so
+    ``config_changed`` records whether this write actually altered the file —
+    the propagator restarts the server only when it did.
+    """
+
+    #: Whether the last ``update_llm_config`` changed the file on disk.
+    config_changed: bool = False
 
     def install(self, workspace: str, llm_config: dict[str, Any]) -> None:
         # Copy PEGASUS_AI.md as AGENTS.md — into the workspace and the global
@@ -211,10 +221,21 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 "models": {m: {"name": m} for m in model_ids},
             }
 
+        # Studio's "Confirm shell commands" setting, expressed as OpenCode's own
+        # permission rules. The builtin loop implemented this itself
+        # (services/chat_permissions.py, a per-turn future resolved by an
+        # endpoint); OpenCode has a permission system, so the setting becomes
+        # configuration rather than a second implementation. Only bash is
+        # gated: file reads and writes inside the workspace were never gated in
+        # Studio and turning them into prompts would make the panel unusable.
+        require_approval = llm_config.get("require_command_approval", True)
+        permission = {"bash": "ask" if require_approval else "allow"}
+
         config = {
             "$schema": "https://opencode.ai/config.json",
             "provider": providers_cfg,
             "model": f"{provider}/{model_id}",
+            "permission": permission,
             # Absolute, not "AGENTS.md": a bare name is resolved against the
             # project opencode walks up to, which is whatever directory the
             # process happened to start in.
@@ -251,11 +272,24 @@ class OpenCodeAdapter(KnowledgeAdapter):
         # still removes the legacy copy for workspaces that have one.
         blob = json.dumps(config, indent=2)
         targets = [os.path.join(global_dir, "opencode.json")]
+        self.config_changed = False
         for path in targets:
             try:
+                # Compare before writing. Propagation runs on every startup and
+                # every provider save, and a write that changed nothing must
+                # not cost the chat panel a server restart mid-conversation.
+                try:
+                    with open(path) as f:
+                        unchanged = f.read() == blob
+                except OSError:
+                    unchanged = False
+                if unchanged:
+                    log.info("opencode_config_unchanged", path=path)
+                    continue
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 with open(path, "w") as f:
                     f.write(blob)
+                self.config_changed = True
                 log.info("opencode_config_written", path=path)
             except OSError as e:
                 log.warning("opencode_config_write_failed", path=path, error=str(e))

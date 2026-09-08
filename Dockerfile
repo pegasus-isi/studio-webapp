@@ -340,11 +340,14 @@ ENV NPM_CONFIG_PREFIX=/opt/npm-global
 ENV PATH="/opt/npm-global/bin:${PATH}"
 
 # ---- default AI tools ----
-# OpenCode ships in the image as a launchable terminal AI tool, version
-# pinned for reproducible builds. The startup seeding step
-# (main._seed_default_tools) registers it as installed and runs its
-# knowledge adapter on first boot.
-RUN npm install -g opencode-ai@1.18.8 && opencode --version \
+# OpenCode is both a launchable terminal AI tool and, since #367, the agent
+# engine behind the chat panel: `opencode serve` runs under supervisord and
+# studio-api proxies the browser to it. Version pinned for reproducible builds,
+# and `@opencode-ai/sdk` in studio-web/package.json MUST be the same version —
+# the client is generated from this server's OpenAPI document, and CI fails if
+# the two drift. The startup seeding step (main._seed_default_tools) registers
+# it as installed and runs its knowledge adapter on first boot.
+RUN npm install -g opencode-ai@1.18.29 && opencode --version \
     # opencode's install (as root) creates /opt/npm-global/lib/node_modules
     # owned root:root 0755 — the earlier `chmod 777` only covered the top dir,
     # so an unprivileged notebook can't `npm install -g` Codex/Claude into it

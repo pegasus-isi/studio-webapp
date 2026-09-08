@@ -591,6 +591,20 @@ export async function getRunFlow(projectId: string) {
   );
 }
 
+/**
+ * The Active Context block for a workflow or run, as text.
+ *
+ * The builtin loop appends this to its own system prompt server-side. The
+ * OpenCode engine's loop is not ours, so the panel fetches the block and sends
+ * it as a synthetic prompt part (#367) — same content, same per-turn
+ * resolution, rendered as a collapsed context chip rather than prose.
+ */
+export async function getChatScopeBlock(type: string, id: string) {
+  return request<{ block: string | null }>(
+    `/chat/scope-block?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`
+  );
+}
+
 // --- UI preferences (per-user rollout flag) ---
 
 export interface UIPreferences {
@@ -607,6 +621,13 @@ export interface UIPreferences {
   nav_advanced_open: boolean;
   /** Skip the landing page at `/` and open Home directly (#370). */
   skip_welcome: boolean;
+  /**
+   * Which agent engine the chat panel talks to (#367). "opencode" makes the
+   * panel a client of the `opencode serve` process in this pod, which brings
+   * compaction, memory, subagents, MCP and skills; "builtin" is the in-process
+   * loop in studio-api. Opt-in while the OpenCode engine is being tried.
+   */
+  chat_engine: "builtin" | "opencode";
 }
 
 export async function getUIPreferences() {

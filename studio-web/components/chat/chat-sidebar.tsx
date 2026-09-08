@@ -1,7 +1,6 @@
 "use client";
 
-import { ChatPanel } from "@/components/chat/chat-panel";
-import { ChatInput } from "@/components/chat/chat-input";
+import { ChatEngine } from "@/components/chat/chat-engine";
 import { ConversationBar } from "@/components/chat/conversation-bar";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 import { ResizablePane } from "@/components/layout/resizable-pane";
@@ -60,13 +59,8 @@ export function ChatSidebar({ onClose }: ChatSidebarProps) {
         </button>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-hidden">
-        <ChatPanel />
-      </div>
-
-      {/* Input */}
-      <ChatInput />
+      {/* Transcript and composer, from whichever engine is selected (#367) */}
+      <ChatEngine />
     </div>
     </ResizablePane>
   );

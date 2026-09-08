@@ -23,7 +23,8 @@
     "tailwind-merge": "^2.6.0",
     "zustand": "^5.0.2",
     "@xyflow/react": "^12.4.0",
-    "@dagrejs/dagre": "^1.1.4"
+    "@dagrejs/dagre": "^1.1.4",
+    "@opencode-ai/sdk": "1.18.29"
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.15",

@@ -53,11 +53,14 @@ npm run build
 
 nginx on **:8888** is the only exposed port, routing `/` → studio-web (Next.js
 standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**),
-`/jupyter/*` → JupyterLab (**:8889**). Supervised by supervisord (`docker/supervisor/`);
+`/jupyter/*` → JupyterLab (**:8889**). `opencode serve` (**:4096**) is
+loopback-only and reached solely through studio-api's proxy, authenticated with
+a per-user password the entrypoint writes to `~/.studio/opencode-password`.
+Supervised by supervisord (`docker/supervisor/`);
 `docker/entrypoint.sh` runs `init_db.py` (first launch only) then `exec supervisord`.
 
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
-  migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 23 services
+  migrations in `db.py`), structlog JSON logging. 17 routers in `routers/`, 24 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
   notifications, terminal/PTY sessions). Workflow runs are
   discovered by globbing `**/braindump.yml` under `$HOME` (`STUDIO_SCAN_DIR`),
@@ -111,10 +114,23 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   tab or a dropped connection — Studio's left nav used to be full page loads,
   and anything owned by the request died with it. Reach for this shape rather
   than sequencing calls in the browser.
-- Chat is the builtin agent loop in `routers/chat.py` (direct provider calls
-  with tool use, Anthropic + OpenAI-compatible + Responses API). OpenCode was
-  removed as a chat backend (#299) — it remains only as a launchable terminal
-  AI tool. Anything reading the knowledge tree goes through
+- **Chat has two engines, chosen per user** by the `chat_engine` UI preference
+  (#367). `builtin` is the in-process agent loop in `routers/chat.py` (direct
+  provider calls with tool use, Anthropic + OpenAI-compatible + Responses API)
+  and is still the default. `opencode` makes the panel a thin client of the
+  supervised `opencode serve` process in the same pod: `routers/opencode.py`
+  proxies `/api/opencode/*` to `127.0.0.1:4096` **verbatim**, including the SSE
+  stream, and `studio-web/lib/opencode/` + `components/chat/opencode-parts.tsx`
+  render OpenCode's own parts through a registry with a fallback. The intended
+  end state is one engine — the builtin loop goes once OpenCode is proven in a
+  real pod — so **do not add features to the builtin loop**; see #367 and
+  `docs/OPENCODE-CHAT-SPIKE.md`, which records what the spike established
+  (config changes need a process restart, text streams as `message.part.delta`
+  and not as whole parts, the plugin hook does receive the session id).
+  Nothing on the Python side parses an OpenCode payload, and it must stay that
+  way: that is what lets a version bump be a version bump. `@opencode-ai/sdk`
+  and the `opencode-ai` pin in the Dockerfile must match, which
+  `tests/test_opencode_version_pin.py` enforces. Anything reading the knowledge tree goes through
   `knowledge/layout.py`; nothing should resolve it independently — `chat.py`
   keeping its own `KNOWLEDGE_ROOT` after the knowledge base moved is how the
   chat lost its context, personas and skills at once (#179).

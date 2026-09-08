@@ -1662,6 +1662,29 @@ async def list_agents() -> dict:
     return await list_agents()
 
 
+@router.get("/scope-block")
+async def scope_block(type: str, id: str) -> dict[str, str | None]:
+    """The Active Context block for a workflow or run, as plain text.
+
+    The builtin loop appends this to its own system prompt, where the browser
+    never sees it. The OpenCode engine has no such seam: the agent loop is not
+    ours, so the caller that knows which workflow the conversation is about is
+    the panel, and it sends the block as a synthetic prompt part — visible to
+    the model, hidden by the renderer, and re-resolved every turn so a
+    finished run stops being described as running.
+
+    Returns ``{"block": null}`` for an id that resolves to nothing, which is
+    the same "no context, carry on" outcome the builtin path already has.
+    """
+    from services.chat_scope import SCOPE_TYPES, build_scope_block
+
+    if type not in SCOPE_TYPES:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown scope type: {type}"
+        )
+    return {"block": await build_scope_block(type, id)}
+
+
 @router.get("/history", response_model=ChatHistoryResponse)
 async def get_history(
     limit: int = 100, conversation_id: str | None = None

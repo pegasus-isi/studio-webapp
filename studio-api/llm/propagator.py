@@ -90,6 +90,16 @@ class LLMPropagator:
         except Exception:
             pass  # Table may not exist yet on first run
 
+        # The chat panel's engine reads its permission rules out of the same
+        # generated config (#367), so the setting that used to be enforced in
+        # Python has to travel with the provider config.
+        try:
+            from services.chat_permissions import require_approval
+
+            config["require_command_approval"] = await require_approval(db)
+        except Exception:
+            pass  # default posture (prompt) is applied by the adapter
+
         installed = await db.list_tools()
         if not installed:
             log.info("llm_propagate_skip", reason="no tools installed")
@@ -108,3 +118,18 @@ class LLMPropagator:
                 log.warning(
                     "llm_propagate_failed", tool_id=tool_id, error=str(e)
                 )
+                continue
+
+            # OpenCode's config is read once, at startup: the chat engine keeps
+            # answering with the old provider until the process restarts, which
+            # is what the previous adapter surfaced as "Model not found". Only
+            # when the file actually changed — propagation also runs at every
+            # startup, and restarting the engine each boot would drop a chat
+            # panel that had just reattached.
+            if tool_id == "opencode" and getattr(adapter, "config_changed", False):
+                try:
+                    from services import opencode_server
+
+                    await opencode_server.restart()
+                except Exception as e:
+                    log.warning("opencode_restart_error", error=str(e))

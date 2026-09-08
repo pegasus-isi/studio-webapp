@@ -1,0 +1,559 @@
+"use client";
+
+/**
+ * The chat panel, backed by the OpenCode agent server (#367).
+ *
+ * Transcript and composer in one component because the state they share lives
+ * in `useOpenCodeChat`, not in a store: OpenCode is the source of truth and
+ * this is a view of it. The builtin engine splits them (ChatPanel +
+ * ChatInput) because its state does sit in a store.
+ *
+ * What this component decides is *how to draw* OpenCode's data. What it must
+ * never do is interpret it: parts go to the registry in opencode-parts.tsx,
+ * which has a fallback, so an OpenCode release that adds a part type or an
+ * event type still renders and still completes the turn.
+ */
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AssistantMessage } from "@opencode-ai/sdk";
+import { PartView } from "@/components/chat/opencode-parts";
+import { ChatContextChip } from "@/components/chat/context-chip";
+import { PegasusLogo } from "@/components/ui/pegasus-logo";
+import {
+  useOpenCodeChat,
+  type RenderedMessage,
+} from "@/lib/hooks/use-opencode-chat";
+import * as oc from "@/lib/opencode/client";
+import type {
+  PermissionRequest,
+  QuestionRequest,
+} from "@/lib/opencode/client";
+import { usePanelStore } from "@/lib/stores/panel-store";
+import { cn } from "@/lib/utils";
+
+const STARTERS = [
+  "Build me a workflow that",
+  "Why did my run fail",
+  "Explain what this workflow does",
+];
+
+interface ModelChoice {
+  providerID: string;
+  modelID: string;
+  label: string;
+}
+
+export function OpenCodeChat() {
+  const chat = useOpenCodeChat();
+  const [input, setInput] = useState("");
+  const [models, setModels] = useState<ModelChoice[] | null>(null);
+  const [picked, setPicked] = useState<string>("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const [engineDown, setEngineDown] = useState<oc.EngineStatus | null>(null);
+  const [restarting, setRestarting] = useState(false);
+
+  // Model list from the engine's own provider catalog, so the picker offers
+  // exactly what the generated config declared — no second source of truth
+  // about which models exist.
+  useEffect(() => {
+    let cancelled = false;
+    oc.getProviders()
+      .then((catalog) => {
+        if (cancelled) return;
+        const choices: ModelChoice[] = [];
+        for (const provider of catalog.providers ?? []) {
+          for (const [modelID, model] of Object.entries(provider.models ?? {})) {
+            choices.push({
+              providerID: provider.id,
+              modelID,
+              label: `${provider.name || provider.id} / ${model?.name || modelID}`,
+            });
+          }
+        }
+        setModels(choices);
+      })
+      .catch(() => setModels([]));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Why the panel is empty, when it is. A failed fetch alone leaves the user
+  // looking at a blank transcript with nothing to act on; "the engine isn't
+  // running, here is the button" is actionable.
+  useEffect(() => {
+    if (chat.connection !== "retrying" && !chat.error) {
+      setEngineDown(null);
+      return;
+    }
+    let cancelled = false;
+    oc.getEngineStatus()
+      .then((status) => {
+        if (!cancelled) setEngineDown(status.running ? null : status);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [chat.connection, chat.error]);
+
+  // Only follow the tail when already near it, so a burst of tool output
+  // doesn't yank someone away from what they were reading.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chat.messages, chat.busy]);
+
+  // A one-shot draft handed over from elsewhere in the app (a dashboard card).
+  const chatDraft = usePanelStore((s) => s.chatDraft);
+  const setChatDraft = usePanelStore((s) => s.setChatDraft);
+  useEffect(() => {
+    if (chatDraft == null) return;
+    setInput(chatDraft);
+    setChatDraft(null);
+    const el = textareaRef.current;
+    if (el) {
+      el.focus();
+      requestAnimationFrame(() => {
+        el.selectionStart = el.selectionEnd = el.value.length;
+      });
+    }
+  }, [chatDraft, setChatDraft]);
+
+  const model = useMemo(() => {
+    if (!picked) return undefined;
+    const [providerID, ...rest] = picked.split("/");
+    return { providerID, modelID: rest.join("/") };
+  }, [picked]);
+
+  const submit = () => {
+    const text = input.trim();
+    if (!text || chat.busy) return;
+    setInput("");
+    void chat.send(text, model);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (
+      e.key === "Enter" &&
+      !e.shiftKey &&
+      !(e.nativeEvent as { isComposing?: boolean }).isComposing
+    ) {
+      e.preventDefault();
+      submit();
+    }
+  };
+
+  const restart = async () => {
+    setRestarting(true);
+    try {
+      await oc.restartEngine();
+    } catch {
+      /* the status line below reports the outcome on its next poll */
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  const showThinking =
+    chat.busy &&
+    chat.permissions.length === 0 &&
+    chat.questions.length === 0 &&
+    chat.messages[chat.messages.length - 1]?.info.role !== "assistant";
+
+  return (
+    <>
+      <div ref={scrollRef} className="flex-1 overflow-auto p-4">
+        {engineDown && (
+          <div className="mx-auto mb-3 max-w-3xl rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-xs">
+            <div className="font-medium text-amber-700 dark:text-amber-400">
+              The chat engine is not responding
+            </div>
+            <p className="mt-1 text-fgmuted">
+              {engineDown.detail ||
+                (engineDown.reason === "not_listening"
+                  ? "It is not listening yet — it may still be starting."
+                  : "OpenCode is unreachable in this session.")}
+            </p>
+            <button
+              onClick={restart}
+              disabled={restarting}
+              className="mt-2 rounded-md border border-line px-2.5 py-1 font-medium text-fgmuted hover:bg-muted disabled:opacity-50"
+            >
+              {restarting ? "Restarting…" : "Restart the engine"}
+            </button>
+          </div>
+        )}
+
+        {chat.messages.length === 0 && !engineDown ? (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center text-fgsubtle">
+              <div className="mb-3 flex justify-center">
+                <PegasusLogo size={48} />
+              </div>
+              <p className="text-lg">Welcome to PegasusAI Chat</p>
+              <p className="mt-1 text-sm">
+                Describe what you want to do and I&apos;ll build or fix it for
+                you.
+              </p>
+              <div className="mt-4 space-y-1.5">
+                {STARTERS.map((starter) => (
+                  <button
+                    key={starter}
+                    onClick={() => setInput(starter + " ")}
+                    className="block w-full rounded-md border border-line bg-surface px-3 py-2 text-left text-sm text-fgmuted transition-colors hover:border-pegasus-400 hover:text-fg"
+                  >
+                    {starter}…
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mx-auto max-w-3xl space-y-4">
+            {chat.messages.map((message) => (
+              <MessageBubble key={message.info.id} message={message} />
+            ))}
+
+            {chat.permissions.map((request) => (
+              <PermissionCard
+                key={request.id}
+                request={request}
+                onReply={chat.answerPermission}
+              />
+            ))}
+            {chat.questions.map((request) => (
+              <QuestionCard
+                key={request.id}
+                request={request}
+                onAnswer={chat.answerQuestion}
+                onReject={chat.rejectQuestion}
+              />
+            ))}
+
+            {chat.error && (
+              <div className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1.5 text-xs text-rose-600 dark:text-rose-400">
+                <span className="font-semibold">Error:</span>
+                <span className="[overflow-wrap:anywhere]">{chat.error}</span>
+              </div>
+            )}
+            {showThinking && <ThinkingIndicator />}
+            <div ref={bottomRef} />
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-line bg-surface p-4">
+        <div className="mx-auto max-w-3xl space-y-2">
+          <div className="flex items-center gap-2 text-xs">
+            <ChatContextChip />
+            <label className="ml-1 text-fgmuted" htmlFor="opencode-model">
+              Model:
+            </label>
+            <select
+              id="opencode-model"
+              value={picked}
+              onChange={(e) => setPicked(e.target.value)}
+              className="max-w-[18rem] rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
+            >
+              {/* Empty means "whatever the generated config says", which is the
+                  provider the user activated in Settings. */}
+              <option value="">Configured default</option>
+              {(models ?? []).map((m) => (
+                <option
+                  key={`${m.providerID}/${m.modelID}`}
+                  value={`${m.providerID}/${m.modelID}`}
+                >
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            {chat.connection === "retrying" && (
+              <span className="ml-auto text-amber-600 dark:text-amber-400">
+                Reconnecting…
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder="Ask about Pegasus workflows... (Shift+Enter for newline)"
+              rows={3}
+              className="min-h-[72px] max-h-56 flex-1 resize-none rounded-md border border-line px-3 py-2 text-sm shadow-sm focus:border-pegasus-500 focus:ring-pegasus-500"
+            />
+            {chat.busy ? (
+              <button
+                onClick={() => void chat.stop()}
+                title="Stop"
+                aria-label="Stop"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                onClick={submit}
+                disabled={!input.trim() || !chat.sessionID}
+                title="Send"
+                aria-label="Send"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-pegasus-600 text-white hover:bg-pegasus-700 disabled:opacity-50"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="19" x2="12" y2="5" />
+                  <polyline points="5 12 12 5 19 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function MessageBubble({ message }: { message: RenderedMessage }) {
+  const isUser = message.info.role === "user";
+  const assistant =
+    message.info.role === "assistant" ? (message.info as AssistantMessage) : null;
+
+  // A step-boundary-only message (a model switch, an empty step) has nothing
+  // to show. Rendering an empty bubble for it makes the transcript look broken.
+  const visible = message.parts.filter(
+    (p) => p.type !== "step-start" && p.type !== "step-finish" && p.type !== "snapshot"
+  );
+  if (visible.length === 0 && !assistant?.error) return null;
+
+  return (
+    <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
+      <span className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
+        {isUser ? "You" : "AI"}
+      </span>
+      <div
+        className={cn(
+          "max-w-[85%] space-y-2 rounded-lg px-4 py-3 text-sm",
+          isUser
+            ? "bg-pegasus-600 text-white"
+            : "border border-line bg-surface text-fg"
+        )}
+      >
+        {message.parts.map((part) => (
+          <PartView key={part.id} part={part} />
+        ))}
+
+        {assistant?.error && (
+          <div className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1.5 text-xs text-rose-600 dark:text-rose-400">
+            <span className="font-semibold">Error:</span>
+            <span className="[overflow-wrap:anywhere]">
+              {(assistant.error as { message?: string }).message ??
+                "The model returned an error"}
+            </span>
+          </div>
+        )}
+
+        {assistant && assistant.tokens.output > 0 && (
+          <div className="border-t border-line pt-1.5 text-xs text-fgmuted">
+            {formatUsage(assistant)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatUsage(message: AssistantMessage): string {
+  const { input, output, cache } = message.tokens;
+  const total = input + output + (cache?.read ?? 0) + (cache?.write ?? 0);
+  const parts = [`~${total.toLocaleString()} tokens`];
+  if (message.cost > 0) parts.push(`$${message.cost.toFixed(4)}`);
+  if (message.time.completed) {
+    const seconds = (message.time.completed - message.time.created) / 1000;
+    parts.push(`${seconds.toFixed(1)}s`);
+  }
+  if (message.modelID) parts.push(message.modelID);
+  return parts.join(", ");
+}
+
+function ThinkingIndicator() {
+  return (
+    <div className="flex justify-start">
+      <div className="mr-2 mt-1 shrink-0">
+        <PegasusLogo size={24} />
+      </div>
+      <div className="flex items-center gap-1 rounded-lg border border-line bg-surface px-4 py-3">
+        <span className="text-xs text-fgmuted">Thinking</span>
+        <span className="flex gap-1">
+          {[0, 150, 300].map((d) => (
+            <span
+              key={d}
+              className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-fgsubtle"
+              style={{ animationDelay: `${d}ms` }}
+            />
+          ))}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One dialog for every permission OpenCode can ask about, now and later.
+ *
+ * The request names what it wants (`permission`), what it wants it for
+ * (`patterns`, the command itself for bash) and what an "always" would allow
+ * (`always`), so nothing here is per-tool and a new gated tool needs no new
+ * component.
+ */
+function PermissionCard({
+  request,
+  onReply,
+}: {
+  request: PermissionRequest;
+  onReply: (id: string, reply: oc.PermissionReply) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState<oc.PermissionReply | null>(null);
+  const decide = (reply: oc.PermissionReply) => {
+    setBusy(reply);
+    void onReply(request.id, reply);
+  };
+  const detail =
+    (typeof request.metadata?.command === "string"
+      ? request.metadata.command
+      : null) ?? request.patterns.join("\n");
+  const alwaysPattern = request.always?.[0];
+
+  return (
+    <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-2.5 text-xs">
+      <div className="flex items-center gap-1.5 font-medium text-amber-700 dark:text-amber-400">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        Allow {request.permission}?
+      </div>
+      {/* Full contrast, deliberately: this is the command being authorised, and
+          it is the one string in the app that must not be a muted grey. */}
+      {detail && (
+        <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap rounded border border-line bg-surface px-2 py-1 font-mono text-fg [overflow-wrap:anywhere]">
+          {detail}
+        </pre>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => decide("once")}
+          disabled={busy !== null}
+          className="rounded-md bg-pegasus-600 px-3 py-1 font-medium text-white hover:bg-pegasus-700 disabled:opacity-50"
+        >
+          Allow once
+        </button>
+        {alwaysPattern && (
+          <button
+            onClick={() => decide("always")}
+            disabled={busy !== null}
+            title={`Allow ${alwaysPattern} for the rest of this session`}
+            className="rounded-md border border-line px-3 py-1 font-medium text-fgmuted hover:bg-muted disabled:opacity-50"
+          >
+            Always allow <code className="font-mono">{alwaysPattern}</code>
+          </button>
+        )}
+        <button
+          onClick={() => decide("reject")}
+          disabled={busy !== null}
+          className="rounded-md border border-line px-3 py-1 font-medium text-fgmuted hover:bg-muted disabled:opacity-50"
+        >
+          Deny
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The agent asking the user something mid-turn. Same shape for every tool. */
+function QuestionCard({
+  request,
+  onAnswer,
+  onReject,
+}: {
+  request: QuestionRequest;
+  onAnswer: (id: string, answers: string[][]) => Promise<void>;
+  onReject: (id: string) => Promise<void>;
+}) {
+  const [chosen, setChosen] = useState<string[][]>(
+    request.questions.map(() => [])
+  );
+  const [busy, setBusy] = useState(false);
+
+  const toggle = (index: number, label: string, multiple?: boolean) => {
+    setChosen((current) =>
+      current.map((answer, i) => {
+        if (i !== index) return answer;
+        if (!multiple) return [label];
+        return answer.includes(label)
+          ? answer.filter((l) => l !== label)
+          : [...answer, label];
+      })
+    );
+  };
+
+  const complete = chosen.every((answer) => answer.length > 0);
+
+  return (
+    <div className="rounded-md border border-pegasus-400/60 bg-pegasus-50 p-2.5 text-xs dark:bg-pegasus-400/10">
+      {request.questions.map((question, index) => (
+        <div key={question.header || index} className="mb-2">
+          <div className="font-medium text-fg">{question.question}</div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {question.options.map((option) => (
+              <button
+                key={option.label}
+                onClick={() => toggle(index, option.label, question.multiple)}
+                title={option.description}
+                className={cn(
+                  "rounded-md border px-2.5 py-1 text-left",
+                  chosen[index]?.includes(option.label)
+                    ? "border-pegasus-500 bg-pegasus-600 text-white"
+                    : "border-line bg-surface text-fgmuted hover:border-pegasus-300 hover:text-fg"
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => {
+            setBusy(true);
+            void onAnswer(request.id, chosen);
+          }}
+          disabled={busy || !complete}
+          className="rounded-md bg-pegasus-600 px-3 py-1 font-medium text-white hover:bg-pegasus-700 disabled:opacity-50"
+        >
+          Answer
+        </button>
+        <button
+          onClick={() => {
+            setBusy(true);
+            void onReject(request.id);
+          }}
+          disabled={busy}
+          className="rounded-md border border-line px-3 py-1 font-medium text-fgmuted hover:bg-muted disabled:opacity-50"
+        >
+          Skip
+        </button>
+      </div>
+    </div>
+  );
+}
