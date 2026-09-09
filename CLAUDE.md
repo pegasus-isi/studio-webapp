@@ -68,7 +68,8 @@ Supervised by supervisord (`docker/supervisor/`);
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
   migrations in `db.py`), structlog JSON logging. 17 routers in `routers/`, 24 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
-  notifications, terminal/PTY sessions). Workflow runs are
+  notifications, terminal/PTY sessions). 18 routers now — `mcp.py` serves the
+  Pegasus tools to the OpenCode engine. Workflow runs are
   discovered by globbing `**/braindump.yml` under `$HOME` (`STUDIO_SCAN_DIR`),
   plus user-added scan roots/excludes from Settings → Pegasus Options
   (`/api/settings/workflow-scan`, merged in `workflow_scanner`'s async
@@ -134,7 +135,13 @@ Supervised by supervisord (`docker/supervisor/`);
   (config changes need a process restart, text streams as `message.part.delta`
   and not as whole parts, the plugin hook does receive the session id).
   Nothing on the Python side parses an OpenCode payload, and it must stay that
-  way: that is what lets a version bump be a version bump. `@opencode-ai/sdk`
+  way: that is what lets a version bump be a version bump. The Pegasus tools
+  reach that engine over MCP — `routers/mcp.py` serves them at `/api/mcp`
+  (stateless Streamable HTTP) and the generated `opencode.json` registers it as
+  a loopback remote server beside `pegasus-docs`/`kiso-docs`. Its tool list is
+  read from `services/chat_tools.py`, so **add a Pegasus tool in one place** and
+  both engines get it; the generic file/shell tools are deliberately not
+  exposed, since OpenCode has its own behind its own permission gate. `@opencode-ai/sdk`
   and the `opencode-ai` pin in the Dockerfile must match, which
   `tests/test_opencode_version_pin.py` enforces. Anything reading the knowledge tree goes through
   `knowledge/layout.py`; nothing should resolve it independently — `chat.py`
