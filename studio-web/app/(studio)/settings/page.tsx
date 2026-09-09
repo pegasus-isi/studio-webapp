@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   useProviders,
   useProviderConfigs,
@@ -15,6 +15,7 @@ import {
   useUIPreferences,
   useUpdateUIPreferences,
 } from "@/lib/hooks/use-ui-prefs";
+import { announceEngineChange } from "@/lib/chat-engine-channel";
 import { ToolCard } from "@/components/tools/tool-card";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
@@ -22,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { appRelativePath } from "@/lib/urls";
 import type { ProviderConfig } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
+import * as oc from "@/lib/opencode/client";
 
 type Tab = "providers" | "tools" | "chat" | "pegasus" | "notifications";
 
@@ -761,6 +763,8 @@ function ChatTab() {
         </div>
       )}
 
+      <ChatEngineSection />
+
       {/* Shell-command approval (SEC-4) */}
       <div className="rounded-lg border border-line bg-surface p-4">
         <div className="flex items-start justify-between gap-4">
@@ -794,6 +798,119 @@ function ChatTab() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ─── Chat engine (#367) ─── */
+
+/**
+ * Which agent loop answers the chat.
+ *
+ * Opt-in, and the builtin loop stays the default, because this replaces the
+ * engine under an existing conversation rather than adding a feature beside
+ * it: everything a user has learned about how the panel behaves is about the
+ * builtin loop. The switch is per user and takes effect on the next render of
+ * the panel, so trying it and going back costs a toggle rather than a
+ * rollback.
+ */
+function ChatEngineSection() {
+  const { prefs } = useUIPreferences();
+  const update = useUpdateUIPreferences();
+  const [status, setStatus] = useState<oc.EngineStatus | null>(null);
+  const [restarting, setRestarting] = useState(false);
+
+  const refresh = useCallback(() => {
+    oc.getEngineStatus()
+      .then(setStatus)
+      .catch(() =>
+        setStatus({ running: false, reason: "unreachable", detail: null })
+      );
+  }, []);
+
+  useEffect(refresh, [refresh]);
+
+  const restart = async () => {
+    setRestarting(true);
+    try {
+      await oc.restartEngine();
+      // Give supervisord a moment to bring it back before asking, so the line
+      // doesn't read "not listening" for the restart it was just asked for.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      refresh();
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  const onOpenCode = prefs.chat_engine === "opencode";
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-fg">Chat engine</h3>
+          <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+            OpenCode runs the conversation inside your session: it summarizes
+            older context instead of forgetting it, remembers across chats, and
+            can use subagents, MCP servers and skills. The built-in engine is
+            the simpler loop Studio has always used.
+          </p>
+        </div>
+        <select
+          value={prefs.chat_engine}
+          disabled={update.isPending}
+          onChange={(e) => {
+            update.mutate(
+              { chat_engine: e.target.value as "builtin" | "opencode" },
+              {
+                // Announced only once the save has landed. Another document
+                // responds by refetching the preference, so announcing first
+                // raced the PUT: it could read the old value and then never
+                // hear again, leaving the notebook chat on the engine the user
+                // had just switched away from. This document doesn't wait —
+                // its cache is updated optimistically by the hook.
+                onSuccess: () => announceEngineChange(),
+              }
+            );
+          }}
+          className="mt-0.5 shrink-0 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:opacity-50"
+        >
+          <option value="builtin">Built-in</option>
+          <option value="opencode">OpenCode</option>
+        </select>
+      </div>
+
+      {onOpenCode && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-xs">
+          <span className="text-fgmuted">Engine:</span>
+          {status === null ? (
+            <span className="text-fgsubtle">checking…</span>
+          ) : status.running ? (
+            <span className="text-emerald-600 dark:text-emerald-400">
+              running{status.version ? ` (${status.version})` : ""}
+            </span>
+          ) : (
+            <span className="text-amber-600 dark:text-amber-400">
+              {status.detail || status.reason || "not running"}
+            </span>
+          )}
+          <button
+            onClick={restart}
+            disabled={restarting}
+            title="Restart the OpenCode server in this session"
+            className="ml-auto rounded-md border border-line px-2.5 py-1 font-medium text-fgmuted hover:bg-muted disabled:opacity-50"
+          >
+            {restarting ? "Restarting…" : "Restart"}
+          </button>
+        </div>
+      )}
+
+      {update.isError && (
+        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">
+          Could not save that preference. Try again.
+        </p>
+      )}
     </div>
   );
 }

@@ -248,3 +248,72 @@ def test_uninstall_still_removes_a_legacy_workspace_config(tmp_path, monkeypatch
 
     OpenCodeAdapter().uninstall(str(workspace))
     assert not legacy.exists()
+
+
+def test_permission_defaults_to_asking_for_bash(tmp_path, monkeypatch):
+    """The safe default must keep shell commands behind user confirmation."""
+    from knowledge.opencode import OpenCodeAdapter
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+
+    OpenCodeAdapter().update_llm_config(
+        str(workspace),
+        {"provider": "gateway", "model": "default", "base_url": "u"},
+    )
+
+    config = json.loads(
+        (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
+    )
+    assert config["permission"] == {"bash": "ask"}
+
+
+def test_permission_allows_bash_when_command_approval_is_disabled(
+    tmp_path, monkeypatch
+):
+    """Disabling Studio's prompt must propagate to OpenCode's own gate."""
+    from knowledge.opencode import OpenCodeAdapter
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+
+    OpenCodeAdapter().update_llm_config(
+        str(workspace),
+        {
+            "provider": "gateway",
+            "model": "default",
+            "base_url": "u",
+            "require_command_approval": False,
+        },
+    )
+
+    config = json.loads(
+        (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
+    )
+    assert config["permission"] == {"bash": "allow"}
+
+
+def test_config_changed_only_when_generated_config_changes(tmp_path, monkeypatch):
+    """An identical propagation must not restart an active chat engine."""
+    from knowledge.opencode import OpenCodeAdapter
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    llm_config = {
+        "provider": "gateway",
+        "model": "default",
+        "base_url": "http://gateway.llm:8080/v1",
+    }
+    adapter = OpenCodeAdapter()
+
+    adapter.update_llm_config(str(workspace), llm_config)
+    assert adapter.config_changed is True
+
+    adapter.update_llm_config(str(workspace), llm_config)
+    assert adapter.config_changed is False
