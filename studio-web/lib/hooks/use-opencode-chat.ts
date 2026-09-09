@@ -99,12 +99,35 @@ export function useOpenCodeChat() {
   const convId = useChatStore((s) => s.activeId);
   const scope = useChatContextStore((s) => s.scopeByConv[convId] ?? null);
   const sessionID = useOpenCodeStore((s) => s.sessionByConv[convId]);
+  const agent = useOpenCodeStore((s) => s.agentByConv[convId]);
   const setSession = useOpenCodeStore((s) => s.setSession);
+  const setAgentForConv = useOpenCodeStore((s) => s.setAgent);
   const clearSession = useOpenCodeStore((s) => s.clearSession);
   const { data: projectData, isPending: projectsPending } =
     useWorkflowProjects();
 
   const [state, dispatch] = useReducer(reduce, EMPTY);
+  /**
+   * The directory this session is rooted in, as the server reports it.
+   *
+   * Not the same as the directory we asked for at creation: a session made
+   * before the workflow scope was known keeps the directory it was created
+   * with. Agents, skills and commands all resolve per directory, so anything
+   * describing what this session can use has to ask about *this* one.
+   */
+  const [sessionDirectory, setSessionDirectory] = useState<string | undefined>();
+  /**
+   * Whether we know the session's directory.
+   *
+   * Tracked separately from the value, because "we could not ask" and "the
+   * engine's default" are indistinguishable once both are `undefined` — and
+   * that is the state where the capability lists are wrong while looking
+   * entirely normal, describing $HOME instead of the workflow. A caller that
+   * cannot see the difference cannot warn about it or offer to retry.
+   */
+  const [directoryStatus, setDirectoryStatus] = useState<
+    "none" | "loading" | "ok" | "error"
+  >("none");
 
   // The session the effects are allowed to act on. Read from a ref inside the
   // stream handler so a session switch can't have events from the old session
@@ -177,6 +200,38 @@ export function useOpenCodeChat() {
   // a resolved approval's card back on screen.
   const syncSeq = useRef(0);
   const statusSeq = useRef(0);
+
+  useEffect(() => {
+    if (!sessionID) {
+      setSessionDirectory(undefined);
+      setDirectoryStatus("none");
+      return;
+    }
+    let cancelled = false;
+    setDirectoryStatus("loading");
+    oc.getSession(sessionID)
+      .then((session) => {
+        if (cancelled) return;
+        setSessionDirectory(session.directory);
+        setDirectoryStatus("ok");
+      })
+      .catch(() => {
+        // Undefined means the catalogs fall back to the engine's own default
+        // directory — a worse answer than the session's, but a usable one.
+        //
+        // Retried on `attempt` for the same reason session creation is: the
+        // likeliest time for this to fail is a panel opening while the engine
+        // is still starting, and without a retry the mistake is permanent —
+        // every capability list would describe $HOME for the rest of the
+        // session, quietly and plausibly.
+        if (cancelled) return;
+        setSessionDirectory(undefined);
+        setDirectoryStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionID, attempt]);
 
   const load = useCallback(
     async (id: string) => {
@@ -423,6 +478,11 @@ export function useOpenCodeChat() {
     [state]
   );
 
+  const setAgent = useCallback(
+    (next: string) => setAgentForConv(convId, next),
+    [convId, setAgentForConv]
+  );
+
   const send = useCallback(
     async (text: string, model?: { providerID: string; modelID: string }) => {
       const id = sessionRef.current;
@@ -471,7 +531,10 @@ export function useOpenCodeChat() {
       }
 
       try {
-        await oc.promptAsync(id, { parts, model });
+        // The agent is read at send time rather than captured, so switching to
+        // plan mode applies to the next turn without re-rendering anything.
+        const selected = useOpenCodeStore.getState().agentByConv[convId];
+        await oc.promptAsync(id, { parts, model, agent: selected || undefined });
       } catch (e) {
         dispatch({ kind: "error", error: (e as Error).message });
         dispatch({ kind: "busy", busy: false });
@@ -545,6 +608,10 @@ export function useOpenCodeChat() {
     permissions: state.permissions,
     questions: state.questions,
     connection: state.connection,
+    sessionDirectory,
+    directoryStatus,
+    agent,
+    setAgent,
     retry,
     send,
     stop,

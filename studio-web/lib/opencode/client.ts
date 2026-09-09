@@ -67,6 +67,43 @@ export interface QuestionRequest {
   questions: QuestionInfo[];
 }
 
+/**
+ * An agent the engine can run.
+ *
+ * `mode` is the distinction that matters to the UI. A **primary** agent is one
+ * the user chooses — `build` executes, `plan` is OpenCode's plan mode and
+ * denies every edit tool server-side, so it is a real guarantee rather than a
+ * prompt asking nicely. A **subagent** is delegated to by the primary agent
+ * through its task tool and is never selected directly. **all** is both: it can
+ * be chosen *and* delegated to, so it belongs in both lists rather than
+ * neither, which is where a `mode === "primary"` test would leave it.
+ *
+ * `compaction`, `summary` and `title` are also primary but are the server's own
+ * machinery; they are distinguishable only by carrying no description, which is
+ * what `selectableAgents` filters on.
+ */
+export interface AgentInfo {
+  name: string;
+  description?: string;
+  mode: "primary" | "subagent" | "all";
+  model?: { providerID: string; modelID: string };
+}
+
+/** A skill the engine has loaded, and where it came from. */
+export interface SkillInfo {
+  name: string;
+  description?: string;
+  /** "<built-in>", or the absolute path of the SKILL.md it was read from. */
+  location?: string;
+}
+
+/** A command the engine offers. `source` is "command" or "skill". */
+export interface CommandInfo {
+  name: string;
+  description?: string;
+  source?: string;
+}
+
 export interface ProviderCatalog {
   providers: {
     id: string;
@@ -168,6 +205,7 @@ export function promptAsync(
   body: {
     parts: { type: "text"; text: string; synthetic?: boolean }[];
     model?: { providerID: string; modelID: string };
+    /** Which primary agent answers this turn — "build", "plan", or a custom one. */
     agent?: string;
   }
 ): Promise<void> {
@@ -249,6 +287,48 @@ export function rejectQuestion(requestID: string): Promise<void> {
   return call<void>(`question/${encodeURIComponent(requestID)}/reject`, {
     method: "POST",
   });
+}
+
+/**
+ * Agents, skills and commands are resolved **per directory**.
+ *
+ * A project carries its own under `.opencode/`, and the engine answers for
+ * whichever directory it is asked about — defaulting to the one it was started
+ * in, which in a pod is $HOME. Asking without one therefore describes a
+ * directory the session is not in: a workflow's own agents and skills would be
+ * missing from a panel whose whole job is saying what this session can use.
+ */
+function scoped(path: string, directory?: string): string {
+  return directory ? `${path}?directory=${encodeURIComponent(directory)}` : path;
+}
+
+export function listAgents(directory?: string): Promise<AgentInfo[]> {
+  return call<AgentInfo[]>(scoped("agent", directory));
+}
+
+export function listSkills(directory?: string): Promise<SkillInfo[]> {
+  return call<SkillInfo[]>(scoped("skill", directory));
+}
+
+export function listCommands(directory?: string): Promise<CommandInfo[]> {
+  return call<CommandInfo[]>(scoped("command", directory));
+}
+
+/**
+ * The agents worth offering as a mode: primary, and not the server's own.
+ *
+ * Filtering on a missing description rather than on a hardcoded name list, so
+ * an agent added by a future OpenCode release, or by a user's own config, shows
+ * up without a change here.
+ */
+export function selectableAgents(agents: AgentInfo[]): AgentInfo[] {
+  return agents.filter(
+    (a) => (a.mode === "primary" || a.mode === "all") && !!a.description
+  );
+}
+
+export function subagents(agents: AgentInfo[]): AgentInfo[] {
+  return agents.filter((a) => a.mode === "subagent" || a.mode === "all");
 }
 
 export function getProviders(): Promise<ProviderCatalog> {

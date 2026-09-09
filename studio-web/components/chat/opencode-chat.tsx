@@ -49,6 +49,8 @@ export function OpenCodeChat() {
   const chat = useOpenCodeChat();
   const [input, setInput] = useState("");
   const [models, setModels] = useState<ModelChoice[] | null>(null);
+  const [agents, setAgents] = useState<oc.AgentInfo[] | null>(null);
+  const [showCapabilities, setShowCapabilities] = useState(false);
   const [picked, setPicked] = useState<string>("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -86,6 +88,25 @@ export function OpenCodeChat() {
       cancelled = true;
     };
   }, [catalogAttempt]);
+
+  // The agents this engine offers. Read from the server rather than hardcoded,
+  // so an agent added by a marketplace update or by the user's own config
+  // appears without a change here.
+  useEffect(() => {
+    let cancelled = false;
+    oc.listAgents(chat.sessionDirectory)
+      .then((list) => {
+        if (!cancelled) setAgents(list);
+      })
+      .catch(() => {
+        if (!cancelled) setAgents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Re-read when the session moves: a workflow project can define its own
+    // agents under .opencode/, and the picker should offer them.
+  }, [catalogAttempt, chat.sessionDirectory]);
 
   // Why the panel is empty, when it is. A failed fetch alone leaves the user
   // looking at a blank transcript with nothing to act on; "the engine isn't
@@ -199,6 +220,14 @@ export function OpenCodeChat() {
   // step-start and an empty text part — several seconds of a blank bubble
   // where the "Thinking" dots had been, on any model that pauses before its
   // first token.
+  const selectable = useMemo(
+    () => (agents ? oc.selectableAgents(agents) : []),
+    [agents]
+  );
+  const activeAgent = useMemo(
+    () => selectable.find((a) => a.name === chat.agent),
+    [selectable, chat.agent]
+  );
   const turns = useMemo(() => groupTurns(chat.messages), [chat.messages]);
   const lastMessage = chat.messages[chat.messages.length - 1];
   const showThinking =
@@ -246,7 +275,13 @@ export function OpenCodeChat() {
               {chat.error}
             </p>
             <button
-              onClick={() => chat.retry()}
+              onClick={() => {
+                // Whatever stopped the session from being created stopped the
+                // catalogs too, so recovery reloads both rather than leaving
+                // the capability lists stale behind a working chat.
+                chat.retry();
+                setCatalogAttempt((n) => n + 1);
+              }}
               className="mt-2 rounded-md border border-line px-2.5 py-1 font-medium text-fgmuted hover:bg-muted"
             >
               Try again
@@ -314,9 +349,35 @@ export function OpenCodeChat() {
 
       <div className="border-t border-line bg-surface p-4">
         <div className="mx-auto max-w-3xl space-y-2">
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <ChatContextChip />
-            <label className="ml-1 text-fgmuted" htmlFor="opencode-model">
+
+            {/* Plan mode is an agent, and OpenCode enforces it: the `plan`
+                agent denies every edit tool server-side, so this is a real
+                guarantee rather than an instruction the model may ignore. */}
+            {selectable.length > 1 && (
+              <>
+                <label className="text-fgmuted" htmlFor="opencode-agent">
+                  Mode:
+                </label>
+                <select
+                  id="opencode-agent"
+                  value={chat.agent ?? ""}
+                  onChange={(e) => chat.setAgent(e.target.value)}
+                  title={activeAgent?.description || "Which agent answers"}
+                  className="rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
+                >
+                  <option value="">Default</option>
+                  {selectable.map((a) => (
+                    <option key={a.name} value={a.name}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
+            <label className="text-fgmuted" htmlFor="opencode-model">
               Model:
             </label>
             <select
@@ -337,12 +398,51 @@ export function OpenCodeChat() {
                 </option>
               ))}
             </select>
+            <button
+              onClick={() => setShowCapabilities((v) => !v)}
+              title="Skills, subagents and commands this session can use"
+              aria-expanded={showCapabilities}
+              className={cn(
+                "ml-auto rounded border px-2 py-1 transition-colors",
+                showCapabilities
+                  ? "border-pegasus-400 text-pegasus-700 dark:text-pegasus-300"
+                  : "border-line text-fgmuted hover:border-pegasus-300 hover:text-fg"
+              )}
+            >
+              What it can do
+            </button>
             {chat.connection === "retrying" && (
-              <span className="ml-auto text-amber-600 dark:text-amber-400">
+              <span className="w-full text-amber-600 dark:text-amber-400">
                 Reconnecting…
               </span>
             )}
           </div>
+
+          {/* Why this is a panel and not a set of controls: skills and
+              subagents are not chosen, they are *matched* — the agent picks a
+              skill by its description and delegates to a subagent through its
+              task tool. So the useful thing to show is what is loaded and
+              where it came from, which is also the fastest way to answer "are
+              my Pegasus skills actually here?". */}
+          {showCapabilities && (
+            <CapabilitiesPanel
+              agents={agents}
+              directory={chat.sessionDirectory}
+              directoryStatus={chat.directoryStatus}
+              attempt={catalogAttempt}
+              onRetry={() => {
+                // Re-resolves the session's directory as well as the lists:
+                // if that lookup was what failed, refetching the catalogs
+                // alone would just ask about the wrong directory again.
+                chat.retry();
+                setCatalogAttempt((n) => n + 1);
+              }}
+            />
+          )}
+
+          {activeAgent?.description && (
+            <p className="text-xs text-fgmuted">{activeAgent.description}</p>
+          )}
 
           <div className="flex items-end gap-2">
             <textarea
@@ -407,6 +507,201 @@ function hasRenderableContent(message: RenderedMessage): boolean {
     }
     return true;
   });
+}
+
+/**
+ * What the engine has loaded: subagents, skills, commands.
+ *
+ * Read-only on purpose. None of these are things a user invokes from here — a
+ * skill is matched by the agent against its description, and a subagent is
+ * delegated to through the task tool — so a picker would misrepresent how they
+ * work. What is genuinely useful is knowing they are *there*, and where they
+ * came from: Studio's own skills arrive from a marketplace checkout that has
+ * gone missing before (#179), and "is my Pegasus skill loaded?" was previously
+ * only answerable from a terminal.
+ */
+type Catalog<T> =
+  | { status: "loading" }
+  | { status: "ok"; items: T[] }
+  | { status: "error" };
+
+function CapabilitiesPanel({
+  agents,
+  directory,
+  directoryStatus,
+  attempt,
+  onRetry,
+}: {
+  agents: oc.AgentInfo[] | null;
+  directory?: string;
+  directoryStatus: "none" | "loading" | "ok" | "error";
+  attempt: number;
+  onRetry: () => void;
+}) {
+  const [skills, setSkills] = useState<Catalog<oc.SkillInfo>>({
+    status: "loading",
+  });
+  const [commands, setCommands] = useState<Catalog<oc.CommandInfo>>({
+    status: "loading",
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    setSkills({ status: "loading" });
+    setCommands({ status: "loading" });
+    void oc
+      .listSkills(directory)
+      .then((items) => !cancelled && setSkills({ status: "ok", items }))
+      // A failed lookup is not an empty one. This panel exists to answer "are
+      // my skills loaded?", so reporting "none" when we could not ask is the
+      // one wrong answer it must never give.
+      .catch(() => !cancelled && setSkills({ status: "error" }));
+    void oc
+      .listCommands(directory)
+      .then((items) => !cancelled && setCommands({ status: "ok", items }))
+      .catch(() => !cancelled && setCommands({ status: "error" }));
+    return () => {
+      cancelled = true;
+    };
+    // `attempt` as well as `directory`: recovering the engine has to clear an
+    // error state here too, or the panel keeps saying it could not check long
+    // after it could.
+  }, [directory, attempt]);
+
+  const delegates = agents ? oc.subagents(agents) : [];
+  // A skill is also offered as a command of the same name, so listing both in
+  // full would show everything twice.
+  const skillNames = new Set(
+    skills.status === "ok" ? skills.items.map((s) => s.name) : []
+  );
+  const ownCommands =
+    commands.status === "ok"
+      ? commands.items.filter((c) => !skillNames.has(c.name))
+      : [];
+
+  // A failed *directory* lookup counts as a failure even when every list came
+  // back, because those lists then describe the engine's default directory
+  // rather than this session's — the case that reads as perfectly normal and
+  // is simply wrong.
+  const failed =
+    directoryStatus === "error" ||
+    skills.status === "error" ||
+    commands.status === "error" ||
+    (agents?.length ?? 0) === 0;
+
+  return (
+    <div className="max-h-56 space-y-3 overflow-auto rounded-md border border-line bg-muted p-2.5 text-xs">
+      {directoryStatus === "error" && (
+        <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-amber-700 dark:text-amber-400">
+          Could not tell which folder this chat is working in, so this list may
+          be for the wrong one — anything the workflow itself defines would be
+          missing.
+        </p>
+      )}
+      {failed && (
+        <button
+          onClick={onRetry}
+          className="w-full rounded border border-line bg-surface px-2 py-1 font-medium text-fgmuted hover:text-fg"
+        >
+          Check again
+        </button>
+      )}
+      <Capability
+        title="Subagents"
+        status={agents === null ? "loading" : "ok"}
+        empty="None — this engine runs every step itself."
+        items={delegates.map((a) => ({
+          name: a.name,
+          detail: a.description,
+        }))}
+        note="The assistant delegates to these on its own; you don't pick one."
+      />
+      <Capability
+        title="Skills"
+        status={skills.status}
+        empty="No skills loaded."
+        items={
+          skills.status === "ok"
+            ? skills.items.map((s) => ({
+                name: s.name,
+                detail: s.description,
+                // "<built-in>" or the SKILL.md path — the answer to "is the
+                // marketplace checkout actually being read?".
+                source: s.location,
+              }))
+            : []
+        }
+        note="Matched by description when they apply; ask in plain language."
+      />
+      <Capability
+        title="Commands"
+        status={commands.status}
+        empty="No commands."
+        items={ownCommands.map((c) => ({ name: c.name, detail: c.description }))}
+      />
+    </div>
+  );
+}
+
+function Capability({
+  title,
+  items,
+  empty,
+  note,
+  status,
+}: {
+  title: string;
+  items: { name: string; detail?: string; source?: string }[];
+  empty: string;
+  note?: string;
+  status: "loading" | "ok" | "error";
+}) {
+  const loading = status === "loading";
+  return (
+    <div>
+      <div className="flex items-baseline gap-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
+          {title}
+        </h4>
+        {status === "ok" && (
+          <span className="text-fgsubtle">{items.length}</span>
+        )}
+      </div>
+      {note && <p className="mt-0.5 text-fgsubtle">{note}</p>}
+      {status === "error" ? (
+        <p className="mt-1 text-amber-600 dark:text-amber-400">
+          Could not check — the engine did not answer.
+        </p>
+      ) : loading ? (
+        <p className="mt-1 text-fgsubtle">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="mt-1 text-fgsubtle">{empty}</p>
+      ) : (
+        <ul className="mt-1 space-y-1">
+          {items.map((item) => (
+            <li key={item.name}>
+              <span className="font-mono font-medium text-fg">{item.name}</span>
+              {item.detail && (
+                <span className="ml-1.5 text-fgmuted">
+                  {item.detail.length > 140
+                    ? `${item.detail.slice(0, 140)}…`
+                    : item.detail}
+                </span>
+              )}
+              {item.source && (
+                <span
+                  className="ml-1.5 block truncate text-[10px] text-fgsubtle"
+                  title={item.source}
+                >
+                  {item.source}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /**
