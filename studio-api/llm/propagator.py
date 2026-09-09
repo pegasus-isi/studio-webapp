@@ -136,6 +136,18 @@ class LLMPropagator:
         except Exception:
             pass  # default posture (prompt) is applied by the adapter
 
+        # Telemetry consent travels the same way (#367 step 6): the engine's
+        # OTel plugin options are part of the generated config, so whether
+        # traces may carry prompt content is decided here, once, and written
+        # with everything else. Absent on failure, which the adapter reads as
+        # "no consent" — the safe direction.
+        try:
+            from services import telemetry
+
+            config["telemetry_content_capture"] = await telemetry.content_capture(db)
+        except Exception:
+            pass
+
         installed = await db.list_tools()
         opencode_written = False
 
