@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useChatStore } from "@/lib/stores/chat-store";
 import { forgetOpenCodeSession } from "@/lib/stores/opencode-store";
+import { deleteChatHistory } from "@/lib/api/client";
 
 /**
  * Conversation controls for the chat header: a "New" button plus a dropdown
@@ -20,6 +21,23 @@ export function ConversationBar() {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  // Position the menu viewport-relative (fixed) so it can't spill past the
+  // narrow JupyterLab iframe's left edge. Clamped into 100vw.
+  const openMenu = () => {
+    const r = buttonRef.current?.getBoundingClientRect();
+    if (r) {
+      const width = Math.min(256, window.innerWidth - 16);
+      setMenuPos({
+        top: r.bottom + 4,
+        left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)),
+        width,
+      });
+    }
+    setOpen((v) => !v);
+  };
 
   useEffect(() => setMounted(true), []);
   useEffect(() => {
@@ -32,6 +50,23 @@ export function ConversationBar() {
     }
   }, [open]);
 
+  // Re-clamp while open (e.g. sidebar dragged, resizing the iframe viewport).
+  useEffect(() => {
+    if (!open) return;
+    const onResize = () => {
+      const r = buttonRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const width = Math.min(256, window.innerWidth - 16);
+      setMenuPos({
+        top: r.bottom + 4,
+        left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)),
+        width,
+      });
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [open]);
+
   // Avoid SSR/localStorage hydration mismatch.
   const active = mounted
     ? conversations.find((c) => c.id === activeId)
@@ -40,7 +75,8 @@ export function ConversationBar() {
   return (
     <div ref={ref} className="relative flex items-center gap-1">
       <button
-        onClick={() => setOpen((v) => !v)}
+        ref={buttonRef}
+        onClick={openMenu}
         title="Conversations"
         className="flex max-w-[150px] items-center gap-1 rounded px-2 py-1 text-xs text-fgmuted hover:bg-muted hover:text-fg"
       >
@@ -53,6 +89,7 @@ export function ConversationBar() {
         onClick={() => {
           if (!window.confirm("Clear all messages in this conversation?")) return;
           clearMessages();
+          deleteChatHistory(activeId).catch(() => {});
           // On the OpenCode engine the transcript is the session's, not this
           // store's, so clearing only the local messages left the same
           // conversation on screen and made the control look broken. The
@@ -80,7 +117,14 @@ export function ConversationBar() {
       </button>
 
       {open && mounted && (
-        <div className="absolute right-0 top-8 z-50 max-h-80 w-64 overflow-auto rounded-lg border border-line bg-surface py-1 shadow-lg">
+        <div
+          style={
+            menuPos
+              ? { top: menuPos.top, left: menuPos.left, width: menuPos.width }
+              : undefined
+          }
+          className="fixed z-50 max-h-80 w-64 max-w-[calc(100vw-1rem)] overflow-auto rounded-lg border border-line bg-surface py-1 shadow-lg"
+        >
           <button
             onClick={() => {
               newConversation();
@@ -124,6 +168,8 @@ export function ConversationBar() {
                   // Otherwise the pairing outlives the conversation and the
                   // persisted map grows for the life of the browser profile.
                   forgetOpenCodeSession(c.id);
+                  // Wipe server rows too so a fresh device can't resurrect it.
+                  deleteChatHistory(c.id).catch(() => {});
                 }}
                 title="Delete"
                 className="rounded p-0.5 text-fgsubtle opacity-0 group-hover:opacity-100 hover:text-rose-500"

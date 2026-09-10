@@ -411,3 +411,28 @@ export const useChatStore = create<ChatStore>()(
     }
   )
 );
+
+// Cross-document sync: the embedded chat (JupyterLab iframe) is a separate
+// document with its own store, so a delete/new/switch in one view must reach
+// the other. localStorage "storage" events fire in OTHER same-origin
+// documents; merge the persisted payload here. Skip while streaming so an
+// in-flight turn isn't clobbered — the next set() re-syncs afterwards.
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key && e.key !== "studio-chat") return;
+    try {
+      const persisted = JSON.parse(localStorage.getItem("studio-chat") || "{}").state;
+      if (!persisted) return;
+      const st = useChatStore.getState();
+      if (st.isStreaming) return;
+      useChatStore.setState({
+        conversations: persisted.conversations ?? st.conversations,
+        activeId: persisted.activeId ?? st.activeId,
+        messagesById: persisted.messagesById ?? st.messagesById,
+        messages: (persisted.messagesById ?? {})[persisted.activeId] ?? [],
+      });
+    } catch {
+      /* ignore */
+    }
+  });
+}

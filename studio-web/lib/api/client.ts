@@ -1070,6 +1070,13 @@ export async function getChatHistory(limit = 100, conversationId?: string) {
   return request<{ messages: ChatMessage[] }>(`/chat/history?${params}`);
 }
 
+export async function deleteChatHistory(conversationId: string) {
+  const params = new URLSearchParams({ conversation_id: conversationId });
+  return request<{ status: string; deleted: number }>(`/chat/history?${params}`, {
+    method: "DELETE",
+  });
+}
+
 export async function stopChat(requestId?: string) {
   return request<{ status: string }>("/chat/stop", {
     method: "POST",

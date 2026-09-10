@@ -139,6 +139,43 @@ export function ChatPanel() {
     prevStreamingRef.current = isStreaming;
   }, [activeId]);
 
+  // Instant bottom when history hydrates after mount (iframe open / fresh
+  // device). The [activeId] effect above fires on empty messages=[] (no
+  // sentinel), so trigger on the 0→N transition instead; isAtBottom guard
+  // respects a user who scrolled during the fetch.
+  const hydratedRef = useRef<Set<string>>(new Set());
+  useLayoutEffect(() => {
+    if (messages.length === 0 || hydratedRef.current.has(activeId)) return;
+    hydratedRef.current.add(activeId);
+    if (!isAtBottom) return;
+    bottomRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior, block: "end" });
+    // Layout can still shift after this (webfonts, markdown code blocks move
+    // the sentinel): re-assert once settled. One-shot per conversation.
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        bottomRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior, block: "end" });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [activeId, messages.length, isAtBottom]);
+
+  // Re-assert bottom when the viewport resizes (e.g. JupyterLab sidebar
+  // dragged, changing the iframe size) — only while following.
+  useEffect(() => {
+    const onResize = () => {
+      if (isAtBottom) {
+        bottomRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior, block: "end" });
+      }
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [isAtBottom]);
+
   // On user send — even if not at bottom, go to bottom for incoming assistant
   useEffect(() => {
     if (messages.length > prevLenRef.current) {

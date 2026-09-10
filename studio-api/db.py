@@ -650,6 +650,16 @@ class Database:
         results.reverse()
         return results
 
+    async def delete_chat_history(self, conversation_id: str) -> int:
+        """Delete all chat messages for a conversation. Returns rows removed."""
+        async with self.db.execute(
+            "DELETE FROM chat_messages WHERE conversation_id = ?",
+            (conversation_id,),
+        ) as cursor:
+            deleted = cursor.rowcount or 0
+        await self.db.commit()
+        return deleted
+
     async def set_chat_feedback(self, message_id: int, value: int | None) -> bool:
         """Rate an assistant reply: 1 = useful, -1 = not useful, None = clear.
         Returns True if the message existed."""

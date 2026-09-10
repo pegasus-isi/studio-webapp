@@ -1904,6 +1904,17 @@ async def get_history(
     return ChatHistoryResponse(messages=messages)
 
 
+@router.delete("/history")
+async def delete_history(conversation_id: str | None = None) -> dict:
+    """Delete chat history, scoped to a conversation (required)."""
+    from main import db
+
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversation_id required")
+    deleted = await db.delete_chat_history(conversation_id)
+    return {"status": "ok", "deleted": deleted}
+
+
 def _error_sse(message: str) -> StreamingResponse:
     """Return an SSE stream with a single error event."""
 
