@@ -473,3 +473,18 @@ def test_project_runs_carry_backend_id(client, monkeypatch):
     data = client.get("/api/workflows/projects").json()
     proj = next(p for p in data["projects"] if p["project_id"] == "bproj")
     assert proj["runs"][0]["backend"] == "local"
+
+
+def test_host_keys_are_persisted_and_trust_policy_changes_control_socket(tmp_path):
+    secure = _make_backend(tmp_path)
+    strict = _make_backend(tmp_path, strict_host_key_checking="yes")
+    disposable = _make_backend(tmp_path, strict_host_key_checking="no")
+    config = secure._render_ssh_config()
+    assert 'UserKnownHostsFile "~/.ssh/known_hosts"' in config
+    assert "StrictHostKeyChecking accept-new" in config
+    assert "/dev/null" not in config
+    assert "StrictHostKeyChecking yes" in strict._render_ssh_config()
+    control = lambda b: next(line for line in b._render_ssh_config().splitlines() if "ControlPath" in line)
+    assert len({control(secure), control(strict), control(disposable)}) == 3
+    with pytest.raises(ValueError, match="strict_host_key_checking"):
+        _make_backend(tmp_path, strict_host_key_checking="typo")

@@ -5,37 +5,24 @@ at `75ac6e7`. The feature branch had 14 unique commits and was missing 107
 commits from main. The review focused on compute backends, workflow execution,
 image building, monitoring, and their overlap with the incoming changes.
 
-## Remaining findings
+## Follow-up remediation
 
-These issues already existed on the feature branch before this merge. They
-are follow-up work; the merge does not resolve them.
+The subsequent review identified eight issues. Fixes have now been applied on
+this feature branch; the original merge itself did not resolve them.
 
-1. **P1 — SSH does not verify the remote host.**
-   `studio-api/services/backends/ssh.py:133` generates
-   `UserKnownHostsFile /dev/null` and `StrictHostKeyChecking no` for all hosts,
-   including a configured jump host. An impersonated server can receive project
-   files, commands, and credentials sent to the execution host. Persist known
-   host keys and reject changed keys; make any disposable-slice exception an
-   explicit configuration choice.
+| Finding | Applied fix |
+| --- | --- |
+| Background pulls overwrite saved edits | Separate download snapshot and persistent shared baseline; preserve edits/deletions and stop affected projects on two-sided conflicts. |
+| Generate returns before files reach the mirror | Await a refresh before success in both manual and guided Generate; serialize push/command/refresh stages. |
+| SSH disables host-key verification | Persistent known hosts and `accept-new` by default; configurable strict verification and separate control sockets when configuration changes. |
+| Run ownership follows the active backend | Resolve configured mirror ownership for run operations and bind in-flight work to its initial backend. |
+| Remote deletion only removes the mirror | Inspect/cancel on the execution host, delete remotely first, then remove mirror state; retain DB records on failure. |
+| Output catalogs expose remote absolute paths as local paths | Translate storage through the run's owning backend and confine remote output lookup to the mirrored workspace. |
+| Notifications retain the old root | Restore selection before startup; restart the watcher with the selected backend and root on switching. |
+| Frontend selection and parameter caches remain stale | Shared selection query/mutation, cancellation of stale requests, backend-specific project state, and reactive terminal menu. |
 
-2. **P1 — Planning can use stale generator output.**
-   `studio-api/services/backends/ssh.py:311` pulls immediately only after
-   `pegasus-plan`, `pegasus-run`, and `pegasus-remove`. A generator invoked as
-   `python3` returns before its generated files are pulled. The guided flow
-   then inspects the local YAML and pushes the project again
-   (`studio-api/services/run_flow.py:972`). If the periodic pull has not run,
-   a first generation can appear to have produced no YAML; a repeat generation
-   can have its new remote YAML overwritten by the old mirror copy. Add an
-   explicit synchronization barrier after generation, with a defined policy
-   for concurrent local edits and periodic pulls.
-
-3. **P2 — Notifications retain the old backend's scan root.**
-   `studio-api/main.py:314` starts the notification engine before applying the
-   persisted execution backend. Switching backends in
-   `studio-api/routers/settings.py:492` also leaves that engine's root unchanged.
-   The workflow list follows the selected backend, but completion/failure
-   notifications can continue scanning the former root. Apply the selection
-   before starting notifications and update the watch root when switching.
+Operational behavior, migration notes, and limits are documented in
+[fabric-backend-safety.md](fabric-backend-safety.md).
 
 ## Integration changes
 
@@ -53,7 +40,7 @@ are follow-up work; the merge does not resolve them.
 - Based remote Apptainer fakeroot selection on the remote user's subuid/subgid
   ranges instead of the machine holding the mirror.
 
-## Validation
+## Merge validation (before follow-up fixes)
 
 - Before the merge: TypeScript passed; 505 backend tests passed and one
   loopback-port test was blocked by sandbox permissions.
@@ -67,3 +54,17 @@ are follow-up work; the merge does not resolve them.
   entry-point check, `pegasus-monitor --version`, and `--help` passed.
 - `git diff --check` passed. The complete application image and live FABRIC
   workflow execution were not tested.
+
+## Remediation validation
+
+- Final full backend suite: **727 passed**. The test environment excludes the
+  developer's installed Condor/Pegasus commands and real backend configuration;
+  the suite's loopback server was permitted. Only the existing Starlette/httpx
+  deprecation warning remained.
+- Frontend: **23 Vitest tests passed**; TypeScript passed.
+- Added 26 backend regressions and four frontend cache regressions, including
+  first/repeated generation, conflicting edits, failed transfers, deletion with
+  a missing mirror, cancellation failure, owner routing after switching,
+  notification startup/rebinding, and late frontend responses.
+- `git diff --check` passed. No Docker changes were needed. The complete
+  application image and live FABRIC workflow execution were not retested.

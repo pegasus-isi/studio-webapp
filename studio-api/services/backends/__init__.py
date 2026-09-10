@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import structlog
 
@@ -32,6 +34,8 @@ __all__ = [
     "ExecResult",
     "RunRef",
     "active_backend",
+    "backend_for_path",
+    "using_backend",
     "all_backends",
     "get_backend",
     "refresh_registry",
@@ -42,6 +46,7 @@ log = structlog.get_logger()
 
 _REGISTRY: dict[str, ComputeBackend] | None = None
 _ACTIVE_ID: str | None = None
+_BOUND: ContextVar[ComputeBackend | None] = ContextVar("compute_backend", default=None)
 
 
 def _backends_file() -> str:
@@ -139,8 +144,37 @@ def set_active_backend_id(backend_id: str | None) -> None:
 
 def active_backend() -> ComputeBackend:
     """The backend workflow operations run against, resolved per call."""
+    if bound := _BOUND.get():
+        return bound
     wanted = _ACTIVE_ID or os.environ.get("STUDIO_EXECUTION_BACKEND") or "local"
     backend = get_backend(wanted)
     if backend is None:
         backend = _registry()["local"]
     return backend
+
+
+@contextmanager
+def using_backend(backend: ComputeBackend):
+    """Bind an operation and its child tasks to their original backend."""
+    token = _BOUND.set(backend)
+    try:
+        yield
+    finally:
+        _BOUND.reset(token)
+
+
+def backend_for_path(path: str) -> ComputeBackend:
+    """Resolve run ownership from its mirror, never from the selected tab."""
+    real = os.path.realpath(path)
+    candidates = [b for b in all_backends() if b.is_remote]
+    if active_backend().is_remote:
+        candidates.append(active_backend())
+    for backend in sorted(candidates, key=lambda b: len(b.scan_root()), reverse=True):
+        root = os.path.realpath(backend.scan_root())
+        if real == root or real.startswith(root + os.sep):
+            return backend
+    # An unconfigured mirror must not be treated as a local submit directory.
+    mirrors = os.path.realpath(os.path.expanduser("~/.studio/mirrors"))
+    if real.startswith(mirrors + os.sep):
+        raise ValueError("This run's compute backend is no longer configured")
+    return _registry()["local"]

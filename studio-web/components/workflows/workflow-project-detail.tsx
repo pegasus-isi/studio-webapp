@@ -1,5 +1,7 @@
 "use client";
 
+import { useExecutionBackend } from "@/lib/hooks/use-execution-backend";
+
 import { useEffect, useMemo, useState } from "react";
 import {
   useWorkflowProjects,
@@ -60,6 +62,12 @@ function outputHint(output: string | null): string | null {
 }
 
 export function WorkflowProjectDetail({ projectId }: Props) {
+  const { backend } = useExecutionBackend();
+  if (!backend) return null;
+  return <BackendProjectDetail key={`${backend.id}:${projectId}`} projectId={projectId} />;
+}
+
+function BackendProjectDetail({ projectId }: Props) {
   const { data, refetch: refetchProjects } = useWorkflowProjects();
   const project = data?.projects.find((p) => p.project_id === projectId);
   // Collapsing the run setup is the point of the disclosure, but a collapsed

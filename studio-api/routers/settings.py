@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Literal
 
@@ -465,8 +466,18 @@ async def get_execution_backend() -> dict:
     }
 
 
+_backend_switch_lock = asyncio.Lock()
+
+
 @router.put("/execution-backend")
 async def put_execution_backend(req: ExecutionBackendRequest) -> dict:
+    # Serialise selection, backend startup and notification rebinding. Two
+    # tabs switching concurrently must not leave the watcher on the loser.
+    async with _backend_switch_lock:
+        return await _switch_execution_backend(req)
+
+
+async def _switch_execution_backend(req: ExecutionBackendRequest) -> dict:
     """Switch the compute backend for workflow actions.
 
     The chat-engine pattern: refuse to switch onto a target that fails its
@@ -493,18 +504,17 @@ async def put_execution_backend(req: ExecutionBackendRequest) -> dict:
     await db.set_setting("execution_backend", req.backend)
     compute.set_active_backend_id(req.backend)
     if previous.id != target.id:
-        try:
-            await previous.stop()
-        except Exception as e:
-            log.warning(
-                "backend_stop_failed", backend=previous.id, error=str(e)
-            )
+        # Keep previously selected mirrors current for in-flight/historical
+        # runs. All started backends are stopped during application shutdown.
         try:
             await target.start()
         except Exception as e:
             log.warning(
                 "backend_start_failed", backend=target.id, error=str(e)
             )
+    from services.notification_engine import engine
+
+    await engine.watch_backend(db, target)
     log.info("execution_backend_switched", backend=req.backend)
     return await get_execution_backend()
 

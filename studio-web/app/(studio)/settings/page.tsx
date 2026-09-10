@@ -1,5 +1,7 @@
 "use client";
 
+import { useExecutionBackend, useUpdateExecutionBackend } from "@/lib/hooks/use-execution-backend";
+
 import { useCallback, useEffect, useState } from "react";
 import {
   useProviders,
@@ -1026,30 +1028,14 @@ function ChatEngineSection() {
 /* ─── Execution backend (compute target for workflow actions) ─── */
 
 function ExecutionBackendSection() {
-  const [status, setStatus] = useState<api.ExecutionBackendStatus | null>(
-    null
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [switching, setSwitching] = useState(false);
+  const { data: status, error: loadError } = useExecutionBackend();
+  const update = useUpdateExecutionBackend();
+  const switching = update.isPending;
+  const error = update.error?.message ?? loadError?.message;
 
-  useEffect(() => {
-    api
-      .getExecutionBackend()
-      .then(setStatus)
-      .catch((e) => setError(String(e)));
-  }, []);
-
-  const select = async (id: string) => {
+  const select = (id: string) => {
     if (!status || status.backend === id || switching) return;
-    setSwitching(true);
-    setError(null);
-    try {
-      setStatus(await api.updateExecutionBackend(id));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSwitching(false);
-    }
+    update.mutate(id);
   };
 
   // Only the local backend exists (no backends file) — nothing to choose,

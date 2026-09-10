@@ -30,7 +30,7 @@ from typing import Any
 
 import structlog
 
-from services.backends import active_backend
+from services.backends import active_backend, using_backend
 
 log = structlog.get_logger()
 
@@ -482,7 +482,8 @@ async def get_ospool_status(force: bool = False) -> dict[str, Any]:
         return {"available": False, "error": "OSPool disabled", "cm": None}
     async with _ospool_lock:
         age = time.monotonic() - _ospool_cache["ts"]
-        if not force and _ospool_cache["data"] is not None and age < _OSPOOL_CACHE_TTL:
+        if (not force and _ospool_cache.get("backend", "local") == active_backend().id
+                and _ospool_cache["data"] is not None and age < _OSPOOL_CACHE_TTL):
             return _ospool_cache["data"]
 
         attrs = ",".join(_SLOT_ATTRS)
@@ -518,6 +519,7 @@ async def get_ospool_status(force: bool = False) -> dict[str, Any]:
                 "avail_slots": avail["slots"],
                 "mine": _sum_claimed(mine_ads or []),
             }
+        _ospool_cache["backend"] = active_backend().id
         _ospool_cache["ts"] = time.monotonic()
         _ospool_cache["data"] = data
         return data
@@ -526,12 +528,18 @@ async def get_ospool_status(force: bool = False) -> dict[str, Any]:
 def _cache_fresh(force: bool) -> bool:
     return (
         not force
+        and _cache.get("backend", "local") == active_backend().id
         and _cache["data"] is not None
         and (time.monotonic() - _cache["ts"]) < _CACHE_TTL
     )
 
 
 async def get_status(force: bool = False) -> dict[str, Any]:
+    with using_backend(active_backend()):
+        return await _get_status(force)
+
+
+async def _get_status(force: bool = False) -> dict[str, Any]:
     """Combined supply/demand/pressure snapshot, cached for _CACHE_TTL seconds."""
     # Fast path: a warm cache returns WITHOUT taking the lock, so a read never
     # blocks behind an in-flight refresh's slow condor_status/condor_q/OSPool
@@ -572,6 +580,7 @@ async def get_status(force: bool = False) -> dict[str, Any]:
         }
         if slot_err or job_err:
             log.debug("condor_pool_unavailable", slots=slot_err, jobs=job_err)
+        _cache["backend"] = active_backend().id
         _cache["ts"] = time.monotonic()
         _cache["data"] = status
         return status

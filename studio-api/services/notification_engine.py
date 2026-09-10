@@ -93,6 +93,15 @@ class NotificationEngine:
             self._task = asyncio.create_task(self._watch_loop())
             log.info("notification_engine_started", interval=_POLL_INTERVAL)
 
+    async def watch_backend(self, db: Database, backend) -> None:
+        """Rebind the watcher after selection, retaining notification history."""
+        from services.backends import using_backend
+
+        await self.stop()
+        self._seen.clear()
+        with using_backend(backend):
+            self.start(db, backend.scan_root())
+
     async def refresh_prefs(self) -> None:
         """Reload muted-kind preferences from the DB into the cache."""
         if self._db is None:

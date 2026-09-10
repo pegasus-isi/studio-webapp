@@ -362,7 +362,10 @@ async def _diagnose(run_dir: str) -> str:
     try:
         from services import condor_pool
 
-        status = await condor_pool.get_status()
+        from services.backends import backend_for_path, using_backend
+
+        with using_backend(backend_for_path(run_dir)):
+            status = await condor_pool.get_status()
         demand = status.get("demand") or {}
         cards.extend(
             run_diagnosis.diagnose_holds(demand.get("held_reasons") or [])
@@ -391,15 +394,16 @@ async def _diagnose(run_dir: str) -> str:
 
 async def _outputs(run_dir: str) -> str:
     from services import run_outputs
-    from services.workflow_scanner import workflows_dir
+    from services.backends import backend_for_path
 
+    backend = backend_for_path(run_dir)
     loop = asyncio.get_event_loop()
     # The listing walks the filesystem (NFS in production) — keep it off the
     # event loop, same as the /outputs endpoint.
     result = await loop.run_in_executor(
         None,
         lambda: run_outputs.listing(
-            run_dir, workflows_dir(), offset=0, limit=_MAX_OUTPUT_FILES
+            run_dir, backend.workflows_dir(), backend=backend, offset=0, limit=_MAX_OUTPUT_FILES
         ),
     )
     return json.dumps(result, indent=1)

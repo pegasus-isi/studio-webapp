@@ -1,5 +1,7 @@
 "use client";
 
+import { useExecutionBackend } from "@/lib/hooks/use-execution-backend";
+
 import { useState, useRef, useEffect } from "react";
 import {
   usePanelStore,
@@ -77,17 +79,8 @@ export function GlobalTerminalPanel() {
 
   // The remote-shell item appears only when a remote compute backend is
   // active; a plain local setup keeps the dropdown exactly as it was.
-  const [remoteBackend, setRemoteBackend] =
-    useState<api.ExecutionBackendInfo | null>(null);
-  useEffect(() => {
-    api
-      .getExecutionBackend()
-      .then((s) => {
-        const active = s.backends.find((b) => b.id === s.backend);
-        setRemoteBackend(active && active.id !== "local" ? active : null);
-      })
-      .catch(() => setRemoteBackend(null));
-  }, []);
+  const { backend, isRemote } = useExecutionBackend();
+  const remoteBackend = isRemote ? backend : null;
 
   // Close dropdown on outside click
   useEffect(() => {

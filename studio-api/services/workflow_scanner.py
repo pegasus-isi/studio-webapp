@@ -111,6 +111,7 @@ _EXCLUDE_RUN_PATH_FRAGMENTS = (
     "site-packages",
     os.sep + ".git" + os.sep,
     os.sep + "node_modules" + os.sep,
+    os.sep + ".studio" + os.sep + "backend-sync" + os.sep,
 )
 
 
@@ -167,6 +168,9 @@ def discover_runs(
 
     Returns list of dicts with keys: run_id, name, run_dir, status.
     """
+    from services.backends import active_backend, backend_for_path
+
+    selected = active_backend()
     runs: list[dict[str, Any]] = []
     seen_run_dirs: set[str] = set()
 
@@ -179,6 +183,14 @@ def discover_runs(
                 continue
             seen_run_dirs.add(run_dir)
             if _is_excluded_run_dir(run_dir, extra_excludes):
+                continue
+            try:
+                owner = backend_for_path(run_dir)
+            except ValueError:
+                continue
+            if owner.is_remote and owner.id != selected.id:
+                continue
+            if selected.is_remote and owner.id != selected.id:
                 continue
             try:
                 bd = _parse_braindump(braindump_path)
@@ -460,10 +472,10 @@ def _pegasus_status(run_dir: str) -> str | None:
     unavailable, times out, or reports no DAG (not yet submitted)."""
     import subprocess
 
-    from services.backends import active_backend
+    from services.backends import backend_for_path
 
     try:
-        result = active_backend().exec_sync(
+        result = backend_for_path(run_dir).exec_sync(
             ["pegasus-status", "-l", run_dir], timeout=15
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
@@ -563,12 +575,8 @@ async def _user_scan_config() -> tuple[list[str], list[str]]:
 
 async def discover_runs_async(workspace: str | None = None) -> list[dict[str, Any]]:
     extra_roots, extra_excludes = await _user_scan_config()
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        None,
-        lambda: discover_runs(
-            workspace, extra_roots=extra_roots, extra_excludes=extra_excludes
-        ),
+    return await asyncio.to_thread(
+        discover_runs, workspace, extra_roots=extra_roots, extra_excludes=extra_excludes
     )
 
 
@@ -576,11 +584,7 @@ async def discover_projects_async(
     workspace: str | None = None,
 ) -> list[dict[str, Any]]:
     _, extra_excludes = await _user_scan_config()
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        None,
-        lambda: discover_projects(workspace, extra_excludes=extra_excludes),
-    )
+    return await asyncio.to_thread(discover_projects, workspace, extra_excludes=extra_excludes)
 
 
 async def get_run_status_async(run_dir: str) -> str:

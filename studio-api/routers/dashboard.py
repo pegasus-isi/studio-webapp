@@ -28,11 +28,17 @@ _RECENT_RUNS = 6
 @router.get("")
 async def dashboard() -> dict:
     """Workflows summary, recent runs, resource snapshot, and versions."""
+    from services.backends import active_backend, using_backend
+
+    with using_backend(active_backend()):
+        return await _dashboard()
+
+
+async def _dashboard() -> dict:
     from main import db
 
-    loop = asyncio.get_event_loop()
-    projects = await loop.run_in_executor(None, discover_projects)
-    runs = await loop.run_in_executor(None, discover_runs)
+    projects = await asyncio.to_thread(discover_projects)
+    runs = await asyncio.to_thread(discover_runs)
 
     run_rows: list[dict] = []
     by_status: dict[str, int] = {}

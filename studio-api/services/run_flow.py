@@ -432,10 +432,15 @@ class RunFlowManager:
     """Owns the flows, one at a time per project."""
 
     def __init__(self) -> None:
-        self._flows: dict[str, RunFlow] = {}
+        self._flows: dict[tuple[str, str], RunFlow] = {}
+
+    def _key(self, project_id: str) -> tuple[str, str]:
+        from services.backends import active_backend
+
+        return active_backend().id, project_id
 
     def get(self, project_id: str) -> RunFlow | None:
-        flow = self._flows.get(project_id)
+        flow = self._flows.get(self._key(project_id))
         if flow is None:
             return None
         # Expire a long-finished flow so a stale outcome doesn't masquerade as
@@ -445,7 +450,7 @@ class RunFlowManager:
             and flow.finished_at is not None
             and time.monotonic() - flow.finished_at > _RETAIN_SECONDS
         ):
-            self._flows.pop(project_id, None)
+            self._flows.pop(self._key(project_id), None)
             return None
         return flow
 
@@ -486,18 +491,21 @@ class RunFlowManager:
         flow = RunFlow(
             flow_id=uuid.uuid4().hex[:12], project_id=project_id, stages=stages
         )
-        self._flows[project_id] = flow
-        flow._task = asyncio.create_task(
-            _execute(
-                flow,
-                project_dir=project_dir,
-                generator_file=generator_file,
-                generator_args=generator_args,
-                site=site,
-                output_site=output_site,
-                force_build=force_build,
+        self._flows[self._key(project_id)] = flow
+        from services.backends import active_backend, using_backend
+
+        with using_backend(active_backend()):
+            flow._task = asyncio.create_task(
+                _execute(
+                    flow,
+                    project_dir=project_dir,
+                    generator_file=generator_file,
+                    generator_args=generator_args,
+                    site=site,
+                    output_site=output_site,
+                    force_build=force_build,
+                )
             )
-        )
         log.info(
             "run_flow_started",
             flow_id=flow.flow_id, project_id=project_id, site=site,
@@ -701,22 +709,17 @@ async def _run_generate(
     from services.backends import active_backend
 
     flow._begin("generate")
-    # A remote backend needs the project's local edits on the submit host
-    # before its generator runs there — otherwise sites.yml is written with
-    # this machine's paths (no-op for local).
-    await active_backend().push_project(project_dir)
-    # The generator is the one step that reads credentials from its own
-    # environment — that is how a value gets baked into the workflow it writes
-    # (`add_env`), since HTCondor gives jobs a clean environment. Settings >
-    # Pegasus Options > Workflow secrets is where they come from; without this
-    # a workflow needing an API key could not run in Studio at all.
     from services import workflow_secrets
 
-    code, output = await _capture(
-        ["python3", generator_file, *args],
-        cwd=project_dir,
-        env=await workflow_secrets.env_overlay(),
-    )
+    backend = active_backend()
+    async with backend.project_operation():
+        await backend.push_project(project_dir)
+        code, output = await _capture(
+            ["python3", generator_file, *args], cwd=project_dir,
+            env=await workflow_secrets.env_overlay(),
+        )
+        if code == 0:
+            await backend.refresh_project(project_dir)
     _emit_output(flow, "generate", output)
     if code != 0:
         flow._fail("generate", output)
@@ -976,11 +979,13 @@ async def _run_plan(
         return False
 
     # Push edits before planning, preserving monitor events in both transports.
-    await active_backend().push_project(project_dir)
-    argv = ["pegasus-plan", *_plan_property_flags(), "-s", site, "-o", output_site, wf_file]
-    code, output = await _plan_capture(
-        flow, argv, project_dir=project_dir, mode=plan_mode
-    )
+    backend = active_backend()
+    async with backend.project_operation():
+        await backend.push_project(project_dir)
+        argv = ["pegasus-plan", *_plan_property_flags(), "-s", site, "-o", output_site, wf_file]
+        code, output = await _plan_capture(
+            flow, argv, project_dir=project_dir, mode=plan_mode
+        )
     _emit_output(flow, "plan", output)
     if code != 0:
         flow._fail("plan", output)

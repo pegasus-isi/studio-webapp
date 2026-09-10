@@ -11,7 +11,7 @@ from typing import Any, AsyncGenerator
 
 import structlog
 
-from services.backends import active_backend
+from services.backends import backend_for_path
 from services.event_reader import find_events_file
 from services.event_reader import jobs as event_jobs
 from services.event_reader import read_events
@@ -93,9 +93,9 @@ async def tail_workflow_events(
     JSONL directly would be wrong anyway: rsync replaces the file by rename,
     so a held-open tail keeps reading the dead inode.
     """
-    from services.backends import active_backend
+    from services.backends import backend_for_path
 
-    stream = await active_backend().stream_events(run_dir)
+    stream = await backend_for_path(run_dir).stream_events(run_dir)
     if stream is not None:
         async for event in stream:
             yield event
@@ -170,7 +170,7 @@ async def _poll_stampede(run_dir: str) -> AsyncGenerator[dict[str, Any], None]:
 async def run_pegasus_analyzer(run_dir: str) -> str:
     """Run pegasus-analyzer on a workflow run directory."""
     try:
-        result = await active_backend().exec(
+        result = await backend_for_path(run_dir).exec(
             ["pegasus-analyzer", run_dir], timeout=60
         )
         output = result.stdout.decode("utf-8", errors="replace")

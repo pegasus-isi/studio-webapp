@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from contextlib import asynccontextmanager
 
 
 @dataclass
@@ -149,6 +150,25 @@ class ComputeBackend(ABC):
     async def push_project(self, project_dir: str) -> None:
         """Make a local project directory available where commands run."""
 
+    async def refresh_project(self, project_dir: str) -> None:
+        """Make files generated on the backend visible before the next stage."""
+
+    async def deletion_snapshot(self, path: str) -> str:
+        """Current files on the execution host, for cancellation before deletion."""
+        return path
+
+    async def delete_tree(self, path: str) -> None:
+        """Remove a remote tree and its mirror; local deletion uses NFS retries."""
+        raise NotImplementedError
+
+    @asynccontextmanager
+    async def project_operation(self):
+        """Keep selection stable for one operation; SSH also serializes sync."""
+        from services.backends import using_backend
+
+        with using_backend(self):
+            yield
+
     async def start(self) -> None:
         """Open transports / start sync loops."""
 
@@ -173,9 +193,7 @@ class ComputeBackend(ABC):
 class RunRef:
     """A resolved run: which backend owns it and its local run directory.
 
-    Today every run belongs to the single active backend; carrying the
-    backend now means the run-addressed endpoints don't change shape again
-    when remote backends land.
+    Ownership is independent of the current Settings selection.
     """
 
     backend: ComputeBackend

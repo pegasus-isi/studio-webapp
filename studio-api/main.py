@@ -311,9 +311,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # constant (services/backends replaced workflow_scanner.SCAN_ROOT).
     from services.workflow_scanner import scan_root
 
-    notification_engine.start(db, scan_root())
-    await notification_engine.refresh_prefs()
-
     # Apply the persisted compute-backend selection and start it (mirror
     # sync loops for a remote backend; no-ops for local). Failures degrade —
     # the backend reports unavailable instead of blocking startup.
@@ -328,13 +325,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         log.warning("backend_start_failed", backend=_backend.id, error=str(e))
 
+    with compute_backends.using_backend(_backend):
+        notification_engine.start(db, scan_root())
+    await notification_engine.refresh_prefs()
+
     yield
     # Cleanup terminal sessions and running tool processes
     await notification_engine.stop()
-    try:
-        await compute_backends.active_backend().stop()
-    except Exception as e:
-        log.warning("backend_stop_failed", error=str(e))
+    for backend in compute_backends.all_backends():
+        try:
+            await backend.stop()
+        except Exception as e:
+            log.warning("backend_stop_failed", backend=backend.id, error=str(e))
     prune_task.cancel()
     knowledge_task.cancel()
     for s in terminal_sessions.list_sessions():

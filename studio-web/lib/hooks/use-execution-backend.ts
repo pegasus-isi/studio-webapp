@@ -1,31 +1,31 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
-import type { ExecutionBackendInfo } from "@/lib/api/client";
+import { applyExecutionBackend, executionBackendKey, prepareBackendChange } from "@/lib/execution-backend-cache";
 
-/**
- * The compute backend workflow actions currently execute on.
- *
- * Sourced from /api/settings/execution-backend. A short staleTime keeps the
- * run panel honest without polling: backends are switched on the Settings
- * page, so the worst case is a 30s-old answer after switching there and
- * coming straight back. Returns null until loaded — callers must treat null
- * as "local", matching the server, where an unknown id falls back to local
- * rather than failing workflow calls.
- */
-export function useExecutionBackend(): {
-  backend: ExecutionBackendInfo | null;
-  isRemote: boolean;
-} {
-  const { data } = useQuery({
-    queryKey: ["execution-backend"],
-    queryFn: () => api.getExecutionBackend(),
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
+/** Shared selection for Settings, workflow forms and the terminal menu. */
+export function useExecutionBackend() {
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: executionBackendKey,
+    queryFn: async ({ signal }) => {
+      const status = await api.getExecutionBackend();
+      await prepareBackendChange(qc, status, signal);
+      return status;
+    },
+    staleTime: 5_000,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
   });
-  const backend = data?.backends.find((b) => b.id === data.backend) ?? null;
-  // Same convention as the run-row badges: anything but "local" is remote.
-  const isRemote = backend !== null && backend.id !== "local";
-  return { backend, isRemote };
+  const backend = query.data?.backends.find((b) => b.id === query.data.backend) ?? null;
+  return { ...query, backend, isRemote: backend !== null && backend.id !== "local" };
+}
+
+export function useUpdateExecutionBackend() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.updateExecutionBackend,
+    onSuccess: (status) => applyExecutionBackend(qc, status),
+  });
 }

@@ -2,18 +2,23 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
+import { useExecutionBackend } from "./use-execution-backend";
 
 export function useWorkflows() {
+  const { data: selection } = useExecutionBackend();
   return useQuery({
-    queryKey: ["workflows"],
+    queryKey: ["workflows", selection?.backend],
+    enabled: !!selection,
     queryFn: () => api.getWorkflows(),
     refetchInterval: 5_000,
   });
 }
 
 export function useWorkflowProjects() {
+  const { data: selection } = useExecutionBackend();
   return useQuery({
-    queryKey: ["workflow-projects"],
+    queryKey: ["workflow-projects", selection?.backend],
+    enabled: !!selection,
     queryFn: () => api.getWorkflowProjects(),
     refetchInterval: 5_000,
   });
@@ -72,15 +77,16 @@ export function useDeleteWorkflow() {
 }
 
 export function useProjectParams(projectId: string) {
+  const { data: selection } = useExecutionBackend();
   return useQuery({
     // Deliberately NOT under the "workflow-projects" key: a generator's params
     // don't change on generate/plan/run, and every such mutation invalidates
     // "workflow-projects". Sharing the prefix would re-introspect the generator
     // on each mutation — wasteful, and previously a submit-loop for generators
     // that plan+submit at import time. Params are static per generator.
-    queryKey: ["project-params", projectId],
+    queryKey: ["project-params", selection?.backend, projectId],
     queryFn: () => api.getProjectParams(projectId),
-    enabled: !!projectId,
+    enabled: !!projectId && !!selection,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
   });

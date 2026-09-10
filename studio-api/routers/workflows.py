@@ -20,7 +20,7 @@ from models import (
     WorkflowProjectRunResponse,
     WorkflowRunResponse,
 )
-from services.backends import RunRef, active_backend
+from services.backends import RunRef, active_backend, backend_for_path, using_backend
 from services.generator_introspect import PLAN_PARAMS, introspect_generator
 from services.workflow_monitor import (
     get_workflow_detail,
@@ -88,6 +88,16 @@ log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
+def _selected_backend_operation(fn):
+    from functools import wraps
+
+    @wraps(fn)
+    async def wrapped(*args, **kwargs):
+        with using_backend(active_backend()):
+            return await fn(*args, **kwargs)
+    return wrapped
+
+
 _CMD_TIMEOUT = 300  # 5 minutes
 
 
@@ -110,6 +120,7 @@ def jupyter_path(abs_path: str) -> str:
 
 
 @router.get("", response_model=WorkflowListResponse)
+@_selected_backend_operation
 async def list_workflows() -> WorkflowListResponse:
     """List discovered workflow runs from the workspace."""
     from main import db
@@ -117,7 +128,6 @@ async def list_workflows() -> WorkflowListResponse:
     # discover_runs scans the backend's scan root and excludes cloned-repo /
     # test-fixture braindumps, so only genuine runs are listed.
     runs = await discover_runs_async()
-    backend_id = active_backend().id
     workflows = []
 
     for run in runs:
@@ -139,7 +149,7 @@ async def list_workflows() -> WorkflowListResponse:
             completed_jobs=detail.get("completed_jobs", 0),
             failed_jobs=detail.get("failed_jobs", 0),
             exec_site=detail.get("exec_site"),
-            backend=backend_id,
+            backend=backend_for_path(run_dir).id,
             created_at=run.get("timestamp") or "",
             updated_at="",
         )
@@ -178,10 +188,10 @@ async def list_workflows() -> WorkflowListResponse:
 
 
 @router.get("/projects", response_model=WorkflowProjectListResponse)
+@_selected_backend_operation
 async def list_projects() -> WorkflowProjectListResponse:
     """List workflow projects from ~/work/workflows/."""
     raw = await discover_projects_async()
-    backend_id = active_backend().id
     projects = [
         WorkflowProjectResponse(
             project_id=p["project_id"],
@@ -194,7 +204,7 @@ async def list_projects() -> WorkflowProjectListResponse:
             jupyter_path=jupyter_path(p["project_dir"]),
             runs=[
                 WorkflowProjectRunResponse(
-                    **r, backend=backend_id, jupyter_path=jupyter_path(r["run_dir"])
+                    **r, backend=backend_for_path(r["run_dir"]).id, jupyter_path=jupyter_path(r["run_dir"])
                 )
                 for r in p["submitted_runs"]
             ],
@@ -205,6 +215,7 @@ async def list_projects() -> WorkflowProjectListResponse:
 
 
 @router.delete("/projects/{project_id}")
+@_selected_backend_operation
 async def delete_project(project_id: str) -> dict:
     """Delete a workflow project and everything in it.
 
@@ -247,6 +258,7 @@ async def delete_project(project_id: str) -> dict:
 
 
 @router.get("/projects/{project_id}/params")
+@_selected_backend_operation
 async def get_project_params(project_id: str) -> dict:
     """Discover the configurable parameters for a project's actions.
 
@@ -280,6 +292,7 @@ async def get_project_params(project_id: str) -> dict:
 
 
 @router.post("/projects/{project_id}/generate")
+@_selected_backend_operation
 async def generate_workflow(
     project_id: str, req: GenerateRequest = GenerateRequest()
 ) -> dict:
@@ -306,12 +319,14 @@ async def generate_workflow(
     env = await workflow_secrets.env_overlay()
 
     try:
-        # A remote backend needs the project's local edits on the submit
-        # host before running its generator there (no-op for local).
-        await active_backend().push_project(project_dir)
-        result = await active_backend().exec(
-            cmd, cwd=project_dir, timeout=_CMD_TIMEOUT, env=env
-        )
+        backend = active_backend()
+        async with backend.project_operation():
+            await backend.push_project(project_dir)
+            result = await backend.exec(
+                cmd, cwd=project_dir, timeout=_CMD_TIMEOUT, env=env
+            )
+            if result.returncode == 0:
+                await backend.refresh_project(project_dir)
         out = result.stdout.decode("utf-8", errors="replace")
         err = result.stderr.decode("utf-8", errors="replace")
         output = out
@@ -333,6 +348,7 @@ async def generate_workflow(
 
 
 @router.post("/projects/{project_id}/build")
+@_selected_backend_operation
 async def build_project_image(
     project_id: str, req: BuildRequest = BuildRequest()
 ) -> StreamingResponse:
@@ -363,7 +379,9 @@ async def build_project_image(
 
     from services.image_builder import stream_build
 
-    async def event_stream():
+    backend = active_backend()
+
+    async def build_chunks():
         client_gone = False
         try:
             async for chunk in stream_build(
@@ -385,6 +403,11 @@ async def build_project_image(
             if not client_gone:
                 yield "data: [DONE]\n\n"
 
+    async def event_stream():
+        with using_backend(backend):
+            async for chunk in build_chunks():
+                yield chunk
+
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
@@ -404,6 +427,7 @@ async def build_project_image(
 
 
 @router.post("/projects/{project_id}/run-flow")
+@_selected_backend_operation
 async def start_run_flow(project_id: str, req: RunFlowRequest) -> dict:
     """Start the whole prepare-and-run sequence as one background flow.
 
@@ -495,6 +519,7 @@ async def run_flow_events(project_id: str) -> StreamingResponse:
 
 
 @router.post("/projects/{project_id}/plan")
+@_selected_backend_operation
 async def plan_workflow(
     project_id: str, req: PlanRequest = PlanRequest()
 ) -> dict:
@@ -530,10 +555,12 @@ async def plan_workflow(
     try:
         # Ship local project edits to the backend before planning there
         # (no-op for local).
-        await active_backend().push_project(project_dir)
-        result = await active_backend().exec(
-            cmd, cwd=project_dir, timeout=_CMD_TIMEOUT
-        )
+        backend = active_backend()
+        async with backend.project_operation():
+            await backend.push_project(project_dir)
+            result = await backend.exec(
+                cmd, cwd=project_dir, timeout=_CMD_TIMEOUT
+            )
         out = result.stdout.decode("utf-8", errors="replace")
         err = result.stderr.decode("utf-8", errors="replace")
         output = out
@@ -612,6 +639,7 @@ async def _notify_run_started(result: dict) -> None:
 
 
 @router.post("/projects/{project_id}/submit")
+@_selected_backend_operation
 async def submit_project(
     project_id: str, req: PlanRequest = PlanRequest()
 ) -> dict:
@@ -625,8 +653,15 @@ async def submit_project(
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
 
+    backend = backend_for_path(req.run_dir) if req.run_dir else active_backend()
     try:
-        await active_backend().push_project(proj["project_dir"])
+        async with backend.project_operation():
+            if not req.run_dir:
+                await backend.push_project(proj["project_dir"])
+            result = await run_planned_workflow(
+                proj["project_dir"], run_dir=req.run_dir,
+                site=req.site, output_site=req.output_site,
+            )
     except Exception as e:
         return {
             "project_id": project_id,
@@ -634,17 +669,12 @@ async def submit_project(
             "output": f"Project push failed: {e}",
         }
 
-    result = await run_planned_workflow(
-        proj["project_dir"],
-        run_dir=req.run_dir,
-        site=req.site,
-        output_site=req.output_site,
-    )
     await _notify_run_started(result)
     return {"project_id": project_id, **result}
 
 
 @router.post("/submit")
+@_selected_backend_operation
 async def submit(
     workflow_dir: str = Query(..., description="Path to workflow directory"),
     site: str = Query("condorpool", description="Execution site"),
@@ -661,12 +691,14 @@ async def submit(
             detail=f"Workflow dir must be inside {workspace_root}",
         )
 
+    backend = active_backend()
     try:
-        await active_backend().push_project(resolved)
+        async with backend.project_operation():
+            await backend.push_project(resolved)
+            result = await submit_workflow(resolved, site=site, output_site=output_site)
     except Exception as e:
         return {"status": "error", "output": f"Project push failed: {e}"}
 
-    result = await submit_workflow(resolved, site=site, output_site=output_site)
     await _notify_run_started(result)
     return result
 
@@ -807,12 +839,13 @@ def _parse_executable_dag(dag_path: str) -> dict:
 def _find_run_workflow_file(run_dir: str) -> str | None:
     """Abstract workflow YAML for a run: in the run dir or an enclosing project."""
     d = run_dir
+    root = backend_for_path(run_dir).workspace_root()
     for _ in range(5):
         wf = _project_workflow_file(d)
         if wf:
             return wf
         parent = os.path.dirname(d)
-        if parent == d or not parent.startswith(active_backend().workspace_root()):
+        if parent == d or not (parent == root or parent.startswith(root + os.sep)):
             break
         d = parent
     return None
@@ -914,7 +947,11 @@ async def _resolve_run(run_id: str) -> RunRef:
     run_dir = await _lookup_run_dir(run_id)
     if not run_dir or not os.path.isdir(run_dir):
         raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
-    return RunRef(backend=active_backend(), run_dir=run_dir)
+    try:
+        backend = backend_for_path(run_dir)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return RunRef(backend=backend, run_dir=run_dir)
 
 
 @router.get("/{run_id}")
@@ -950,9 +987,9 @@ async def get_run_outputs(
     directory is unbounded.
     """
     from services import run_outputs
-    from services.workflow_scanner import workflows_dir
 
-    run_dir = (await _resolve_run(run_id)).run_dir
+    ref = await _resolve_run(run_id)
+    run_dir = ref.run_dir
     loop = asyncio.get_event_loop()
     # The walk touches the filesystem (NFS in production), so keep it off the
     # event loop — every other request and WebSocket shares it.
@@ -960,7 +997,8 @@ async def get_run_outputs(
         None,
         lambda: run_outputs.listing(
             run_dir,
-            workflows_dir(),
+            ref.backend.workflows_dir(),
+            backend=ref.backend,
             output_site=output_site,
             offset=offset,
             limit=limit,
@@ -984,11 +1022,11 @@ async def get_run_output_file(
     from fastapi.responses import FileResponse
 
     from services import run_outputs
-    from services.workflow_scanner import workflows_dir
 
-    run_dir = (await _resolve_run(run_id)).run_dir
+    ref = await _resolve_run(run_id)
+    run_dir = ref.run_dir
     output_dir, _ = run_outputs.resolve_output_dir(
-        run_dir, workflows_dir(), output_site
+        run_dir, ref.backend.workflows_dir(), output_site, backend=ref.backend
     )
     if not output_dir:
         raise HTTPException(status_code=404, detail="No output directory for this run")
@@ -1085,7 +1123,8 @@ async def diagnose_run(run_id: str) -> dict:
 
         # get_status() is cached, so this rides the snapshot the dashboard and
         # Resources page already refresh rather than issuing its own condor_q.
-        status = await condor_pool.get_status()
+        with using_backend(backend_for_path(run_dir)):
+            status = await condor_pool.get_status()
         demand = status.get("demand") or {}
         cards.extend(
             run_diagnosis.diagnose_holds(demand.get("held_reasons") or [])
@@ -1130,7 +1169,6 @@ async def delete_workflow(run_id: str) -> dict:
     the scan root (the user's home tree), never an arbitrary path.
     """
     from main import db
-    from services.workflow_scanner import scan_root
     from services.workflow_submitter import delete_run
 
     # Same lookup every run endpoint uses — but tolerate a missing directory:
@@ -1139,10 +1177,14 @@ async def delete_workflow(run_id: str) -> dict:
     if not run_dir:
         raise HTTPException(status_code=404, detail=f"Workflow not found: {run_id}")
 
-    if os.path.isdir(run_dir):
+    try:
+        backend = backend_for_path(run_dir)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    if os.path.isdir(run_dir) or backend.is_remote:
         # Safety: confine deletion to the scan root.
         resolved = os.path.realpath(run_dir)
-        root = os.path.realpath(scan_root())
+        root = os.path.realpath(backend.scan_root())
         if resolved != root and not resolved.startswith(root + os.sep):
             raise HTTPException(
                 status_code=403, detail="Run directory is outside the workspace"
@@ -1152,5 +1194,6 @@ async def delete_workflow(run_id: str) -> dict:
         # Directory already gone — just clear any stale bookkeeping.
         result = {"status": "deleted"}
 
-    await db.delete_workflow_run(run_id)
+    if result.get("status") == "deleted":
+        await db.delete_workflow_run(run_id)
     return {"run_id": run_id, **result}

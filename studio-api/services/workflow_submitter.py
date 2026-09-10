@@ -12,7 +12,7 @@ import time
 
 import structlog
 
-from services.backends import active_backend
+from services.backends import active_backend, backend_for_path
 
 log = structlog.get_logger()
 
@@ -163,7 +163,7 @@ async def run_planned_workflow(
         )
 
     try:
-        result = await active_backend().exec(
+        result = await backend_for_path(target).exec(
             ["pegasus-run", target], timeout=_CMD_TIMEOUT
         )
         out = result.stdout.decode("utf-8", errors="replace")
@@ -190,7 +190,7 @@ async def run_planned_workflow(
 async def cancel_workflow(run_dir: str) -> dict[str, str]:
     """Cancel a running workflow using pegasus-remove."""
     try:
-        result = await active_backend().exec(
+        result = await backend_for_path(run_dir).exec(
             ["pegasus-remove", run_dir], timeout=60
         )
         output = result.stdout.decode("utf-8", errors="replace")
@@ -245,9 +245,26 @@ async def delete_run(run_dir: str) -> dict[str, str]:
     the list) and report success — the leftover stubs clear when the holder
     exits.
     """
+    backend = backend_for_path(run_dir)
+    if backend.is_remote:
+        try:
+            async with backend.project_operation():
+                snapshot = await backend.deletion_snapshot(run_dir)
+                from services.workflow_scanner import dagman_exit_status, _jobstate_terminal_status
+
+                terminal = dagman_exit_status(snapshot) or _jobstate_terminal_status(snapshot)
+                if _is_submitted(snapshot) and not terminal:
+                    result = await backend.exec(["pegasus-remove", run_dir], timeout=60)
+                    if result.returncode:
+                        return {"status": "error", "output": result.stderr.decode(errors="replace") or "Could not cancel remote run"}
+                await backend.delete_tree(run_dir)
+            return {"status": "deleted"}
+        except (OSError, RuntimeError, ValueError, asyncio.TimeoutError) as e:
+            return {"status": "error", "output": str(e)}
+
     if _is_submitted(run_dir):
         try:
-            await active_backend().exec(["pegasus-remove", run_dir], timeout=60)
+            await backend.exec(["pegasus-remove", run_dir], timeout=60)
         except (FileNotFoundError, asyncio.TimeoutError, OSError) as e:
             # A cancel failure shouldn't block deletion — log and proceed.
             log.warning("delete_run_cancel_failed", run_dir=run_dir, error=str(e))
@@ -302,6 +319,21 @@ async def delete_project(project_dir: str) -> dict[str, str]:
     is a worse state than the one we started in, and the user can retry once
     the holder exits.
     """
+    backend = backend_for_path(project_dir)
+    if backend.is_remote:
+        try:
+            async with backend.project_operation():
+                snapshot = await backend.deletion_snapshot(project_dir)
+                for bd in sorted(_glob.glob(os.path.join(snapshot, "**", "braindump.yml"), recursive=True)):
+                    run_dir = os.path.join(project_dir, os.path.relpath(os.path.dirname(bd), snapshot))
+                    result = await delete_run(run_dir)
+                    if result.get("status") != "deleted":
+                        return result
+                await backend.delete_tree(project_dir)
+            return {"status": "deleted"}
+        except (OSError, RuntimeError, ValueError, asyncio.TimeoutError) as e:
+            return {"status": "error", "output": str(e)}
+
     runs = sorted(
         os.path.dirname(bd)
         for bd in _glob.glob(

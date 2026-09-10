@@ -101,7 +101,7 @@ def _site_catalog_storage(catalog_path: str, output_site: str) -> str | None:
             ):
                 path = directory.get("path")
                 if path:
-                    return os.path.realpath(str(path))
+                    return str(path)
     return None
 
 
@@ -122,7 +122,7 @@ def project_dir_for_run(run_dir: str, workflows_root: str) -> str | None:
 
 
 def resolve_output_dir(
-    run_dir: str, workflows_root: str, output_site: str = "local"
+    run_dir: str, workflows_root: str, output_site: str = "local", *, backend=None
 ) -> tuple[str | None, str]:
     """(output directory, how it was found).
 
@@ -130,6 +130,9 @@ def resolve_output_dir(
     to distinguish "the workflow says it puts results here and there are none
     yet" from "we guessed and found nothing".
     """
+    if backend is None:
+        from services.backends import backend_for_path
+        backend = backend_for_path(run_dir)
     project_dir = project_dir_for_run(run_dir, workflows_root)
 
     # 1. The site catalog, wherever it lives. pegasus-plan copies catalogs into
@@ -144,14 +147,25 @@ def resolve_output_dir(
                 continue
             storage = _site_catalog_storage(candidate, output_site)
             if storage:
-                return storage, "catalog"
+                local = os.path.realpath(backend.to_local(storage))
+                if backend.is_remote:
+                    # Never serve an unmirrored remote path from this host.
+                    root = os.path.realpath(backend.workspace_root())
+                    if local != root and not local.startswith(root + os.sep):
+                        return None, "none"
+                return local, "catalog"
 
     # 2. Convention, relative to the project.
     if project_dir:
         for name in _CONVENTIONAL_DIRS:
             candidate = os.path.join(project_dir, name)
             if os.path.isdir(candidate):
-                return os.path.realpath(candidate), "convention"
+                resolved = os.path.realpath(candidate)
+                if backend.is_remote:
+                    root = os.path.realpath(backend.workspace_root())
+                    if resolved != root and not resolved.startswith(root + os.sep):
+                        continue
+                return resolved, "convention"
 
     return None, "none"
 
@@ -215,10 +229,11 @@ def listing(
     output_site: str = "local",
     offset: int = 0,
     limit: int = 100,
+    backend=None,
 ) -> dict[str, Any]:
     """A page of a run's outputs, plus enough context to explain an empty one."""
     output_dir, found_via = resolve_output_dir(
-        run_dir, workflows_root, output_site
+        run_dir, workflows_root, output_site, backend=backend
     )
     if output_dir is None or not os.path.isdir(output_dir):
         return {

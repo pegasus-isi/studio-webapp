@@ -1,5 +1,7 @@
 "use client";
 
+import { useExecutionBackend } from "@/lib/hooks/use-execution-backend";
+
 /**
  * ⌘K search over the things a user actually looks for: their own analyses, and
  * the examples they could add (#314).
@@ -45,10 +47,11 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  const { data: selection } = useExecutionBackend();
   const projects = useQuery({
-    queryKey: ["workflow-projects"],
+    queryKey: ["workflow-projects", selection?.backend],
     queryFn: () => api.getWorkflowProjects(),
-    enabled: open,
+    enabled: open && !!selection,
   });
   const marketplace = useQuery({
     queryKey: ["marketplace"],

@@ -18,6 +18,20 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("STUDIO_SCAN_DIR", tempfile.mkdtemp())
 
 
+@pytest.fixture(autouse=True)
+def isolated_compute_backends(tmp_path, monkeypatch):
+    """Never load a developer's real SSH targets or leak selection across tests."""
+    from services import backends
+
+    monkeypatch.setenv("STUDIO_BACKENDS_FILE", str(tmp_path / "no-backends.json"))
+    monkeypatch.setenv("STUDIO_EXECUTION_BACKEND", "local")
+    monkeypatch.setattr(backends, "_REGISTRY", None)
+    monkeypatch.setattr(backends, "_ACTIVE_ID", None)
+    token = backends._BOUND.set(None)
+    yield
+    backends._BOUND.reset(token)
+
+
 @pytest.fixture
 def tmp_db(tmp_path):
     """Create a temporary SQLite database path."""
