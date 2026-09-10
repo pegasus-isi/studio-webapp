@@ -107,25 +107,37 @@ def is_write_origin_allowed(headers) -> bool:
     only thing distinguishing "the user clicked something in Studio" from "the
     user visited a page that posted to Studio" is where the request came from.
 
+    The order below is load-bearing.
+
+    * **Allowlisted Origin** — allowed, and checked *first*. An operator naming
+      an origin has made a decision that must beat every heuristic after it.
+      Checking ``Sec-Fetch-Site`` ahead of this made the allowlist dead on
+      arrival: a browser posting from an allowlisted origin necessarily labels
+      the request ``cross-site`` or ``same-site``, which is exactly what the
+      operator was overriding. The bug was invisible to tests because the ASGI
+      test client sends no ``Sec-Fetch-Site`` at all.
+    * ``Sec-Fetch-Site`` — ``cross-site`` and ``same-site`` are rejected. The
+      browser has already classified the request, and it cannot be spoofed by
+      the page making it.
+    * **Origin absent** — allowed. A request with no Origin did not come from a
+      browser acting on a page (curl, the test client, a local MCP client), and
+      those cannot be driven cross-site by a victim's browser. Refusing them
+      would break every non-browser caller to defend against an attacker who
+      has no way to strip the header anyway.
     * **Origin present** — must be same-origin with the Host this request was
-      addressed to, or explicitly allowlisted. Browsers send Origin on every
-      unsafe-method request, cross-site form submissions included, so this is
-      the case that matters.
-    * **Origin absent** — allowed, unless ``Sec-Fetch-Site`` contradicts it. A
-      request with no Origin did not come from a browser acting on a page
-      (curl, the test client, a local MCP client), and those cannot be driven
-      cross-site by a victim's browser. Refusing them would break every
-      non-browser caller to defend against an attacker who has no way to strip
-      the header anyway.
-    * ``Sec-Fetch-Site`` is checked as a second signal where the browser sends
-      it: ``cross-site`` and ``same-site`` are rejected even if Origin somehow
-      looked acceptable.
+      addressed to. Browsers send Origin on every unsafe-method request,
+      cross-site form submissions included, so this is the common case.
     """
+    origin = headers.get("origin")
+
+    # First, before any heuristic: an explicit operator allowlist.
+    if origin and origin.rstrip("/") in allowed_origins():
+        return True
+
     site = (headers.get("sec-fetch-site") or "").strip().lower()
     if site in ("cross-site", "same-site"):
         return False
 
-    origin = headers.get("origin")
     if not origin:
         return True
 
@@ -134,9 +146,6 @@ def is_write_origin_allowed(headers) -> bool:
         # "null" (a sandboxed iframe, a file:// page) parses to no netloc. It is
         # never same-origin with anything, so it is never one of ours.
         return False
-
-    if origin.rstrip("/") in allowed_origins():
-        return True
 
     host = _request_host(headers)
     return bool(host and origin_netloc.lower() == host.strip().rstrip("/").lower())

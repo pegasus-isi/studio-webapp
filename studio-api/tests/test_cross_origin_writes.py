@@ -27,10 +27,27 @@ import pytest
 EVIL = "https://evil.example.com"
 
 
-def _post(client, path: str, origin: str | None = None, **headers):
+def _post(
+    client,
+    path: str,
+    origin: str | None = None,
+    sec_fetch_site: str | None = None,
+    **headers,
+):
+    """POST the way a browser would.
+
+    ``sec_fetch_site`` is explicit and used deliberately throughout: the ASGI
+    test client sends no ``Sec-Fetch-Site``, but every real browser does, and a
+    suite that omits it tests a request no user can actually make. That gap hid
+    a live bug — the allowlist was consulted *after* the Sec-Fetch-Site
+    rejection, so an allowlisted origin was refused for every real browser while
+    the tests passed.
+    """
     h = dict(headers)
     if origin is not None:
         h["Origin"] = origin
+    if sec_fetch_site is not None:
+        h["Sec-Fetch-Site"] = sec_fetch_site
     return client.post(path, headers=h)
 
 
@@ -46,7 +63,7 @@ def _post(client, path: str, origin: str | None = None, **headers):
     ],
 )
 def test_cross_origin_write_is_rejected_on_real_routes(client, path):
-    res = _post(client, path, origin=EVIL)
+    res = _post(client, path, origin=EVIL, sec_fetch_site="cross-site")
     assert res.status_code == 403, (path, res.status_code, res.text)
     assert res.json()["detail"] == "Cross-origin request rejected"
 
@@ -71,7 +88,10 @@ def test_same_origin_write_passes(client):
     which it can only do once it has run.
     """
     res = _post(
-        client, "/api/tools/claude-code/start", origin="http://testserver"
+        client,
+        "/api/tools/claude-code/start",
+        origin="http://testserver",
+        sec_fetch_site="same-origin",
     )
     assert res.status_code == 400
     assert res.json()["detail"] == "Tool not installed"
@@ -104,17 +124,54 @@ def test_preflight_reaches_cors(client):
     assert res.status_code != 403
 
 
-def test_allowlisted_origin_is_accepted(client, monkeypatch):
+@pytest.mark.parametrize("site", ["cross-site", "same-site", None])
+def test_allowlisted_origin_is_accepted(client, monkeypatch, site):
     """`next dev` on :3000 proxies the browser's Origin through to the API, so
-    local frontend development needs an explicit entry."""
+    local frontend development needs an explicit entry — and it has to work
+    with the header the browser actually sends.
+
+    Regression: the allowlist was checked *after* the `Sec-Fetch-Site`
+    rejection. A browser posting from an allowlisted origin necessarily labels
+    the request `cross-site` (or `same-site` for a sibling port), which is
+    precisely what the operator was overriding — so the escape hatch was
+    refused for every real browser, while the tests, sending no such header,
+    passed. Parametrised over the labels a browser can attach so the ordering
+    cannot silently regress.
+    """
     monkeypatch.setenv("STUDIO_ALLOWED_ORIGINS", "http://localhost:3000")
-    res = _post(client, "/api/tools/claude-code/start", origin="http://localhost:3000")
+    res = _post(
+        client,
+        "/api/tools/claude-code/start",
+        origin="http://localhost:3000",
+        sec_fetch_site=site,
+    )
     assert res.status_code == 400, res.text
+    assert res.json()["detail"] == "Tool not installed"
 
     # And the allowlist is not a blanket opener: a different origin still 403s
     # while it is set.
-    other = _post(client, "/api/tools/claude-code/start", origin=EVIL)
+    other = _post(
+        client, "/api/tools/claude-code/start", origin=EVIL, sec_fetch_site=site
+    )
     assert other.status_code == 403
+
+
+def test_allowlist_beats_sec_fetch_site_at_the_header_level(client, monkeypatch):
+    """The unit-level statement of the same rule."""
+    from security import is_write_origin_allowed
+
+    monkeypatch.setenv("STUDIO_ALLOWED_ORIGINS", "http://localhost:3000")
+    assert is_write_origin_allowed(
+        _headers(
+            origin="http://localhost:3000",
+            host="localhost:8080",
+            sec_fetch_site="cross-site",
+        )
+    )
+    # An origin that is not on the list gains nothing from the list existing.
+    assert not is_write_origin_allowed(
+        _headers(origin=EVIL, host="localhost:8080", sec_fetch_site="cross-site")
+    )
 
 
 # --- The header logic itself --------------------------------------------------
