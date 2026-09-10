@@ -226,6 +226,9 @@ def test_supervisord_config_expands_the_port_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("STUDIO_BIND_ADDR", "127.0.0.1")
     monkeypatch.setenv("STUDIO_API_PORT", "22222")
     monkeypatch.setenv("STUDIO_WEB_PORT", "23333")
+    # Referenced by the studio-web program; supervisord has no default syntax
+    # for %(ENV_...)s, so it must be defined even when empty.
+    monkeypatch.setenv("STUDIO_INTERNAL_SECRET", "")
 
     opts = options.ServerOptions()
     opts.configfile = os.path.join(_REPO, "docker", "supervisor", "supervisord.conf")
@@ -252,6 +255,10 @@ def test_supervisord_config_expands_the_port_environment(tmp_path, monkeypatch):
     assert (
         commands["studio-web"].environment["API_URL"] == "http://127.0.0.1:22222"
     )
+    # Named explicitly rather than left to inherit: server components call
+    # studio-api on loopback, so on a gated session they must present the
+    # header the front proxy would otherwise have stamped (#391).
+    assert "STUDIO_INTERNAL_SECRET" in commands["studio-web"].environment
     # nginx must be pointed at the rendered config; the baked one is gone.
     assert f"-c {runtime}/nginx.conf" in commands["nginx"].command
 

@@ -144,6 +144,21 @@ def _studio_mcp_url() -> str:
     return f"http://127.0.0.1:{port}/api/mcp"
 
 
+def _studio_mcp_headers() -> dict[str, Any]:
+    """The proxy-stamped secret, when this session runs behind the gate.
+
+    Empty on the hosted path, so the generated config is unchanged there. When
+    ``STUDIO_INTERNAL_SECRET`` is set, studio-api refuses anything that did not
+    come through the front proxy — and this connection deliberately does not,
+    being a sibling process on loopback — so the header has to be supplied here
+    instead.
+    """
+    secret = (os.environ.get("STUDIO_INTERNAL_SECRET") or "").strip()
+    if not secret:
+        return {}
+    return {"headers": {"X-Studio-Internal": secret}}
+
+
 def _global_config_dir() -> str:
     """OpenCode's global config dir (XDG). Config here applies from ANY cwd —
     the workspace-only config was picked up only when opencode started in
@@ -353,14 +368,21 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 # session's actual state, which is what makes "why did this run
                 # fail?" answerable without the user pasting anything.
                 #
-                # Loopback, and read-only. studio-api has no auth of its own —
-                # an upstream ingress authenticates the browser — and the
-                # engine runs in this pod as this user, so there is no
-                # credential to add and nothing a token would protect against.
+                # Loopback, and read-only. On the hosted path studio-api has
+                # no auth of its own — an upstream ingress authenticates the
+                # browser — and the engine runs in this pod as this user.
+                #
+                # On a gated session (#391) that stops being true: studio-api
+                # requires a proxy-stamped header, and this call does not go
+                # through the proxy — it is loopback, straight to uvicorn. So
+                # the engine has to present the secret itself, or every Pegasus
+                # tool returns 403 and the chat quietly loses the ability to
+                # answer anything about the user's own runs.
                 "pegasus": {
                     "type": "remote",
                     "url": _studio_mcp_url(),
                     "enabled": True,
+                    **_studio_mcp_headers(),
                 },
             },
         }

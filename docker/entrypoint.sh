@@ -135,10 +135,23 @@ else
     STUDIO_JUPYTER_TOKEN="${STUDIO_JUPYTER_TOKEN:-}"
     STUDIO_INTERNAL_SECRET="${STUDIO_INTERNAL_SECRET:-}"
 fi
-# jupyter.sh reads the token; security.InternalSecretMiddleware reads the
-# secret. Both are supervisord children, so the environment is the channel.
-export STUDIO_AUTH_TOKEN STUDIO_URL_PREFIX STUDIO_JUPYTER_TOKEN \
-       STUDIO_INTERNAL_SECRET
+# STUDIO_AUTH_TOKEN and STUDIO_URL_PREFIX are deliberately NOT exported. They
+# are used by render_template below, which runs in this shell, and nothing
+# downstream needs them. The token is the browser's session credential — the
+# one value that lets a request in through the gate — and exporting it would
+# put it in the environment of every supervisord child, which includes the
+# chat engine's tool shells and every terminal the user opens. A prompt
+# injection that got one command run could then read the session credential
+# straight out of `environ`. Same-uid processes are not a privilege boundary,
+# but a credential that never leaves this shell cannot be exfiltrated from one.
+#
+# These two do have to travel: jupyter.sh reads the token, and
+# security.InternalSecretMiddleware plus studio-web's server components read
+# the secret. supervisord interpolates them into its config, so they must be in
+# its environment, and its children inherit. That residual is bounded — same
+# uid, and /proc/<pid>/environ is unreadable by the other local users this gate
+# exists to keep out.
+export STUDIO_JUPYTER_TOKEN STUDIO_INTERNAL_SECRET
 
 # Read by supervisord's %(ENV_...)s expansion, by jupyter.sh and the Jupyter
 # server config, by routers/jupyter.py (status), knowledge/opencode.py (the MCP

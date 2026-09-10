@@ -292,3 +292,69 @@ def test_the_proxy_stamps_every_api_location_and_no_web_location(tmp_path):
             assert "gate-api-headers.conf" in body, body[:200]
         if re.search(r"proxy_pass http://127\.0\.0\.1:\d+", body):
             assert "gate-jupyter-headers.conf" in body, body[:200]
+
+
+# --- In-pod callers that bypass the proxy on purpose ---------------------------
+#
+# The gate refuses anything that did not come through the front proxy. Two
+# callers inside the pod deliberately do not: the chat engine's MCP client and
+# studio-web's server components both talk to loopback, because routing a
+# sibling process's traffic back out through the ingress would make it depend on
+# a gateway that has nothing to do with it. Both therefore have to present the
+# secret themselves — and both fail *silently* if they do not. MCP tools return
+# 403 and the chat merely stops being able to answer questions about the user's
+# runs; the ui-prefs fetch falls back to "show the welcome page".
+
+
+def test_mcp_is_refused_without_the_header(client, monkeypatch):
+    """The regression this guards: the engine reaches /api/mcp on loopback."""
+    monkeypatch.setenv("STUDIO_INTERNAL_SECRET", "s3cr3t")
+    res = client.post(
+        "/api/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    )
+    assert res.status_code == 403
+
+
+def test_mcp_works_with_the_header(client, monkeypatch):
+    monkeypatch.setenv("STUDIO_INTERNAL_SECRET", "s3cr3t")
+    res = client.post(
+        "/api/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+        headers={"X-Studio-Internal": "s3cr3t"},
+    )
+    assert res.status_code == 200
+    assert res.json()["result"]["tools"]
+
+
+def test_generated_opencode_config_carries_the_secret(monkeypatch, tmp_path):
+    """So the engine can actually reach the tools on a gated session."""
+    monkeypatch.setenv("STUDIO_INTERNAL_SECRET", "s3cr3t")
+    from knowledge.opencode import _studio_mcp_headers
+
+    assert _studio_mcp_headers() == {"headers": {"X-Studio-Internal": "s3cr3t"}}
+
+
+def test_generated_opencode_config_is_unchanged_when_ungated(monkeypatch):
+    """The hosted path must not gain a header that means nothing there."""
+    monkeypatch.delenv("STUDIO_INTERNAL_SECRET", raising=False)
+    from knowledge.opencode import _studio_mcp_headers
+
+    assert _studio_mcp_headers() == {}
+
+
+def test_the_session_token_never_reaches_a_child_process(tmp_path):
+    """STUDIO_AUTH_TOKEN is the browser's session credential — the one value
+    that opens the gate. It is used only by the renderer, in the entrypoint's
+    own shell, and must not be exported: every supervisord child inherits that
+    environment, including the chat engine's tool shells and the user's
+    terminals, so an injected command could read it straight out of `environ`.
+    """
+    with open(_ENTRYPOINT, encoding="utf-8") as fh:
+        script = fh.read()
+
+    exports = re.findall(r"^export ([^\n]+)$", script, re.MULTILINE)
+    exported = {name for line in exports for name in line.replace("\\", "").split()}
+    assert "STUDIO_AUTH_TOKEN" not in exported, exported
+    # The ones that genuinely have to travel still do.
+    assert "STUDIO_INTERNAL_SECRET" in exported
+    assert "STUDIO_JUPYTER_TOKEN" in exported
