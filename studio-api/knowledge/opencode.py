@@ -133,6 +133,17 @@ def _telemetry_plugin(content_capture: bool) -> list[Any] | None:
     return [_OTEL_PLUGIN, options]
 
 
+def _studio_mcp_url() -> str:
+    """Where studio-api serves the Pegasus MCP tools, from inside this pod.
+
+    Loopback rather than the public hostname: the engine is a sibling process,
+    and routing its tool calls back out through the ingress would make them
+    depend on a gateway that has nothing to do with them.
+    """
+    port = os.environ.get("STUDIO_API_PORT", "8080")
+    return f"http://127.0.0.1:{port}/api/mcp"
+
+
 def _global_config_dir() -> str:
     """OpenCode's global config dir (XDG). Config here applies from ANY cwd —
     the workspace-only config was picked up only when opencode started in
@@ -334,6 +345,21 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 "kiso-docs": {
                     "type": "remote",
                     "url": "https://gitmcp.io/pegasus-isi/kiso",
+                    "enabled": True,
+                },
+                # This Studio's own workflow tools (#367): the user's projects
+                # and runs, live job status, a failure diagnosis, run outputs.
+                # The other two servers are documentation; this one is the
+                # session's actual state, which is what makes "why did this run
+                # fail?" answerable without the user pasting anything.
+                #
+                # Loopback, and read-only. studio-api has no auth of its own —
+                # an upstream ingress authenticates the browser — and the
+                # engine runs in this pod as this user, so there is no
+                # credential to add and nothing a token would protect against.
+                "pegasus": {
+                    "type": "remote",
+                    "url": _studio_mcp_url(),
                     "enabled": True,
                 },
             },
