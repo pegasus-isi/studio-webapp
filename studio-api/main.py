@@ -22,6 +22,7 @@ from routers import (
     knowledge,
     llm,
     marketplace,
+    mcp,
     notifications,
     opencode,
     pegasus_bot,
@@ -364,6 +365,7 @@ app.include_router(ai_terminal.router)
 app.include_router(workflows.router)
 app.include_router(chat.router)
 app.include_router(opencode.router)
+app.include_router(mcp.router)
 app.include_router(notifications.router)
 app.include_router(dashboard.router)
 app.include_router(provisioning.router)
