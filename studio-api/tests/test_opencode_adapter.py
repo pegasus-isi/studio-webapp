@@ -317,3 +317,56 @@ def test_config_changed_only_when_generated_config_changes(tmp_path, monkeypatch
 
     adapter.update_llm_config(str(workspace), llm_config)
     assert adapter.config_changed is False
+
+
+def test_the_generated_config_registers_studios_own_mcp_server(tmp_path, monkeypatch):
+    """The engine has to be told where the Pegasus tools are (#367).
+
+    The other two MCP servers are documentation; this one is the session's own
+    state, and it is what makes "why did this run fail?" answerable without the
+    user pasting anything in. Loopback, because the engine is a sibling process
+    in the same pod.
+    """
+    from knowledge.opencode import OpenCodeAdapter
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("STUDIO_API_PORT", raising=False)
+    ws = tmp_path / "work"
+    ws.mkdir()
+
+    OpenCodeAdapter().update_llm_config(
+        str(ws), {"provider": "gateway", "model": "m", "base_url": "u"}
+    )
+
+    cfg = json.loads(
+        (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
+    )
+    pegasus = cfg["mcp"]["pegasus"]
+    assert pegasus == {
+        "type": "remote",
+        "url": "http://127.0.0.1:8080/api/mcp",
+        "enabled": True,
+    }
+    # The documentation servers stay.
+    assert "pegasus-docs" in cfg["mcp"]
+    assert "kiso-docs" in cfg["mcp"]
+
+
+def test_the_mcp_url_follows_the_api_port(tmp_path, monkeypatch):
+    from knowledge.opencode import OpenCodeAdapter
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("STUDIO_API_PORT", "9090")
+    ws = tmp_path / "work"
+    ws.mkdir()
+
+    OpenCodeAdapter().update_llm_config(
+        str(ws), {"provider": "gateway", "model": "m", "base_url": "u"}
+    )
+
+    cfg = json.loads(
+        (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
+    )
+    assert cfg["mcp"]["pegasus"]["url"] == "http://127.0.0.1:9090/api/mcp"

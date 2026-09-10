@@ -365,6 +365,60 @@ async def update_ui_preferences(req: UIPreferences) -> UIPreferences:
     return req
 
 
+class TelemetryConsent(BaseModel):
+    """Whether prompts and replies may be exported with this user's traces."""
+
+    content_capture: bool = False
+    # Read-only for the client: whether this deployment has a collector at all.
+    # Without one nothing is exported whatever the flag says, and a control
+    # that implies otherwise would be a lie about where the data goes.
+    collector_configured: bool = False
+
+
+@router.get("/telemetry", response_model=TelemetryConsent)
+async def get_telemetry_consent() -> TelemetryConsent:
+    from main import db
+    from services import telemetry
+
+    return TelemetryConsent(
+        content_capture=await telemetry.content_capture(db),
+        collector_configured=telemetry.collector_configured(),
+    )
+
+
+@router.put("/telemetry", response_model=TelemetryConsent)
+async def update_telemetry_consent(req: TelemetryConsent) -> TelemetryConsent:
+    """Store the consent flag and push it to the engine.
+
+    Propagated, not just stored, for the same reason the shell-approval setting
+    is: the engine reads its plugin options out of the generated opencode.json
+    at startup and no endpoint reloads it, so without this the Settings page
+    would claim content capture was off while the running engine kept exporting
+    prompts for the rest of the pod's life. `propagate` rewrites the config and
+    schedules the restart itself (the restart is not awaited — supervisorctl
+    blocks for a stop *and* a start).
+    """
+    from main import db
+    from services import telemetry
+
+    await telemetry.set_content_capture(db, req.content_capture)
+    try:
+        from llm.propagator import LLMPropagator
+
+        await LLMPropagator().propagate(db)
+    except Exception as e:
+        # Stored but not propagated: the flag is right in the DB and the engine
+        # is wrong until its next restart. Surfaced as a warning rather than a
+        # 500 because failing the request would suggest the choice was not
+        # recorded, and re-toggling would then be the natural thing to try.
+        log.warning("telemetry_consent_propagate_failed", error=str(e))
+
+    return TelemetryConsent(
+        content_capture=req.content_capture,
+        collector_configured=telemetry.collector_configured(),
+    )
+
+
 @router.get("", response_model=SettingsResponse)
 async def get_settings() -> SettingsResponse:
     from main import db

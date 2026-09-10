@@ -1106,6 +1106,26 @@ export async function updateCommandApproval(requireApproval: boolean) {
   });
 }
 
+// --- Telemetry consent (#367 step 6) ---
+
+export type TelemetryConsent = {
+  content_capture: boolean;
+  /** False when this deployment has no collector, so nothing is exported
+   *  either way — the FABRIC VM and plain `docker run` are like this. */
+  collector_configured: boolean;
+};
+
+export async function getTelemetryConsent() {
+  return request<TelemetryConsent>("/settings/telemetry");
+}
+
+export async function updateTelemetryConsent(contentCapture: boolean) {
+  return request<TelemetryConsent>("/settings/telemetry", {
+    method: "PUT",
+    body: JSON.stringify({ content_capture: contentCapture }),
+  });
+}
+
 // --- Jupyter ---
 
 export async function getJupyterStatus() {
