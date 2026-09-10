@@ -4,7 +4,20 @@
 # All knobs are optional environment variables:
 #
 #   IMAGE                 Image to run (default: pegasus/studio-webapp:latest)
-#   PORT                  Host port mapped to nginx :8888 (default: 8888)
+#   PORT                  Host port to publish (default: same as STUDIO_PORT)
+#   STUDIO_PORT           Port nginx listens on INSIDE the container
+#                         (default: 8888). Set it to check that a deployment
+#                         which moves the front port still works — the mapping
+#                         follows automatically.
+#   ALLOC_PORTS=1         Have the container pick free ports per session for
+#                         its four internal listeners (uvicorn, Next.js,
+#                         JupyterLab, opencode) instead of the fixed defaults.
+#                         This is the Open OnDemand shape, where the image runs
+#                         on a shared host and fixed internal ports collide
+#                         between users. Nothing about the published port
+#                         changes, so the browser URL is unaffected — which is
+#                         the point: if this run behaves differently from a
+#                         default one, the port plumbing is wrong.
 #   NAME                  Container name (default: none, so docker assigns one).
 #                         Set it when something needs to address the container
 #                         later — `docker exec <name> ...` from a test harness,
@@ -42,7 +55,11 @@
 set -euo pipefail
 
 IMAGE="${IMAGE:-pegasus/studio-webapp:latest}"
-PORT="${PORT:-8888}"
+# The container's own front port, and the host port published to it. They
+# default to the same number so `PORT=9000 ./local-test-instance.sh` keeps
+# meaning what it always did.
+STUDIO_PORT="${STUDIO_PORT:-8888}"
+PORT="${PORT:-$STUDIO_PORT}"
 # $USER isn't always exported (e.g. some CI/cron shells); fall back to id.
 USER="${USER:-$(id -un)}"
 
@@ -73,9 +90,19 @@ ARGS=(
     -u "$(id -u):$(id -g)"
     -e "HOME=/home/$USER"
     -e "USER=$USER"
-    -p "${PORT}:8888"
+    -p "${PORT}:${STUDIO_PORT}"
+    -e "STUDIO_PORT=${STUDIO_PORT}"
     -v "$HOME_DIR:/home/$USER"
 )
+
+# Exercise per-session port allocation (the Open OnDemand shape). Only the four
+# internal listeners move; the front port is never auto-allocated, because
+# whatever publishes it — this -p mapping, OOD's allocator — has to know it in
+# advance.
+if [ "${ALLOC_PORTS:-0}" = "1" ]; then
+    ARGS+=(-e "STUDIO_ALLOC_PORTS=1")
+    echo "Per-session port allocation enabled for the internal listeners"
+fi
 
 if [ -n "${NAME:-}" ]; then
     ARGS+=(--name "$NAME")
@@ -120,6 +147,9 @@ if [ -n "${EXTRA_DOCKER_ARGS:-}" ]; then
 fi
 
 echo "Starting $IMAGE as uid=$(id -u) gid=$(id -g)"
+if [ "${PORT}" != "${STUDIO_PORT}" ]; then
+    echo "Publishing host ${PORT} -> container ${STUDIO_PORT}"
+fi
 echo "Open http://localhost:${PORT} when ready"
 echo ""
 

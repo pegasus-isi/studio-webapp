@@ -65,6 +65,20 @@ a per-user password the entrypoint writes to `~/.studio/opencode-password`.
 Supervised by supervisord (`docker/supervisor/`);
 `docker/entrypoint.sh` runs `init_db.py` (first launch only) then `exec supervisord`.
 
+**Those port numbers are defaults, not constants.** All five come from the
+environment (`STUDIO_PORT`, `STUDIO_API_PORT`, `STUDIO_WEB_PORT`,
+`STUDIO_JUPYTER_PORT`, `STUDIO_OPENCODE_PORT`), with `STUDIO_ALLOC_PORTS=1` to
+pick free ones per session — the image also runs on shared hosts (Open OnDemand,
+where Apptainer gives it the *host* network namespace by default), and there a
+fixed port is two users colliding. The nginx configs are therefore templates
+under `docker/nginx/*.tmpl`, rendered by the entrypoint into
+`$STUDIO_RUNTIME_DIR` (which also holds the pid files, supervisor socket and
+nginx temp dirs, uid-suffixed) and loaded with `nginx -c`; `/etc` is not
+writable by the injected uid, so **never bake a rendered config into the image**.
+`entrypoint.sh --render-only` renders and exits — the image build uses it to run
+`nginx -t`. If you add a `@STUDIO_*@` placeholder to a template, add it to
+`render_template()` too; `tests/test_port_rendering.py` fails if the two drift.
+
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
   migrations in `db.py`), structlog JSON logging. 17 routers in `routers/`, 24 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,

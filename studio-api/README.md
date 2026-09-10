@@ -141,16 +141,40 @@ Provider API keys are stored in the DB via the app (not env). See `main.py` /
 
 ## Container Deployment
 
-In the container, nginx (**port 8888**, the only exposed port) fronts everything:
+In the container, nginx (**port 8888** by default, the only exposed port)
+fronts everything:
 
 ```
-nginx :8888
-├── /          → Next.js frontend (:3000)
-├── /api/, /ws/ → studio-api (:8080)
-└── /jupyter/  → JupyterLab (:8889, always-on)
+nginx :8888                       STUDIO_PORT
+├── /          → Next.js frontend (:3000)   STUDIO_WEB_PORT
+├── /api/, /ws/ → studio-api      (:8080)   STUDIO_API_PORT
+└── /jupyter/  → JupyterLab       (:8889)   STUDIO_JUPYTER_PORT
+                  opencode serve  (:4096)   STUDIO_OPENCODE_PORT
 ```
 
-Supervised by supervisord. `docker/entrypoint.sh`:
+**Every listener is configurable**, because the image no longer only runs
+one-per-pod. Under Open OnDemand it runs on a shared host, and with Apptainer it
+does not get its own network namespace by default, so two users' sessions would
+bind the same ports on the same machine. Set the variables above, or set
+`STUDIO_ALLOC_PORTS=1` to have the entrypoint pick a free port for each of the
+four internal listeners. The front port is never auto-allocated: whatever
+publishes it has to know it in advance.
+
+`STUDIO_BIND_ADDR` (default `127.0.0.1`) is the internal bind address for
+uvicorn and Next.js (JupyterLab and opencode already bind loopback via their own
+flags). nginx is unaffected — its `listen` carries no address, so it still
+answers on all interfaces and the front port stays reachable. Set it to
+`0.0.0.0` only if something must reach a backend without going through nginx. `STUDIO_RUNTIME_DIR` (default `/tmp/studio-runtime-<uid>`)
+holds the rendered nginx configs, pid files, the supervisor socket and nginx's
+temp dirs; the uid suffix is what keeps two sessions on one host apart.
+
+Because `/etc` is not writable by the injected uid, the nginx configs are
+**templates** (`docker/nginx/*.tmpl`) rendered per session by the entrypoint;
+nginx is started with `-c` against the result. `entrypoint.sh --render-only`
+renders and exits, which is how the image build runs `nginx -t` over them.
+
+Supervised by supervisord, whose config takes those ports through its own
+`%(ENV_VAR)s` expansion. `docker/entrypoint.sh`:
 
 1. On **first launch only** (marker on the PVC), runs `timeout 60 init_db.py`
    and seeds `AGENTS.md`.

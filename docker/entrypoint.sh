@@ -16,16 +16,141 @@ WORK="${HOME:-/tmp}/work"
 STUDIO_DIR="${HOME:-/tmp}/.studio"
 MARKER="${STUDIO_DIR}/.initialized"
 
+PYTHON="$(which python3 2>/dev/null || which python 2>/dev/null || echo python3)"
+
+# ---- Ports and the per-session runtime directory ----
+#
+# Every listener is configurable because the container is no longer only run
+# one-per-pod. Under Open OnDemand the same image runs on a shared host — and
+# with Apptainer, which by default gives the container the *host* network and
+# mount namespaces, so two users' sessions bind the same ports on the same
+# machine and the second one loses. Ports:
+#
+#   STUDIO_PORT           front proxy, the only one anything connects to (8888)
+#   STUDIO_API_PORT       uvicorn                                        (8080)
+#   STUDIO_WEB_PORT       Next.js standalone                             (3000)
+#   STUDIO_JUPYTER_PORT   JupyterLab                                     (8889)
+#   STUDIO_OPENCODE_PORT  opencode serve                                 (4096)
+#
+# STUDIO_ALLOC_PORTS=1 picks a free port for each of the four internal
+# listeners that was not set explicitly. The front port is deliberately NOT
+# auto-allocated: whoever publishes it (OOD's own allocator, a -p mapping, the
+# KubeSpawner service) has to know it in advance, so guessing here would
+# produce a port nothing routes to.
+STUDIO_PORT="${STUDIO_PORT:-8888}"
+if [ "${STUDIO_ALLOC_PORTS:-0}" = "1" ]; then
+    # One python invocation for all four: separate calls would each close their
+    # socket before the next bound, and the kernel is free to hand out the same
+    # port twice. Held open together, then released at once — still a race
+    # against the rest of the host, which is why the services themselves fail
+    # loudly on a bind conflict rather than trusting this.
+    read -r ALLOC_API ALLOC_WEB ALLOC_JUPYTER ALLOC_OPENCODE <<EOF
+$("${PYTHON}" - <<'PYEOF'
+import socket
+socks = []
+for _ in range(4):
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    socks.append(s)
+print(" ".join(str(s.getsockname()[1]) for s in socks))
+for s in socks:
+    s.close()
+PYEOF
+)
+EOF
+    STUDIO_API_PORT="${STUDIO_API_PORT:-${ALLOC_API}}"
+    STUDIO_WEB_PORT="${STUDIO_WEB_PORT:-${ALLOC_WEB}}"
+    STUDIO_JUPYTER_PORT="${STUDIO_JUPYTER_PORT:-${ALLOC_JUPYTER}}"
+    STUDIO_OPENCODE_PORT="${STUDIO_OPENCODE_PORT:-${ALLOC_OPENCODE}}"
+fi
+STUDIO_API_PORT="${STUDIO_API_PORT:-8080}"
+STUDIO_WEB_PORT="${STUDIO_WEB_PORT:-3000}"
+STUDIO_JUPYTER_PORT="${STUDIO_JUPYTER_PORT:-8889}"
+STUDIO_OPENCODE_PORT="${STUDIO_OPENCODE_PORT:-4096}"
+# Loopback by default (#229). Nothing outside the container reaches these
+# ports: nginx proxies to 127.0.0.1 for every backend, and its own `listen` has
+# no address, so it still answers on all interfaces and KubeSpawner is
+# unaffected. JupyterLab and opencode already bind loopback via their own
+# flags, so this only ever governed uvicorn and Next.js — and there 0.0.0.0 put
+# studio-api on the pod's cluster IP, reachable by any pod on a flat network
+# with no NetworkPolicy. Same reasoning services/installer.py already applies
+# to `opencode web`, and on a shared host it is not the cluster network but
+# every other local user.
+#
+# A deployment that genuinely needs a backend reachable directly — a sidecar,
+# a probe that does not go through nginx — sets 0.0.0.0 explicitly.
+STUDIO_BIND_ADDR="${STUDIO_BIND_ADDR:-127.0.0.1}"
+
+# Read by supervisord's %(ENV_...)s expansion, by jupyter.sh and the Jupyter
+# server config, by routers/jupyter.py (status), knowledge/opencode.py (the MCP
+# URL it writes into opencode.json) and services/opencode_server.py.
+export STUDIO_PORT STUDIO_API_PORT STUDIO_WEB_PORT STUDIO_JUPYTER_PORT \
+       STUDIO_OPENCODE_PORT STUDIO_BIND_ADDR
+
+# Not under $HOME: in K8s the home is NFS-backed and a unix domain socket
+# (supervisor.sock) cannot live on NFS. /tmp is local in both models, and the
+# uid suffix is what keeps two users on one shared host out of each other's
+# runtime state — pid files, the supervisor socket, nginx temp dirs and the
+# rendered configs all live here.
+STUDIO_RUNTIME_DIR="${STUDIO_RUNTIME_DIR:-/tmp/studio-runtime-$(id -u)}"
+export STUDIO_RUNTIME_DIR
+mkdir -p "${STUDIO_RUNTIME_DIR}"
+# The supervisor socket is chmod 0700 by supervisord, but the directory around
+# it is ours to lock down: on a shared host /tmp is world-readable, and the
+# rendered configs name every port this session is using.
+chmod 700 "${STUDIO_RUNTIME_DIR}" 2>/dev/null || true
+
+# Nginx temp dirs must exist before nginx starts (non-root can't create them
+# under /var/lib/nginx, so the rendered config points them at the runtime dir).
+mkdir -p "${STUDIO_RUNTIME_DIR}/nginx-client-body" \
+         "${STUDIO_RUNTIME_DIR}/nginx-proxy" \
+         "${STUDIO_RUNTIME_DIR}/nginx-fastcgi" \
+         "${STUDIO_RUNTIME_DIR}/nginx-uwsgi" \
+         "${STUDIO_RUNTIME_DIR}/nginx-scgi"
+
+# ---- Render the nginx configs ----
+# Templates rather than baked configs because /etc is not writable: the
+# container runs as whatever uid KubeSpawner (or the OOD job) injects. nginx is
+# started with `-c` against the rendered copy (see supervisord.conf).
+render_template() {
+    src="$1"; dst="$2"
+    sed -e "s|@STUDIO_PORT@|${STUDIO_PORT}|g" \
+        -e "s|@STUDIO_API_PORT@|${STUDIO_API_PORT}|g" \
+        -e "s|@STUDIO_WEB_PORT@|${STUDIO_WEB_PORT}|g" \
+        -e "s|@STUDIO_JUPYTER_PORT@|${STUDIO_JUPYTER_PORT}|g" \
+        -e "s|@STUDIO_OPENCODE_PORT@|${STUDIO_OPENCODE_PORT}|g" \
+        -e "s|@STUDIO_RUNTIME_DIR@|${STUDIO_RUNTIME_DIR}|g" \
+        "${src}" > "${dst}"
+    # A placeholder left behind means a template gained one that this function
+    # does not substitute. nginx would fail on the literal with a parse error
+    # naming a line, not a cause, so say it here instead.
+    if grep -q '@STUDIO_[A-Z_]*@' "${dst}"; then
+        echo "[studio] FATAL: unsubstituted placeholder in ${dst}:" >&2
+        grep -n '@STUDIO_[A-Z_]*@' "${dst}" >&2
+        exit 1
+    fi
+}
+render_template /opt/pegasus-ai/templates/nginx.conf.tmpl \
+                "${STUDIO_RUNTIME_DIR}/nginx.conf"
+render_template /opt/pegasus-ai/templates/studio-proxy.conf.tmpl \
+                "${STUDIO_RUNTIME_DIR}/studio-proxy.conf"
+echo "[studio] Ports: front=${STUDIO_PORT} api=${STUDIO_API_PORT}" \
+     "web=${STUDIO_WEB_PORT} jupyter=${STUDIO_JUPYTER_PORT}" \
+     "opencode=${STUDIO_OPENCODE_PORT} bind=${STUDIO_BIND_ADDR}"
+
+# Render and stop. The image build uses this to run `nginx -t` over the real
+# templates (see Dockerfile), so a template that does not parse fails the build
+# rather than the first session to start. Deliberately before anything that
+# touches $HOME: at build time that is root's home, and this must leave nothing
+# behind there.
+if [ "${1:-}" = "--render-only" ]; then
+    echo "[studio] Rendered into ${STUDIO_RUNTIME_DIR}; --render-only, stopping."
+    exit 0
+fi
+
 # workflows/ is where the Marketplace "Add" clones into and where the scaffold
 # skills are told to put projects, so it should exist before anyone looks.
 mkdir -p "${WORK}" "${STUDIO_DIR}" "${WORK}/workflows"
-
-# Nginx temp dirs must exist before nginx starts (non-root can't create them
-# under /var/lib/nginx, so we use /tmp paths configured in nginx.conf).
-mkdir -p /tmp/nginx-client-body /tmp/nginx-proxy /tmp/nginx-fastcgi \
-         /tmp/nginx-uwsgi /tmp/nginx-scgi
-
-PYTHON="$(which python3 2>/dev/null || which python 2>/dev/null || echo python3)"
 
 # ---- Marketplace checkout (skills, agents, templates) ----
 # The image ships a pinned copy at /opt/pegasus-ai/marketplace. It is a template

@@ -1,9 +1,18 @@
+# Studio's server block. Rendered by docker/entrypoint.sh into
+# $STUDIO_RUNTIME_DIR/studio-proxy.conf and included by the rendered nginx.conf.
+#
+# Every listener is a placeholder rather than a literal, because on a shared
+# host two sessions must not collide: under Open OnDemand the front port comes
+# from the portal's own allocator, and the internal three are picked per
+# session (STUDIO_ALLOC_PORTS=1). The defaults keep the container's historical
+# 8888/8080/3000/8889 when nothing is set.
+
 upstream studio_api {
-    server 127.0.0.1:8080;
+    server 127.0.0.1:@STUDIO_API_PORT@;
 }
 
 upstream studio_web {
-    server 127.0.0.1:3000;
+    server 127.0.0.1:@STUDIO_WEB_PORT@;
 }
 
 # WebSocket upgrade map
@@ -13,7 +22,7 @@ map $http_upgrade $connection_upgrade {
 }
 
 server {
-    listen 8888;
+    listen @STUDIO_PORT@;
     server_name _;
 
     client_max_body_size 100M;
@@ -64,7 +73,7 @@ server {
     # JupyterLab is prefix-aware; jupyter.sh starts it with
     # ${JUPYTERHUB_SERVICE_PREFIX}/jupyter/ when KubeSpawner provides that env.
     location ~ ^/user/[^/]+/jupyter(?:/.*)?$ {
-        proxy_pass http://127.0.0.1:8889;
+        proxy_pass http://127.0.0.1:@STUDIO_JUPYTER_PORT@;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -91,7 +100,10 @@ server {
 
         proxy_set_header Accept-Encoding "";
         sub_filter_once off;
-        sub_filter_types text/html;
+        # No sub_filter_types: the directive *adds* to nginx's default, which is
+        # already text/html, so naming it again is a duplicate — nginx warns on
+        # every config test, and a build check that always warns is one nobody
+        # reads. HTML is the only type these rewrites apply to.
         sub_filter 'href="/_next/' 'href="$studio_prefix/_next/';
         sub_filter 'src="/_next/' 'src="$studio_prefix/_next/';
         sub_filter 'href="./_next/' 'href="$studio_prefix/_next/';
@@ -149,7 +161,7 @@ server {
         proxy_send_timeout 3600s;
     }
 
-    # --- JupyterLab (on-demand, port 8889) ---
+    # --- JupyterLab (on-demand, @STUDIO_JUPYTER_PORT@) ---
     # WebSocket upgrade headers are set on the MAIN /jupyter/ location so that
     # ALL Jupyter websockets work — not just kernels/terminals, but also
     # jupyter-ai chat (/jupyter/api/ai/...) and jupyter-collaboration RTC/yjs
@@ -158,7 +170,7 @@ server {
     # Without this, those sockets silently fail and JupyterLab shows
     # "Unable to reconnect to the server".
     location /jupyter/ {
-        proxy_pass http://127.0.0.1:8889/jupyter/;
+        proxy_pass http://127.0.0.1:@STUDIO_JUPYTER_PORT@/jupyter/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
