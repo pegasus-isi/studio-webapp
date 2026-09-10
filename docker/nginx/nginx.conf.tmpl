@@ -1,0 +1,49 @@
+# Custom nginx.conf for non-root operation. Rendered by docker/entrypoint.sh
+# into $STUDIO_RUNTIME_DIR; nginx is started with `-c` pointing at the result.
+#
+# - No 'user' directive: nginx runs workers as the process owner.
+# - pid and all temp paths live in the runtime dir, not fixed /tmp paths.
+#   Fixed paths were fine when a container owned its own /tmp, but on a shared
+#   host (Open OnDemand, where Apptainer gives the container the *host* network
+#   and mount namespaces by default) two users' sessions would fight over
+#   /tmp/nginx.pid and every temp dir. The runtime dir carries the uid, so they
+#   do not meet.
+# - Logs go to stdout/stderr for Docker log capture.
+
+worker_processes auto;
+pid @STUDIO_RUNTIME_DIR@/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include      /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent"';
+
+    access_log /dev/stdout main;
+
+    sendfile    on;
+    tcp_nopush  on;
+    keepalive_timeout 65;
+
+    # Redirect all writable temp dirs into the runtime dir (the default paths
+    # under /var/lib/nginx are not writable by a non-root uid).
+    client_body_temp_path @STUDIO_RUNTIME_DIR@/nginx-client-body;
+    proxy_temp_path       @STUDIO_RUNTIME_DIR@/nginx-proxy;
+    fastcgi_temp_path     @STUDIO_RUNTIME_DIR@/nginx-fastcgi;
+    uwsgi_temp_path       @STUDIO_RUNTIME_DIR@/nginx-uwsgi;
+    scgi_temp_path        @STUDIO_RUNTIME_DIR@/nginx-scgi;
+
+    # Only the rendered server block. The distro's conf.d/sites-enabled are
+    # deliberately NOT included: their default site listens on :80 and, more to
+    # the point, this file is no longer the config nginx is started with, so an
+    # include of a path outside the runtime dir would reintroduce exactly the
+    # shared, unrenderable state this rendering exists to remove.
+    include @STUDIO_RUNTIME_DIR@/studio-proxy.conf;
+}

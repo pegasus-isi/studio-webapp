@@ -433,9 +433,20 @@ COPY --from=frontend-build /build/.next/standalone /opt/studio-web/
 COPY --from=frontend-build /build/.next/static /opt/studio-web/.next/static
 COPY --from=frontend-build /build/public /opt/studio-web/public
 
-# ---- Nginx config ----
-COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
-COPY docker/nginx/default.conf /etc/nginx/sites-available/default
+# ---- Nginx config templates ----
+# Templates, not finished configs: every listener is rendered per session by
+# docker/entrypoint.sh into $STUDIO_RUNTIME_DIR, and nginx is started with `-c`
+# against the result (see docker/supervisor/supervisord.conf). They cannot be
+# rendered into /etc, because the container runs as whatever uid KubeSpawner or
+# an Open OnDemand job injects and /etc is not writable by it.
+RUN mkdir -p /opt/pegasus-ai/templates
+COPY docker/nginx/nginx.conf.tmpl /opt/pegasus-ai/templates/nginx.conf.tmpl
+COPY docker/nginx/studio-proxy.conf.tmpl /opt/pegasus-ai/templates/studio-proxy.conf.tmpl
+# The distro ships a default site listening on :80. Nothing includes it now
+# that nginx runs from the rendered config, but leaving it in the image invites
+# someone to start nginx without `-c` and get a server that answers on the
+# wrong port with none of Studio's routes.
+RUN rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf
 
 # ---- supervisord config and service scripts ----
 RUN mkdir -p /etc/supervisor/scripts
@@ -500,6 +511,15 @@ COPY knowledge/overlay/ /opt/pegasus-ai/overlay/
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# Validate the rendered nginx configuration at build time. The templates are
+# only exercised at session start, so a syntax error in one would otherwise
+# first appear as a container that boots with no proxy — and nginx reports it
+# by line number, from a file that does not exist until the session runs.
+# --render-only stops before anything touches $HOME, so this leaves no state.
+RUN STUDIO_RUNTIME_DIR=/tmp/nginx-validate /usr/local/bin/entrypoint.sh --render-only \
+    && nginx -t -c /tmp/nginx-validate/nginx.conf \
+    && rm -rf /tmp/nginx-validate
+
 # ---- Runtime workspace configuration ----
 # STUDIO_WORKSPACE_DIR: where the app stores the SQLite DB, tool configs, and
 # workflow projects.  Defaults to $HOME/work (KubeSpawner sets $HOME).
@@ -508,6 +528,9 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 WORKDIR /opt
 
+# The default front port. A deployment that overrides STUDIO_PORT publishes
+# that port itself (OOD allocates one per session); EXPOSE is documentation for
+# the default, not a constraint on it.
 EXPOSE 8888
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

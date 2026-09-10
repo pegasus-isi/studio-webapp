@@ -24,7 +24,7 @@ fi
 exec jupyter lab \
     --no-browser \
     --ip=127.0.0.1 \
-    --port=8889 \
+    --port="${STUDIO_JUPYTER_PORT:-8889}" \
     --ServerApp.base_url="${BASE_URL}" \
     --ServerApp.root_dir="${ROOT}" \
     --ServerApp.token=""
