@@ -798,6 +798,114 @@ function ChatTab() {
           </button>
         </div>
       </div>
+
+      <TelemetrySection />
+    </div>
+  );
+}
+
+/* ─── Telemetry consent (#367 step 6) ─── */
+
+/**
+ * Whether this session's prompts may be exported with its telemetry.
+ *
+ * Two things are worth being precise about in the copy, because the difference
+ * is the whole point of the control. Activity counters (how many turns, how
+ * many tokens, how long tools took) are collected wherever a collector is
+ * configured and contain nothing the user typed. Prompt and reply text is
+ * exported only with this switch on, and the reason it is a switch rather than
+ * a build-time decision is that the engine's tracing carries the prompt in the
+ * span itself — there is no "traces without content" setting to hide behind.
+ *
+ * Its own endpoint rather than a UI preference: `PUT /api/settings/ui`
+ * replaces preferences wholesale, and a consent flag that an unrelated toggle
+ * could revert from a stale cache is not consent.
+ */
+function TelemetrySection() {
+  const [consent, setConsent] = useState<api.TelemetryConsent | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getTelemetryConsent()
+      .then(setConsent)
+      // Unknown state reads as "off": the control must never imply content is
+      // being withheld when it is, nor invite consent it cannot record.
+      .catch(() =>
+        setConsent({ content_capture: false, collector_configured: false })
+      );
+  }, []);
+
+  const toggle = async (next: boolean) => {
+    if (saving || consent === null) return;
+    setSaving(true);
+    const prev = consent;
+    setConsent({ ...consent, content_capture: next });
+    setError(null);
+    try {
+      setConsent(await api.updateTelemetryConsent(next));
+    } catch (e) {
+      setConsent(prev);
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const on = consent?.content_capture === true;
+  const collecting = consent?.collector_configured === true;
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-fg">
+            Share chat text for troubleshooting
+          </h3>
+          <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+            {collecting ? (
+              <>
+                Studio always records how much the chat is used — number of
+                turns, tokens, how long tools took, which model answered. That
+                never includes what you wrote. Turn this on to also send the
+                text of your messages and the replies, which is what makes it
+                possible to see why a particular answer went wrong. You can
+                turn it off again at any time; the chat engine restarts when
+                you do.
+              </>
+            ) : (
+              <>
+                This Studio has no telemetry collector configured, so nothing
+                is being sent anywhere — not usage counts and not chat text.
+                This setting has no effect here.
+              </>
+            )}
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={on}
+          aria-label="Share chat text for troubleshooting"
+          disabled={consent === null || saving || !collecting}
+          onClick={() => toggle(!on)}
+          className={cn(
+            "relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50",
+            on ? "bg-pegasus-600" : "bg-muted"
+          )}
+        >
+          <span
+            className={cn(
+              "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+              on ? "translate-x-4" : "translate-x-0.5"
+            )}
+          />
+        </button>
+      </div>
+
+      {error && (
+        <p className="mt-2 text-xs text-red-700 dark:text-rose-400">{error}</p>
+      )}
     </div>
   );
 }
