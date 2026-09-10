@@ -232,9 +232,106 @@ def test_supervisord_config_expands_the_port_environment(tmp_path, monkeypatch):
     # Next.js standalone takes its listener from the environment, not argv.
     assert commands["studio-web"].environment["PORT"] == "23333"
     assert commands["studio-web"].environment["HOSTNAME"] == "127.0.0.1"
+    # And it must be told where studio-api is. Server components fetch it
+    # directly (lib/server/ui-prefs.ts, the app-root redirect) and fall back to
+    # a literal localhost:8080 — which, once the API port is allocated, is a
+    # port nothing is listening on. That module's failure path returns "show
+    # the welcome page", so the symptom would be every user stuck on the
+    # welcome screen with nothing logged.
+    assert (
+        commands["studio-web"].environment["API_URL"] == "http://127.0.0.1:22222"
+    )
     # nginx must be pointed at the rendered config; the baked one is gone.
     assert f"-c {runtime}/nginx.conf" in commands["nginx"].command
 
     # Runtime state is per session: on a shared host these are what two users
     # would otherwise collide on.
     assert opts.pidfile == f"{runtime}/supervisord.pid"
+
+
+# --- The entrypoint end to end ----------------------------------------------
+
+
+def _run_entrypoint(tmp_path, **env: str):
+    """Run entrypoint.sh --render-only against the real templates.
+
+    The image keeps templates at /opt/pegasus-ai/templates, which does not exist
+    on a developer machine, so the copy under test is redirected at the repo's
+    own docker/nginx. Everything else — port defaults, allocation, rendering,
+    the placeholder guard — is the real script.
+    """
+    script = tmp_path / "entrypoint.sh"
+    with open(_ENTRYPOINT, encoding="utf-8") as fh:
+        script.write_text(
+            fh.read().replace("/opt/pegasus-ai/templates", _TEMPLATES),
+            encoding="utf-8",
+        )
+
+    home = tmp_path / "home"  # deliberately NOT created
+    runtime = tmp_path / "runtime"
+    base = {
+        k: v for k, v in os.environ.items()
+        if not k.startswith("STUDIO_")
+    }
+    return subprocess.run(
+        ["bash", str(script), "--render-only"],
+        capture_output=True,
+        text=True,
+        env={
+            **base,
+            "HOME": str(home),
+            "STUDIO_RUNTIME_DIR": str(runtime),
+            **env,
+        },
+    ), home, runtime
+
+
+def test_defaults_reproduce_the_historical_container_ports(tmp_path):
+    """No env set must give exactly the ports the image always used."""
+    proc, _, runtime = _run_entrypoint(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+
+    assert "front=8888" in proc.stdout
+    assert "api=8080" in proc.stdout
+    assert "web=3000" in proc.stdout
+    assert "jupyter=8889" in proc.stdout
+    assert "opencode=4096" in proc.stdout
+
+    proxy = (runtime / "studio-proxy.conf").read_text(encoding="utf-8")
+    assert "listen 8888;" in proxy
+    assert "server 127.0.0.1:8080;" in proxy
+
+
+def test_bind_addr_defaults_to_loopback(tmp_path):
+    """#229: uvicorn and Next must not land on the pod's cluster IP, nor on a
+    shared host's interfaces, just because nobody set the variable."""
+    proc, _, _ = _run_entrypoint(tmp_path)
+    assert "bind=127.0.0.1" in proc.stdout
+
+
+def test_alloc_ports_gives_four_distinct_non_default_ports(tmp_path):
+    proc, _, _ = _run_entrypoint(tmp_path, STUDIO_ALLOC_PORTS="1")
+    assert proc.returncode == 0, proc.stderr
+
+    # Only the Ports: line — the next line of output is the render message.
+    line = proc.stdout.split("Ports: ")[1].splitlines()[0]
+    ports = dict(kv.split("=", 1) for kv in line.split())
+    internal = [ports[k] for k in ("api", "web", "jupyter", "opencode")]
+    assert len(set(internal)) == 4, internal
+    assert all(p not in ("8080", "3000", "8889", "4096") for p in internal)
+    # The front port is never auto-allocated — nothing would route to a guess.
+    assert ports["front"] == "8888"
+
+
+def test_explicit_port_wins_over_allocation(tmp_path):
+    proc, _, _ = _run_entrypoint(
+        tmp_path, STUDIO_ALLOC_PORTS="1", STUDIO_API_PORT="21999"
+    )
+    assert "api=21999" in proc.stdout
+
+
+def test_render_only_leaves_home_alone(tmp_path):
+    """The image build runs this as root; it must create nothing under $HOME."""
+    proc, home, _ = _run_entrypoint(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert not home.exists(), sorted(p.name for p in home.iterdir())

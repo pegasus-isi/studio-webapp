@@ -11,7 +11,7 @@ c = get_config()  # noqa: F821 — Jupyter config magic
 # --- Server basics ---
 import os as _os_port
 
-c.ServerApp.ip = _os_port.environ.get("STUDIO_BIND_ADDR", "0.0.0.0")
+c.ServerApp.ip = _os_port.environ.get("STUDIO_BIND_ADDR", "127.0.0.1")
 # jupyter.sh passes --ip/--port on the command line, which wins over this
 # file. Both read the same environment so the two cannot disagree, and a
 # jupyter started without the wrapper still lands on the session's port.

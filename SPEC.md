@@ -28,23 +28,34 @@ Browser
   |
 JupyterHub / Open OnDemand / ingress
   |
-nginx :8888
-  |-- /          -> studio-web  :3000
-  |-- /api/*     -> studio-api  :8080
+nginx :8888                            STUDIO_PORT
+  |-- /          -> studio-web  :3000  STUDIO_WEB_PORT
+  |-- /api/*     -> studio-api  :8080  STUDIO_API_PORT
   |-- /ws/*      -> studio-api  WebSocket PTYs
-  `-- /jupyter/* -> JupyterLab  :8889
+  `-- /jupyter/* -> JupyterLab  :8889  STUDIO_JUPYTER_PORT
+                    opencode    :4096  STUDIO_OPENCODE_PORT
 ```
 
-The container entrypoint initializes the workspace and then execs
-`supervisord`. Process definitions live in
-`docker/supervisor/supervisord.conf`.
+Those numbers are defaults; every listener is configurable, and
+`STUDIO_ALLOC_PORTS=1` picks free ones per session. That exists because the
+image is not only run one-per-pod: under Open OnDemand it runs on a shared
+host, and Apptainer gives it the host network namespace unless it can create a
+new one, so fixed ports are two users colliding. Only nginx answers on all
+interfaces — the rest bind `STUDIO_BIND_ADDR`, `127.0.0.1` by default.
+
+The container entrypoint allocates the ports, renders the nginx configs from
+`docker/nginx/*.tmpl` into `STUDIO_RUNTIME_DIR` (`/etc` is not writable by the
+injected uid), initializes the workspace and then execs `supervisord`. Process
+definitions live in `docker/supervisor/supervisord.conf`, which takes the ports
+through supervisord's own `%(ENV_VAR)s` expansion.
 
 | Program | Command | Purpose |
 |---------|---------|---------|
-| `studio-api` | `uvicorn main:app --host 0.0.0.0 --port 8080` | FastAPI backend |
-| `studio-web` | `node server.js` | Next.js standalone server |
+| `studio-api` | `uvicorn main:app --host $STUDIO_BIND_ADDR --port $STUDIO_API_PORT` | FastAPI backend |
+| `studio-web` | `node server.js` (`PORT`, `HOSTNAME`, `API_URL` from the environment) | Next.js standalone server |
 | `jupyter` | `/etc/supervisor/scripts/jupyter.sh` | Always-on JupyterLab |
-| `nginx` | `nginx -g "daemon off;"` | Public reverse proxy |
+| `opencode` | `/etc/supervisor/scripts/opencode.sh` | Chat engine, loopback + per-user password |
+| `nginx` | `nginx -c $STUDIO_RUNTIME_DIR/nginx.conf -g "daemon off;"` | Public reverse proxy |
 
 `supervisord` restarts crashed services and keeps logs on stdout/stderr for the
 container runtime.

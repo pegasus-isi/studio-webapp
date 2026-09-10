@@ -16,15 +16,33 @@ Browser
   |
 JupyterHub / OOD / ingress
   |
-nginx :8888
-  |-- /          -> studio-web  :3000
-  |-- /api/*     -> studio-api  :8080
+nginx :8888                            STUDIO_PORT
+  |-- /          -> studio-web  :3000  STUDIO_WEB_PORT
+  |-- /api/*     -> studio-api  :8080  STUDIO_API_PORT
   |-- /ws/*      -> studio-api  WebSocket PTYs
-  `-- /jupyter/* -> JupyterLab  :8889
+  `-- /jupyter/* -> JupyterLab  :8889  STUDIO_JUPYTER_PORT
+                    opencode    :4096  STUDIO_OPENCODE_PORT
 ```
 
+**Those numbers are defaults.** Every listener is configurable, because the
+image also runs on shared hosts — under Open OnDemand, where Apptainer gives the
+container the *host* network namespace by default, two users' sessions would
+otherwise collide on the same ports. Set the variables above, or set
+`STUDIO_ALLOC_PORTS=1` to have the entrypoint pick free ports for the four
+internal listeners. The front port is never auto-allocated: whatever publishes
+it has to know it in advance.
+
+The internal services bind `127.0.0.1` (`STUDIO_BIND_ADDR`); only nginx answers
+on all interfaces. Per-session runtime state — rendered nginx configs, pid
+files, the supervisor socket, nginx temp dirs — lives in `STUDIO_RUNTIME_DIR`
+(default `/tmp/studio-runtime-<uid>`), uid-suffixed so two sessions on one host
+stay apart.
+
 Long-running services are managed by `supervisord`
-([docker/supervisor/supervisord.conf](docker/supervisor/supervisord.conf)).
+([docker/supervisor/supervisord.conf](docker/supervisor/supervisord.conf)),
+which takes those ports through its own `%(ENV_VAR)s` expansion. The nginx
+configs are templates ([docker/nginx/](docker/nginx/)) rendered per session by
+the entrypoint, because `/etc` is not writable by the injected uid.
 JupyterLab is always on and opens in a separate browser tab.
 
 ## Architecture Notes
@@ -63,7 +81,9 @@ All knobs are optional environment variables:
 
 | Env | Purpose |
 |-----|---------|
-| `IMAGE` / `PORT` | Image to run / host port (default `pegasus/studio-webapp:latest`, `8888`) |
+| `IMAGE` / `PORT` | Image to run / host port to publish (default `pegasus/studio-webapp:latest`, matches `STUDIO_PORT`) |
+| `STUDIO_PORT` | Port nginx listens on *inside* the container (default `8888`); the `-p` mapping follows |
+| `ALLOC_PORTS=1` | Pick free ports per session for the four internal listeners — the Open OnDemand shape. The published port is unchanged, so a run that behaves differently from a default one means the port plumbing is wrong |
 | `STUDIO_HOME` | Persist the container home here instead of a tmp dir (keeps SQLite state, tool configs, cloned workflows across runs) |
 | `CONDOR_HOST` | Point Studio's HTCondor client at a different AP / central manager (also sets the schedd host) |
 | `CONDOR_SCHEDD_HOST` | Schedd host, if different from `CONDOR_HOST` |

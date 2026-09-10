@@ -67,10 +67,19 @@ STUDIO_API_PORT="${STUDIO_API_PORT:-8080}"
 STUDIO_WEB_PORT="${STUDIO_WEB_PORT:-3000}"
 STUDIO_JUPYTER_PORT="${STUDIO_JUPYTER_PORT:-8889}"
 STUDIO_OPENCODE_PORT="${STUDIO_OPENCODE_PORT:-4096}"
-# Unchanged default. The pod network namespace makes 0.0.0.0 private in K8s;
-# a shared host does not, so a site running this on one sets 127.0.0.1 and
-# reaches the session through the front port only.
-STUDIO_BIND_ADDR="${STUDIO_BIND_ADDR:-0.0.0.0}"
+# Loopback by default (#229). Nothing outside the container reaches these
+# ports: nginx proxies to 127.0.0.1 for every backend, and its own `listen` has
+# no address, so it still answers on all interfaces and KubeSpawner is
+# unaffected. JupyterLab and opencode already bind loopback via their own
+# flags, so this only ever governed uvicorn and Next.js — and there 0.0.0.0 put
+# studio-api on the pod's cluster IP, reachable by any pod on a flat network
+# with no NetworkPolicy. Same reasoning services/installer.py already applies
+# to `opencode web`, and on a shared host it is not the cluster network but
+# every other local user.
+#
+# A deployment that genuinely needs a backend reachable directly — a sidecar,
+# a probe that does not go through nginx — sets 0.0.0.0 explicitly.
+STUDIO_BIND_ADDR="${STUDIO_BIND_ADDR:-127.0.0.1}"
 
 # Read by supervisord's %(ENV_...)s expansion, by jupyter.sh and the Jupyter
 # server config, by routers/jupyter.py (status), knowledge/opencode.py (the MCP

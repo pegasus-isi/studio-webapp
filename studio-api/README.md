@@ -160,9 +160,11 @@ bind the same ports on the same machine. Set the variables above, or set
 four internal listeners. The front port is never auto-allocated: whatever
 publishes it has to know it in advance.
 
-`STUDIO_BIND_ADDR` (default `0.0.0.0`) is the internal bind address — a pod
-network namespace makes that private, a shared host does not, so set it to
-`127.0.0.1` there. `STUDIO_RUNTIME_DIR` (default `/tmp/studio-runtime-<uid>`)
+`STUDIO_BIND_ADDR` (default `127.0.0.1`) is the internal bind address for
+uvicorn and Next.js (JupyterLab and opencode already bind loopback via their own
+flags). nginx is unaffected — its `listen` carries no address, so it still
+answers on all interfaces and the front port stays reachable. Set it to
+`0.0.0.0` only if something must reach a backend without going through nginx. `STUDIO_RUNTIME_DIR` (default `/tmp/studio-runtime-<uid>`)
 holds the rendered nginx configs, pid files, the supervisor socket and nginx's
 temp dirs; the uid suffix is what keeps two sessions on one host apart.
 

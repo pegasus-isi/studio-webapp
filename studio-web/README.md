@@ -112,5 +112,11 @@ studio's slide-in panel.
 npm run build    # standalone output in .next/standalone/ (~15 MB)
 ```
 
-The container copies the standalone build and runs it on port 3000 behind nginx;
-see `../studio-api/README.md` and the repo `Dockerfile`.
+The container copies the standalone build and runs it behind nginx on
+`STUDIO_WEB_PORT` (default 3000), bound to `STUDIO_BIND_ADDR` (default
+`127.0.0.1`) — supervisord passes both as `PORT` and `HOSTNAME`, which is what
+the standalone server reads. It also passes `API_URL`, because server components
+fetch studio-api directly (`lib/server/ui-prefs.ts` decides the app-root
+redirect before any client code runs) and would otherwise fall back to a literal
+`localhost:8080`, which is the wrong port as soon as the API port is allocated
+per session. See `../studio-api/README.md` and the repo `Dockerfile`.
