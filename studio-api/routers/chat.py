@@ -1478,7 +1478,8 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                 continue
                             if ev["type"] == "result":
                                 result = ev["result"]
-                        break
+                        # no break here — fall through to shared post-processing
+                        # (usage, tool_calls, final_text) like the direct path
                     except httpx.HTTPStatusError as e:
                         status = e.response.status_code if e.response is not None else "?"
                         body_txt = e.response.text[:500] if e.response is not None else str(e)
