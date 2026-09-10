@@ -31,8 +31,9 @@ class FakeRemoteBackend(ComputeBackend):
         self._stdout = stdout
         self._raise = raise_exc
 
-    async def exec(self, argv, *, cwd=None, timeout):
+    async def exec(self, argv, *, cwd=None, timeout, env=None):
         self.calls.append(("exec", list(argv), cwd))
+        self.last_env = env
         if self._raise is not None:
             raise self._raise
         return ExecResult(returncode=self._returncode, stdout=self._stdout, stderr=b"")
@@ -67,6 +68,10 @@ def no_local_subprocess(monkeypatch):
 def _install(monkeypatch, backend: ComputeBackend) -> None:
     # Call sites import active_backend lazily from services.backends, so
     # patching the module attribute covers every stage.
+    # Initialize router imports before substituting the registry function;
+    # otherwise a lazy main import can retain this fake after the test ends.
+    import main  # noqa: F401
+
     monkeypatch.setattr(backends_mod, "active_backend", lambda: backend)
 
 
@@ -218,3 +223,76 @@ def test_unset_site_resolves_from_the_backend_plan_defaults(
     assert res.status_code == 200
     assert captured["site"] == "fabricpool"
     assert captured["output_site"] == "local"
+
+
+def test_remote_generator_gets_only_workflow_secrets(client, monkeypatch, tmp_path):
+    client.put("/api/settings/workflow-secrets", json={"name": "DATA_KEY", "value": "token"})
+    monkeypatch.setenv("SERVER_ONLY_KEY", "must-stay-local")
+    fake = FakeRemoteBackend()
+    _install(monkeypatch, fake)
+
+    assert asyncio.run(rf._run_generate(
+        _flow(), project_dir=str(tmp_path), generator_file="workflow_generator.py", args=[]
+    ))
+    assert fake.last_env == {"DATA_KEY": "token"}
+
+
+def test_manual_remote_generate_gets_workflow_secrets(client, monkeypatch, tmp_path):
+    import routers.workflows as wf_router
+
+    client.put("/api/settings/workflow-secrets", json={"name": "DATA_KEY", "value": "token"})
+    fake = FakeRemoteBackend()
+    monkeypatch.setattr(wf_router, "active_backend", lambda: fake)
+
+    async def projects():
+        return [{"project_id": "p", "project_dir": str(tmp_path),
+                 "has_generator": True, "generator_file": "workflow_generator.py"}]
+
+    monkeypatch.setattr(wf_router, "discover_projects_async", projects)
+    response = client.post("/api/workflows/projects/p/generate", json={"args": []})
+    assert response.status_code == 200, response.text
+    assert fake.calls[0] == ("push", str(tmp_path))
+    assert fake.last_env == {"DATA_KEY": "token"}
+
+
+def test_ssh_flow_bypasses_local_condor_preflight_and_planning(
+    monkeypatch, tmp_path, no_local_subprocess
+):
+    fake = FakeRemoteBackend()
+    _install(monkeypatch, fake)
+    (tmp_path / "workflow.yml").write_text('pegasus: "5.0"\njobs: []\n')
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("SSH flow consulted the local Condor deployment")
+
+    monkeypatch.setattr(rf, "_plan_mode_setting", forbidden)
+    monkeypatch.setattr(rf.submit_host, "check", forbidden)
+    monkeypatch.setattr(rf.remote_exec, "run_on_submit_host", forbidden)
+    assert asyncio.run(rf._resolve_plan_mode()) == ("remote", "backend")
+
+    async def submitted(flow, **kwargs):
+        flow._succeed()
+        return True
+
+    monkeypatch.setattr(rf, "_run_submit", submitted)
+    flow = _flow(stages=("plan", "submit"))
+    asyncio.run(rf._execute(
+        flow, project_dir=str(tmp_path), generator_file=None, generator_args=[],
+        site="condorpool", output_site="local", force_build=False,
+    ))
+    assert flow.state == "succeeded", flow.failure
+    assert fake.calls[1][1][0] == "pegasus-plan"
+
+
+@pytest.mark.parametrize("remote_has_range", [True, False])
+def test_remote_build_uses_remote_subuid_ranges(monkeypatch, remote_has_range):
+    from services import image_builder as ib
+
+    monkeypatch.delenv("STUDIO_BUILD_FAKEROOT", raising=False)
+    # The laptop deliberately disagrees with the submit host.
+    monkeypatch.setattr(ib, "subuid_range", lambda: None if remote_has_range else ("u", "g"))
+    fake = FakeRemoteBackend(returncode=0 if remote_has_range else 1)
+    command = asyncio.run(ib.build_command_for(fake, "apptainer", "i.sif", "i.def"))
+    assert ("--fakeroot" in command) is remote_has_range
+    assert "/etc/subuid" in fake.calls[0][1][2]
+    assert "/etc/subgid" in fake.calls[0][1][2]

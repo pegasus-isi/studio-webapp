@@ -22,12 +22,14 @@ class LocalBackend(ComputeBackend):
         *,
         cwd: str | None = None,
         timeout: float,
+        env: dict[str, str] | None = None,
     ) -> ExecResult:
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
+            env={**os.environ, **env} if env is not None else None,
         )
         stdout, stderr = await communicate_or_kill(proc, timeout)
         return ExecResult(

@@ -29,7 +29,9 @@ JupyterLab is always on and opens in a separate browser tab.
 
 ## Architecture Notes
 
-- Runtime image: `ubuntu:24.04`, system Python 3.12, Node.js 20.
+- Runtime image: `debian:trixie-slim`, system Python 3.13, Node.js 20. The
+  distro matches the HTCondor access point, because Pegasus bakes its venv's
+  Python minor version into every submit file it writes (#334).
 - Pegasus WMS and HTCondor are installed from DEB packages.
 - Apptainer 1.5 provides Singularity-compatible `docker://` workflow execution.
 - JupyterLab runs in classic document mode. `jupyter-ai` and collaboration/RTC
@@ -87,17 +89,24 @@ the cluster policy.
 
 ## Main Views
 
-| View (nav label) | Route | Purpose |
+The shell is a **top bar** (wordmark, ⌘K search, account menu) above a **72px
+icon rail**. Every rail cell carries a short label under its glyph.
+
+| View (rail label) | Route | Purpose |
 |------------------|-------|---------|
-| Home | `/` | Landing page: first-run welcome, capabilities, recent runs, resources at a glance |
-| My analyses | `/workflows` | Discover projects and runs; set up and run a workflow, watch its steps, read its results, diagnose failures |
-| My data | `/data` | Drag-and-drop your own input files into the workspace; copy a path to paste into a run |
-| Examples | `/marketplace` | Browse workflows sourced live from GitHub (PegasusHub registry + curated Pegasus-ISI list) and "Add" (git-clone) one into the workspace |
+| Home | `/` | Welcome, four ways in, a gallery of openers that hand a prompt to the assistant, and a strip naming anything that needs attention |
+| Analyses | `/workflows` | Discover projects and runs; set up and run a workflow (collapsible), watch the graph, read results, diagnose failures |
+| Data | `/data` | Drag-and-drop your own input files into the workspace; copy a path to paste into a run |
+| Examples | `/marketplace` | Browse workflows sourced live from GitHub (PegasusHub registry + curated Pegasus-ISI list), filter by subject/source, and "Add" (git-clone) one into the workspace |
+| Notebooks | `/notebooks` | JupyterLab, framed in Studio, with "Open in new tab" and Reload. `?path=` opens a specific folder |
 | Resources | `/provisioning` | Whether there is capacity to run now, with HTCondor pool inventory, workflow demand, pressure findings and an OSPool (OSG) panel under Details |
-| Notebooks | `/notebooks` | Open the always-on JupyterLab instance |
-| Settings | `/settings` | Notifications, Pegasus options (incl. the Simplified Run toggle) and chat engine, with LLM providers and **Tools** under Advanced |
-| PegasusAI Chat | (slide-in panel + `/chat`) | Built-in SSE chat with file, shell, and Pegasus tool use; per-turn approval before shell commands run |
+| Settings | `/settings` | Notifications, Pegasus options (incl. the Simplified Run toggle), with LLM providers and **Tools** under Advanced |
+| PegasusAI Chat | (resizable slide-in panel + `/chat`) | Built-in SSE chat with file, shell, and Pegasus tool use; per-turn approval before shell commands run |
 | Terminal | (panel) | Browser PTY connected to the workspace |
+
+**Onboarding** is a guided tour that spotlights real elements rather than a
+card describing them. It runs itself on a first visit and is restartable any
+time from **Take a tour** in the account menu.
 
 **Running a workflow.** One **Run** button prepares and starts the workflow —
 generating it, building the software environment only if it is stale, planning
@@ -273,7 +282,7 @@ npm run dev
 Tests / gates (CI runs neither — run before every PR):
 
 ```bash
-cd studio-api && pytest -q                       # ~235 tests
+cd studio-api && pytest -q                       # ~500 tests
 cd studio-web && node_modules/.bin/tsc --noEmit   # NOT `npm test`/`npm run lint` — those don't work
 ```
 

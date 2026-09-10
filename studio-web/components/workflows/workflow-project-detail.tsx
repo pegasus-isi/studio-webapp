@@ -12,6 +12,8 @@ import {
   useDeleteWorkflow,
   useDeleteWorkflowProject,
 } from "@/lib/hooks/use-workflows";
+import type { WorkflowProjectRun } from "@/lib/api/client";
+import { AppLink } from "@/components/layout/app-link";
 import { DagViewer } from "@/components/workflows/dag-viewer";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { RunFlowPanel } from "@/components/workflows/run-flow-panel";
@@ -20,12 +22,14 @@ import { FailureCards } from "@/components/workflows/failure-cards";
 import {
   ParamField,
   buildArgs,
+  missingRequired,
   type ParamValues,
 } from "@/components/workflows/param-field";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { useUIPreferences, useUpdateUIPreferences } from "@/lib/hooks/use-ui-prefs";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { apiUrl, jupyterUrl } from "@/lib/urls";
+import { apiUrl } from "@/lib/urls";
+import { usePaneSize } from "@/lib/hooks/use-pane-size";
 import { cn, statusColor } from "@/lib/utils";
 
 interface Props {
@@ -58,6 +62,9 @@ function outputHint(output: string | null): string | null {
 export function WorkflowProjectDetail({ projectId }: Props) {
   const { data, refetch: refetchProjects } = useWorkflowProjects();
   const project = data?.projects.find((p) => p.project_id === projectId);
+  // Collapsing the run setup is the point of the disclosure, but a collapsed
+  // pane must not hide the fact that it is still incomplete.
+  const [configCollapsed, setConfigCollapsed] = useState(false);
   const { data: params } = useProjectParams(projectId);
 
   const generate = useGenerateWorkflow();
@@ -102,6 +109,10 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     [params]
   );
   const planParams = useMemo(() => params?.plan.params ?? [], [params]);
+  const requiredMissing = useMemo(
+    () => missingRequired([...genParams, ...planParams], values),
+    [genParams, planParams, values]
+  );
   const mutexGroups = params?.generator.mutex_required ?? [];
 
   // Initialize form values from discovered defaults once params load.
@@ -299,56 +310,42 @@ export function WorkflowProjectDetail({ projectId }: Props) {
           <FileCheck label="Apptainer def" exists={project.has_container_def} />
         </div>
       </div>
-      {/* Parameters (discovered per-workflow from the generator's argparse) */}
-      {(genParams.length > 0 || planParams.length > 0) && (
+      {/* Parameters are NOT repeated here (#314).
+          "Set up your run" above already renders every generate parameter —
+          the primary ones inline and the plumbing under "More options" — so
+          this section used to show all of them a second time, with different
+          headings, on the same page. Two editors for one value is worse than
+          an inconvenient one. What is left here is the machinery that has no
+          equivalent up there: the individual Pegasus steps, the plan/submit
+          flags the run flow does not expose, and the raw command output. */}
+      {planParams.length > 0 && (
         <div>
           <h3 className="mb-3 text-sm font-semibold text-fg">
-            Parameters
+            Plan and submit options
           </h3>
-
-          {genParams.length > 0 && (
-            <div className="mb-4 rounded-md border border-line p-4">
-              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-fgsubtle">
-                Generate
+          <div className="rounded-md border border-line p-4">
+            {mutexGroups.map((grp, i) => (
+              <p
+                key={i}
+                className="mb-2 text-xs text-amber-600 dark:text-amber-400"
+              >
+                Provide exactly one of:{" "}
+                {grp
+                  .map((d) => genParams.find((p) => p.dest === d)?.flag ?? d)
+                  .join(" or ")}
               </p>
-              {mutexGroups.map((grp, i) => (
-                <p key={i} className="mb-2 text-xs text-amber-600 dark:text-amber-400">
-                  Provide exactly one of:{" "}
-                  {grp
-                    .map((d) => genParams.find((p) => p.dest === d)?.flag ?? d)
-                    .join(" or ")}
-                </p>
+            ))}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {planParams.map((p) => (
+                <ParamField
+                  key={p.dest}
+                  param={p}
+                  value={values[p.dest]}
+                  onChange={(v) => setValue(p.dest, v)}
+                />
               ))}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {genParams.map((p) => (
-                  <ParamField
-                    key={p.dest}
-                    param={p}
-                    value={values[p.dest]}
-                    onChange={(v) => setValue(p.dest, v)}
-                  />
-                ))}
-              </div>
             </div>
-          )}
-
-          {planParams.length > 0 && (
-            <div className="rounded-md border border-line p-4">
-              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-fgsubtle">
-                Plan / Submit
-              </p>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {planParams.map((p) => (
-                  <ParamField
-                    key={p.dest}
-                    param={p}
-                    value={values[p.dest]}
-                    onChange={(v) => setValue(p.dest, v)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       )}
 
@@ -464,11 +461,17 @@ export function WorkflowProjectDetail({ projectId }: Props) {
       {/* Header */}
       <div className="border-b border-line bg-surface px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-fg">
+          {/* A heading, not a picker. Choosing which analysis moved up to the
+              page header (components/workflows/workflow-picker.tsx) — here it
+              was only reachable once you had already chosen, and it vanished
+              with this pane. */}
+          <div className="min-w-0">
+            <h2 className="truncate text-lg font-semibold text-fg">
               {project.name}
             </h2>
-            <p className="text-sm text-fgmuted">{project.project_dir}</p>
+            <p className="truncate text-sm text-fgmuted">
+              {project.project_dir}
+            </p>
           </div>
           <span className="flex items-center gap-3">
             {/* Every workflow gets a way into its own folder: the files are
@@ -476,15 +479,13 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                 and hunting for the path in JupyterLab's tree is the friction
                 this removes. */}
             {project.jupyter_path && (
-              <a
-                href={jupyterUrl(`/lab/tree/${project.jupyter_path}`)}
-                target="_blank"
-                rel="noopener noreferrer"
+              <AppLink
+                href={`/notebooks?path=${encodeURIComponent(project.jupyter_path)}`}
                 title="Open this workflow's folder in JupyterLab"
                 className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
               >
-                Open in JupyterLab ↗
-              </a>
+                Open in JupyterLab
+              </AppLink>
             )}
             <button
               onClick={() => setConfirmDeleteProject(true)}
@@ -506,40 +507,82 @@ export function WorkflowProjectDetail({ projectId }: Props) {
       </div>
 
       <div className="p-6 space-y-6">
-        {prefs.simple_run && (
-          <>
+        {/* One run-setup surface, whatever the interface preference (#314).
+            It used to be either/or: the simplified interface got "Set up your
+            run" *plus* an Advanced block that rendered the same parameters
+            again, and turning the interface off replaced the run flow with
+            that raw block. So a parameter had two editors in one mode and a
+            different one in the other. Now the run flow always owns the
+            parameters, and Advanced is only the machinery that has no
+            equivalent in it — the individual steps and the raw output. */}
+        <details
+          open={!configCollapsed}
+          onToggle={(e) => {
+            const open = (e.currentTarget as HTMLDetailsElement).open;
+            if (open === configCollapsed) setConfigCollapsed(!open);
+          }}
+          className="rounded-xl border border-line bg-surface"
+        >
+          <summary className="cursor-pointer list-none px-5 py-3">
+            <span className="flex items-center gap-2">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "text-fgsubtle transition-transform",
+                  configCollapsed && "-rotate-90"
+                )}
+              >
+                ▾
+              </span>
+              <span className="text-base font-semibold text-fg">
+                Set up your run
+              </span>
+              {configCollapsed && requiredMissing.length > 0 && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
+                  {requiredMissing.length} still needed
+                </span>
+              )}
+            </span>
+          </summary>
+          <div className="border-t border-line p-5 pt-4">
             <RunFlowPanel
+              embedded
               projectId={projectId}
               params={params}
               values={values}
               onChange={setValue}
               onSubmitted={() => refetchProjects()}
             />
+          </div>
+        </details>
 
-            {/* Everything Pegasus-shaped lives behind one disclosure. Open
-                state is a per-user preference, so a workflow engineer who
-                wants it doesn't reopen it on every visit. */}
-            <details
-              open={prefs.advanced_open}
-              onToggle={(e) => {
-                const open = (e.currentTarget as HTMLDetailsElement).open;
-                if (open !== prefs.advanced_open) {
-                  updatePrefs.mutate({ ...prefs, advanced_open: open });
-                }
-              }}
-              className="rounded-xl border border-line bg-surface"
-            >
-              <summary className="cursor-pointer px-5 py-3 text-sm font-medium text-fgmuted hover:text-fg">
-                Advanced — run the steps individually
-              </summary>
-              <div className="space-y-6 border-t border-line p-5">
-                {advancedSections}
-              </div>
-            </details>
-          </>
-        )}
+        <GraphPane
+          projectId={projectId}
+          projectName={project.name}
+          runs={project.runs}
+        />
 
-        {!prefs.simple_run && advancedSections}
+        {/* Everything Pegasus-shaped lives behind one disclosure. Open state is
+            a per-user preference, so a workflow engineer who wants it doesn't
+            reopen it on every visit — and turning the simplified interface off
+            opens it by default rather than replacing anything. */}
+        <details
+          open={prefs.advanced_open || !prefs.simple_run}
+          onToggle={(e) => {
+            const open = (e.currentTarget as HTMLDetailsElement).open;
+            if (open !== prefs.advanced_open) {
+              updatePrefs.mutate({ advanced_open: open });
+            }
+          }}
+          className="rounded-xl border border-line bg-surface"
+        >
+          <summary className="cursor-pointer px-5 py-3 text-sm font-medium text-fgmuted hover:text-fg">
+            Advanced — run the steps individually
+          </summary>
+          <div className="space-y-6 border-t border-line p-5">
+            {advancedSections}
+          </div>
+        </details>
 
         {/* Submitted runs */}
         {project.runs.length > 0 && (
@@ -579,15 +622,13 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                         </span>
                       )}
                       {run.jupyter_path && (
-                        <a
-                          href={jupyterUrl(`/lab/tree/${run.jupyter_path}`)}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <AppLink
+                          href={`/notebooks?path=${encodeURIComponent(run.jupyter_path)}`}
                           title="Open this run's folder in JupyterLab"
                           className="rounded border border-line px-2 py-0.5 text-xs text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
                         >
                           Files
-                        </a>
+                        </AppLink>
                       )}
                       <button
                         type="button"
@@ -676,6 +717,169 @@ export function WorkflowProjectDetail({ projectId }: Props) {
           busy={deleteRun.isPending}
           onConfirm={handleDeleteRun}
           onCancel={() => setRunToDelete(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The graph, always on screen (#314).
+ *
+ * It used to live behind a "DAG" button that opened a full-page modal, so the
+ * shape of the thing you are running was something you had to go and ask for
+ * and then dismiss. It defaults to the most recent run — that is the one you
+ * came to look at — and falls back to the abstract graph before anything has
+ * been submitted, so the pane is never empty.
+ */
+function GraphPane({
+  projectId,
+  projectName,
+  runs,
+}: {
+  projectId: string;
+  projectName: string;
+  runs: WorkflowProjectRun[];
+}) {
+  // Newest first — the API returns runs oldest-first, and "most recent" is
+  // what someone opening this page means by "the run".
+  const ordered = useMemo(() => [...runs].reverse(), [runs]);
+  const [runId, setRunId] = useState<string | null>(null);
+  // Follow the newest run as it appears, until the user picks one themselves.
+  const [pinned, setPinned] = useState(false);
+  const newest = ordered[0]?.run_id ?? null;
+  const selected = pinned && runId ? runId : newest;
+  const run = ordered.find((r) => r.run_id === selected);
+
+  // Drag the bottom edge to resize; the graph is the thing you stare at, and
+  // 420px was a guess that suited neither a laptop nor a big monitor. Height
+  // persists per browser, like the other panes.
+  const {
+    size: height,
+    collapsed,
+    toggleCollapsed,
+    dragging,
+    startDrag,
+    onHandleKeyDown,
+    paneRef,
+  } = usePaneSize({
+    storageKey: "graph-pane",
+    defaultSize: 420,
+    minSize: 220,
+    maxSize: 1200,
+    axis: "y",
+  });
+  // Full screen for "I need the whole picture": the same viewer already has a
+  // modal mode, so this is a prop rather than a second implementation.
+  const [full, setFull] = useState(false);
+
+  const url = run
+    ? apiUrl(`workflows/${run.run_id}/graph.json`)
+    : apiUrl(`workflows/projects/${projectId}/graph.json`);
+  const title = run
+    ? `${run.run_name || run.run_id.slice(0, 12)}`
+    : `${projectName} — before it runs`;
+
+  const picker =
+    ordered.length > 0 ? (
+      <label className="flex items-center gap-1.5 text-xs text-fgmuted">
+        <span className="sr-only">Show the graph for</span>
+        <select
+          value={selected ?? ""}
+          onChange={(e) => {
+            setRunId(e.target.value || null);
+            setPinned(true);
+          }}
+          className="h-7 max-w-[180px] rounded-md border border-line bg-surface px-1.5 text-xs text-fg outline-none focus:border-pegasus-400"
+        >
+          {ordered.map((r, i) => (
+            <option key={r.run_id} value={r.run_id}>
+              {r.run_name || r.run_id.slice(0, 12)}
+              {i === 0 ? " (latest)" : ""} — {r.status}
+            </option>
+          ))}
+          <option value="">Before it runs</option>
+        </select>
+      </label>
+    ) : null;
+
+  return (
+    <div
+      ref={paneRef}
+      className="relative overflow-hidden rounded-xl border border-line bg-surface"
+    >
+      <div className="flex items-center gap-2 border-b border-line px-4 py-2">
+        <button
+          onClick={toggleCollapsed}
+          aria-expanded={!collapsed}
+          className="flex items-center gap-1.5 text-sm font-semibold text-fg"
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              "inline-block text-fgsubtle transition-transform",
+              collapsed && "-rotate-90"
+            )}
+          >
+            ▾
+          </span>
+          Graph
+        </button>
+        <span className="truncate text-xs text-fgsubtle">{title}</span>
+        {!collapsed && (
+          <button
+            onClick={() => setFull(true)}
+            title="Show the graph full screen"
+            className="ml-auto rounded-md border border-line px-2 py-0.5 text-xs font-medium text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
+          >
+            Full screen
+          </button>
+        )}
+      </div>
+      {!collapsed && (
+        <>
+          <div style={{ height }}>
+            <DagViewer
+              // Remount on a different graph so the poll and the fit restart
+              // cleanly rather than animating between two unrelated shapes.
+              key={url}
+              graphUrl={url}
+              title={title}
+              live={!!run}
+              inline
+              headerExtra={picker}
+            />
+          </div>
+
+          {/* Drag handle on the bottom edge. Taller than it looks, because a
+              1px target is a fine line to hit and this is not a precision
+              task. */}
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize the graph"
+            tabIndex={0}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              startDrag();
+            }}
+            onKeyDown={onHandleKeyDown}
+            className={cn(
+              "h-2 w-full cursor-row-resize",
+              "hover:bg-pegasus-400/40 focus:bg-pegasus-400/60 focus:outline-none",
+              dragging && "bg-pegasus-400/60"
+            )}
+          />
+        </>
+      )}
+
+      {full && (
+        <DagViewer
+          graphUrl={url}
+          title={title}
+          live={!!run}
+          headerExtra={picker}
+          onClose={() => setFull(false)}
         />
       )}
     </div>

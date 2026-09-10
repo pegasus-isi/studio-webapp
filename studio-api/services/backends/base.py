@@ -53,8 +53,12 @@ class ComputeBackend(ABC):
         *,
         cwd: str | None = None,
         timeout: float,
+        env: dict[str, str] | None = None,
     ) -> ExecResult:
         """Run ``argv`` where this backend executes workflows.
+
+        ``env`` overlays only the supplied variables on the execution host's
+        environment; it must not contain a copy of the API server's environment.
 
         Raises ``FileNotFoundError`` if the binary is absent and
         ``asyncio.TimeoutError`` on timeout (with the work actually stopped,

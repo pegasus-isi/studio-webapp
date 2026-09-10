@@ -144,6 +144,40 @@ def test_label_falls_back_to_the_flag_when_help_is_long_or_absent(tmp_path):
     assert "very long explanation" in params["min_subjects"]["help"]
 
 
+def test_a_short_only_flag_never_labels_a_field_with_one_letter(tmp_path):
+    """Observed on the 1000Genomes generator (#314).
+
+    It declares only `-s`, with help too long to serve as a label, so the
+    fallback produced the label "s". Because `_is_advanced` never demotes a
+    required parameter, that single letter ended up naming the one field the
+    user had to fill in.
+    """
+    params = _params(
+        tmp_path,
+        "p.add_argument('-s', required=True, help='"
+        + "Execution site to plan against, which must already be present in "
+        "the site catalog used for this run'"
+        ")\n",
+    )
+    assert params["s"]["required"] is True
+    label = params["s"]["label"]
+    assert len(label) > 2, f"one-letter label leaked through: {label!r}"
+    # Nothing better than the help exists here, so a clipped clause is the
+    # honest answer — the full sentence is still the description.
+    assert label.startswith("Execution site")
+    assert "site catalog" in params["s"]["help"]
+
+
+def test_a_long_flag_still_wins_over_its_short_alias(tmp_path):
+    params = _params(
+        tmp_path,
+        "p.add_argument('-o', '--output-dir', help='"
+        + "Where every produced artefact is written once the run completes'"
+        ")\n",
+    )
+    assert params["output_dir"]["label"] == "Output dir"
+
+
 def test_plumbing_is_marked_advanced_but_required_params_never_are(tmp_path):
     params = _params(
         tmp_path,

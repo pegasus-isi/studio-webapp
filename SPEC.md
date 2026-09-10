@@ -51,9 +51,12 @@ container runtime.
 
 ## Container Stack
 
-- Base image: `ubuntu:24.04`.
+- Base image: `debian:trixie-slim` — the same distro as the HTCondor access
+  point, so the Pegasus venv path baked into submit files matches on both
+  sides (#334). Override with `--build-arg DEBIAN_SUITE=`.
 - Supported platform: `linux/amd64`.
-- Python: single system Python 3.12. No conda/Miniforge layer.
+- Python: single system Python 3.13 (whatever the suite ships). No
+  conda/Miniforge layer.
 - Node.js: 20.x for the Next.js server and npm-installed AI tools.
 - Pegasus WMS and HTCondor: installed from native DEB packages.
 - Apptainer: installed from the upstream `.deb`, with `singularity` compatibility.
@@ -133,8 +136,8 @@ Router groups:
 | `terminal` | Browser bash PTY |
 | `ai_terminal` | AI tool PTYs |
 | `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate |
-| `chat` | PegasusAI SSE chat; pluggable engine — shared `opencode serve` proxy (default) or builtin loop (fallback); per-turn shell-command approval |
-| `jupyter` | Status only (JupyterLab is always-on) |
+| `chat` | PegasusAI SSE chat — the builtin agent loop (direct provider calls with tool use; Anthropic, OpenAI-compatible and Responses API). Per-turn shell-command approval. OpenCode was removed as a chat engine in #299 and remains only as a launchable terminal tool |
+| `jupyter` | Status only (JupyterLab is always-on; the `/notebooks` page frames it) |
 | `dashboard` | Aggregate landing-page data (projects, runs, resources, versions) |
 | `provisioning` | HTCondor pool inventory + queue demand + pressure + OSPool capacity (read-only) |
 | `notifications` | Notification feed + prefs; SSE stream for live toasts |

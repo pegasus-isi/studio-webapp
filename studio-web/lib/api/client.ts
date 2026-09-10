@@ -143,6 +143,63 @@ export async function updateWorkflowScanSettings(data: {
   });
 }
 
+// --- Planning location ---
+
+export type PlanMode = "auto" | "remote" | "local";
+
+export interface PlanningSettings {
+  /** The stored preference. */
+  mode: PlanMode;
+  choices: PlanMode[];
+  /** What the next run will actually do — with `auto` this is a detection
+      result, so it is shown rather than left to be guessed at. */
+  effective: "remote" | "local";
+  /** Where `effective` came from: setting | env | detected | no-condor |
+      fallback | backend (the selected SSH compute backend). */
+  source: string;
+  /** null when undetermined — must not be rendered as "co-located". */
+  submit_host_is_remote: boolean | null;
+  env_default: string;
+}
+
+export async function getPlanningSettings() {
+  return request<PlanningSettings>("/settings/planning");
+}
+
+export async function updatePlanningSettings(mode: PlanMode) {
+  return request<PlanningSettings>("/settings/planning", {
+    method: "PUT",
+    body: JSON.stringify({ mode }),
+  });
+}
+
+// --- Workflow secrets (credentials a generator reads from its environment) ---
+
+export interface WorkflowSecretsSettings {
+  /** Names and timestamps only — values are write-only server-side. */
+  secrets: { name: string; updated_at: string }[];
+  /** False when no master key is configured, so values sit in plaintext. */
+  encrypted_at_rest: boolean;
+}
+
+export async function getWorkflowSecrets() {
+  return request<WorkflowSecretsSettings>("/settings/workflow-secrets");
+}
+
+export async function setWorkflowSecret(name: string, value: string) {
+  return request<WorkflowSecretsSettings>("/settings/workflow-secrets", {
+    method: "PUT",
+    body: JSON.stringify({ name, value }),
+  });
+}
+
+export async function deleteWorkflowSecret(name: string) {
+  return request<WorkflowSecretsSettings>(
+    `/settings/workflow-secrets/${encodeURIComponent(name)}`,
+    { method: "DELETE" }
+  );
+}
+
 // --- LLM ---
 
 export interface LLMConfig {
@@ -449,7 +506,14 @@ export interface WorkflowParam {
 
 export interface ProjectParams {
   project_id: string;
-  generator: { params: WorkflowParam[]; mutex_required: string[][] };
+  generator: {
+    params: WorkflowParam[];
+    mutex_required: string[][];
+    /** Environment variables the generator's source reads — the credentials it
+        wants, detected by scanning rather than declared, so a hint and not a
+        contract. Absent on a backend that predates the scan. */
+    env_vars?: string[];
+  };
   plan: { params: WorkflowParam[] };
 }
 
@@ -561,6 +625,20 @@ export async function getRunFlow(projectId: string) {
   );
 }
 
+/**
+ * The Active Context block for a workflow or run, as text.
+ *
+ * The builtin loop appends this to its own system prompt server-side. The
+ * OpenCode engine's loop is not ours, so the panel fetches the block and sends
+ * it as a synthetic prompt part (#367) — same content, same per-turn
+ * resolution, rendered as a collapsed context chip rather than prose.
+ */
+export async function getChatScopeBlock(type: string, id: string) {
+  return request<{ block: string | null }>(
+    `/chat/scope-block?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`
+  );
+}
+
 // --- UI preferences (per-user rollout flag) ---
 
 export interface UIPreferences {
@@ -575,6 +653,15 @@ export interface UIPreferences {
   welcome_dismissed: boolean;
   /** Sidebar's Advanced group (Resources, Terminal). */
   nav_advanced_open: boolean;
+  /** Skip the landing page at `/` and open Home directly (#370). */
+  skip_welcome: boolean;
+  /**
+   * Which agent engine the chat panel talks to (#367). "opencode" makes the
+   * panel a client of the `opencode serve` process in this pod, which brings
+   * compaction, memory, subagents, MCP and skills; "builtin" is the in-process
+   * loop in studio-api. Opt-in while the OpenCode engine is being tried.
+   */
+  chat_engine: "builtin" | "opencode";
 }
 
 export async function getUIPreferences() {
@@ -805,7 +892,11 @@ export interface MarketplaceWorkflow {
   id: string;
   name: string;
   description: string;
+  /** First entry of `topics`, kept for compatibility. Prefer `topics`. */
   topic: string;
+  /** Normalized subject tags — the registry's free-text `topic`, split and
+   *  case/hyphen folded server-side (#314). */
+  topics?: string[];
   repo_url: string;
   image: string;
   license: string;
@@ -1046,6 +1137,26 @@ export async function updateCommandApproval(requireApproval: boolean) {
   return request<{ require_approval: boolean }>("/chat/command-approval", {
     method: "PUT",
     body: JSON.stringify({ require_approval: requireApproval }),
+  });
+}
+
+// --- Telemetry consent (#367 step 6) ---
+
+export type TelemetryConsent = {
+  content_capture: boolean;
+  /** False when this deployment has no collector, so nothing is exported
+   *  either way — the FABRIC VM and plain `docker run` are like this. */
+  collector_configured: boolean;
+};
+
+export async function getTelemetryConsent() {
+  return request<TelemetryConsent>("/settings/telemetry");
+}
+
+export async function updateTelemetryConsent(contentCapture: boolean) {
+  return request<TelemetryConsent>("/settings/telemetry", {
+    method: "PUT",
+    body: JSON.stringify({ content_capture: contentCapture }),
   });
 }
 

@@ -159,7 +159,7 @@ export function WorkflowList({ projects, workflows }: Props) {
                         </div>
                         <div className="mt-1 h-1.5 w-full rounded-full bg-muted">
                           <div
-                            className="h-1.5 rounded-full bg-pegasus-500 transition-all"
+                            className="h-1.5 rounded-full bg-pegasus-600 transition-all"
                             style={{ width: `${progress}%` }}
                           />
                         </div>

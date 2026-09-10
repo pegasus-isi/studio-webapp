@@ -1,13 +1,18 @@
 import { Sidebar } from "@/components/layout/sidebar";
+import { TopBar } from "@/components/layout/top-bar";
 import { GlobalChatPanel } from "@/components/layout/global-chat-panel";
 import { GlobalTerminalPanel } from "@/components/layout/global-terminal-panel";
 import { StatusBar } from "@/components/layout/status-bar";
 import { ToastContainer } from "@/components/notifications/toast-container";
 
 /**
- * Studio shell — sidebar, panels, status bar, theme toggle. Applied to the
+ * Studio shell — top bar, icon rail, panels, status bar. Applied to the
  * chromed pages. Routes outside this group (e.g. /chat, embedded in
  * JupyterLab) render bare under the root layout.
+ *
+ * The bar spans the full width above the rail (#314): identity, search and
+ * account belong to the app rather than to any page, and moving them up is
+ * what lets the left nav be a 56px rail of icons.
  */
 export default function StudioLayout({
   children,
@@ -17,19 +22,19 @@ export default function StudioLayout({
   return (
     <>
       <ToastContainer />
-      {/* h-dvh (not h-screen/100vh): the dynamic viewport height matches what
-          is actually visible, so the terminal panel and status bar can never
-          render below the fold on short windows — with overflow-hidden here
-          there is no scrollbar to reach clipped content. */}
-      <div className="flex h-dvh overflow-hidden">
-        <Sidebar />
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex flex-1 overflow-hidden">
-            <main className="flex-1 overflow-auto bg-base">{children}</main>
-            <GlobalChatPanel />
+      {/* Dynamic height keeps the terminal and status bar inside the viewport. */}
+      <div className="flex h-dvh flex-col overflow-hidden">
+        <TopBar />
+        <div className="flex flex-1 overflow-hidden">
+          <Sidebar />
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <div className="flex flex-1 overflow-hidden">
+              <main className="flex-1 overflow-auto bg-base">{children}</main>
+              <GlobalChatPanel />
+            </div>
+            <GlobalTerminalPanel />
+            <StatusBar />
           </div>
-          <GlobalTerminalPanel />
-          <StatusBar />
         </div>
       </div>
     </>

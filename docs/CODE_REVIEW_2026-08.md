@@ -8,6 +8,12 @@ highest-severity items were re-checked by hand for this writeup.
 
 Reviewed at branch `refactor/sidebar-version` (`f4bc70c`).
 
+> **Fully remediated.** Every finding below carries a `**Status:** ✅ PR #NN`
+> line. Check those before assuming anything here is still open — including the
+> security items, which are closed. Line and file references are from August
+> and have drifted since; the September interface work in
+> `docs/UI-REDESIGN-2026-09.md` moved much of `studio-web/`.
+
 ## Gate results (run for this review)
 
 - **Backend tests**: `pytest -q` in `studio-api` → **185 passed** (1 deprecation warning).

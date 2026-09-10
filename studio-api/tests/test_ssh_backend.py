@@ -112,6 +112,29 @@ def test_exec_maps_remote_127_to_filenotfound(tmp_path, monkeypatch):
         asyncio.run(b.exec(["pegasus-plan", "--submit"], timeout=10))
 
 
+def test_exec_quotes_environment_overrides_without_forwarding_server_env(tmp_path, monkeypatch):
+    import shlex
+    from services.backends import ssh as ssh_mod
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SERVER_ONLY_KEY", "private")
+    backend = _make_backend(tmp_path)
+    captured = {}
+
+    async def fake_exec(*argv, **kwargs):
+        captured["argv"] = argv
+        return _FakeProc()
+
+    monkeypatch.setattr(ssh_mod.asyncio, "create_subprocess_exec", fake_exec)
+    value = "spaces ' and $(literal)"
+    asyncio.run(backend.exec(["python3", "generator.py"], timeout=10, env={"DATA_KEY": value}))
+    command = captured["argv"][-1]
+    assert shlex.split(command) == [
+        "cd", "/home/ubuntu", "&&", "env", f"DATA_KEY={value}", "python3", "generator.py"
+    ]
+    assert "SERVER_ONLY_KEY" not in command
+
+
 def test_exec_mutating_tool_pulls_workspace(tmp_path, monkeypatch):
     from services.backends import ssh as ssh_mod
 

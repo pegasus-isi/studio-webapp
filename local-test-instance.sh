@@ -5,6 +5,12 @@
 #
 #   IMAGE                 Image to run (default: pegasus/studio-webapp:latest)
 #   PORT                  Host port mapped to nginx :8888 (default: 8888)
+#   NAME                  Container name (default: none, so docker assigns one).
+#                         Set it when something needs to address the container
+#                         later — `docker exec <name> ...` from a test harness,
+#                         say. An unnamed container cannot be driven.
+#   DETACH=1              Run in the background and print the container id,
+#                         instead of holding the terminal. Implies no TTY.
 #   STUDIO_HOME           Persist the container home here instead of a throwaway
 #                         tmp dir — keeps the SQLite state, tool configs, and
 #                         cloned workflows across runs.
@@ -51,8 +57,18 @@ else
     echo "Home dir (tmp, wiped on exit): $HOME_DIR -> /home/$USER"
 fi
 
+# -it is right for the common case (watch it boot, Ctrl-C to stop), but wrong
+# for an unattended one: a detached container with a TTY still works, yet the
+# combination is confusing to read in `docker ps` and pointless without a
+# terminal attached. Pick one or the other.
+if [ "${DETACH:-0}" = "1" ]; then
+    RUN_MODE=(-d)
+else
+    RUN_MODE=(-it)
+fi
+
 ARGS=(
-    --rm -it
+    --rm "${RUN_MODE[@]}"
     --platform linux/amd64
     -u "$(id -u):$(id -g)"
     -e "HOME=/home/$USER"
@@ -60,6 +76,11 @@ ARGS=(
     -p "${PORT}:8888"
     -v "$HOME_DIR:/home/$USER"
 )
+
+if [ -n "${NAME:-}" ]; then
+    ARGS+=(--name "$NAME")
+    echo "Container name: $NAME"
+fi
 
 # --- HTCondor: connect to a different AP / submit host ---
 if [ -n "${CONDOR_HOST:-}" ]; then

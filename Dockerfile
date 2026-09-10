@@ -3,6 +3,11 @@
 # Stage 1: Build Next.js frontend (standalone output ~15MB)
 # Stage 2: Runtime — Pegasus/HTCondor + studio-api + frontend + supervisord
 
+# Debian suite for the runtime stage. Global (declared before the first FROM)
+# because that is the only scope a FROM line can interpolate; the runtime stage
+# re-declares it to use it in RUN. See the stage 2 header for why Debian.
+ARG DEBIAN_SUITE=trixie
+
 # ============================================================
 # Stage 1: Build frontend
 # ============================================================
@@ -18,7 +23,28 @@ RUN npm run build
 # ============================================================
 # Stage 2: Runtime
 # ============================================================
-FROM ubuntu:24.04 AS runtime
+# Debian trixie, not Ubuntu, because of what the HTCondor access point runs.
+#
+# Pegasus assumes the planner and the schedd live on one machine and bakes its
+# own absolute paths into the submit files it writes. Those paths run through
+# Pegasus's Python venv, so they carry a Python minor version:
+#
+#     /usr/lib/pegasus/venv/lib/python3.13/site-packages/Pegasus/data/sh/…
+#
+# The AP (studio-system, salt-managed) is Debian trixie / python3.13. On
+# ubuntu:24.04 this pod was python3.12, and on 2026-09-02 every workflow died
+# on its first node with "Failed to execute … pegasus-lite-local.sh (errno=2)" —
+# same Pegasus version, same apt channel, one Python minor apart (#334). Same
+# distro as the AP means the two agree by construction rather than by
+# workaround. `services/submit_host.py` keeps its preflight, since the AP can
+# drift again.
+#
+# Everything version-specific about the suite is below: the HTCondor and
+# Pegasus apt channels, and the Apptainer artifact. Keep them moving together —
+# and note the Apptainer asset only exists for trixie, so DEBIAN_SUITE is not
+# freely swappable, it is a single place to change when the AP moves.
+FROM debian:${DEBIAN_SUITE}-slim AS runtime
+ARG DEBIAN_SUITE
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -33,17 +59,53 @@ RUN printf '%s\n' \
     'Acquire::ftp::Timeout "120";' \
     > /etc/apt/apt.conf.d/80-retries
 
-# ---- Remove default ubuntu user ----
+# ---- User accounts ----
 # The container runs as whatever UID KubeSpawner injects via the pod security
-# context — no fixed user is created here.
-RUN userdel -r ubuntu 2>/dev/null || true
+# context, and libnss-sss (see docker/nsswitch.conf, `passwd: files sss`) is what
+# resolves that UID to an account in production.
+#
+# A passwd entry for uid 1000 is added because deployments without an sssd
+# socket — every local run, which is uid 1000 by way of local-test-instance.sh —
+# otherwise resolve uid 1000 to nothing, and anything that looks up the calling
+# user fails. `apptainer build` is the one that bites:
+#     FATAL: Couldn't determine user account information: user: unknown userid 1000
+# It exits before a single %post line runs, so no workflow container image can
+# ever be built. When a different UID is injected the entry is simply unused, so
+# the arbitrary-UID design is unchanged.
+#
+# The home path is nominal: the real HOME is whatever the spawner mounts
+# (`ap:/home/<user>` in production, a bind mount locally) and is always exported
+# in the environment. Debian, unlike Ubuntu, ships no stock uid-1000 account, so
+# there is nothing to delete first.
+#
+# It is created empty anyway (-M plus an explicit mkdir, rather than -m, so no
+# skel files land in it and it stays obviously nominal). "HOME is always
+# exported" is true of everything that reads the environment — and `apptainer
+# build` does not. It reads the passwd entry, mounts that path to /root, and
+# dies before the definition is touched if it is missing:
+#
+#   FATAL: failed to mount /home/studio to /root: no such file or directory
+#
+# There is no way around it from the caller: `apptainer build` accepts neither
+# --home nor --no-home, and ignores APPTAINER_HOME and $HOME. So every workflow
+# container build failed on this image. In hosted mode sssd resolves the injected
+# UID to a real NFS home and this entry is never consulted, which is why the
+# directory can be empty and unused there at no cost.
+RUN groupadd -g 1000 studio && \
+    useradd -u 1000 -g 1000 -M -d /home/studio -s /bin/bash studio && \
+    mkdir -p /home/studio && chown 1000:1000 /home/studio
 
 # ---- System packages (no python3-pip — we bootstrap pip cleanly below) ----
+# software-properties-common is deliberately absent: trixie does not ship it,
+# and it was already dead weight here — the pip bootstrap below wipes
+# /usr/lib/python3/dist-packages, which takes apt_pkg with it and leaves
+# add-apt-repository broken regardless (see the Apptainer step).
 # Retry-with-recovery loop: under amd64 emulation a dpkg post-install can be
 # killed mid-configure (exit 1) at a random package. Re-run dpkg --configure -a
 # + apt-get install -f to repair the half-configured state, then retry.
 RUN ok=0; for i in 1 2 3 4 5; do \
       apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
         libnss-sss \
         nginx \
         xz-utils \
@@ -53,17 +115,24 @@ RUN ok=0; for i in 1 2 3 4 5; do \
         vim \
         poppler-utils \
         build-essential \
-        software-properties-common \
-        python3.12 \
-        python3.12-venv \
-        python3.12-dev \
+        python3 \
+        python3-venv \
+        python3-dev \
+        python-is-python3 \
       && { ok=1; break; }; \
       echo "[apt] attempt $i failed — repairing and retrying"; \
       dpkg --configure -a || true; apt-get install -f -y || true; sleep 5; \
     done; [ "$ok" = 1 ] || { echo "[apt] failed after 5 attempts"; exit 1; } \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # Unversioned python3 on purpose: the suite decides the version (trixie is
+    # 3.13) and Pegasus's venv is built against whatever /usr/bin/python3 is, so
+    # naming a version here would be a second place to keep in sync. `python`
+    # comes from python-is-python3 rather than update-alternatives, which on
+    # Debian would take over the dpkg-managed /usr/bin/python3 symlink.
+    && python3 --version \
+    # ca-certificates is explicit because -slim does not carry it and every
+    # curl below (get-pip, the repo keys, the Apptainer deb) is https.
+    && test -f /etc/ssl/certs/ca-certificates.crt
 
 # nsswitch - for user/group lookups
 COPY docker/nsswitch.conf /etc/nsswitch.conf
@@ -72,7 +141,10 @@ COPY docker/nsswitch.conf /etc/nsswitch.conf
 # Wipe all apt-installed Python packages (they lack RECORD files and block
 # pip from upgrading transitive deps like PyJWT, cryptography, etc.).
 # Then bootstrap a clean pip from get-pip.py.
-RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && \
+# The glob covers whatever minor version the suite ships, so a suite bump does
+# not silently leave the marker in place and turn every pip install below into
+# an "externally-managed-environment" error.
+RUN rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED && \
     rm -rf /usr/lib/python3/dist-packages/* && \
     # sha256-pinned instead of curl|python3 into the root interpreter: a new
     # upstream get-pip.py fails the checksum loudly (bump the hash on a pip
@@ -115,14 +187,28 @@ RUN python3 -m pip uninstall -y \
 # ---- Jupyter server configuration ----
 COPY docker/jupyter/jupyter_server_config.py /etc/jupyter/jupyter_server_config.py
 
+# ---- JupyterLab theme: match Studio ----
+# The overrides are light-theme variables (sky accent, slate text, Studio
+# surfaces), so they are appended to the light theme's own stylesheet rather
+# than loaded as global custom CSS — global CSS would also clobber the dark
+# theme's variables the moment someone picked it. Nothing later rebuilds the
+# lab app (labextension builds are prebuilt bundles), so the append sticks.
+# `test -f` makes a move of the theme directory fail the build instead of
+# silently shipping an unthemed JupyterLab.
+COPY docker/jupyter/studio-overrides.css /opt/pegasus-ai/jupyter/studio-overrides.css
+RUN THEME="$(jupyter lab path | awk -F': *' '/Application directory/{print $2}')/themes/@jupyterlab/theme-light-extension/index.css" \
+    && test -f "$THEME" \
+    && printf '\n\n/* ---- PegasusAI Studio overrides (docker/jupyter/studio-overrides.css) ---- */\n' >> "$THEME" \
+    && cat /opt/pegasus-ai/jupyter/studio-overrides.css >> "$THEME"
+
 # ---- supervisord (process supervisor) ----
 RUN pip install --no-cache-dir supervisor
 
 # ---- HTCondor + Pegasus WMS (amd64 DEB packages) ----
 # Native DEB packages provide full daemon support (condor_master) and the
-# Pegasus planner (pegasus-plan), and install their Python deps for the single
-# system Python 3.12. The image is built for linux/amd64 (see the Makefile);
-# HTCondor publishes no arm64 DEB, so other arches are unsupported here.
+# Pegasus planner (pegasus-plan). The image is built for linux/amd64 (see the
+# Makefile); HTCondor publishes no arm64 DEB, so other arches are unsupported
+# here.
 #
 # NOTE: we deliberately do NOT install conda/Miniforge. It was previously added
 # only for an arm64 HTCondor fallback, but it shadowed the system python3 with
@@ -136,7 +222,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
     install -d /etc/apt/keyrings && \
     curl -fsSL https://htcss-downloads.chtc.wisc.edu/repo/keys/HTCondor-25.x-Key \
         -o /etc/apt/keyrings/htcondor.asc && \
-    curl -fsSL https://htcss-downloads.chtc.wisc.edu/repo/ubuntu/htcondor-25.x-noble.list \
+    curl -fsSL "https://htcss-downloads.chtc.wisc.edu/repo/debian/htcondor-25.x-${DEBIAN_SUITE}.list" \
         -o /etc/apt/sources.list.d/htcondor.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends condor && \
@@ -145,16 +231,33 @@ COPY docker/htcondor/90-studio.conf /etc/condor/config.d/90-studio.conf
 COPY docker/pegasus/pegasus.properties /etc/pegasus/pegasus.properties
 
 # ---- Pegasus ----
+# Python minor version of the HTCondor access point, which trixie matches.
+ARG AP_PYTHON=3.13
 RUN curl -fsSL https://download.pegasus.isi.edu/pegasus/gpg.txt \
          -o /etc/apt/trusted.gpg.d/pegasus.asc && \
-    echo 'deb [arch=amd64, trusted=yes] https://download.pegasus.isi.edu/pegasus/development/6.0/ubuntu/ noble main' >/etc/apt/sources.list.d/pegasus.list && \
+    echo "deb [arch=amd64, trusted=yes] https://download.pegasus.isi.edu/pegasus/development/6.0/debian/ ${DEBIAN_SUITE} main" >/etc/apt/sources.list.d/pegasus.list && \
     apt-get update && \
     apt-get install -y pegasus && \
     rm -rf /var/lib/apt/lists/* && \
-    pegasus-version
+    pegasus-version && \
+    # The Debian package ships Pegasus in its own venv, built against
+    # /usr/bin/python3 with include-system-site-packages=false — so the venv's
+    # lib path carries the suite's Python minor version, and that path is what
+    # the planner bakes into every submit file.
+    #
+    # Assert it equals the AP's, which is the whole point of moving to Debian
+    # (#334). A suite whose Python drifts from the AP's must fail here, at
+    # build time, and not 25 nodes into somebody's workflow with an error about
+    # a file that exists on both machines. AP_PYTHON is what the AP advertises
+    # as PegasusShareDir — see services/submit_host.py, which keeps checking
+    # this at runtime because the AP can move independently of this image.
+    test -d "/usr/lib/pegasus/venv/lib/python${AP_PYTHON}/site-packages/Pegasus/data"
 
-# Pin Pegasus's CLI tools (pegasus-preflight-check, etc.) explicitly to the
-# system Python 3.12 — the interpreter that carries Pegasus's DEB deps.
+# Pin Pegasus's CLI tools (pegasus-preflight-check, etc.) to /usr/bin/python3 —
+# the same interpreter the packaged venv points at (`venv/bin/python3` is a
+# symlink to it), so the tools get the venv's Pegasus deps rather than whatever
+# else ends up on PATH. Unversioned: naming a minor version here is how it
+# would rot on a suite bump.
 ENV PEGASUS_PYTHON=/usr/bin/python3
 
 # ---- workflow event log (monitord wfevents adapter) ----
@@ -169,9 +272,11 @@ ENV PEGASUS_PYTHON=/usr/bin/python3
 # Side benefit: the adapter's deps (rich, pyyaml) are exactly what the
 # pegasus-monitor CLI installed below needs.
 ARG WORKFLOW_MONITOR_REF=3ae923351023178cf7bcc2c52eaf1c3ab3946745
-RUN pip install --no-cache-dir \
+# Pegasus's Debian venv is isolated from system pip packages. Install and
+# verify the adapter in the interpreter that actually runs monitord.
+RUN pip --python /usr/lib/pegasus/venv/bin/python3 install --no-cache-dir \
         "git+https://github.com/pegasus-isi/workflow-monitor.git@${WORKFLOW_MONITOR_REF}" && \
-    python3 -c "import importlib.metadata as m; \
+    /usr/lib/pegasus/venv/bin/python3 -c "import importlib.metadata as m; \
 eps = m.entry_points(group='pegasus.monitord.plugins'); \
 assert any(e.name == 'wfmonitor' for e in eps), 'wfmonitor entry point missing'; \
 print('wfmonitor entry point OK')"
@@ -187,13 +292,13 @@ print('wfmonitor entry point OK')"
 # /usr/lib/pegasus/python/Pegasus/monitor/.pegasus-monitor-manifest.json
 # (applied there by fabric-deployments deploy/pegasus-htcondor/
 # overlay_pegasus_monitor.sh). Sparse blob:none clone so only the two overlay
-# paths are downloaded; the assertions fail the build loudly if the DEB
-# layout ever moves.
+# paths are downloaded. The overlay and launcher use the Debian venv; the
+# assertions fail the build loudly if that layout ever moves.
 ARG PEGASUS_MONITOR_REF=29464e9a375f797a42c086837e724baafde0637d
 RUN set -e && \
-    PEG_TREE=/usr/lib/pegasus/python/Pegasus && \
-    test -d "$PEG_TREE/cli" && \
-    grep -q '%%BASE_NAME%%' /usr/bin/pegasus-python-wrapper && \
+    PEG_TREE="/usr/lib/pegasus/venv/lib/python${AP_PYTHON}/site-packages/Pegasus" && \
+    test -d "$PEG_TREE/data" && \
+    test -x /usr/lib/pegasus/venv/bin/python3 && \
     git clone --quiet --filter=blob:none --no-checkout \
         https://github.com/pegasus-isi/pegasus.git /tmp/pegsrc && \
     git -C /tmp/pegsrc sparse-checkout set --no-cone \
@@ -204,9 +309,8 @@ RUN set -e && \
     python3 -m py_compile "$SRC"/monitor/*.py "$SRC/cli/pegasus-monitor.py" && \
     install -d -m 0755 "$PEG_TREE/monitor" && \
     install -m 0644 "$SRC"/monitor/*.py "$PEG_TREE/monitor/" && \
-    install -m 0644 "$SRC/cli/pegasus-monitor.py" "$PEG_TREE/cli/pegasus-monitor.py" && \
-    sed 's/%%BASE_NAME%%/pegasus-monitor/' /usr/bin/pegasus-python-wrapper \
-        > /usr/bin/pegasus-monitor && \
+    printf '#!/usr/lib/pegasus/venv/bin/python3\n' > /usr/bin/pegasus-monitor && \
+    tail -n +2 "$SRC/cli/pegasus-monitor.py" >> /usr/bin/pegasus-monitor && \
     chmod 0755 /usr/bin/pegasus-monitor && \
     printf '{"applied_at": "%s", "pegasus_monitor_ref": "%s", "source": "image-build"}\n' \
         "$(date -u +%FT%TZ)" "${PEGASUS_MONITOR_REF}" \
@@ -219,16 +323,31 @@ RUN set -e && \
 # Pegasus workflows run jobs in Singularity containers (e.g. container_type
 # SINGULARITY, image "docker://python:3.11-slim"), so the studio needs a
 # runtime that can pull and execute docker:// images. Apptainer runs rootless
-# via user namespaces — which means the container must be started with
-# --privileged (see the Makefile `run` target); inside an unprivileged
-# container the kernel blocks unprivileged_userns_clone.
+# via user namespaces, which means the container must be started with
+# --privileged (see the Makefile `run` target).
+#
+# --privileged is necessary but not sufficient. Creating a user namespace with
+# UID mappings is also gated on the *host*: Ubuntu 24.04 ships
+# `kernel.apparmor_restrict_unprivileged_userns=1`, which blocks unconfined
+# unprivileged processes from doing it even inside a privileged container. Root
+# in the container builds; the UID the studio runs as does not, and reports
+#     ERROR: Failed to create mount namespace: mount namespace requires privileges
+# On such a host, set `kernel.apparmor_restrict_unprivileged_userns=0`.
+# apptainer-suid does not help: the setuid starter covers *running* a container,
+# while an unprivileged *build* needs the user namespace either way.
 #
 # Installed from the GitHub release .deb rather than the apptainer PPA: the
 # pip-bootstrap step above wipes /usr/lib/python3/dist-packages/*, which removes
 # apt_pkg and breaks add-apt-repository. `apt-get install ./*.deb` resolves the
 # runtime deps (libseccomp, squashfs-tools, uidmap, fuse, …) from the repos.
+#
+# Take the suite-specific asset, not the plain `apptainer_<ver>_amd64.deb`. The
+# generic one is built against libfuse3-3, which trixie does not have (it ships
+# libfuse3-4), so it fails dependency resolution outright. The `-trixie+` build
+# depends on libfuse3-4 / libseccomp2 >= 2.6 / libsubid5, all present here. The
+# `+` is percent-encoded because it is part of the filename, not a space.
 ARG APPTAINER_VERSION=1.5.0
-RUN curl -fsSL "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/apptainer_${APPTAINER_VERSION}_amd64.deb" \
+RUN curl -fsSL "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/apptainer_${APPTAINER_VERSION}-${DEBIAN_SUITE}%2B_amd64.deb" \
         -o /tmp/apptainer.deb && \
     apt-get update && \
     apt-get install -y --no-install-recommends /tmp/apptainer.deb && \
@@ -272,11 +391,14 @@ ENV NPM_CONFIG_PREFIX=/opt/npm-global
 ENV PATH="/opt/npm-global/bin:${PATH}"
 
 # ---- default AI tools ----
-# OpenCode ships in the image as a launchable terminal AI tool, version
-# pinned for reproducible builds. The startup seeding step
-# (main._seed_default_tools) registers it as installed and runs its
-# knowledge adapter on first boot.
-RUN npm install -g opencode-ai@1.18.8 && opencode --version \
+# OpenCode is both a launchable terminal AI tool and, since #367, the agent
+# engine behind the chat panel: `opencode serve` runs under supervisord and
+# studio-api proxies the browser to it. Version pinned for reproducible builds,
+# and `@opencode-ai/sdk` in studio-web/package.json MUST be the same version —
+# the client is generated from this server's OpenAPI document, and CI fails if
+# the two drift. The startup seeding step (main._seed_default_tools) registers
+# it as installed and runs its knowledge adapter on first boot.
+RUN npm install -g opencode-ai@1.18.29 && opencode --version \
     # opencode's install (as root) creates /opt/npm-global/lib/node_modules
     # owned root:root 0755 — the earlier `chmod 777` only covered the top dir,
     # so an unprivileged notebook can't `npm install -g` Codex/Claude into it

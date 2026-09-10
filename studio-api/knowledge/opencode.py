@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from typing import Any
 
@@ -46,6 +47,101 @@ def _provider_options(ptype: str, api_key: str, base_url: str) -> dict[str, str]
         if api_key:
             options["apiKey"] = api_key
     return options
+
+
+# The OTel plugin that turns the engine's own events into telemetry (#367
+# step 6, docs/llm-telemetry-design.md). Pinned exactly: opencode resolves a
+# bare package name to whatever npm serves that day, and a plugin that throws
+# on import fails *silently* (docs/OPENCODE-CHAT-SPIKE.md) — a breaking release
+# would take telemetry away with nothing in the panel to say so.
+_OTEL_PLUGIN = "@devtheops/opencode-plugin-otel@1.5.1"
+
+# Only these characters survive into a resource attribute value. The attribute
+# string is a flat `k=v,k=v` list, so a username containing a comma or an
+# equals sign would not corrupt one attribute — it would silently redefine the
+# ones after it.
+_ATTR_SAFE = re.compile(r"[^A-Za-z0-9._@:-]")
+
+
+def _attr_value(raw: str) -> str:
+    return _ATTR_SAFE.sub("_", raw.strip())
+
+
+def _telemetry_plugin(content_capture: bool) -> list[Any] | None:
+    """The OTel plugin entry for opencode.json, or None to leave it out.
+
+    Absent unless ``STUDIO_OTLP_ENDPOINT`` names a collector. Studio also runs
+    on a FABRIC VM and in plain `docker run` containers where no collector
+    exists, and there a configured exporter is not harmless: the plugin would
+    be fetched from npm on every engine start and then retry an endpoint that
+    is never coming up. No endpoint, no plugin, no npm dependency at all.
+
+    Two things travel separately here, because they carry different risk:
+
+    * **Metrics** (tokens, tool durations, session and message counts, model
+      ids) are on whenever there is a collector. They are counters about
+      activity and contain nothing the user typed.
+    * **Traces** carry the prompt itself. The plugin puts it in the span's
+      `input.value` regardless of `capturePromptInLogs`, so traces *are* the
+      content-capture decision and they stay off until the user opts in
+      per-user in Settings. When off, `disabledTraces: ["all"]` expands to
+      every trace type the plugin knows (verified against its
+      `expandDisabledTraces`), so a future fourth trace type is disabled too
+      rather than newly exporting prompts.
+
+    Log events are off unconditionally: there is no log backend deployed
+    (`monitoring` is kube-prometheus-stack only), so they would be egress to
+    somewhere that drops them.
+    """
+    endpoint = (os.environ.get("STUDIO_OTLP_ENDPOINT") or "").strip()
+    if not endpoint:
+        return None
+
+    # Per-user attribution. The pod is per-user, so the identity is the pod's:
+    # JUPYTERHUB_USER is injected by KubeSpawner and trusted the same way
+    # main.py trusts it for the account menu.
+    user = _attr_value(
+        os.environ.get("JUPYTERHUB_USER")
+        or os.environ.get("USER")
+        or os.environ.get("LOGNAME")
+        or ""
+    )
+    attrs = [
+        "service.namespace=studio",
+        f"deployment.environment={_attr_value(os.environ.get('STUDIO_DEPLOYMENT_ENV') or 'unknown')}",
+        # Whether this session's traces are allowed to carry content, recorded
+        # on the data itself. The collector redacts content from any resource
+        # that does not say `true` — belt and braces, so a stale config left by
+        # a missed engine restart cannot leak a prompt.
+        f"studio.content_capture={'true' if content_capture else 'false'}",
+    ]
+    if user:
+        attrs.append(f"enduser.id={user}")
+
+    options: dict[str, Any] = {
+        "enabled": True,
+        "endpoint": endpoint,
+        # http/protobuf, not the plugin's grpc default: the collector is
+        # reached over plain HTTP through the cluster network, and the OTLP
+        # http exporter is the one that needs no extra port or TLS setup.
+        "protocol": (os.environ.get("STUDIO_OTLP_PROTOCOL") or "http/protobuf"),
+        "logsEnabled": False,
+        "capturePromptInLogs": False,
+        "disabledTraces": [] if content_capture else ["all"],
+        "resourceAttributes": ",".join(attrs),
+    }
+    return [_OTEL_PLUGIN, options]
+
+
+def _studio_mcp_url() -> str:
+    """Where studio-api serves the Pegasus MCP tools, from inside this pod.
+
+    Loopback rather than the public hostname: the engine is a sibling process,
+    and routing its tool calls back out through the ingress would make them
+    depend on a gateway that has nothing to do with them.
+    """
+    port = os.environ.get("STUDIO_API_PORT", "8080")
+    return f"http://127.0.0.1:{port}/api/mcp"
 
 
 def _global_config_dir() -> str:
@@ -111,7 +207,17 @@ def _link_agents_into_global() -> int:
 
 
 class OpenCodeAdapter(KnowledgeAdapter):
-    """Translates canonical knowledge into OpenCode's native format."""
+    """Translates canonical knowledge into OpenCode's native format.
+
+    This config is read by two things now: the terminal tool, and the
+    supervised ``opencode serve`` process that backs the chat panel (#367).
+    The server reads it once at startup and no endpoint reloads it, so
+    ``config_changed`` records whether this write actually altered the file —
+    the propagator restarts the server only when it did.
+    """
+
+    #: Whether the last ``update_llm_config`` changed the file on disk.
+    config_changed: bool = False
 
     def install(self, workspace: str, llm_config: dict[str, Any]) -> None:
         # Copy PEGASUS_AI.md as AGENTS.md — into the workspace and the global
@@ -211,10 +317,21 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 "models": {m: {"name": m} for m in model_ids},
             }
 
+        # Studio's "Confirm shell commands" setting, expressed as OpenCode's own
+        # permission rules. The builtin loop implemented this itself
+        # (services/chat_permissions.py, a per-turn future resolved by an
+        # endpoint); OpenCode has a permission system, so the setting becomes
+        # configuration rather than a second implementation. Only bash is
+        # gated: file reads and writes inside the workspace were never gated in
+        # Studio and turning them into prompts would make the panel unusable.
+        require_approval = llm_config.get("require_command_approval", True)
+        permission = {"bash": "ask" if require_approval else "allow"}
+
         config = {
             "$schema": "https://opencode.ai/config.json",
             "provider": providers_cfg,
             "model": f"{provider}/{model_id}",
+            "permission": permission,
             # Absolute, not "AGENTS.md": a bare name is resolved against the
             # project opencode walks up to, which is whatever directory the
             # process happened to start in.
@@ -230,8 +347,35 @@ class OpenCodeAdapter(KnowledgeAdapter):
                     "url": "https://gitmcp.io/pegasus-isi/kiso",
                     "enabled": True,
                 },
+                # This Studio's own workflow tools (#367): the user's projects
+                # and runs, live job status, a failure diagnosis, run outputs.
+                # The other two servers are documentation; this one is the
+                # session's actual state, which is what makes "why did this run
+                # fail?" answerable without the user pasting anything.
+                #
+                # Loopback, and read-only. studio-api has no auth of its own —
+                # an upstream ingress authenticates the browser — and the
+                # engine runs in this pod as this user, so there is no
+                # credential to add and nothing a token would protect against.
+                "pegasus": {
+                    "type": "remote",
+                    "url": _studio_mcp_url(),
+                    "enabled": True,
+                },
             },
         }
+
+        # Telemetry (#367 step 6). Declared in the config rather than through
+        # OPENCODE_* environment variables so it follows the same path as every
+        # other engine setting: written here, picked up on the restart the
+        # propagator schedules. An env-var-only switch would need a supervisord
+        # change and a pod restart to alter, which a per-user preference cannot
+        # ask for.
+        plugin = _telemetry_plugin(
+            bool(llm_config.get("telemetry_content_capture"))
+        )
+        if plugin is not None:
+            config["plugin"] = [plugin]
 
         # Point the skill loader straight at the checkout. Declaring the path is
         # what makes discovery independent of where opencode starts: the loader
@@ -251,11 +395,38 @@ class OpenCodeAdapter(KnowledgeAdapter):
         # still removes the legacy copy for workspaces that have one.
         blob = json.dumps(config, indent=2)
         targets = [os.path.join(global_dir, "opencode.json")]
+        self.config_changed = False
         for path in targets:
             try:
+                # Compare before writing. Propagation runs on every startup and
+                # every provider save, and a write that changed nothing must
+                # not cost the chat panel a server restart mid-conversation.
+                #
+                # Compared as bytes, deliberately. Reading as text raises
+                # UnicodeDecodeError on a file with one bad byte, and that is
+                # not an OSError: it escaped this method, the config was never
+                # rewritten, config_changed stayed False so the engine was
+                # never restarted, and every later propagation failed the same
+                # way. A damaged config used to heal itself on the next write.
+                try:
+                    with open(path, "rb") as f:
+                        unchanged = f.read() == blob.encode()
+                except (OSError, ValueError):
+                    unchanged = False
+                if unchanged:
+                    log.info("opencode_config_unchanged", path=path)
+                    continue
                 os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w") as f:
+                # Written via a temp file and renamed, because the engine reads
+                # this file at startup and the propagator that writes it runs
+                # under a hard timeout in the entrypoint. A SIGTERM between
+                # truncate and flush would otherwise leave a half-written
+                # config for a starting engine to read.
+                tmp = f"{path}.{os.getpid()}.tmp"
+                with open(tmp, "w") as f:
                     f.write(blob)
+                os.replace(tmp, path)
+                self.config_changed = True
                 log.info("opencode_config_written", path=path)
             except OSError as e:
                 log.warning("opencode_config_write_failed", path=path, error=str(e))

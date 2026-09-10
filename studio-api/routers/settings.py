@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from models import LLMConfigRequest, SettingsResponse
 
@@ -132,6 +133,141 @@ async def update_workflow_scan(req: WorkflowScanRequest) -> dict:
     return await _workflow_scan_response()
 
 
+class PlanModeRequest(BaseModel):
+    """Where `pegasus-plan` should run.
+
+    ``auto`` detects it (remote when the schedd is on another host), and is
+    what ships. The other two are overrides, and the reason they exist is that
+    the interesting question — does planning in this workspace produce a DAG
+    the submit host can execute — cannot be answered by reading anything. You
+    have to try it. Until now that meant editing STUDIO_PLAN_ON_SUBMIT_HOST in
+    the spawner profile and restarting the pod, which is not a thing a user can
+    do to their own session.
+    """
+
+    mode: str = "auto"
+
+
+async def _plan_mode_response() -> dict:
+    """The stored choice plus what the next run would actually do."""
+    from services import run_flow, submit_host
+
+    stored = await run_flow._plan_mode_setting()
+    effective, source = await run_flow._resolve_plan_mode()
+    return {
+        "mode": stored,
+        "choices": list(run_flow.PLAN_MODE_CHOICES),
+        # What the next run does, and why — with `auto` the answer is a
+        # detection result, and showing it is the difference between a switch
+        # you can reason about and one you have to experiment with.
+        "effective": effective,
+        "source": source,
+        # None when undetermined; the UI must not turn that into "co-located".
+        "submit_host_is_remote": await submit_host.is_remote(),
+        "env_default": os.environ.get(
+            "STUDIO_PLAN_ON_SUBMIT_HOST", "auto"
+        ).strip().lower(),
+    }
+
+
+@router.get("/planning")
+async def get_planning() -> dict:
+    """Planning location: the stored preference and the effective outcome."""
+    return await _plan_mode_response()
+
+
+@router.put("/planning")
+async def update_planning(req: PlanModeRequest) -> dict:
+    """Persist where planning runs.
+
+    Deliberately accepts "local" even when the submit host is remote and the
+    two Pegasus installs disagree. Refusing it would remove the only way to
+    check whether that is still true, and the run flow already catches the
+    mismatch in its preflight — where it can name this setting as the cause
+    and point at the switch that undoes it, rather than failing 25 nodes deep.
+    """
+    from main import db
+    from services import run_flow
+
+    mode = (req.mode or "").strip().lower()
+    if mode not in run_flow.PLAN_MODE_CHOICES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "mode must be one of "
+                f"{', '.join(run_flow.PLAN_MODE_CHOICES)}: {req.mode!r}"
+            ),
+        )
+
+    await db.set_setting("plan_mode", mode)
+    log.info("plan_mode_updated", mode=mode)
+    return await _plan_mode_response()
+class WorkflowSecretRequest(BaseModel):
+    """One credential a workflow's generator reads from its environment."""
+
+    name: str
+    value: str
+
+
+async def _workflow_secrets_response() -> dict:
+    """Names and timestamps. Values are never returned, by design.
+
+    Write-only, like the LLM keys (SEC-3): a GET that echoed them would put
+    every credential in the workspace one request — or one devtools tab — away,
+    and nothing in the UI needs the value back.
+    """
+    from main import db
+    import secretbox
+
+    return {
+        "secrets": await db.list_workflow_secrets(),
+        # Whether the values are actually encrypted on disk. secretbox is
+        # fail-open by design, so the UI has to be able to say which.
+        "encrypted_at_rest": secretbox.is_active(),
+    }
+
+
+@router.get("/workflow-secrets")
+async def get_workflow_secrets() -> dict:
+    """Which credentials are set, and when they were last changed."""
+    return await _workflow_secrets_response()
+
+
+@router.put("/workflow-secrets")
+async def update_workflow_secret(req: WorkflowSecretRequest) -> dict:
+    """Store or replace one credential."""
+    from main import db
+    from services import workflow_secrets
+
+    try:
+        name = workflow_secrets.normalize_name(req.name)
+        value = workflow_secrets.validate_value(req.value)
+    except workflow_secrets.InvalidSecret as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    await db.set_workflow_secret(name, value)
+    # Name only. A log line carrying the value would outlive every other
+    # protection this feature has.
+    log.info("workflow_secret_set", name=name)
+    return await _workflow_secrets_response()
+
+
+@router.delete("/workflow-secrets/{name}")
+async def delete_workflow_secret(name: str) -> dict:
+    """Remove one credential."""
+    from main import db
+    from services import workflow_secrets
+
+    try:
+        canonical = workflow_secrets.normalize_name(name)
+    except workflow_secrets.InvalidSecret as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not await db.delete_workflow_secret(canonical):
+        raise HTTPException(status_code=404, detail=f"No secret named {canonical}")
+    log.info("workflow_secret_deleted", name=canonical)
+    return await _workflow_secrets_response()
+
+
 class UIPreferences(BaseModel):
     """Per-user UI preferences for the non-specialist redesign (#241).
 
@@ -167,6 +303,25 @@ class UIPreferences(BaseModel):
     # necessarily want a terminal in their sidebar, and coupling two unrelated
     # disclosures to one flag makes both surprising.
     nav_advanced_open: bool = False
+    # Skip the landing page at `/` and open Home directly. Distinct from
+    # `welcome_dismissed`, which records that the first-run tour has been
+    # shown: the landing page is a marketing-style introduction that a
+    # returning user may never want to see again, and the Next server reads
+    # this flag when deciding where the app root redirects.
+    skip_welcome: bool = False
+    # Which agent engine the chat panel talks to (#367).
+    #
+    # "opencode" makes the panel a client of the supervised `opencode serve`
+    # process, which brings context compaction, cross-session memory,
+    # subagents, MCP and skills — none of which the builtin loop has. It is
+    # opt-in while it is being tried in a real pod: the builtin loop is what
+    # every existing conversation was written against, and a per-user
+    # preference means switching back is a toggle rather than a rollback.
+    #
+    # A string rather than a boolean because the intended end state is one
+    # engine, not two (the builtin loop is to be deleted once this is proven),
+    # and a retired value should read as a stale name, not an inverted flag.
+    chat_engine: Literal["builtin", "opencode"] = "builtin"
 
 
 _UI_PREFS_KEY = "ui_preferences"
@@ -180,9 +335,23 @@ async def get_ui_preferences() -> UIPreferences:
     stored = await db.get_setting(_UI_PREFS_KEY, {}) or {}
     if not isinstance(stored, dict):
         stored = {}
-    return UIPreferences(**{
-        k: v for k, v in stored.items() if k in UIPreferences.model_fields
-    })
+    known = {k: v for k, v in stored.items() if k in UIPreferences.model_fields}
+    try:
+        return UIPreferences(**known)
+    except ValidationError:
+        # A stored *value* that no longer validates — a retired `chat_engine`
+        # name, a string where a bool belongs — must not 500 this endpoint and
+        # take every other preference down with it. Keep the fields that stand
+        # on their own and default the rest.
+        safe: dict[str, object] = {}
+        for key, value in known.items():
+            try:
+                UIPreferences(**{key: value})
+            except ValidationError:
+                log.warning("ui_preference_invalid", key=key, value=value)
+                continue
+            safe[key] = value
+        return UIPreferences(**safe)
 
 
 @router.put("/ui", response_model=UIPreferences)
@@ -193,6 +362,60 @@ async def update_ui_preferences(req: UIPreferences) -> UIPreferences:
     await db.set_setting(_UI_PREFS_KEY, req.model_dump())
     log.info("ui_preferences_updated", **req.model_dump())
     return req
+
+
+class TelemetryConsent(BaseModel):
+    """Whether prompts and replies may be exported with this user's traces."""
+
+    content_capture: bool = False
+    # Read-only for the client: whether this deployment has a collector at all.
+    # Without one nothing is exported whatever the flag says, and a control
+    # that implies otherwise would be a lie about where the data goes.
+    collector_configured: bool = False
+
+
+@router.get("/telemetry", response_model=TelemetryConsent)
+async def get_telemetry_consent() -> TelemetryConsent:
+    from main import db
+    from services import telemetry
+
+    return TelemetryConsent(
+        content_capture=await telemetry.content_capture(db),
+        collector_configured=telemetry.collector_configured(),
+    )
+
+
+@router.put("/telemetry", response_model=TelemetryConsent)
+async def update_telemetry_consent(req: TelemetryConsent) -> TelemetryConsent:
+    """Store the consent flag and push it to the engine.
+
+    Propagated, not just stored, for the same reason the shell-approval setting
+    is: the engine reads its plugin options out of the generated opencode.json
+    at startup and no endpoint reloads it, so without this the Settings page
+    would claim content capture was off while the running engine kept exporting
+    prompts for the rest of the pod's life. `propagate` rewrites the config and
+    schedules the restart itself (the restart is not awaited — supervisorctl
+    blocks for a stop *and* a start).
+    """
+    from main import db
+    from services import telemetry
+
+    await telemetry.set_content_capture(db, req.content_capture)
+    try:
+        from llm.propagator import LLMPropagator
+
+        await LLMPropagator().propagate(db)
+    except Exception as e:
+        # Stored but not propagated: the flag is right in the DB and the engine
+        # is wrong until its next restart. Surfaced as a warning rather than a
+        # 500 because failing the request would suggest the choice was not
+        # recorded, and re-toggling would then be the natural thing to try.
+        log.warning("telemetry_consent_propagate_failed", error=str(e))
+
+    return TelemetryConsent(
+        content_capture=req.content_capture,
+        collector_configured=telemetry.collector_configured(),
+    )
 
 
 @router.get("", response_model=SettingsResponse)

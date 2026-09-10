@@ -33,6 +33,9 @@ def client(tmp_db, monkeypatch):
     # Keep startup hermetic: don't seed image-bundled tools (would run real
     # knowledge adapters if e.g. opencode is on the dev machine's PATH).
     monkeypatch.setenv("STUDIO_DEFAULT_TOOLS", "")
+    # The catalog fills blank descriptions from GitHub; tests must not reach
+    # the network, and CI would burn the unauthenticated rate limit doing it.
+    monkeypatch.setenv("STUDIO_MARKETPLACE_ENRICH", "0")
 
     # Set KNOWLEDGE_ROOT to a temp dir for tests
     knowledge_dir = tempfile.mkdtemp()

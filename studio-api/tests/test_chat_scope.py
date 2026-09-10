@@ -203,7 +203,7 @@ def test_chat_stream_accepts_context(client, monkeypatch):
     seen = {}
 
     async def fake_dispatch(client_, base_url, api_key, model, messages,
-                            system_prompt, wire_api):
+                            system_prompt, wire_api, max_tokens=None):
         seen["system_prompt"] = system_prompt
         yield {"type": "text", "text": "ok"}
         yield {
@@ -233,7 +233,7 @@ def test_chat_stream_bad_context_is_ignored(client, monkeypatch):
     import routers.chat as chat
 
     async def fake_dispatch(client_, base_url, api_key, model, messages,
-                            system_prompt, wire_api):
+                            system_prompt, wire_api, max_tokens=None):
         yield {"type": "text", "text": "ok"}
         yield {
             "type": "result",

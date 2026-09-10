@@ -7,6 +7,7 @@ import { ResizablePane } from "@/components/layout/resizable-pane";
 import { WorkflowDetail } from "@/components/workflows/workflow-detail";
 import { WorkflowProjectDetail } from "@/components/workflows/workflow-project-detail";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import { WorkflowPicker } from "@/components/workflows/workflow-picker";
 
 export default function WorkflowsPage() {
   const { data: runsData, isLoading: runsLoading, error: runsError } = useWorkflows();
@@ -35,7 +36,24 @@ export default function WorkflowsPage() {
   const totalCount = projects.length + standaloneRuns.length;
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col">
+      {/* Which analysis, above both panes. In the detail header it only
+          appeared once something was selected — no use for selecting, and
+          gone entirely when the list is collapsed. */}
+      <div className="flex items-center gap-3 border-b border-line bg-surface px-4 py-2">
+        <WorkflowPicker
+          projects={projects}
+          standaloneRuns={standaloneRuns}
+          isLoading={isLoading}
+        />
+        <span className="truncate text-xs text-fgsubtle">
+          {isLoading
+            ? "Scanning your workspace…"
+            : `${totalCount} in this workspace`}
+        </span>
+      </div>
+
+      <div className="flex min-h-0 flex-1">
       {/* Workflow list — resizable and collapsible. A fixed width was wrong in
           both directions: too narrow for long workflow names, too wide once
           you're watching a run and want the space for the run itself. */}
@@ -76,10 +94,17 @@ export default function WorkflowsPage() {
         ) : selectedRunId ? (
           <WorkflowDetail runId={selectedRunId} />
         ) : (
-          <div className="flex h-full items-center justify-center text-fgsubtle">
-            Select a workflow to view details
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="text-fgsubtle">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 8 12 12 14 14"/>
+              </svg>
+            </div>
+            <p className="text-sm font-medium text-fgmuted">Select a workflow</p>
+            <p className="text-xs text-fgsubtle">Choose a project or run from the list</p>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

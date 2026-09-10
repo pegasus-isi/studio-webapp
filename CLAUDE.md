@@ -36,30 +36,40 @@ npm run build
 
 ```sh
 # Backend (from repo root; assumes the studio-api venv is active with deps installed)
-(cd studio-api && pytest -q)                          # ~450 tests; no Pegasus/Condor/keys needed
+(cd studio-api && pytest -q)                          # ~500 tests; no Pegasus/Condor/keys needed
 
 # Frontend (needs `npm ci` first so node_modules/.bin/tsc exists)
 (cd studio-web && npm ci && node_modules/.bin/tsc --noEmit)   # strict mode
+(cd studio-web && npm test)                                   # vitest, lib/ only
 ```
 
-- `.github/workflows/deploy.yml` now runs both gates (pytest + tsc) as a `test`
-  job that gates build/push, and builds without pushing on `pull_request` (added
-  in PR #57). Run them locally anyway before pushing to avoid a red PR.
-- On the frontend use `tsc`, **not** `npm run lint` (eslint isn't installed) or `npm test`
-  (zero test files exist). Single backend test: `pytest tests/test_workflows.py::test_x -q`
+- `.github/workflows/deploy.yml` runs all three gates (pytest, tsc, vitest) as a
+  `test` job that gates build/push, and builds without pushing on
+  `pull_request` (added in PR #57). Run them locally anyway before pushing to
+  avoid a red PR.
+- On the frontend `npm run lint` is still not a gate (eslint isn't installed).
+  `npm test` is: vitest over `lib/**/*.test.ts`, node environment, no DOM —
+  added in #367 for `lib/opencode/transcript.ts`, the chat transcript state
+  machine, whose rules come from measured server behaviour and which three
+  review rounds found ordering and reconciliation bugs in. Components are still
+  covered only by `tsc`. Single backend test: `pytest tests/test_workflows.py::test_x -q`
   (run from `studio-api/`).
 
 ## Architecture
 
 nginx on **:8888** is the only exposed port, routing `/` → studio-web (Next.js
 standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**),
-`/jupyter/*` → JupyterLab (**:8889**). Supervised by supervisord (`docker/supervisor/`);
+`/jupyter/*` → JupyterLab (**:8889**). `opencode serve` (**:4096**) is
+loopback-only and reached solely through studio-api's proxy, authenticated with
+a per-user password the entrypoint writes to `~/.studio/opencode-password`.
+Supervised by supervisord (`docker/supervisor/`);
 `docker/entrypoint.sh` runs `init_db.py` (first launch only) then `exec supervisord`.
 
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
-  migrations in `db.py`), structlog JSON logging. 16 routers in `routers/`, 21 services
+  migrations in `db.py`), structlog JSON logging. 17 routers in `routers/`, 24 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
-  notifications, terminal/PTY sessions). Workflow runs are
+  notifications, terminal/PTY sessions). 18 routers now — `mcp.py` serves the
+  Pegasus tools to the OpenCode engine. Workflow runs are
   discovered by globbing `**/braindump.yml` under `$HOME` (`STUDIO_SCAN_DIR`),
   plus user-added scan roots/excludes from Settings → Pegasus Options
   (`/api/settings/workflow-scan`, merged in `workflow_scanner`'s async
@@ -111,10 +121,29 @@ standalone, **:3000**), `/api/*` and `/ws/*` → studio-api (FastAPI, **:8080**)
   tab or a dropped connection — Studio's left nav used to be full page loads,
   and anything owned by the request died with it. Reach for this shape rather
   than sequencing calls in the browser.
-- Chat is the builtin agent loop in `routers/chat.py` (direct provider calls
-  with tool use, Anthropic + OpenAI-compatible + Responses API). OpenCode was
-  removed as a chat backend (#299) — it remains only as a launchable terminal
-  AI tool. Anything reading the knowledge tree goes through
+- **Chat has two engines, chosen per user** by the `chat_engine` UI preference
+  (#367). `builtin` is the in-process agent loop in `routers/chat.py` (direct
+  provider calls with tool use, Anthropic + OpenAI-compatible + Responses API)
+  and is still the default. `opencode` makes the panel a thin client of the
+  supervised `opencode serve` process in the same pod: `routers/opencode.py`
+  proxies `/api/opencode/*` to `127.0.0.1:4096` **verbatim**, including the SSE
+  stream, and `studio-web/lib/opencode/` + `components/chat/opencode-parts.tsx`
+  render OpenCode's own parts through a registry with a fallback. The intended
+  end state is one engine — the builtin loop goes once OpenCode is proven in a
+  real pod — so **do not add features to the builtin loop**; see #367 and
+  `docs/OPENCODE-CHAT-SPIKE.md`, which records what the spike established
+  (config changes need a process restart, text streams as `message.part.delta`
+  and not as whole parts, the plugin hook does receive the session id).
+  Nothing on the Python side parses an OpenCode payload, and it must stay that
+  way: that is what lets a version bump be a version bump. The Pegasus tools
+  reach that engine over MCP — `routers/mcp.py` serves them at `/api/mcp`
+  (stateless Streamable HTTP) and the generated `opencode.json` registers it as
+  a loopback remote server beside `pegasus-docs`/`kiso-docs`. Its tool list is
+  read from `services/chat_tools.py`, so **add a Pegasus tool in one place** and
+  both engines get it; the generic file/shell tools are deliberately not
+  exposed, since OpenCode has its own behind its own permission gate. `@opencode-ai/sdk`
+  and the `opencode-ai` pin in the Dockerfile must match, which
+  `tests/test_opencode_version_pin.py` enforces. Anything reading the knowledge tree goes through
   `knowledge/layout.py`; nothing should resolve it independently — `chat.py`
   keeping its own `KNOWLEDGE_ROOT` after the knowledge base moved is how the
   chat lost its context, personas and skills at once (#179).

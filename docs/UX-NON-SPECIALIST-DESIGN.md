@@ -238,8 +238,18 @@ no way to provide them without JupyterLab or scp. Requirements:
 
 ## Phase 6 — Onboarding and in-context help
 
-- One-time three-step welcome (*pick an example → give it your inputs → run
-  it*), dismissal persisted in the settings DB.
+**Superseded in part.** The one-time welcome card shipped in #271 and was
+replaced by a guided tour in #317 (see `docs/UI-REDESIGN-2026-09.md`). The card
+explained Studio on the one screen with nothing to point at, and was gone by
+the time a user reached the pages it described. The tour spotlights the real
+rail cells instead, runs itself on a first visit, and is restartable from the
+account menu. It reuses this phase's `welcome_dismissed` preference, so anyone
+who dismissed the card is not re-onboarded. The glossary below survives
+unchanged, behind "What do the words mean?" on the landing page.
+
+- ~~One-time three-step welcome (*pick an example → give it your inputs → run
+  it*), dismissal persisted in the settings DB.~~ Replaced by the guided tour
+  (#317); the preference key is retained.
 - Replace teach-by-CLI empty states (the workflow list currently suggests
   running `pegasus-plan --submit` in a terminal) with a "Browse examples"
   button.
@@ -352,7 +362,7 @@ into backend and frontend PRs so each stayed reviewable.
 | 3 — Humanized run form | #259 (argparse type/label/plumbing hints), #261 (typed widgets, file picker, pre-submit summary) |
 | 4 — Progress and results | #251 (outputs API), #253 (Results tab, honest estimate, notification deep link) |
 | 5 — Actionable failures | #263 (diagnosis rules), #267 (failure cards, "Explain this failure") |
-| 6 — Onboarding and help | #271 |
+| 6 — Onboarding and help | #271 — welcome card since replaced by a guided tour, #317 |
 | 7 — Progressive disclosure | #275 |
 | Default flipped on | #269 — **ahead of the terminology gate**, see Rollout strategy |
 

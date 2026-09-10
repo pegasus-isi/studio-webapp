@@ -18,6 +18,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from llm.model_limits import FLOOR_MAX_TOKENS, anthropic_max_tokens
 from models import ChatHistoryResponse, ChatMessage
 
 log = structlog.get_logger()
@@ -72,6 +73,83 @@ _MAX_TOOL_ROUNDS = 50
 _MAX_STREAM_RETRIES = 2
 _STREAM_RETRY_DELAY_S = 1.5
 
+# How often to emit an SSE comment while a round is in flight but silent.
+# nginx caps the /api/ location at proxy_read_timeout (300s here), and an
+# ingress in front of a real deployment will have its own limit, so the stream
+# has to prove it is alive from the application side rather than relying on
+# proxy configuration. Well under any plausible proxy timeout.
+_HEARTBEAT_INTERVAL_S = 20.0
+
+_HEARTBEAT = {"type": "__heartbeat__"}
+
+
+async def _with_heartbeat(
+    stream: AsyncGenerator[dict[str, Any], None],
+    interval: float = _HEARTBEAT_INTERVAL_S,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Yield a stream's events, emitting `_HEARTBEAT` whenever it goes quiet.
+
+    A reasoning model can spend minutes on thinking tokens before the first
+    text delta of a round. The per-round ping is emitted *before* the round, so
+    it does not help inside one: the proxy sees no bytes for the whole think and
+    drops the connection, which reaches the client as a bare network error.
+
+    Awaiting the next event as a task lets the wait be bounded without
+    disturbing the stream — nothing is consumed until it actually arrives.
+    """
+    it = stream.__aiter__()
+    pending: asyncio.Task | None = None
+    try:
+        while True:
+            pending = asyncio.ensure_future(it.__anext__())
+            while True:
+                done, _ = await asyncio.wait({pending}, timeout=interval)
+                if done:
+                    break
+                yield _HEARTBEAT
+            try:
+                event = pending.result()
+            except StopAsyncIteration:
+                return
+            finally:
+                pending = None
+            yield event
+    finally:
+        # Caller broke out (client gone, tool round finished early): the
+        # in-flight __anext__ must not outlive this generator.
+        if pending is not None and not pending.done():
+            pending.cancel()
+
+
+# How long the upstream LLM connection may stay silent before we give up on it.
+#
+# This was a flat 120s read timeout, which is a *token gap*, not a total budget —
+# so any model that thinks for two minutes in one burst was torn down mid-turn.
+# It surfaced as `ReadTimeout` and was reported to the user as a drop "from the
+# provider", which is the worst possible framing: the natural response is to
+# retry, and a retry often succeeds because the model happens to think in shorter
+# bursts the second time. A ceiling that presents as flakiness.
+#
+# Observed: a model produced 27 tool calls over 428s, then 16 over 335s on the
+# identical prompt — different points, same wall-clock wall — while the *same*
+# model ran 1628s on another task without trouble, because there it streamed
+# continuously. Reasoning models that buffer before emitting are the ones hit.
+#
+# 900s is deliberately generous: a silent connection costs one held socket, while
+# a premature teardown costs the whole turn and misattributes the failure.
+_LLM_READ_TIMEOUT_S = float(os.environ.get("STUDIO_LLM_READ_TIMEOUT", "900"))
+_LLM_CONNECT_TIMEOUT_S = float(os.environ.get("STUDIO_LLM_CONNECT_TIMEOUT", "30"))
+
+
+def _llm_timeout() -> httpx.Timeout:
+    """Timeouts for the upstream call to the model provider."""
+    return httpx.Timeout(
+        _LLM_READ_TIMEOUT_S,
+        connect=_LLM_CONNECT_TIMEOUT_S,
+        write=60.0,
+        pool=30.0,
+    )
+
 
 def _transport_error_message(
     exc: Exception, base_url: str, mid_stream: bool
@@ -85,6 +163,16 @@ def _transport_error_message(
     except Exception:
         pass
     detail = type(exc).__name__
+    if isinstance(exc, httpx.ReadTimeout):
+        # Ours, not theirs. Saying "transient provider drop" here sends people to
+        # retry a problem a retry cannot fix.
+        return (
+            f"The model at {host} went quiet for more than "
+            f"{_LLM_READ_TIMEOUT_S:.0f}s, so the connection was closed. Models "
+            "that reason for a long time before answering can hit this; raise "
+            "STUDIO_LLM_READ_TIMEOUT if it keeps happening. Some steps may "
+            "already have run."
+        )
     if mid_stream:
         return (
             f"Lost the connection to the LLM endpoint ({host}) partway through "
@@ -106,6 +194,35 @@ _MAX_UI_RESULT_CHARS = 2000        # per tool result shown in the UI
 
 # stop_reason values that mean the model was cut off at the output-token cap.
 _TRUNCATED_STOP_REASONS = {"length", "max_tokens", "incomplete"}
+
+# Only the Anthropic Messages API makes max_tokens mandatory; the OpenAI
+# transports omit it and let the model decide.
+#
+# The ceiling for that one transport is resolved from the selected model rather
+# than fixed here (llm/model_limits.py): a constant 8192 was the value every
+# Messages-API model accepts, which truncated every current model at a
+# sixteenth of its real 128K capacity — and on a reasoning model, whose
+# thinking is billed against the same budget, the cap could be spent before any
+# visible content appeared. `extra_config.max_tokens` still overrides it.
+
+
+def _coerce_max_tokens(value: Any, provider: str) -> int | None:
+    """Validate an operator-supplied ``extra_config.max_tokens``.
+
+    The field is free-form JSON, so a bad value must not take the turn down
+    with it: anything that is not a positive integer is logged and dropped,
+    leaving the ceiling to the model.
+    """
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 0
+    if parsed <= 0:
+        log.warning("llm_max_tokens_invalid", provider=provider, value=value)
+        return None
+    return parsed
 
 
 def _clip_ui_result(text: str) -> str:
@@ -491,12 +608,22 @@ async def _anthropic_stream(
     model: str,
     messages: list[dict],
     system_prompt: str,
+    max_tokens: int | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream the Anthropic Messages API.
 
     Yields ``{"type": "text", "text": delta}`` as tokens arrive and a final
     ``{"type": "result", "result": {...}}`` with the aggregated content, tool
     calls and usage (same shape the tool-calling loop expects).
+
+    Unlike the OpenAI transports, the Messages API *requires* ``max_tokens``,
+    so this is the one path that cannot defer the ceiling to the model. The
+    caller resolves it from the selected model (llm/model_limits.py); the floor
+    here is only for a direct call that passes nothing.
+
+    Streaming, which this is, is also what makes a large ceiling safe: the SDKs
+    require it above ~16K because a non-streamed response that big outruns the
+    HTTP timeout.
     """
     url = f"{base_url}/v1/messages"
     headers = {
@@ -506,7 +633,7 @@ async def _anthropic_stream(
     }
     body = {
         "model": model,
-        "max_tokens": 8192,
+        "max_tokens": max_tokens or FLOOR_MAX_TOKENS,
         "system": system_prompt,
         "messages": messages,
         "tools": TOOL_DEFINITIONS_ANTHROPIC,
@@ -591,10 +718,16 @@ async def _openai_stream(
     model: str,
     messages: list[dict],
     system_prompt: str,
+    max_tokens: int | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream an OpenAI-compatible /chat/completions response.
 
     Yields text deltas then a final aggregated result (see _anthropic_stream).
+
+    ``max_tokens`` is omitted unless configured, so the ceiling is whatever the
+    model and endpoint allow. A fixed cap here truncates reasoning models —
+    their thinking tokens are billed against the same budget, so a small
+    ceiling can be spent before any content or tool call is emitted.
     """
     url = f"{base_url}/chat/completions"
     headers: dict[str, str] = {"content-type": "application/json"}
@@ -602,15 +735,16 @@ async def _openai_stream(
         headers["authorization"] = f"Bearer {api_key}"
 
     full_messages = [{"role": "system", "content": system_prompt}] + messages
-    body = {
+    body: dict[str, Any] = {
         "model": model,
         "messages": full_messages,
         "tools": TOOL_DEFINITIONS,
-        "max_tokens": 8192,
         "stream": True,
         # Ask for usage in the terminal chunk (OpenAI + most compatible proxies).
         "stream_options": {"include_usage": True},
     }
+    if max_tokens:
+        body["max_tokens"] = max_tokens
 
     content = ""
     tool_frags: dict[int, dict[str, str]] = {}
@@ -774,25 +908,29 @@ async def _openai_responses_stream(
     model: str,
     messages: list[dict],
     system_prompt: str,
+    max_tokens: int | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream the OpenAI Responses API (/responses).
 
     Text deltas are forwarded live; tool calls and usage come from the terminal
     ``response.completed`` event (whose payload matches the non-streaming shape).
+
+    ``max_output_tokens`` is omitted unless configured (see _openai_stream).
     """
     url = f"{base_url}/responses"
     headers: dict[str, str] = {"content-type": "application/json"}
     if api_key:
         headers["authorization"] = f"Bearer {api_key}"
 
-    body = {
+    body: dict[str, Any] = {
         "model": model,
         "instructions": system_prompt,
         "input": _messages_to_responses_input(messages),
         "tools": _tools_for_responses(),
-        "max_output_tokens": 8192,
         "stream": True,
     }
+    if max_tokens:
+        body["max_output_tokens"] = max_tokens
 
     content = ""
     final: dict[str, Any] | None = None
@@ -840,6 +978,7 @@ async def _openai_dispatch(
     messages: list[dict],
     system_prompt: str,
     wire_api: str = "auto",
+    max_tokens: int | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream via Chat Completions or the Responses API, picking the transport.
 
@@ -860,12 +999,12 @@ async def _openai_dispatch(
     """
     def responses() -> AsyncGenerator[dict[str, Any], None]:
         return _openai_responses_stream(
-            client, base_url, api_key, model, messages, system_prompt
+            client, base_url, api_key, model, messages, system_prompt, max_tokens
         )
 
     def chat() -> AsyncGenerator[dict[str, Any], None]:
         return _openai_stream(
-            client, base_url, api_key, model, messages, system_prompt
+            client, base_url, api_key, model, messages, system_prompt, max_tokens
         )
 
     if wire_api == "responses" or base_url in _RESPONSES_ENDPOINTS or (
@@ -1042,6 +1181,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
     messages = body.get("messages", [])
     model_override = body.get("model", "")
     provider_override = body.get("provider", "")
+    max_tokens_override = body.get("max_tokens")
     agent_id = body.get("agent", "general")
     request_id = body.get("request_id", str(uuid.uuid4()))
     conversation_id = body.get("conversation_id")
@@ -1105,6 +1245,27 @@ async def chat_stream(request: Request) -> StreamingResponse:
     # for a provider whose model id isn't auto-detected.
     wire_api = (config.get("extra_config") or {}).get("wire_api", "auto")
 
+    # Optional output ceiling: extra_config.max_tokens. Unset means the model
+    # and endpoint decide, which is what reasoning models need — a fixed cap is
+    # spent on thinking tokens before any content or tool call is emitted.
+    # The Anthropic transport requires a value and falls back to its default.
+    # Per-request override wins, exactly as provider/model do. The stored
+    # value is global — one row, shared by every provider and model a request
+    # can select — so an evaluation harness or a caller that knows the model
+    # cannot express "this model needs more room" through config alone.
+    max_tokens = _coerce_max_tokens(
+        max_tokens_override
+        if max_tokens_override is not None
+        else (config.get("extra_config") or {}).get("max_tokens"),
+        provider,
+    )
+    # Nothing configured, and this is the transport that must send a number:
+    # ask the model what it allows instead of assuming the lowest common
+    # denominator. Cached per model, and it falls back to that same floor if
+    # the provider cannot answer, so a turn is never held up by this.
+    if max_tokens is None and is_anthropic:
+        max_tokens = await anthropic_max_tokens(base_url, api_key, model)
+
     system_prompt = _load_system_prompt(agent_id)
 
     # Workflow/run scope from the chat panel's context picker. Resolved fresh
@@ -1125,7 +1286,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
     async def event_generator() -> AsyncGenerator[str, None]:
         import time
 
-        client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=30.0))
+        client = httpx.AsyncClient(timeout=_llm_timeout())
         _active_clients[request_id] = client
 
         # Read the approval posture once per turn (SEC-4): whether run_command
@@ -1204,19 +1365,23 @@ async def chat_stream(request: Request) -> StreamingResponse:
                         if is_anthropic:
                             stream = _anthropic_stream(
                                 client, base_url, api_key, model,
-                                conv_messages, system_prompt,
+                                conv_messages, system_prompt, max_tokens,
                             )
                         else:
                             stream = _openai_dispatch(
                                 client, base_url, api_key, model,
                                 conv_messages, system_prompt, wire_api,
+                                max_tokens,
                             )
-                        async for ev in stream:
+                        async for ev in _with_heartbeat(stream):
                             # Client cancelled mid-stream — stop and release the
                             # HTTP connection instead of draining the response.
                             if request_id not in _active_clients:
                                 await stream.aclose()
                                 return
+                            if ev["type"] == "__heartbeat__":
+                                yield ": ping\n\n"
+                                continue
                             if ev["type"] == "text":
                                 emitted_text = True
                                 yield f"data: {json.dumps({'content': ev['text']})}\n\n"
@@ -1472,6 +1637,19 @@ async def set_command_approval(request: Request) -> dict:
         body = {}
     value = bool(body.get("require_approval", True))
     await chat_permissions.set_require_approval(db, value)
+
+    # The OpenCode engine enforces this setting as a `permission` rule in its
+    # generated config (#367), so storing it is only half the job: without
+    # propagating, Settings said "commands are confirmed" while the engine kept
+    # whatever rule it was last given — including `allow` — for the rest of the
+    # pod's life. The builtin loop reads the setting per turn and does not care.
+    try:
+        from llm.propagator import LLMPropagator
+
+        await LLMPropagator().propagate(db)
+    except Exception as e:
+        log.warning("command_approval_propagate_failed", error=str(e))
+
     return {"require_approval": value}
 
 
@@ -1510,6 +1688,29 @@ async def list_agents() -> dict:
     from routers.knowledge import list_agents
 
     return await list_agents()
+
+
+@router.get("/scope-block")
+async def scope_block(type: str, id: str) -> dict[str, str | None]:
+    """The Active Context block for a workflow or run, as plain text.
+
+    The builtin loop appends this to its own system prompt, where the browser
+    never sees it. The OpenCode engine has no such seam: the agent loop is not
+    ours, so the caller that knows which workflow the conversation is about is
+    the panel, and it sends the block as a synthetic prompt part — visible to
+    the model, hidden by the renderer, and re-resolved every turn so a
+    finished run stops being described as running.
+
+    Returns ``{"block": null}`` for an id that resolves to nothing, which is
+    the same "no context, carry on" outcome the builtin path already has.
+    """
+    from services.chat_scope import SCOPE_TYPES, build_scope_block
+
+    if type not in SCOPE_TYPES:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown scope type: {type}"
+        )
+    return {"block": await build_scope_block(type, id)}
 
 
 @router.get("/history", response_model=ChatHistoryResponse)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   useProviders,
   useProviderConfigs,
@@ -15,12 +15,15 @@ import {
   useUIPreferences,
   useUpdateUIPreferences,
 } from "@/lib/hooks/use-ui-prefs";
+import { announceEngineChange } from "@/lib/chat-engine-channel";
 import { ToolCard } from "@/components/tools/tool-card";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { cn } from "@/lib/utils";
+import { appRelativePath } from "@/lib/urls";
 import type { ProviderConfig } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
+import * as oc from "@/lib/opencode/client";
 
 type Tab = "providers" | "tools" | "chat" | "pegasus" | "notifications";
 
@@ -760,6 +763,8 @@ function ChatTab() {
         </div>
       )}
 
+      <ChatEngineSection />
+
       {/* Shell-command approval (SEC-4) */}
       <div className="rounded-lg border border-line bg-surface p-4">
         <div className="flex items-start justify-between gap-4">
@@ -793,6 +798,227 @@ function ChatTab() {
           </button>
         </div>
       </div>
+
+      <TelemetrySection />
+    </div>
+  );
+}
+
+/* ─── Telemetry consent (#367 step 6) ─── */
+
+/**
+ * Whether this session's prompts may be exported with its telemetry.
+ *
+ * Two things are worth being precise about in the copy, because the difference
+ * is the whole point of the control. Activity counters (how many turns, how
+ * many tokens, how long tools took) are collected wherever a collector is
+ * configured and contain nothing the user typed. Prompt and reply text is
+ * exported only with this switch on, and the reason it is a switch rather than
+ * a build-time decision is that the engine's tracing carries the prompt in the
+ * span itself — there is no "traces without content" setting to hide behind.
+ *
+ * Its own endpoint rather than a UI preference: `PUT /api/settings/ui`
+ * replaces preferences wholesale, and a consent flag that an unrelated toggle
+ * could revert from a stale cache is not consent.
+ */
+function TelemetrySection() {
+  const [consent, setConsent] = useState<api.TelemetryConsent | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getTelemetryConsent()
+      .then(setConsent)
+      // Unknown state reads as "off": the control must never imply content is
+      // being withheld when it is, nor invite consent it cannot record.
+      .catch(() =>
+        setConsent({ content_capture: false, collector_configured: false })
+      );
+  }, []);
+
+  const toggle = async (next: boolean) => {
+    if (saving || consent === null) return;
+    setSaving(true);
+    const prev = consent;
+    setConsent({ ...consent, content_capture: next });
+    setError(null);
+    try {
+      setConsent(await api.updateTelemetryConsent(next));
+    } catch (e) {
+      setConsent(prev);
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const on = consent?.content_capture === true;
+  const collecting = consent?.collector_configured === true;
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-fg">
+            Share chat text for troubleshooting
+          </h3>
+          <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+            {collecting ? (
+              <>
+                Studio always records how much the chat is used — number of
+                turns, tokens, how long tools took, which model answered. That
+                never includes what you wrote. Turn this on to also send the
+                text of your messages and the replies, which is what makes it
+                possible to see why a particular answer went wrong. You can
+                turn it off again at any time; the chat engine restarts when
+                you do.
+              </>
+            ) : (
+              <>
+                This Studio has no telemetry collector configured, so nothing
+                is being sent anywhere — not usage counts and not chat text.
+                This setting has no effect here.
+              </>
+            )}
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={on}
+          aria-label="Share chat text for troubleshooting"
+          disabled={consent === null || saving || !collecting}
+          onClick={() => toggle(!on)}
+          className={cn(
+            "relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50",
+            on ? "bg-pegasus-600" : "bg-muted"
+          )}
+        >
+          <span
+            className={cn(
+              "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+              on ? "translate-x-4" : "translate-x-0.5"
+            )}
+          />
+        </button>
+      </div>
+
+      {error && (
+        <p className="mt-2 text-xs text-red-700 dark:text-rose-400">{error}</p>
+      )}
+    </div>
+  );
+}
+
+/* ─── Chat engine (#367) ─── */
+
+/**
+ * Which agent loop answers the chat.
+ *
+ * Opt-in, and the builtin loop stays the default, because this replaces the
+ * engine under an existing conversation rather than adding a feature beside
+ * it: everything a user has learned about how the panel behaves is about the
+ * builtin loop. The switch is per user and takes effect on the next render of
+ * the panel, so trying it and going back costs a toggle rather than a
+ * rollback.
+ */
+function ChatEngineSection() {
+  const { prefs } = useUIPreferences();
+  const update = useUpdateUIPreferences();
+  const [status, setStatus] = useState<oc.EngineStatus | null>(null);
+  const [restarting, setRestarting] = useState(false);
+
+  const refresh = useCallback(() => {
+    oc.getEngineStatus()
+      .then(setStatus)
+      .catch(() =>
+        setStatus({ running: false, reason: "unreachable", detail: null })
+      );
+  }, []);
+
+  useEffect(refresh, [refresh]);
+
+  const restart = async () => {
+    setRestarting(true);
+    try {
+      await oc.restartEngine();
+      // Give supervisord a moment to bring it back before asking, so the line
+      // doesn't read "not listening" for the restart it was just asked for.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      refresh();
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  const onOpenCode = prefs.chat_engine === "opencode";
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-fg">Chat engine</h3>
+          <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+            OpenCode runs the conversation inside your session: it summarizes
+            older context instead of forgetting it, remembers across chats, and
+            can use subagents, MCP servers and skills. The built-in engine is
+            the simpler loop Studio has always used.
+          </p>
+        </div>
+        <select
+          value={prefs.chat_engine}
+          disabled={update.isPending}
+          onChange={(e) => {
+            update.mutate(
+              { chat_engine: e.target.value as "builtin" | "opencode" },
+              {
+                // Announced only once the save has landed. Another document
+                // responds by refetching the preference, so announcing first
+                // raced the PUT: it could read the old value and then never
+                // hear again, leaving the notebook chat on the engine the user
+                // had just switched away from. This document doesn't wait —
+                // its cache is updated optimistically by the hook.
+                onSuccess: () => announceEngineChange(),
+              }
+            );
+          }}
+          className="mt-0.5 shrink-0 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:opacity-50"
+        >
+          <option value="builtin">Built-in</option>
+          <option value="opencode">OpenCode</option>
+        </select>
+      </div>
+
+      {onOpenCode && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-xs">
+          <span className="text-fgmuted">Engine:</span>
+          {status === null ? (
+            <span className="text-fgsubtle">checking…</span>
+          ) : status.running ? (
+            <span className="text-emerald-600 dark:text-emerald-400">
+              running{status.version ? ` (${status.version})` : ""}
+            </span>
+          ) : (
+            <span className="text-amber-600 dark:text-amber-400">
+              {status.detail || status.reason || "not running"}
+            </span>
+          )}
+          <button
+            onClick={restart}
+            disabled={restarting}
+            title="Restart the OpenCode server in this session"
+            className="ml-auto rounded-md border border-line px-2.5 py-1 font-medium text-fgmuted hover:bg-muted disabled:opacity-50"
+          >
+            {restarting ? "Restarting…" : "Restart"}
+          </button>
+        </div>
+      )}
+
+      {update.isError && (
+        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">
+          Could not save that preference. Try again.
+        </p>
+      )}
     </div>
   );
 }
@@ -1013,7 +1239,9 @@ function PegasusOptionsTab() {
         <code>--submit</code>/<code>--cleanup</code>, and generator arguments —
         are set on each workflow&apos;s <strong>Plan</strong> /{" "}
         <strong>Run</strong> form, so they can differ per workflow. This tab
-        holds the container registry used when building workflow images.
+        holds the settings that apply to every workflow: where planning runs,
+        the API keys your analyses need to download data, and the container
+        registry used when building workflow images.
       </p>
 
       {/* Execution backend — shown only when remote backends are configured */}
@@ -1022,11 +1250,322 @@ function PegasusOptionsTab() {
       {/* Simplified Run flow — the Phase 1 rollout flag (#241) */}
       <SimpleRunSection />
 
+      {/* Whether the app root shows the landing page or goes to Home (#370) */}
+      <WelcomePageSection />
+
+      {/* Where pegasus-plan runs — remote by default when the schedd is
+          elsewhere, overridable to test local planning */}
+      <PlanningLocationSection />
+
+      {/* API keys a workflow's generator needs (#364) */}
+      <WorkflowSecretsSection />
+
       {/* Container registry — persisted; drives the Build Image action */}
       <RegistrySection />
 
       {/* Where runs are looked for — extra scan roots / excludes (#306) */}
       <WorkflowDiscoverySection />
+    </div>
+  );
+}
+
+/**
+ * Where `pegasus-plan` runs.
+ *
+ * Planning happens on the submit host when the schedd is on another machine,
+ * because the planner writes its own absolute paths into the submit files and
+ * Pegasus executes those on the schedd host (#334). That is the right default
+ * and stays the default.
+ *
+ * The override exists because whether local planning works is not a question
+ * anyone can answer by reading: it depends on the two machines agreeing about
+ * Pegasus, which changed when the image moved to Debian trixie. Before this it
+ * meant an env var in the spawner profile and a pod restart, which is not
+ * something a user can do to their own session.
+ */
+function PlanningLocationSection() {
+  const [settings, setSettings] = useState<api.PlanningSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getPlanningSettings()
+      .then(setSettings)
+      .catch((e) => setError((e as Error).message || String(e)));
+  }, []);
+
+  const choose = async (mode: api.PlanMode) => {
+    if (saving || settings?.mode === mode) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setSettings(await api.updatePlanningSettings(mode));
+    } catch (e) {
+      setError((e as Error).message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const OPTIONS: { value: api.PlanMode; label: string; hint: string }[] = [
+    {
+      value: "auto",
+      label: "Automatic (recommended)",
+      hint:
+        "Plan on the submit host when it is a different machine, here when it " +
+        "is not. This is what Pegasus expects.",
+    },
+    {
+      value: "remote",
+      label: "Always on the submit host",
+      hint:
+        "Plan through HTCondor on the machine that runs your workflows, whatever " +
+        "detection says.",
+    },
+    {
+      value: "local",
+      label: "Always in this workspace",
+      hint:
+        "Plan here. Use this to check whether local planning works against your " +
+        "submit host — it only does when both have Pegasus in the same place.",
+    },
+  ];
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <h2 className="text-sm font-semibold text-fg">Where planning runs</h2>
+      <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+        Preparing a workflow to run (<code>pegasus-plan</code>) writes file paths
+        into the instructions your submit host executes, so it normally happens
+        on that host. Override it here to try planning in this workspace
+        instead. Nothing else about your workflows changes.
+      </p>
+
+      {error && (
+        <p className="mt-2 text-xs text-red-600 dark:text-rose-400">{error}</p>
+      )}
+
+      <div className="mt-3 space-y-2">
+        {OPTIONS.map((o) => {
+          const selected = settings?.mode === o.value;
+          return (
+            <label
+              key={o.value}
+              className={cn(
+                "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+                selected
+                  ? "border-pegasus-400 bg-pegasus-50 dark:bg-pegasus-400/10"
+                  : "border-line hover:bg-base",
+                (!settings || saving) && "cursor-wait opacity-70"
+              )}
+            >
+              <input
+                type="radio"
+                name="plan-mode"
+                className="mt-0.5"
+                value={o.value}
+                checked={selected}
+                disabled={!settings || saving}
+                onChange={() => choose(o.value)}
+              />
+              <span>
+                <span className="block text-sm font-medium text-fg">
+                  {o.label}
+                </span>
+                <span className="block text-xs text-fgmuted">{o.hint}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
+      {/* What the next run will actually do. With "Automatic" the answer is a
+          detection result, and without showing it the setting is a switch you
+          have to experiment with to understand. */}
+      {settings && (
+        <p className="mt-3 text-xs text-fgsubtle">
+          Your next run will plan{" "}
+          <strong className="text-fgmuted">
+            {settings.effective === "remote"
+              ? "on the submit host"
+              : "in this workspace"}
+          </strong>
+          {settings.source === "detected" &&
+            (settings.submit_host_is_remote
+              ? " — the submit host is a different machine."
+              : " — the submit host is this machine.")}
+          {settings.source === "setting" && " — because you chose it above."}
+          {settings.source === "env" &&
+            ` — set for this deployment (STUDIO_PLAN_ON_SUBMIT_HOST=${settings.env_default}).`}
+          {settings.source === "no-condor" &&
+            " — HTCondor isn't available here to send the work anywhere else."}
+          {settings.source === "fallback" &&
+            " — the submit host could not be checked."}
+        </p>
+      )}
+
+      {settings?.effective === "local" &&
+        settings.submit_host_is_remote === true && (
+          <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+            Your submit host is a different machine, so this only works if it
+            has Pegasus installed in the same place as this workspace. If they
+            differ, the run stops before doing any work and says so — it will
+            not fail halfway through.
+          </p>
+        )}
+    </div>
+  );
+}
+
+/**
+ * Credentials a workflow's generator reads from its environment (#364).
+ *
+ * A generator gets a key to its jobs by reading it here and baking it in with
+ * `add_env` — HTCondor gives jobs a clean environment, so nothing else reaches
+ * them. That environment belongs to the server inside the pod, which is why a
+ * workflow needing an API key could not run in Studio at all: the only place to
+ * set one was the spawner profile, followed by a pod restart.
+ *
+ * Values are write-only. Once saved, the name and the date are all anyone can
+ * read back — including this UI.
+ */
+function WorkflowSecretsSection() {
+  const [settings, setSettings] =
+    useState<api.WorkflowSecretsSettings | null>(null);
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getWorkflowSecrets()
+      .then(setSettings)
+      .catch((e) => setError((e as Error).message || String(e)));
+  }, []);
+
+  const save = async () => {
+    if (!name.trim() || !value || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setSettings(await api.setWorkflowSecret(name.trim(), value));
+      setSaved(name.trim().toUpperCase());
+      setName("");
+      setValue("");
+      setTimeout(() => setSaved(null), 2500);
+    } catch (e) {
+      setError((e as Error).message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (secretName: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setSettings(await api.deleteWorkflowSecret(secretName));
+    } catch (e) {
+      setError((e as Error).message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <h2 className="text-sm font-semibold text-fg">Workflow secrets</h2>
+      <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+        API keys and tokens your analyses need to download data — a Kaggle key,
+        a data portal token. Each one is set as an environment variable when
+        Studio prepares a run, which is how the value reaches the steps that
+        need it. Use the exact name the workflow expects, for example{" "}
+        <code>KAGGLE_KEY</code>.
+      </p>
+
+      {error && (
+        <p className="mt-2 text-xs text-red-600 dark:text-rose-400">{error}</p>
+      )}
+
+      {settings && settings.secrets.length > 0 && (
+        <ul className="mt-3 divide-y divide-line rounded-md border border-line">
+          {settings.secrets.map((s) => (
+            <li
+              key={s.name}
+              className="flex items-center justify-between gap-3 px-3 py-2"
+            >
+              <span className="min-w-0">
+                <code className="text-sm text-fg">{s.name}</code>
+                {/* No value, ever — saying so is clearer than an empty gap
+                    where a masked value would be. */}
+                <span className="ml-2 text-xs text-fgsubtle">
+                  set {new Date(s.updated_at).toLocaleDateString()} · value
+                  hidden
+                </span>
+              </span>
+              <button
+                onClick={() => remove(s.name)}
+                disabled={busy}
+                className="shrink-0 rounded border border-line px-2 py-1 text-xs text-fgmuted hover:border-red-400 hover:text-red-600 disabled:opacity-50 dark:hover:text-red-400"
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-fgmuted">Name</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="KAGGLE_KEY"
+            spellCheck={false}
+            className="w-48 rounded-md border border-line bg-surface px-2 py-1 font-mono text-sm text-fg"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-fgmuted">Value</span>
+          <input
+            type="password"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="paste the key"
+            spellCheck={false}
+            autoComplete="off"
+            className="w-64 rounded-md border border-line bg-surface px-2 py-1 text-sm text-fg"
+          />
+        </label>
+        <button
+          onClick={save}
+          disabled={busy || !name.trim() || !value}
+          className="rounded-md bg-pegasus-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-pegasus-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+        {saved && (
+          <span className="text-xs text-green-600 dark:text-emerald-400">
+            {saved} saved
+          </span>
+        )}
+      </div>
+
+      {/* secretbox is fail-open: with no master key configured the values are
+          stored in plaintext on the volume. The user is the one deciding what
+          to paste in, so they get told which it is. */}
+      {settings && !settings.encrypted_at_rest && (
+        <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+          These are stored unencrypted in this workspace, because no encryption
+          key is configured for this deployment. They are as private as your
+          home directory — fine for a personal data-portal token, worth asking
+          your administrator about for anything more valuable.
+        </p>
+      )}
     </div>
   );
 }
@@ -1192,10 +1731,56 @@ function SimpleRunSection() {
           checked={prefs.simple_run}
           disabled={update.isPending}
           onChange={(e) =>
-            update.mutate({ ...prefs, simple_run: e.target.checked })
+            update.mutate({ simple_run: e.target.checked })
           }
         />
         Use the simplified Run flow
+      </label>
+      {update.isError && (
+        <p className="mt-2 text-xs text-red-600 dark:text-rose-400">
+          Couldn&apos;t save: {(update.error as Error).message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Whether opening Studio shows the welcome page first.
+ *
+ * The welcome page introduces the product; someone who opens Studio every day
+ * does not need the introduction each time. The checkbox on the page itself
+ * sets this, and this section is where it gets turned back off — a preference
+ * that can only be set from the page it hides needs a second home.
+ */
+function WelcomePageSection() {
+  const { prefs } = useUIPreferences();
+  const update = useUpdateUIPreferences();
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <h2 className="text-sm font-semibold text-fg">Welcome page</h2>
+      <p className="mt-1 text-xs text-fgmuted">
+        Studio opens on a welcome page that introduces the product. Skip it to
+        land on Home directly. The page stays available at{" "}
+        <a
+          href={appRelativePath("/welcome")}
+          className="font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
+        >
+          Welcome
+        </a>
+        .
+      </p>
+      <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-fg">
+        <input
+          type="checkbox"
+          checked={prefs.skip_welcome}
+          disabled={update.isPending}
+          onChange={(e) =>
+            update.mutate({ skip_welcome: e.target.checked })
+          }
+        />
+        Skip the welcome page and open Home directly
       </label>
       {update.isError && (
         <p className="mt-2 text-xs text-red-600 dark:text-rose-400">

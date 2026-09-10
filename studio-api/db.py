@@ -177,6 +177,17 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value           TEXT NOT NULL,          -- JSON-encoded
     updated_at      TEXT NOT NULL
 );
+
+-- Credentials a workflow's generator needs (KAGGLE_KEY, an OpenAQ token, ...).
+-- Kept out of app_settings deliberately: values here are secretbox-encrypted
+-- and must never be returned over the API, and app_settings is read and echoed
+-- freely. Its own table makes "never echo this" a property of the storage
+-- rather than a rule every reader has to remember.
+CREATE TABLE IF NOT EXISTS workflow_secrets (
+    name            TEXT PRIMARY KEY,       -- environment variable name
+    value           TEXT NOT NULL,          -- secretbox-encrypted (S7)
+    updated_at      TEXT NOT NULL
+);
 """
 
 
@@ -419,11 +430,16 @@ class Database:
         # Also sync to llm_config table for backward compatibility
         config = await self.get_provider_config(provider_id)
         if config:
+            # Carry the existing extra_config across. Omitting it wrote {},
+            # so activating any provider silently discarded settings such as
+            # wire_api and max_tokens — and activation is routine, not rare.
+            existing = await self.get_llm_config()
             await self.set_llm_config(
                 provider=config["provider_id"],
                 model=config["default_model"] or None,
                 api_key=config["api_key"] or None,
                 base_url=config["base_url"] or None,
+                extra_config=(existing or {}).get("extra_config") or {},
             )
 
     async def delete_provider_config(self, provider_id: str) -> None:
@@ -836,6 +852,45 @@ class Database:
             (key, json.dumps(value), _now()),
         )
         await self.db.commit()
+
+    # --- Workflow secrets (credentials for generators; encrypted at rest) ---
+
+    async def list_workflow_secrets(self) -> list[dict[str, Any]]:
+        """Names and timestamps only — never the values.
+
+        The read path for the UI. `get_workflow_secret_env` is the only method
+        that decrypts, and only the run path calls it.
+        """
+        async with self.db.execute(
+            "SELECT name, updated_at FROM workflow_secrets ORDER BY name"
+        ) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def set_workflow_secret(self, name: str, value: str) -> None:
+        await self.db.execute(
+            """INSERT INTO workflow_secrets (name, value, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(name) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at""",
+            (name, secretbox.encrypt(value), _now()),
+        )
+        await self.db.commit()
+
+    async def delete_workflow_secret(self, name: str) -> bool:
+        cursor = await self.db.execute(
+            "DELETE FROM workflow_secrets WHERE name = ?", (name,)
+        )
+        await self.db.commit()
+        return bool(cursor.rowcount)
+
+    async def get_workflow_secret_env(self) -> dict[str, str]:
+        """Decrypted name -> value, for injecting into a generator's env."""
+        async with self.db.execute(
+            "SELECT name, value FROM workflow_secrets"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return {r["name"]: (secretbox.decrypt(r["value"]) or "") for r in rows}
 
     async def has_prior_activity(self) -> bool:
         """True if this workspace was already in use before now.

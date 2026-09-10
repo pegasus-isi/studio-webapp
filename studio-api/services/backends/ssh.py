@@ -296,10 +296,11 @@ class SshBackend(ComputeBackend):
         *,
         cwd: str | None = None,
         timeout: float,
+        env: dict[str, str] | None = None,
     ) -> ExecResult:
         proc = await asyncio.create_subprocess_exec(
             *self._ssh_argv(),
-            self._remote_command(argv, cwd),
+            self._remote_command(argv, cwd, env),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

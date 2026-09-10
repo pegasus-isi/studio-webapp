@@ -6,6 +6,7 @@ import structlog
 from fastapi import APIRouter
 
 from models import DetailedHealthResponse, HealthResponse
+from services import submit_host
 
 log = structlog.get_logger()
 
@@ -47,6 +48,18 @@ async def detailed_health() -> DetailedHealthResponse:
         pegasus_version=pegasus_version,
         condor_version=condor_version,
     )
+
+
+@router.get("/submit-host")
+async def submit_host_compat() -> dict[str, object]:
+    """Whether this workspace's Pegasus matches the submit host's.
+
+    Exposed separately from /detailed because it is the answer to "why did
+    every workflow fail on its first step", and because it is the one health
+    fact that depends on another machine. Cheap: reads schedd ClassAds, never
+    submits a job. See services/submit_host.py for why this exists.
+    """
+    return (await submit_host.check()).as_dict()
 
 
 async def _run_version_cmd(cmd: str) -> str | None:
