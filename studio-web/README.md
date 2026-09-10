@@ -19,6 +19,17 @@ npm run dev
 Open `http://localhost:3000`. `/api/*` and `/ws/*` are proxied to `$API_URL`
 (default `http://localhost:8080`) via `next.config` rewrites.
 
+**Start the backend with the dev origin allowlisted**, or every write 403s:
+
+```bash
+STUDIO_ALLOWED_ORIGINS=http://localhost:3000 uvicorn main:app --reload --port 8080
+```
+
+The rewrite forwards the browser's `Origin: http://localhost:3000` while the
+request arrives with `Host: localhost:8080`, which is exactly the cross-origin
+write shape the API refuses (PAS-SEC-01, `studio-api/security.py`). In the
+container both sides are one origin behind nginx, so nothing is needed there.
+
 ### Type-check gate (run before every PR)
 
 CI runs no frontend tests or lint, so `tsc` is the gate:

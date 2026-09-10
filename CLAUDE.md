@@ -93,6 +93,14 @@ writable by the injected uid, so **never bake a rendered config into the image**
   TanStack Query, xterm.js, `@xyflow/react` DAG viewer. Routes under `app/(studio)/`;
   `app/chat/page.tsx` is a standalone chrome-less page iframed into JupyterLab by the
   `jupyter-pegasusai-chat/` extension (postMessage handshake, origin-checked).
+- **The API refuses cross-origin writes** (`security.py`,
+  `CrossOriginWriteMiddleware`). Studio has no auth of its own — the gateway's
+  cookie rides along on any request a page makes — and CORS governs only whether
+  a page may *read* a reply, so unsafe methods get their own `Origin` /
+  `Sec-Fetch-Site` check. Requests with no `Origin` are allowed on purpose:
+  curl, the test client and the local MCP client cannot be driven cross-site by
+  a victim's browser. Running the frontend separately (`npm run dev`) therefore
+  needs `STUDIO_ALLOWED_ORIGINS=http://localhost:3000` on the backend.
 - **Prefix handling is a recurring subtlety.** Under KubeSpawner the app lives at
   `/user/<name>/…`. `middleware.ts` strips the prefix, `app/layout.tsx` sets `<base
   href>` from `x-forwarded-prefix`, `lib/urls.ts` builds every URL relative to
