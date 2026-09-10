@@ -100,7 +100,10 @@ server {
 
         proxy_set_header Accept-Encoding "";
         sub_filter_once off;
-        sub_filter_types text/html;
+        # No sub_filter_types: the directive *adds* to nginx's default, which is
+        # already text/html, so naming it again is a duplicate — nginx warns on
+        # every config test, and a build check that always warns is one nobody
+        # reads. HTML is the only type these rewrites apply to.
         sub_filter 'href="/_next/' 'href="$studio_prefix/_next/';
         sub_filter 'src="/_next/' 'src="$studio_prefix/_next/';
         sub_filter 'href="./_next/' 'href="$studio_prefix/_next/';

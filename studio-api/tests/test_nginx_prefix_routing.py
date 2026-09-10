@@ -40,7 +40,14 @@ def _blocks(path: str | None = None) -> list[tuple[str, str]]:
             elif text[i] == "}":
                 depth -= 1
             i += 1
-        out.append((header, text[m.end():i]))
+        body = text[m.end():i]
+        # Directives only. These guards look for the *presence of a directive*
+        # by substring, so a comment mentioning one by name would fail them —
+        # which is a test that dictates prose rather than configuration.
+        body = "\n".join(
+            ln for ln in body.splitlines() if not ln.lstrip().startswith("#")
+        )
+        out.append((header, body))
     return out
 
 
