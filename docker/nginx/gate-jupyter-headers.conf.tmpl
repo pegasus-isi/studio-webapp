@@ -1,0 +1,10 @@
+# Included by every location that proxies to JupyterLab. Rendered comment-only
+# when STUDIO_AUTH_TOKEN is unset — the container path keeps Jupyter's empty
+# token, which is safe only because nothing else shares its network namespace.
+#
+# On a gated session the entrypoint starts JupyterLab with a real token: an
+# empty token means any local user reaching the Jupyter port gets terminals as
+# the session owner. Injecting it here keeps the browser flow unchanged — the
+# cookie gate has already established that this request is the session
+# owner's, so asking them for a token as well would only be theatre.
+proxy_set_header Authorization "token @STUDIO_JUPYTER_TOKEN@";

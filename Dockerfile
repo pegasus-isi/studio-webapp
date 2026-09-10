@@ -520,6 +520,19 @@ RUN STUDIO_RUNTIME_DIR=/tmp/nginx-validate /usr/local/bin/entrypoint.sh --render
     && nginx -t -c /tmp/nginx-validate/nginx.conf \
     && rm -rf /tmp/nginx-validate
 
+# And again with the session token gate on. The gate fragments render to bare
+# comments by default, so the pass above never parses a single one of their
+# directives — a broken map, `if` or location in them would first surface on a
+# multi-user host, which is the one deployment where a proxy that fails to
+# start is least acceptable. The prefix is set too, since it changes the
+# rendered regexes.
+RUN STUDIO_RUNTIME_DIR=/tmp/nginx-validate-gate \
+    STUDIO_AUTH_TOKEN=buildtimevalidationtoken \
+    STUDIO_URL_PREFIX=/node/example/12345 \
+    /usr/local/bin/entrypoint.sh --render-only \
+    && nginx -t -c /tmp/nginx-validate-gate/nginx.conf \
+    && rm -rf /tmp/nginx-validate-gate
+
 # ---- Runtime workspace configuration ----
 # STUDIO_WORKSPACE_DIR: where the app stores the SQLite DB, tool configs, and
 # workflow projects.  Defaults to $HOME/work (KubeSpawner sets $HOME).

@@ -343,6 +343,7 @@ app = FastAPI(
 # API in their browser. Extra origins (e.g. a `next dev` server) via
 # STUDIO_ALLOWED_ORIGINS.
 from security import CrossOriginWriteMiddleware  # noqa: E402
+from security import InternalSecretMiddleware  # noqa: E402
 from security import allowed_origins as _allowed_origins  # noqa: E402
 
 app.add_middleware(
@@ -359,6 +360,14 @@ app.add_middleware(
 # request executes (PAS-SEC-01). Preflights are OPTIONS, which this passes
 # straight through to CORSMiddleware.
 app.add_middleware(CrossOriginWriteMiddleware)
+
+# Outermost of the three (#218). A request that never came through the session
+# proxy must be refused before anything else runs — including a websocket
+# handshake, which is why this is raw ASGI and not @app.middleware("http"): the
+# terminal PTYs hand out an interactive shell as the session owner, and they
+# are what a local attacker on a shared host would reach for first. No-op when
+# STUDIO_INTERNAL_SECRET is unset, which is the K8s and plain-container path.
+app.add_middleware(InternalSecretMiddleware)
 
 # Register routers
 app.include_router(health.router)

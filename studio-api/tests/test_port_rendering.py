@@ -55,12 +55,23 @@ def _render(tmp_path, template: str, **env: str) -> str:
          "_", src, dst],
         capture_output=True,
         text=True,
-        env={**os.environ, **env},
+        env={**os.environ, **GATE_OFF, **env},
     )
     assert proc.returncode == 0, proc.stderr
     with open(dst, encoding="utf-8") as fh:
         return fh.read()
 
+
+# The variables render_template substitutes. The gate ones are empty here —
+# these tests are about ports, and the entrypoint always defines all of them
+# before calling the function, so extracting it alone has to supply them or
+# `set -u` aborts. The gate's own rendering is covered in test_session_gate.py.
+GATE_OFF = {
+    "STUDIO_AUTH_TOKEN": "",
+    "STUDIO_URL_PREFIX": "",
+    "STUDIO_JUPYTER_TOKEN": "",
+    "STUDIO_INTERNAL_SECRET": "",
+}
 
 # Deliberately not superstrings of the defaults: "18888" contains "8888", so a
 # template that never got substituted would still satisfy the stale-port check.
@@ -156,7 +167,7 @@ def test_renderer_refuses_to_emit_an_unsubstituted_config(tmp_path):
          "_", str(bogus), str(tmp_path / "out.conf")],
         capture_output=True,
         text=True,
-        env={**os.environ, **ALL_PORTS},
+        env={**os.environ, **GATE_OFF, **ALL_PORTS},
     )
     assert proc.returncode != 0
     assert "unsubstituted placeholder" in proc.stderr

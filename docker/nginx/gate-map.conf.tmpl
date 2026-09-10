@@ -1,0 +1,11 @@
+# Session token gate, http-level part. Rendered by docker/entrypoint.sh into
+# $STUDIO_RUNTIME_DIR; rendered comment-only when STUDIO_AUTH_TOKEN is unset,
+# which is the K8s and plain-container path.
+#
+# The browser proves it owns this session by carrying the studio_session
+# cookie, set by the /auth redirect (see gate-server.conf.tmpl). A map rather
+# than an `if` so the check is one hash lookup, evaluated lazily per request.
+map $cookie_studio_session $studio_auth_ok {
+    default 0;
+    "@STUDIO_AUTH_TOKEN@" 1;
+}

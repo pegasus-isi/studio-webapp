@@ -101,6 +101,17 @@ writable by the injected uid, so **never bake a rendered config into the image**
   curl, the test client and the local MCP client cannot be driven cross-site by
   a victim's browser. Running the frontend separately (`npm run dev`) therefore
   needs `STUDIO_ALLOWED_ORIGINS=http://localhost:3000` on the backend.
+- **The session token gate is off unless `STUDIO_AUTH_TOKEN` is set**, and when
+  it is, four things turn on together (#218): the proxy's cookie gate, loopback
+  binds, a real JupyterLab token, and the `X-Studio-Internal` secret
+  `security.InternalSecretMiddleware` demands. Do not add one without the
+  others — on a shared host a loopback bind is not a boundary between local
+  users, so the cookie gate alone protects nothing. Every location proxying to
+  studio-api must `include` the stamp fragment; a location that forgets it is a
+  hole straight past the middleware, which `tests/test_session_gate.py`
+  enforces. The gate fragments render to bare comments when the gate is off, so
+  `nginx -t` in the image build runs **twice** — once each way — or their
+  directives are never parsed at all.
 - **Prefix handling is a recurring subtlety.** Under KubeSpawner the app lives at
   `/user/<name>/…`. `middleware.ts` strips the prefix, `app/layout.tsx` sets `<base
   href>` from `x-forwarded-prefix`, `lib/urls.ts` builds every URL relative to

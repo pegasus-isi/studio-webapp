@@ -81,6 +81,65 @@ STUDIO_OPENCODE_PORT="${STUDIO_OPENCODE_PORT:-4096}"
 # a probe that does not go through nginx — sets 0.0.0.0 explicitly.
 STUDIO_BIND_ADDR="${STUDIO_BIND_ADDR:-127.0.0.1}"
 
+# ---- Session token gate (#218) ----
+#
+# Unset (the K8s and plain-container default): no gate at all, and every
+# fragment below renders to a comment. The pod owns its network namespace, so
+# the front port is the only way in and the gateway already authenticated it.
+#
+# Set (an Open OnDemand session, whose before.sh.erb generates it the same way
+# it generates any batch-connect password): Studio is running on a machine
+# other people are logged into, and it has no auth of its own. Four things turn
+# on together, because any one alone is a gate with a door beside it:
+#
+#   1. the proxy 403s everything without the session cookie, and only
+#      GET /auth?token=... sets it;
+#   2. the internal services bind loopback (already the default);
+#   3. JupyterLab gets a real token — an empty one means any local user
+#      reaching its port gets terminals as this user — injected by the proxy so
+#      the browser flow is unchanged;
+#   4. studio-api requires the proxy-stamped X-Studio-Internal secret, because
+#      loopback is not a boundary between local users.
+STUDIO_AUTH_TOKEN="${STUDIO_AUTH_TOKEN:-}"
+# Only used by the gate's /auth location today. Full prefix rendering is a
+# separate piece of work; empty here means /auth sits at the root, which is
+# what the container and OOD's own path-stripping proxy both give us.
+STUDIO_URL_PREFIX="${STUDIO_URL_PREFIX:-}"
+STUDIO_URL_PREFIX="${STUDIO_URL_PREFIX%/}"
+if [ -n "${STUDIO_AUTH_TOKEN}" ]; then
+    # The token lands in a sed replacement, an nginx regex, an nginx string
+    # literal and a cookie value. Constrain the charset so it cannot break out
+    # of any of them — a token containing a quote would produce a config that
+    # either fails to parse or, worse, parses into something else.
+    case "${STUDIO_AUTH_TOKEN}" in
+        *[!A-Za-z0-9_-]*)
+            echo "[studio] FATAL: STUDIO_AUTH_TOKEN may only contain" \
+                 "[A-Za-z0-9_-]" >&2
+            exit 1
+            ;;
+    esac
+    if [ -n "${STUDIO_URL_PREFIX}" ]; then
+        case "${STUDIO_URL_PREFIX}" in
+            /*) ;;
+            *)
+                echo "[studio] FATAL: STUDIO_URL_PREFIX must start with '/'" \
+                     "(got '${STUDIO_URL_PREFIX}')" >&2
+                exit 1
+                ;;
+        esac
+    fi
+    STUDIO_JUPYTER_TOKEN="${STUDIO_JUPYTER_TOKEN:-$("${PYTHON}" -c 'import secrets; print(secrets.token_urlsafe(32))')}"
+    STUDIO_INTERNAL_SECRET="${STUDIO_INTERNAL_SECRET:-$("${PYTHON}" -c 'import secrets; print(secrets.token_urlsafe(32))')}"
+    echo "[studio] Session token gate ENABLED"
+else
+    STUDIO_JUPYTER_TOKEN="${STUDIO_JUPYTER_TOKEN:-}"
+    STUDIO_INTERNAL_SECRET="${STUDIO_INTERNAL_SECRET:-}"
+fi
+# jupyter.sh reads the token; security.InternalSecretMiddleware reads the
+# secret. Both are supervisord children, so the environment is the channel.
+export STUDIO_AUTH_TOKEN STUDIO_URL_PREFIX STUDIO_JUPYTER_TOKEN \
+       STUDIO_INTERNAL_SECRET
+
 # Read by supervisord's %(ENV_...)s expansion, by jupyter.sh and the Jupyter
 # server config, by routers/jupyter.py (status), knowledge/opencode.py (the MCP
 # URL it writes into opencode.json) and services/opencode_server.py.
@@ -114,7 +173,23 @@ mkdir -p "${STUDIO_RUNTIME_DIR}/nginx-client-body" \
 # started with `-c` against the rendered copy (see supervisord.conf).
 render_template() {
     src="$1"; dst="$2"
+    # Gate fragments carry directives only when the gate is on. The includes
+    # that load them are unconditional — an include of a missing file is a
+    # startup failure — so the file must always exist, empty of effect.
+    case "$(basename "${src}")" in
+        gate-*.conf.tmpl)
+            if [ -z "${STUDIO_AUTH_TOKEN}" ]; then
+                printf '# STUDIO_AUTH_TOKEN unset — session token gate off.\n' \
+                    > "${dst}"
+                return 0
+            fi
+            ;;
+    esac
     sed -e "s|@STUDIO_PORT@|${STUDIO_PORT}|g" \
+        -e "s|@STUDIO_AUTH_TOKEN@|${STUDIO_AUTH_TOKEN}|g" \
+        -e "s|@STUDIO_URL_PREFIX@|${STUDIO_URL_PREFIX}|g" \
+        -e "s|@STUDIO_JUPYTER_TOKEN@|${STUDIO_JUPYTER_TOKEN}|g" \
+        -e "s|@STUDIO_INTERNAL_SECRET@|${STUDIO_INTERNAL_SECRET}|g" \
         -e "s|@STUDIO_API_PORT@|${STUDIO_API_PORT}|g" \
         -e "s|@STUDIO_WEB_PORT@|${STUDIO_WEB_PORT}|g" \
         -e "s|@STUDIO_JUPYTER_PORT@|${STUDIO_JUPYTER_PORT}|g" \
@@ -134,6 +209,14 @@ render_template /opt/pegasus-ai/templates/nginx.conf.tmpl \
                 "${STUDIO_RUNTIME_DIR}/nginx.conf"
 render_template /opt/pegasus-ai/templates/studio-proxy.conf.tmpl \
                 "${STUDIO_RUNTIME_DIR}/studio-proxy.conf"
+for gate in gate-map gate-server gate-api-headers gate-jupyter-headers; do
+    render_template "/opt/pegasus-ai/templates/${gate}.conf.tmpl" \
+                    "${STUDIO_RUNTIME_DIR}/${gate}.conf"
+done
+# The rendered fragments hold this session's token, Jupyter token and internal
+# secret in cleartext. The runtime dir is already 0700; be explicit about the
+# files too, since /tmp on a shared host is world-readable.
+chmod 600 "${STUDIO_RUNTIME_DIR}"/gate-*.conf 2>/dev/null || true
 echo "[studio] Ports: front=${STUDIO_PORT} api=${STUDIO_API_PORT}" \
      "web=${STUDIO_WEB_PORT} jupyter=${STUDIO_JUPYTER_PORT}" \
      "opencode=${STUDIO_OPENCODE_PORT} bind=${STUDIO_BIND_ADDR}"

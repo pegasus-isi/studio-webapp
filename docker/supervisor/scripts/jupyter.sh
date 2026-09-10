@@ -21,10 +21,20 @@ if [ -n "${JUPYTERHUB_SERVICE_PREFIX:-}" ]; then
     BASE_URL="${JUPYTERHUB_SERVICE_PREFIX%/}/jupyter/"
 fi
 
+# --ServerApp.token is empty unless the session token gate is on. An empty
+# token is safe only while nothing else shares this network namespace; on a
+# shared host it means any local user reaching this port gets terminals as us.
+# With the gate on, the entrypoint mints a real token and the proxy injects it
+# as an Authorization header, so the browser flow is unchanged.
+#
+# Keep every argument below on its own `\`-continued line with NO comments
+# between them: a comment line inside a continuation ends the command, and the
+# arguments after it become commands of their own. That fails silently — the
+# server starts, just without the flags you thought you passed.
 exec jupyter lab \
     --no-browser \
     --ip=127.0.0.1 \
     --port="${STUDIO_JUPYTER_PORT:-8889}" \
     --ServerApp.base_url="${BASE_URL}" \
     --ServerApp.root_dir="${ROOT}" \
-    --ServerApp.token=""
+    --ServerApp.token="${STUDIO_JUPYTER_TOKEN:-}"

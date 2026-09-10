@@ -171,6 +171,31 @@ answers on all interfaces and the front port stays reachable. Set it to
 holds the rendered nginx configs, pid files, the supervisor socket and nginx's
 temp dirs; the uid suffix is what keeps two sessions on one host apart.
 
+### Session token gate (shared hosts)
+
+Off by default, and off is exactly today's behaviour. Set `STUDIO_AUTH_TOKEN`
+(Open OnDemand's `before.sh.erb` generates one the way it generates any
+batch-connect password) and four things switch on together, because any one of
+them alone is a gate with a door beside it:
+
+1. the proxy 403s every request without the `studio_session` cookie, and only
+   `GET /auth?token=…` sets it — that is the URL the Connect button points at;
+2. the internal services bind loopback (already the default);
+3. JupyterLab gets a real token, injected by the proxy as an `Authorization`
+   header so the browser flow is unchanged — an empty token means any local
+   user reaching its port gets terminals as the session owner;
+4. studio-api requires a proxy-stamped `X-Studio-Internal` secret
+   (`security.InternalSecretMiddleware`), so hitting uvicorn directly 403s.
+
+Point 4 is the one that is easy to skip and cannot be. On a shared host a
+loopback bind is **not** a boundary between local users — it separates hosts,
+not accounts — so the cookie gate on the front port protects nothing on its own.
+
+`STUDIO_URL_PREFIX` (optional, e.g. `/node/<host>/<port>`) is currently used
+only to place the gate's `/auth` location; full prefix rendering is separate
+work. The rendered gate fragments hold this session's secrets and are written
+0600 inside the 0700 runtime dir.
+
 Because `/etc` is not writable by the injected uid, the nginx configs are
 **templates** (`docker/nginx/*.tmpl`) rendered per session by the entrypoint;
 nginx is started with `-c` against the result. `entrypoint.sh --render-only`
