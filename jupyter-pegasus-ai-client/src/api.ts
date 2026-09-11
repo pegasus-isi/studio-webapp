@@ -29,6 +29,7 @@ export interface IFeedbackPayload {
   problem_label?: string | null;
   latency_ms?: number | null;
   ts_ms?: number | null;
+  feedback_source?: 'cell_button' | 'chat' | null;
 }
 
 /**
@@ -82,13 +83,20 @@ export async function sendFeedbackRequest(
   serverUrl: string,
   payload: IFeedbackPayload
 ): Promise<void> {
+  // This client only ever emits cell-button feedback. Default it here so the
+  // widget (vendored, untouched) needs no change; an explicit value from a
+  // future caller is preserved (sender declares its source).
+  const body = {
+    ...payload,
+    feedback_source: payload.feedback_source ?? 'cell_button',
+  };
   const response = await fetch(`${serverUrl}/feedback`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*'
     },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(body)
   });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);

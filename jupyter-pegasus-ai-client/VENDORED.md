@@ -22,6 +22,9 @@ path, so both coexist.
     message to the user (object-shaped `detail` handled) instead of a blanket
     "PegasusAI Bot is currently offline" for every non-2xx; the offline
     message is reserved for genuine connection failures.
+  - `src/api.ts` — default `feedback_source: 'cell_button'` in
+    `sendFeedbackRequest` so Likert votes are attributed without touching
+    the vendored `feedback_widget.ts`.
 
 ## Updating
 
