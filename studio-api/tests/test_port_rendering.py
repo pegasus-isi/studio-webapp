@@ -353,3 +353,40 @@ def test_render_only_leaves_home_alone(tmp_path):
     proc, home, _ = _run_entrypoint(tmp_path)
     assert proc.returncode == 0, proc.stderr
     assert not home.exists(), sorted(p.name for p in home.iterdir())
+
+
+# --- The image has to contain what the entrypoint renders ---------------------
+
+
+def test_every_template_is_copied_into_the_image():
+    """A template in docker/nginx/ that the Dockerfile does not copy is a
+    container that cannot start.
+
+    This is the gap that shipped: the four gate fragments were added here and
+    the Dockerfile kept naming the original two, so the image had neither. The
+    render tests all point `_TEMPLATES` at *this repository*, not at
+    /opt/pegasus-ai/templates, so every one of them passed. The only thing that
+    noticed was `nginx -t` at build time, and only in the gate-on pass — with
+    the gate off, `render_template` short-circuits before it ever reads the
+    source file, so the missing templates were invisible there too.
+    """
+    import fnmatch
+
+    with open(os.path.join(_REPO, "Dockerfile"), encoding="utf-8") as fh:
+        dockerfile = fh.read()
+
+    patterns = re.findall(
+        r"^COPY\s+(docker/nginx/\S+)\s+/opt/pegasus-ai/templates",
+        dockerfile,
+        re.MULTILINE,
+    )
+    assert patterns, "Dockerfile copies no templates at all"
+
+    present = {n for n in os.listdir(_TEMPLATES) if n.endswith(".tmpl")}
+    copied = {
+        name
+        for name in present
+        for pat in patterns
+        if fnmatch.fnmatch(f"docker/nginx/{name}", pat)
+    }
+    assert present == copied, f"not copied into the image: {sorted(present - copied)}"

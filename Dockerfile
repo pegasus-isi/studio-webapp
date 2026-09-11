@@ -440,8 +440,12 @@ COPY --from=frontend-build /build/public /opt/studio-web/public
 # rendered into /etc, because the container runs as whatever uid KubeSpawner or
 # an Open OnDemand job injects and /etc is not writable by it.
 RUN mkdir -p /opt/pegasus-ai/templates
-COPY docker/nginx/nginx.conf.tmpl /opt/pegasus-ai/templates/nginx.conf.tmpl
-COPY docker/nginx/studio-proxy.conf.tmpl /opt/pegasus-ai/templates/studio-proxy.conf.tmpl
+# The whole directory, deliberately, not a list of names. Naming them
+# individually is how the four gate fragments were added to docker/nginx/ and
+# silently left out of the image: the tests render from the repo directory, so
+# they passed, and the only thing that noticed was `nginx -t` at build time.
+# A glob cannot forget the next one.
+COPY docker/nginx/*.conf.tmpl /opt/pegasus-ai/templates/
 # The distro ships a default site listening on :80. Nothing includes it now
 # that nginx runs from the rendered config, but leaving it in the image invites
 # someone to start nginx without `-c` and get a server that answers on the
