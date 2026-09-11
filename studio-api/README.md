@@ -54,7 +54,10 @@ python init_db.py          # creates ~/.studio/studio.db
 ### 4. Run the dev server
 
 ```bash
-uvicorn main:app --reload --port 8080
+# STUDIO_ALLOWED_ORIGINS is only needed when the frontend runs separately
+# (npm run dev on :3000) — the API refuses cross-origin writes, and the dev
+# proxy makes them look exactly like one.
+STUDIO_ALLOWED_ORIGINS=http://localhost:3000 uvicorn main:app --reload --port 8080
 ```
 
 Swagger UI at `http://localhost:8080/docs`.
@@ -131,7 +134,7 @@ stop it.
 | `KNOWLEDGE_MARKETPLACE` | (unset) | pin the marketplace checkout. Unset prefers the user's `~/.local/share/pegasus-ai/marketplace`, then the image-baked `/opt/pegasus-ai/marketplace` |
 | `STUDIO_KNOWLEDGE_GIT_TIMEOUT` | `20` | Seconds before a knowledge-base `git` call (status / fast-forward) is abandoned |
 | `KNOWLEDGE_OVERLAY` | `/opt/pegasus-ai/overlay` | Studio-specific context composed on top of the portable Pegasus guide |
-| `STUDIO_ALLOWED_ORIGINS` | (empty) | extra CORS origins (same-origin always allowed) |
+| `STUDIO_ALLOWED_ORIGINS` | (empty) | extra origins allowed to read responses **and to make writes** (same-origin always allowed) |
 | `STUDIO_TRUST_AUTH_HEADER` | `0` | trust `X-Auth-User` for display identity (opt-in) |
 | `STUDIO_LLM_GATEWAY_URL` | internal | base URL for the zero-config `gateway` provider |
 | `STUDIO_SECRET_KEY` / `STUDIO_SECRET_KEY_FILE` | (unset) | master secret used to encrypt stored API keys / registry password at rest (S7). Unset → stored plaintext with a warning. Must come from a sealed secret, **not** the PVC. |

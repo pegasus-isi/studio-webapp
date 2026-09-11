@@ -342,6 +342,7 @@ app = FastAPI(
 # so reflecting an arbitrary Origin would let any site the user visits drive this
 # API in their browser. Extra origins (e.g. a `next dev` server) via
 # STUDIO_ALLOWED_ORIGINS.
+from security import CrossOriginWriteMiddleware  # noqa: E402
 from security import allowed_origins as _allowed_origins  # noqa: E402
 
 app.add_middleware(
@@ -351,6 +352,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Added AFTER CORS so it wraps it (Starlette middleware is outermost-last): a
+# cross-site write must be refused before a handler runs, and CORS cannot do
+# that job — it governs whether a page may *read* a reply, not whether the
+# request executes (PAS-SEC-01). Preflights are OPTIONS, which this passes
+# straight through to CORSMiddleware.
+app.add_middleware(CrossOriginWriteMiddleware)
 
 # Register routers
 app.include_router(health.router)
