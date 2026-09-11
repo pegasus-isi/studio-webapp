@@ -33,7 +33,7 @@
     "@jupyterlab/coreutils": "^6.0.0"
   },
   "devDependencies": {
-    "@jupyterlab/builder": "^4.0.0",
+    "@jupyter/builder": "^1.2.0",
     "rimraf": "^5.0.0",
     "typescript": "~5.3.0"
   },
