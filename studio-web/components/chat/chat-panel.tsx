@@ -459,15 +459,20 @@ function ApprovalCard({
 
 function FeedbackButtons({ msg }: { msg: ChatMsg }) {
   const setMessageFeedback = useChatStore((s) => s.setMessageFeedback);
+  // Compare before the guard: the early return below narrows msg.feedback to
+  // 0 | undefined, which would make === 1 / === -1 a type error.
+  const isUseful = msg.feedback === 1;
+  const isNotUseful = msg.feedback === -1;
   // Feedback needs the persisted DB id; a still-streaming reply doesn't have
-  // one yet, so hold the controls until it arrives.
-  if (msg.serverId == null) return null;
+  // one yet, so hold the controls until it arrives. Once rated, hide forever
+  // (one-shot votes, incl. hydrated) — no undo, no re-vote.
+  if (msg.serverId == null || msg.feedback) return null;
 
   const rate = (value: 1 | -1) => {
-    const next = msg.feedback === value ? 0 : value;
-    setMessageFeedback(msg.id, next); // optimistic
-    api.setChatFeedback(msg.serverId as number, next).catch(() => {
-      setMessageFeedback(msg.id, msg.feedback ?? 0); // revert on failure
+    if (msg.feedback) return; // one-shot: no undo, no re-vote
+    setMessageFeedback(msg.id, value); // optimistic
+    api.setChatFeedback(msg.serverId as number, value).catch(() => {
+      setMessageFeedback(msg.id, 0); // revert + buttons reappear on failure
     });
   };
 
@@ -483,8 +488,8 @@ function FeedbackButtons({ msg }: { msg: ChatMsg }) {
         onClick={() => rate(1)}
         title="Useful"
         aria-label="Mark reply useful"
-        aria-pressed={msg.feedback === 1}
-        className={btn(msg.feedback === 1)}
+        aria-pressed={isUseful}
+        className={btn(isUseful)}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
@@ -494,8 +499,8 @@ function FeedbackButtons({ msg }: { msg: ChatMsg }) {
         onClick={() => rate(-1)}
         title="Not useful"
         aria-label="Mark reply not useful"
-        aria-pressed={msg.feedback === -1}
-        className={btn(msg.feedback === -1)}
+        aria-pressed={isNotUseful}
+        className={btn(isNotUseful)}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" />

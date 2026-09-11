@@ -136,6 +136,7 @@ CREATE TABLE IF NOT EXISTS provider_configs (
 CREATE TABLE IF NOT EXISTS chat_messages (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id TEXT,
+    request_id      TEXT,
     role            TEXT NOT NULL,
     content         TEXT NOT NULL,
     agent_id        TEXT,
@@ -601,14 +602,16 @@ class Database:
         agent_id: str | None = None,
         tool_calls: Any | None = None,
         conversation_id: str | None = None,
+        request_id: str | None = None,
     ) -> int:
         now = _now()
         async with self.db.execute(
             """INSERT INTO chat_messages
-                   (conversation_id, role, content, agent_id, tool_calls, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+                   (conversation_id, request_id, role, content, agent_id, tool_calls, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 conversation_id,
+                request_id,
                 role,
                 content,
                 agent_id,
@@ -659,6 +662,15 @@ class Database:
             deleted = cursor.rowcount or 0
         await self.db.commit()
         return deleted
+
+    async def get_chat_message(self, message_id: int) -> dict[str, Any] | None:
+        """Single row by id, with request_id/conversation_id/feedback for the feedback gate."""
+        async with self.db.execute(
+            "SELECT id, conversation_id, role, agent_id, feedback, request_id FROM chat_messages WHERE id = ?",
+            (message_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
     async def set_chat_feedback(self, message_id: int, value: int | None) -> bool:
         """Rate an assistant reply: 1 = useful, -1 = not useful, None = clear.

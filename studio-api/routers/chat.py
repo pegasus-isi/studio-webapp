@@ -629,6 +629,25 @@ async def _raise_for_stream_status(resp: httpx.Response) -> None:
         resp.raise_for_status()
 
 
+async def _forward_chat_feedback(request_id: str, value: int, agent_id: str | None) -> None:
+    """Best-effort copy of a chat vote into the bot's feedback table."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                f"{PEGASUS_BOT_SERVER_URL.rstrip('/')}/feedback",
+                json={
+                    "request_id": request_id,
+                    "cell_id": "chat",
+                    "value": value,
+                    "label": "thumbs_up" if value == 1 else "thumbs_down",
+                    "problem_label": agent_id,
+                    "feedback_source": "chat",
+                },
+            )
+    except Exception as e:
+        log.warning("chat_feedback_forward_failed", request_id=request_id, error=str(e))
+
+
 async def _pegasus_chat_stream(
     client: httpx.AsyncClient,
     bot_base_url: str,
@@ -1589,6 +1608,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                             "assistant", final_text, agent_id=agent_id,
                             tool_calls=tools_used or None,
                             conversation_id=conversation_id,
+                            request_id=request_id,
                         )
                         # Expose the saved row id so the client can attach 👍/👎.
                         yield f"data: {json.dumps({'message_id': msg_id})}\n\n"
@@ -1702,6 +1722,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                     "assistant", notice.strip(), agent_id=agent_id,
                     tool_calls=tools_used or None,
                     conversation_id=conversation_id,
+                    request_id=request_id,
                 )
                 yield f"data: {json.dumps({'message_id': msg_id})}\n\n"
             except Exception:
@@ -1826,7 +1847,8 @@ async def chat_feedback(request: Request) -> dict:
     """Rate an assistant reply useful / not useful.
 
     Body: ``{"message_id": <int>, "value": 1 | -1 | 0}`` where 1 = useful,
-    -1 = not useful, 0 = clear the rating.
+    -1 = not useful, 0 = clear the rating. First votes are forwarded to the
+    bot server's feedback table (one-shot); clears stay local.
     """
     from main import db
 
@@ -1843,10 +1865,23 @@ async def chat_feedback(request: Request) -> dict:
             detail="message_id (int) and value (1, -1, or 0) are required",
         )
 
+    row = await db.get_chat_message(message_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown message_id")
+    if row.get("feedback") not in (None, 0):
+        # Already voted: one-shot feedback, do not re-send to the bot.
+        return {"status": "ok", "message_id": message_id, "value": row["feedback"]}
+
     stored = None if value == 0 else value
     ok = await db.set_chat_feedback(message_id, stored)
     if not ok:
         raise HTTPException(status_code=404, detail="Unknown message_id")
+    if value in (1, -1) and row.get("request_id") and PEGASUS_BOT_SERVER_URL:
+        asyncio.create_task(_forward_chat_feedback(  # fire-and-forget, never fails the local rating
+            request_id=row["request_id"],
+            value=value,
+            agent_id=row.get("agent_id"),
+        ))
     return {"status": "ok", "message_id": message_id, "value": value}
 
 
