@@ -36,7 +36,7 @@ npm run build
 
 ```sh
 # Backend (from repo root; assumes the studio-api venv is active with deps installed)
-(cd studio-api && pytest -q)                          # ~500 tests; no Pegasus/Condor/keys needed
+(cd studio-api && pytest -q)                          # ~700 tests; no Pegasus/Condor/keys needed
 
 # Frontend (needs `npm ci` first so node_modules/.bin/tsc exists)
 (cd studio-web && npm ci && node_modules/.bin/tsc --noEmit)   # strict mode
@@ -80,9 +80,9 @@ writable by the injected uid, so **never bake a rendered config into the image**
 `render_template()` too; `tests/test_port_rendering.py` fails if the two drift.
 
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
-  migrations in `db.py`), structlog JSON logging. 17 routers in `routers/`, 24 services
+  migrations in `db.py`), structlog JSON logging. 18 routers in `routers/`, 28 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
-  notifications, terminal/PTY sessions). 18 routers now — `mcp.py` serves the
+  notifications, terminal/PTY sessions, telemetry consent). `mcp.py` serves the
   Pegasus tools to the OpenCode engine. Workflow runs are
   discovered by globbing `**/braindump.yml` under `$HOME` (`STUDIO_SCAN_DIR`),
   plus user-added scan roots/excludes from Settings → Pegasus Options
