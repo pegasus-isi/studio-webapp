@@ -171,6 +171,60 @@ answers on all interfaces and the front port stays reachable. Set it to
 holds the rendered nginx configs, pid files, the supervisor socket and nginx's
 temp dirs; the uid suffix is what keeps two sessions on one host apart.
 
+### Session token gate (shared hosts)
+
+Off by default, and off is exactly today's behaviour. Set `STUDIO_AUTH_TOKEN`
+(Open OnDemand's `before.sh.erb` generates one the way it generates any
+batch-connect password) and four things switch on together, because any one of
+them alone is a gate with a door beside it:
+
+1. the proxy 403s every request without the `studio_session` cookie, and only
+   `GET /auth?token=…` sets it — that is the URL the Connect button points at;
+2. the internal services bind loopback (already the default);
+3. JupyterLab gets a real token, injected by the proxy as an `Authorization`
+   header so the browser flow is unchanged — an empty token means any local
+   user reaching its port gets terminals as the session owner;
+4. studio-api requires a proxy-stamped `X-Studio-Internal` secret
+   (`security.InternalSecretMiddleware`), so hitting uvicorn directly 403s.
+
+Point 4 is the one that is easy to skip and cannot be. On a shared host a
+loopback bind is **not** a boundary between local users — it separates hosts,
+not accounts — so the cookie gate on the front port protects nothing on its own.
+
+`STUDIO_URL_PREFIX` (optional, e.g. `/node/<host>/<port>`) is currently used
+only to place the gate's `/auth` location; full prefix rendering is separate
+work. The rendered gate fragments hold this session's secrets and are written
+0600 inside the 0700 runtime dir.
+
+`STUDIO_AUTH_TOKEN` is deliberately **not** exported to any child process. It
+is the browser's session credential, it is needed only while rendering, and
+every supervisord child — including the chat engine's tool shells and the
+user's terminals — would otherwise carry it in its environment.
+
+#### Known residual exposure (#229)
+
+**The Next.js upstream is not gated.** Every location proxying to studio-api
+carries the `X-Studio-Internal` stamp and every JupyterLab location carries the
+token, but the web locations carry neither, so a second local user on a shared
+host can still fetch pages from the Next.js port directly. This is recorded
+rather than fixed, for the reason the measured probe found: what they get is the
+UI shell — HTML, the client bundle, CSS. The app is client-rendered, so the data
+arrives through `/api`, which refuses them.
+
+Two caveats worth keeping honest about that reasoning:
+
+- It is **not** true that nothing is fetched server-side any more.
+  `lib/server/ui-prefs.ts` reads `/api/settings/ui` during SSR to decide the
+  app-root redirect, using the session's own secret. An unauthenticated fetch of
+  `/` therefore reveals one bit of user preference — whether the welcome page is
+  skipped. Trivial, but it means "no user data during SSR" is no longer the
+  argument; "almost no user data" is.
+- Closing this properly means rejecting unstamped requests in `middleware.ts`,
+  whose matcher currently covers only `/user/:path*`. Widening it touches every
+  route on the hosted path, which is more risk to production than the finding
+  carries on its own. Revisit if the web upstream ever starts serving real user
+  data during SSR.
+
 Because `/etc` is not writable by the injected uid, the nginx configs are
 **templates** (`docker/nginx/*.tmpl`) rendered per session by the entrypoint;
 nginx is started with `-c` against the result. `entrypoint.sh --render-only`

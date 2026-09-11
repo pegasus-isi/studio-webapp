@@ -1,0 +1,30 @@
+# Session token gate, server-level part. Rendered comment-only when
+# STUDIO_AUTH_TOKEN is unset.
+#
+# Deny-by-default for every request without the session cookie, with exactly
+# one way in: GET /auth?token=<token>, which is the URL the Open OnDemand
+# Connect button points at. It sets the cookie and redirects to the app root.
+# WebSockets and SSE inherit the cookie automatically.
+#
+# The set/if chain runs in the server rewrite phase, before any location is
+# entered, so it cannot be skipped by a location that forgot to include it.
+#
+# This gates the PROXY port only. The backends behind it are protected
+# separately, by the same launcher run: the X-Studio-Internal secret studio-api
+# enforces, and the real Jupyter token injected above.
+set $studio_deny 0;
+if ($studio_auth_ok = 0) { set $studio_deny 1; }
+# /auth itself must be reachable without the cookie — that is the whole point
+# of it — with an optional URL prefix in front.
+if ($uri ~ "^(@STUDIO_URL_PREFIX@)?/auth$") { set $studio_deny 0; }
+if ($studio_deny) { return 403; }
+
+# One regex location serves both the bare and the prefixed /auth. The capture
+# is empty when there is no prefix, so the redirect target and the cookie Path
+# both degrade to "/". Scoping the cookie to the prefix keeps two sessions
+# proxied under one origin (an OOD host) from overwriting each other's cookie.
+location ~ ^(?<studio_auth_prefix>@STUDIO_URL_PREFIX@)?/auth$ {
+    if ($arg_token != "@STUDIO_AUTH_TOKEN@") { return 403; }
+    add_header Set-Cookie "studio_session=@STUDIO_AUTH_TOKEN@; Path=$studio_auth_prefix/; HttpOnly; SameSite=Lax";
+    return 302 $studio_auth_prefix/;
+}

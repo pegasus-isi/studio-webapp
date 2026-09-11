@@ -55,12 +55,23 @@ def _render(tmp_path, template: str, **env: str) -> str:
          "_", src, dst],
         capture_output=True,
         text=True,
-        env={**os.environ, **env},
+        env={**os.environ, **GATE_OFF, **env},
     )
     assert proc.returncode == 0, proc.stderr
     with open(dst, encoding="utf-8") as fh:
         return fh.read()
 
+
+# The variables render_template substitutes. The gate ones are empty here —
+# these tests are about ports, and the entrypoint always defines all of them
+# before calling the function, so extracting it alone has to supply them or
+# `set -u` aborts. The gate's own rendering is covered in test_session_gate.py.
+GATE_OFF = {
+    "STUDIO_AUTH_TOKEN": "",
+    "STUDIO_URL_PREFIX": "",
+    "STUDIO_JUPYTER_TOKEN": "",
+    "STUDIO_INTERNAL_SECRET": "",
+}
 
 # Deliberately not superstrings of the defaults: "18888" contains "8888", so a
 # template that never got substituted would still satisfy the stale-port check.
@@ -156,7 +167,7 @@ def test_renderer_refuses_to_emit_an_unsubstituted_config(tmp_path):
          "_", str(bogus), str(tmp_path / "out.conf")],
         capture_output=True,
         text=True,
-        env={**os.environ, **ALL_PORTS},
+        env={**os.environ, **GATE_OFF, **ALL_PORTS},
     )
     assert proc.returncode != 0
     assert "unsubstituted placeholder" in proc.stderr
@@ -215,6 +226,9 @@ def test_supervisord_config_expands_the_port_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("STUDIO_BIND_ADDR", "127.0.0.1")
     monkeypatch.setenv("STUDIO_API_PORT", "22222")
     monkeypatch.setenv("STUDIO_WEB_PORT", "23333")
+    # Referenced by the studio-web program; supervisord has no default syntax
+    # for %(ENV_...)s, so it must be defined even when empty.
+    monkeypatch.setenv("STUDIO_INTERNAL_SECRET", "")
 
     opts = options.ServerOptions()
     opts.configfile = os.path.join(_REPO, "docker", "supervisor", "supervisord.conf")
@@ -241,6 +255,10 @@ def test_supervisord_config_expands_the_port_environment(tmp_path, monkeypatch):
     assert (
         commands["studio-web"].environment["API_URL"] == "http://127.0.0.1:22222"
     )
+    # Named explicitly rather than left to inherit: server components call
+    # studio-api on loopback, so on a gated session they must present the
+    # header the front proxy would otherwise have stamped (#391).
+    assert "STUDIO_INTERNAL_SECRET" in commands["studio-web"].environment
     # nginx must be pointed at the rendered config; the baked one is gone.
     assert f"-c {runtime}/nginx.conf" in commands["nginx"].command
 

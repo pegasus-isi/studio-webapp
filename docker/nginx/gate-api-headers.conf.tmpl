@@ -1,0 +1,10 @@
+# Included by every location that proxies to studio-api. Rendered comment-only
+# when STUDIO_AUTH_TOKEN is unset.
+#
+# The cookie gate protects only the proxy's own port. On a shared host uvicorn
+# is still reachable by every other local user, and a loopback bind is not a
+# boundary between users. This secret exists in exactly two places — this
+# rendered config and studio-api's environment — so
+# security.InternalSecretMiddleware can refuse anything that arrived any other
+# way.
+proxy_set_header X-Studio-Internal "@STUDIO_INTERNAL_SECRET@";
