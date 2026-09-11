@@ -7,12 +7,13 @@ monitoring [Pegasus WMS](https://pegasus.isi.edu/) workflows.
 
 ```
 studio-api/
-├── main.py                 # FastAPI app, lifespan, CORS, router registration
+├── main.py                 # FastAPI app, lifespan, middleware, routers
 ├── db.py                   # Async SQLite (aiosqlite) — hand-rolled migrations
 ├── models.py               # Pydantic v2 schemas + enums
-├── security.py             # CORS allowlist + WebSocket cross-origin guard
+├── security.py             # CORS allowlist, cross-origin write gate,
+│                          #   WebSocket origin guard, proxy-secret middleware
 ├── logging_config.py       # structlog JSON processor chain
-├── routers/                # 16 routers (see API Endpoints below)
+├── routers/                # 18 routers (see API Endpoints below)
 ├── llm/
 │   ├── providers.py        # Provider registry, key-requirement + model discovery
 │   └── propagator.py       # Push the active LLM config to installed tools
@@ -28,7 +29,7 @@ studio-api/
 │                           # run_diagnosis, chat_turn, onboarding_metrics, …
 ├── init_db.py              # CLI: initialize / migrate the SQLite schema
 ├── propagate_llm.py        # CLI: propagate the saved LLM config to installed tools
-└── tests/                  # ~500 tests; no Pegasus/Condor/keys needed
+└── tests/                  # ~700 tests; no Pegasus/Condor/keys needed
 ```
 
 The SQLite DB (`~/.studio/studio.db`; an existing one is moved out of `~/work/.studio` on first start) has **8 tables**: `app_settings`,
@@ -73,10 +74,34 @@ All tests use temporary SQLite DBs and need no Pegasus, HTCondor, or LLM keys.
 
 ## API Endpoints
 
-16 routers are registered under `/api` (WebSockets under `/ws`): `health`,
+18 routers are registered under `/api` (WebSockets under `/ws`): `health`,
 `settings`, `llm`, `knowledge`, `tools`, `files`, `jupyter`, `terminal`,
-`ai_terminal`, `workflows`, `chat`, `notifications`, `dashboard`, `provisioning`,
-`pegasus_bot`, `marketplace`. Highlights (see `/docs` for the full list):
+`ai_terminal`, `workflows`, `chat`, `opencode`, `mcp`, `notifications`,
+`dashboard`, `provisioning`, `pegasus_bot`, `marketplace`. Highlights (see
+`/docs` for the full list):
+
+Two are not browser-facing. `opencode` proxies `/api/opencode/*` verbatim to the
+loopback agent server that backs the chat panel. `mcp` serves the Pegasus
+workflow tools at `/api/mcp` over stateless Streamable HTTP, read-only, for that
+same engine — its tool list is read from `services/chat_tools.py`, so a Pegasus
+tool added there reaches both chat engines.
+
+### Request gates
+
+Three checks run before any handler, all of them no-ops in the deployment that
+does not need them:
+
+- **CORS** — allowlist empty by default (`STUDIO_ALLOWED_ORIGINS` adds to it).
+  Same-origin needs no entry.
+- **Cross-origin writes** — unsafe methods must carry a same-origin or
+  allowlisted `Origin`, with `Sec-Fetch-Site` as a second signal. CORS governs
+  whether a page may *read* a reply, never whether the request runs, so without
+  this any page the user visited could drive every mutating route with the
+  gateway's cookie. Requests with no `Origin` are allowed deliberately: curl,
+  the test client and the in-pod MCP client send none and cannot be driven
+  cross-site by a victim's browser. WebSockets are checked at the handshake
+  instead, where a close code can be sent.
+- **Proxy secret** — only when the session token gate is on; see below.
 
 ### Health, Settings & LLM
 
@@ -85,6 +110,7 @@ All tests use temporary SQLite DBs and need no Pegasus, HTCondor, or LLM keys.
 | GET | `/api/health`, `/api/health/detailed` | liveness + DB/Pegasus/HTCondor |
 | GET/PUT | `/api/settings` | LLM-config accessor (shares the validated `llm` save path) |
 | GET/PUT | `/api/settings/workflow-scan` | user-added run-scan roots/excludes, merged with the env defaults (#306) |
+| GET/PUT | `/api/settings/telemetry` | whether this user's traces may carry chat text. Its own row, not a `UIPreferences` field, because that PUT replaces the bag wholesale and its GET substitutes defaults for invalid values — both wrong for a consent flag. Saving propagates, since the engine reads plugin options once at startup |
 | GET/PUT | `/api/llm/config` | active provider/model; **keys are write-only** — GETs return `has_api_key`, never the value |
 | GET/PUT | `/api/llm/provider-configs` | saved providers (also write-only keys) |
 | GET | `/api/llm/provider-configs/{id}/models` | model discovery using the **stored** key (server-side) |

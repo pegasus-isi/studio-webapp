@@ -302,7 +302,7 @@ npm run dev
 Tests / gates (CI runs neither — run before every PR):
 
 ```bash
-cd studio-api && pytest -q                       # ~500 tests
+cd studio-api && pytest -q                       # ~700 tests
 cd studio-web && node_modules/.bin/tsc --noEmit   # NOT `npm test`/`npm run lint` — those don't work
 ```
 
