@@ -22,6 +22,9 @@ path, so both coexist.
     message to the user (object-shaped `detail` handled) instead of a blanket
     "PegasusAI Bot is currently offline" for every non-2xx; the offline
     message is reserved for genuine connection failures.
+  - `src/toolbarPlugin.ts` — register JupyterLab's built-in
+    `notebook:clear-cell-output` in the cell toolbar (rank 1, after the
+    PegasusAI button) so every cell output can be cleared per cell.
   - `src/api.ts` — default `feedback_source: 'cell_button'` in
     `sendFeedbackRequest` so Likert votes are attributed without touching
     the vendored `feedback_widget.ts`.

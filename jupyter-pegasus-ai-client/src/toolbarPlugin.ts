@@ -234,6 +234,11 @@ export const toolbarPlugin: JupyterFrontEndPlugin<void> = {
             name: 'render-markdown-cell',
             command: 'toolbar-button:render-markdown-cell',
             rank: 0
+          },
+          {
+            name: 'clear-cell-output',
+            command: 'notebook:clear-cell-output',
+            rank: 1
           }
         ];
         let changed = false;
