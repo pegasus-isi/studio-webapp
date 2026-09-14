@@ -109,3 +109,27 @@ def test_auto_reraises_unrelated_400(monkeypatch):
     with pytest.raises(httpx.HTTPStatusError):
         _dispatch("gpt-4o")
     assert calls == ["chat"]  # no fallback on an unrelated 400
+
+
+
+def test_memo_is_per_model_not_per_endpoint(monkeypatch):
+    """One model's wire API must not decide another's on a shared proxy.
+
+    The FABRIC, NRP and RENCI proxies front many models on one base URL, each
+    speaking its own wire API. While the memo was keyed by base URL alone, one
+    model discovering it needs the Responses API pinned *every* model behind
+    that URL to a Responses-shaped body — which a chat-completions gateway
+    answers with `BadRequest - chat-completions request must have at least one
+    message`, at turn one, having read nothing.
+    """
+    calls = _patch(monkeypatch, _http_error(400, "Unsupported parameter: 'messages'"))
+    _dispatch("custom-reasoner-1")
+    assert calls == ["chat", "responses"]      # probes, learns, falls back
+
+    calls.clear()
+    _dispatch("custom-reasoner-1")
+    assert calls == ["responses"]              # same model: the memo skips the probe
+
+    calls.clear()
+    _dispatch("glm-5")
+    assert calls == ["chat", "responses"]      # another model still gets its own probe
