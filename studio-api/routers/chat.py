@@ -30,18 +30,27 @@ from knowledge import layout
 # Active streaming clients tracked by request_id
 _active_clients: dict[str, httpx.AsyncClient] = {}
 
-# Base URLs discovered to require the OpenAI *Responses* API (e.g. gpt-5.5 on
-# the FABRIC/RENCI proxy) rather than Chat Completions. Populated on first 400.
-_RESPONSES_ENDPOINTS: set[str] = set()
+# (base URL, model) pairs discovered to require the OpenAI *Responses* API
+# (e.g. gpt-5.5 on the FABRIC/RENCI proxy) rather than Chat Completions.
+# Populated on first 400.
+#
+# Keyed by the pair, not the URL alone. These proxies front *many* models on one
+# base URL and each speaks its own wire API, so remembering "this endpoint needs
+# Responses" because one model did pins every other model behind it to a shape
+# its gateway cannot parse. A chat-completions gateway handed a Responses body
+# answers `BadRequest - chat-completions request must have at least one
+# message`, at turn one, having read nothing — which is what it did to glm-5,
+# qwen3-small and gemma4-12b on the NRP proxy.
+_RESPONSES_ENDPOINTS: set[tuple[str, str]] = set()
 _RESPONSES_ENDPOINTS_MAX = 128
 
 
-def _memoize_responses_endpoint(base_url: str) -> None:
-    """Remember a base URL that needs the Responses API, bounded so the set
-    can't grow without limit on a long-lived pod (BE-9). In practice there are
-    only a handful of distinct endpoints; the cap is a backstop."""
+def _memoize_responses_endpoint(base_url: str, model: str) -> None:
+    """Remember a (base URL, model) that needs the Responses API, bounded so the
+    set can't grow without limit on a long-lived pod (BE-9). In practice there
+    are only a handful of distinct endpoints; the cap is a backstop."""
     if len(_RESPONSES_ENDPOINTS) < _RESPONSES_ENDPOINTS_MAX:
-        _RESPONSES_ENDPOINTS.add(base_url)
+        _RESPONSES_ENDPOINTS.add((base_url, model))
 
 
 _RESPONSES_HINTS = (
@@ -1007,7 +1016,7 @@ async def _openai_dispatch(
             client, base_url, api_key, model, messages, system_prompt, max_tokens
         )
 
-    if wire_api == "responses" or base_url in _RESPONSES_ENDPOINTS or (
+    if wire_api == "responses" or (base_url, model) in _RESPONSES_ENDPOINTS or (
         wire_api == "auto" and _is_responses_model(model)
     ):
         async for ev in responses():
@@ -1032,7 +1041,7 @@ async def _openai_dispatch(
         # A 400 that explicitly says "use the Responses API" is definitive —
         # memoize so we skip the chat probe next time.
         if status == 400 and any(h in body for h in _RESPONSES_HINTS):
-            _memoize_responses_endpoint(base_url)
+            _memoize_responses_endpoint(base_url, model)
             async for ev in responses():
                 yield ev
             return
@@ -1042,7 +1051,7 @@ async def _openai_dispatch(
         if status in (404, 405) or (status is not None and status >= 500):
             rgen = responses()
             rfirst = await rgen.__anext__()
-            _memoize_responses_endpoint(base_url)
+            _memoize_responses_endpoint(base_url, model)
             yield rfirst
             async for ev in rgen:
                 yield ev
