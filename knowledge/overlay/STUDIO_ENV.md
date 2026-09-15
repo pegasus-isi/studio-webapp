@@ -28,34 +28,54 @@ are on disk and look fine in the file browser. It is not a matter of taste or of
 
 ### The path you pass to a tool is not the path on disk
 
-Your file tools take a path **relative to `$HOME/work`**, and they do **not** expand
-`~` or `$HOME`. The location above is where files end up; it is not what you type.
+**Pass a real, fully expanded absolute path.**
 
-| Pass this | Not this |
+```
+/home/<your-user>/work/workflows/<name>/workflow_generator.py
+```
+
+Run `echo $HOME` (or `pwd`) once and use the value it prints. Do not guess the
+home directory's name, and do not leave `~` or `$HOME` *in* the path: no file
+tool here expands them, so they become a directory named literally `~` or
+`$HOME`.
+
+An absolute path is the only form that is right everywhere. A **relative** path
+is joined onto a different directory depending on which chat engine is running
+and, on one of them, on which conversation you are in:
+
+| where you are | a relative path is joined onto |
 |---|---|
-| `workflows/<name>/workflow_generator.py` | `~/work/workflows/<name>/workflow_generator.py` |
-| `workflows/<name>/bin/run.sh` | `$HOME/work/workflows/<name>/bin/run.sh` |
-| `workflows/<name>/README.md` | `work/workflows/<name>/README.md` |
-| | `<name>/workflow_generator.py` |
+| the builtin chat loop | `$HOME/work` |
+| OpenCode, chat scoped to a workflow | that workflow's own folder |
+| OpenCode, chat not scoped to one | `$HOME` |
 
-A real absolute path also works: `$HOME/work/workflows/<name>/...` — expand it
-rather than guessing the home directory's name.
+The third row is the ordinary case for the request you are most likely to get:
+nobody can scope a conversation to a workflow that does not exist yet, so a new
+project is always built in an unscoped chat. There,
+`workflows/<name>/workflow_generator.py` lands in `$HOME/workflows/<name>/` —
+outside the one directory the Workflows tab scans. In the second row it is worse
+and harder to see: the workflow's folder is already `…/workflows/<name>/`, so the
+same relative path doubles it into `…/workflows/<name>/workflows/<name>/`.
 
 Every wrong form fails **silently** — the tool reports success and the transcript
 looks correct:
 
-- `~/work/…` creates a directory **literally named `~`**, at
-  `$HOME/work/~/work/workflows/<name>/`
+- `~/work/…` creates a directory **literally named `~`**
 - `$HOME/work/…` does the same with a literal `$HOME`
-- `work/…` doubles the prefix: `$HOME/work/work/workflows/<name>/`
-- `<name>/…` drops the `workflows/` level: `$HOME/work/<name>/`
+- `workflows/…` goes wherever the table above says, which is usually not
+  `$HOME/work/workflows/`
+- `work/…` can double the prefix: `$HOME/work/work/workflows/<name>/`
+- `<name>/…` drops the `workflows/` level
 
 All of them land outside the one directory the Workflows tab scans, so the project
 gets no Generate, Plan or Run button. Nothing errors. The files are simply
 somewhere the interface never looks.
 
-**Check yourself before reporting done**: `ls workflows/<name>` must list your
-files. If it does not, you wrote them somewhere else.
+**Check yourself before reporting done**: `ls $HOME/work/workflows/<name>` must
+list your files. If it does not, you wrote them somewhere else — and the check
+only means anything with the `$HOME/work` in it, because a bare
+`ls workflows/<name>` is resolved from wherever your shell happens to start and
+can list a directory the Workflows tab never sees.
 
 `<workflow-name>` is `<pipeline-name>-workflow`: the kebab-case name the user
 gave the analysis, followed by a `-workflow` suffix. An analysis the user calls
