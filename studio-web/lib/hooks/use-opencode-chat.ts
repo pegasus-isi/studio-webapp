@@ -45,7 +45,6 @@ import { useChatStore } from "@/lib/stores/chat-store";
 import { useChatContextStore } from "@/lib/stores/chat-context-store";
 import { useNotebookContextStore } from "@/lib/stores/notebook-context-store";
 import { useOpenCodeStore } from "@/lib/stores/opencode-store";
-import { useWorkflowProjects } from "@/lib/hooks/use-workflows";
 
 /** `properties` of an event, as an object we can read fields off. */
 function props(event: RawEvent): Record<string, unknown> {
@@ -97,23 +96,21 @@ const creating = new Map<string, Promise<string>>();
 
 export function useOpenCodeChat() {
   const convId = useChatStore((s) => s.activeId);
-  const scope = useChatContextStore((s) => s.scopeByConv[convId] ?? null);
   const sessionID = useOpenCodeStore((s) => s.sessionByConv[convId]);
   const agent = useOpenCodeStore((s) => s.agentByConv[convId]);
   const setSession = useOpenCodeStore((s) => s.setSession);
   const setAgentForConv = useOpenCodeStore((s) => s.setAgent);
   const clearSession = useOpenCodeStore((s) => s.clearSession);
-  const { data: projectData, isPending: projectsPending } =
-    useWorkflowProjects();
 
   const [state, dispatch] = useReducer(reduce, EMPTY);
   /**
    * The directory this session is rooted in, as the server reports it.
    *
-   * Not the same as the directory we asked for at creation: a session made
-   * before the workflow scope was known keeps the directory it was created
-   * with. Agents, skills and commands all resolve per directory, so anything
-   * describing what this session can use has to ask about *this* one.
+   * Every session is created without one now, so this is the engine's own
+   * default (~/work) — but it is still read back rather than assumed. Agents,
+   * skills and commands all resolve per directory, so anything describing what
+   * this session can use has to ask about *this* one, and a session created
+   * before that default changed keeps the directory it was made with.
    */
   const [sessionDirectory, setSessionDirectory] = useState<string | undefined>();
   /**
@@ -143,36 +140,33 @@ export function useOpenCodeChat() {
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
-  const projectDir = useMemo(() => {
-    if (scope?.type !== "workflow") return undefined;
-    return projectData?.projects.find((p) => p.project_id === scope.id)
-      ?.project_dir;
-  }, [scope, projectData]);
+  // No `directory` is passed at session creation, deliberately. The engine
+  // joins a *relative* path onto its session's directory, and the always-on
+  // knowledge tells every model to write `workflows/<name>/…`, so a session
+  // rooted anywhere but ~/work makes that string mean the wrong place: at
+  // $HOME the project lands in $HOME/workflows/<name>/, and rooted at the
+  // workflow's own folder the same string doubles into
+  // …/workflows/<name>/workflows/<name>/. Rooting every session at the engine's
+  // default — now ~/work, see docker/supervisor/scripts/opencode.sh — makes one
+  // relative path mean one place in every conversation.
+  //
+  // What this gives up is that a workflow-scoped chat no longer starts *inside*
+  // that workflow's folder. It costs one path segment: the Active Context block
+  // already tells the model which workflow the conversation is about, and
+  // `workflows/<name>/…` is the form the knowledge teaches anyway.
+  //
+  // It also removes a race rather than working around one. The session used to
+  // wait for the project list, because a directory fixed at creation could not
+  // be corrected afterwards; there is nothing left to wait for.
 
-  // A workflow-scoped conversation must wait for the project list before its
-  // session exists: the directory is fixed at creation and roots OpenCode's
-  // file tools, AGENTS.md lookup and skill discovery. Creating first and
-  // learning the directory a moment later — which is what happens with a
-  // TanStack query on first render — reliably rooted the session at the
-  // server's default directory instead of at the workflow.
-  // Only while the query is still pending. Keyed on `isPending` rather than on
-  // `data === undefined` so a *failed* project list doesn't block session
-  // creation for good — the session then roots at the server's default
-  // directory, which is worse than the workflow's folder but far better than a
-  // chat panel that never starts.
-  const waitingForDirectory = scope?.type === "workflow" && projectsPending;
-
-  // Ensure this conversation has a session. The workflow's own folder becomes
-  // the session directory, which is what roots OpenCode's file tools, its
-  // AGENTS.md lookup and its skill discovery — a chat about a workflow should
-  // be able to read that workflow without being told where it lives.
+  // Ensure this conversation has a session.
   useEffect(() => {
-    if (sessionID || waitingForDirectory) return;
+    if (sessionID) return;
     let cancelled = false;
     let pending = creating.get(convId);
     if (!pending) {
       pending = oc
-        .createSession({ title: "Studio chat", directory: projectDir })
+        .createSession({ title: "Studio chat" })
         .then((session) => session.id)
         .finally(() => creating.delete(convId));
       creating.set(convId, pending);
@@ -189,7 +183,7 @@ export function useOpenCodeChat() {
     return () => {
       cancelled = true;
     };
-  }, [sessionID, convId, projectDir, waitingForDirectory, setSession, attempt]);
+  }, [sessionID, convId, setSession, attempt]);
 
   // Reads are ordered by hand. Two reconnects in quick succession put two
   // transcript reads in flight, and the older one resolving last would apply an
