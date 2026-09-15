@@ -19,6 +19,11 @@ what is specific to *this* environment, which the guide cannot know.
 $HOME/workflows/<workflow-name>/
 ```
 
+This is the location the `pegasus-scaffold`, `pegasus-wrapper` and
+`pegasus-apptainer` skills defer to. They describe how a workflow project is
+laid out and say that the environment names the place; this is where it is
+named. Where the two could seem to differ, this section wins.
+
 Nowhere else. The Workflows tab lists the immediate children of
 `$HOME/workflows/` and nothing deeper or elsewhere, so a project written to
 `$HOME/<name>/` or any other path **does not appear in the UI at all** — no
