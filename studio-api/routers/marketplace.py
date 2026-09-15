@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 import structlog
 from fastapi import APIRouter, HTTPException
+from workspace import workflows_dir, workspace_root
 
 log = structlog.get_logger()
 
@@ -36,11 +37,8 @@ _CLONE_TIMEOUT = float(os.environ.get("STUDIO_MARKETPLACE_CLONE_TIMEOUT", "180")
 # reach the network, and available to an operator behind a strict egress policy.
 _ENRICH = os.environ.get("STUDIO_MARKETPLACE_ENRICH", "1") not in ("0", "false", "")
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
-WORKFLOWS_DIR = os.path.join(WORKSPACE_ROOT, "workflows")
+WORKSPACE_ROOT = workspace_root()
+WORKFLOWS_DIR = workflows_dir(WORKSPACE_ROOT)
 
 # Curated Pegasus-ISI workflows to always surface, merged (and deduped by repo
 # URL) with the live registry. Descriptions from each repo's GitHub metadata.

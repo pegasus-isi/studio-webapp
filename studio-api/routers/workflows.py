@@ -36,6 +36,7 @@ from services.workflow_submitter import (
     run_planned_workflow,
     submit_workflow,
 )
+from workspace import workspace_root
 
 
 class GenerateRequest(BaseModel):
@@ -84,10 +85,7 @@ log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
+WORKSPACE_ROOT = workspace_root()
 
 _CMD_TIMEOUT = 300  # 5 minutes
 
@@ -216,7 +214,7 @@ async def delete_project(project_id: str) -> dict:
     Runs inside it are cancelled and removed first — see
     ``workflow_submitter.delete_project`` for why that ordering matters.
     """
-    from services.workflow_scanner import WORKFLOWS_DIR
+    from services.workflow_scanner import project_roots
     from services.workflow_submitter import delete_project as remove_project
 
     projects = await discover_projects_async()
@@ -225,11 +223,13 @@ async def delete_project(project_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
 
     project_dir = os.path.realpath(proj["project_dir"])
-    root = os.path.realpath(WORKFLOWS_DIR)
-    if not project_dir.startswith(root + os.sep):
-        # Belt and braces: the scanner only walks the workflows dir, but a
-        # symlinked entry could still resolve outside it, and this deletes
-        # files.
+    # Every directory the scanner lists from, not just the current one — a
+    # project still in the legacy $HOME/work/workflows is listed, so it has to
+    # be deletable too, or the button is there and returns 403.
+    roots = [os.path.realpath(r) for r in project_roots()]
+    if not any(project_dir.startswith(root + os.sep) for root in roots):
+        # Belt and braces: the scanner only walks those dirs, but a symlinked
+        # entry could still resolve outside them, and this deletes files.
         raise HTTPException(
             status_code=403, detail="Refusing to delete outside the workflows directory"
         )
@@ -922,7 +922,7 @@ async def get_run_outputs(
     directory is unbounded.
     """
     from services import run_outputs
-    from services.workflow_scanner import WORKFLOWS_DIR
+    from services.workflow_scanner import project_roots
 
     run_dir = await _resolve_run_dir(run_id)
     loop = asyncio.get_event_loop()
@@ -932,7 +932,7 @@ async def get_run_outputs(
         None,
         lambda: run_outputs.listing(
             run_dir,
-            WORKFLOWS_DIR,
+            project_roots(),
             output_site=output_site,
             offset=offset,
             limit=limit,
@@ -956,11 +956,11 @@ async def get_run_output_file(
     from fastapi.responses import FileResponse
 
     from services import run_outputs
-    from services.workflow_scanner import WORKFLOWS_DIR
+    from services.workflow_scanner import project_roots
 
     run_dir = await _resolve_run_dir(run_id)
     output_dir, _ = run_outputs.resolve_output_dir(
-        run_dir, WORKFLOWS_DIR, output_site
+        run_dir, project_roots(), output_site
     )
     if not output_dir:
         raise HTTPException(status_code=404, detail="No output directory for this run")

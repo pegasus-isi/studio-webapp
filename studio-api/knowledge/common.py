@@ -242,11 +242,13 @@ def ensure_context_file(path: str) -> bool:
     return True
 
 
-# Generated tool config that used to be written into the workspace ($HOME/work).
-# Terminals and tools start in $HOME, so a file one directory down was invisible
-# unless the user happened to cd into it — the same cwd problem the $HOME-scoped
-# copies were added to work around. These are pruned from the workspace so the
-# stale copy cannot win when cwd is ~/work.
+# Generated tool config that used to be written into the workspace when the
+# workspace was $HOME/work. Terminals and tools start in $HOME, so a file one
+# directory down was invisible unless the user happened to cd into it — the
+# same cwd problem the $HOME-scoped copies were added to work around. These are
+# pruned from $HOME/work so a copy left there cannot win when a shell starts in
+# it. The workspace itself is $HOME now (#401), which the prune below refuses
+# to touch: that is where the live files are.
 LEGACY_WORKSPACE_FILES = (
     "CLAUDE.md",
     "AGENTS.md",

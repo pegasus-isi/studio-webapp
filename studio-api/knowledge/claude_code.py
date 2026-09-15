@@ -66,7 +66,9 @@ class ClaudeCodeAdapter(KnowledgeAdapter):
         if content:
             appendix = build_knowledge_appendix()
             body = content + ("\n" + appendix if appendix else "")
-            # Workspace CLAUDE.md (project memory; Studio owns ~/work).
+            # CLAUDE.md at the config root ($HOME), which is also the
+            # workspace root — a tool started anywhere under it reads this
+            # one by walking up.
             dst = os.path.join(workspace, "CLAUDE.md")
             with open(dst, "w") as f:
                 f.write(body)

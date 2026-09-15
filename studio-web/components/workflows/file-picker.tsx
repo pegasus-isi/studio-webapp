@@ -125,7 +125,14 @@ function BrowseDialog({
     return up.length >= root.length ? up : null;
   }, [cwd, root]);
 
-  const entries = listing?.entries ?? [];
+  // Dotfiles are hidden here, and only here. The workspace root is $HOME
+  // (#401), so browsing up from data/ now reaches .cache, .local, .npm and the
+  // rest — none of which is an input to a workflow, and all of which buries
+  // the three directories that are. The API still lists them: a model asking
+  // for a project's contents needs to see .pegasushub.yml and .gitignore.
+  const entries = (listing?.entries ?? []).filter(
+    (e) => !e.name.startsWith(".")
+  );
   const dirs = entries.filter((e) => e.type === "dir");
   const files = mode === "file" ? entries.filter((e) => e.type === "file") : [];
 

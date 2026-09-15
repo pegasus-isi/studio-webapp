@@ -15,15 +15,27 @@ import structlog
 
 from services.event_reader import read_events
 from services.event_reader import workflow_status as event_workflow_status
+from workspace import legacy_workflows_dirs, workflows_dir, workspace_root
 
 log = structlog.get_logger()
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
+WORKSPACE_ROOT = workspace_root()
 
-WORKFLOWS_DIR = os.path.join(WORKSPACE_ROOT, "workflows")
+WORKFLOWS_DIR = workflows_dir(WORKSPACE_ROOT)
+
+
+def project_roots() -> list[str]:
+    """Every directory workflow projects are listed from, current one first.
+
+    The second is the pre-#401 ``$HOME/work/workflows``. Those projects are on
+    persistent NFS homes and are not moved or rewritten — listing them is the
+    whole migration, so a user who had projects before the workspace collapsed
+    into $HOME opens Studio and finds them where they left them.
+
+    Read from the module constant rather than resolved afresh so a test (and
+    the marketplace router) can still repoint WORKFLOWS_DIR.
+    """
+    return [WORKFLOWS_DIR, *legacy_workflows_dirs(WORKSPACE_ROOT)]
 
 # Known workflow-generator filenames. pegasus-isi repos are inconsistent: most
 # use the underscore form, but quickstart-workflow ships the hyphenated name,
@@ -202,15 +214,46 @@ def discover_projects(
     workspace: str | None = None,
     extra_excludes: tuple | list = (),
 ) -> list[dict[str, Any]]:
-    """Find workflow projects in the workflows directory.
+    """Find workflow projects.
 
-    Scans ~/work/workflows/ for directories containing workflow_generator.py
-    or workflow YAML files.  Returns a list of project dicts that merge
-    unsubmitted project metadata with any submitted runs found inside the
-    project tree. ``extra_excludes`` extends the builtin run-dir exclusion
-    fragments (the projects dir itself is not affected by scan roots).
+    Scans $HOME/workflows/ for directories containing workflow_generator.py or
+    workflow YAML files, then the legacy $HOME/work/workflows/ for anything a
+    user left there before the workspace moved. Returns a list of project dicts
+    that merge unsubmitted project metadata with any submitted runs found
+    inside the project tree. ``extra_excludes`` extends the builtin run-dir
+    exclusion fragments (the projects dir itself is not affected by scan
+    roots).
+
+    An explicit ``workspace`` scans that one directory and nothing else.
     """
-    workspace = workspace or WORKFLOWS_DIR
+    roots = [workspace] if workspace else project_roots()
+
+    projects: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for root in roots:
+        for project in _scan_projects_dir(root, extra_excludes):
+            if project["project_id"] in seen:
+                # Same directory name in both roots. The current workspace
+                # wins; naming the loser matters, because the one the user is
+                # looking at is not the one they just edited.
+                log.info(
+                    "project_shadowed",
+                    project_id=project["project_id"],
+                    ignored=project["project_dir"],
+                )
+                continue
+            seen.add(project["project_id"])
+            projects.append(project)
+
+    log.info("project_scan_complete", count=len(projects), roots=roots)
+    return projects
+
+
+def _scan_projects_dir(
+    workspace: str,
+    extra_excludes: tuple | list = (),
+) -> list[dict[str, Any]]:
+    """Workflow projects directly inside one directory."""
     projects: list[dict[str, Any]] = []
 
     if not os.path.isdir(workspace):
@@ -306,7 +349,6 @@ def discover_projects(
             "submitted_runs": submitted_runs,
         })
 
-    log.info("project_scan_complete", count=len(projects), workspace=workspace)
     return projects
 
 

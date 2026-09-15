@@ -16,46 +16,34 @@ what is specific to *this* environment, which the guide cannot know.
 ## Where a workflow goes — exactly one place
 
 ```
-$HOME/work/workflows/<workflow-name>/
+$HOME/workflows/<workflow-name>/
 ```
 
+This is the location the `pegasus-scaffold`, `pegasus-wrapper` and
+`pegasus-apptainer` skills defer to. They describe how a workflow project is
+laid out and say that the environment names the place; this is where it is
+named. Where the two could seem to differ, this section wins.
+
 Nowhere else. The Workflows tab lists the immediate children of
-`$HOME/work/workflows/` and nothing deeper or elsewhere, so a project written to
-`$HOME/workflows/`, `$HOME/<name>/` or any other path **does not appear in the UI
-at all** — no Generate, Plan, Run or Build buttons for it, even though the files
-are on disk and look fine in the file browser. It is not a matter of taste or of
-"anywhere under `$HOME`": one directory is scanned.
+`$HOME/workflows/` and nothing deeper or elsewhere, so a project written to
+`$HOME/<name>/` or any other path **does not appear in the UI at all** — no
+Generate, Plan, Run or Build buttons for it, even though the files are on disk
+and look fine in the file browser. It is not a matter of taste or of "anywhere
+under `$HOME`": one directory is scanned.
 
 ### The path you pass to a tool is not the path on disk
 
-Your file tools take a path **relative to `$HOME/work`**, and they do **not** expand
-`~` or `$HOME`. The location above is where files end up; it is not what you type.
+Your file tools take a path **relative to `$HOME`**, and they do **not** expand
+`~` or `$HOME`. Pass `workflows/<name>/workflow_generator.py`, not
+`~/workflows/…` or `$HOME/workflows/…` — those create a directory literally
+named `~` or `$HOME` under the workspace, which the Workflows tab never looks
+in. A real absolute path works too: expand `$HOME` yourself rather than guessing
+the home directory's name.
 
-| Pass this | Not this |
-|---|---|
-| `workflows/<name>/workflow_generator.py` | `~/work/workflows/<name>/workflow_generator.py` |
-| `workflows/<name>/bin/run.sh` | `$HOME/work/workflows/<name>/bin/run.sh` |
-| `workflows/<name>/README.md` | `work/workflows/<name>/README.md` |
-| | `<name>/workflow_generator.py` |
-
-A real absolute path also works: `$HOME/work/workflows/<name>/...` — expand it
-rather than guessing the home directory's name.
-
-Every wrong form fails **silently** — the tool reports success and the transcript
-looks correct:
-
-- `~/work/…` creates a directory **literally named `~`**, at
-  `$HOME/work/~/work/workflows/<name>/`
-- `$HOME/work/…` does the same with a literal `$HOME`
-- `work/…` doubles the prefix: `$HOME/work/work/workflows/<name>/`
-- `<name>/…` drops the `workflows/` level: `$HOME/work/<name>/`
-
-All of them land outside the one directory the Workflows tab scans, so the project
-gets no Generate, Plan or Run button. Nothing errors. The files are simply
-somewhere the interface never looks.
-
-**Check yourself before reporting done**: `ls workflows/<name>` must list your
-files. If it does not, you wrote them somewhere else.
+The failure is silent. The tool reports success, the transcript looks correct,
+and the files are somewhere the interface never shows them. **Check yourself
+before reporting done**: `ls workflows/<name>` must list your files. If it does
+not, you wrote them somewhere else.
 
 `<workflow-name>` is `<pipeline-name>-workflow`: the kebab-case name the user
 gave the analysis, followed by a `-workflow` suffix. An analysis the user calls
@@ -67,19 +55,24 @@ shipped example workflow is called.
 **Everything for that workflow lives inside that one directory**, including
 documents you write about it. A specification, README, notes, the generator,
 `bin/`, `Apptainer/` and data all belong under
-`$HOME/work/workflows/<workflow-name>/`. Do not put a specification in `$HOME`
-and the code somewhere else: a scattered project is one the user cannot run.
+`$HOME/workflows/<workflow-name>/`. Do not put a specification in `$HOME` and
+the code somewhere else: a scattered project is one the user cannot run.
 
 So a request to "write specification.md first, then build the workflow" means:
 
 ```
-$HOME/work/workflows/<workflow-name>/specification.md
-$HOME/work/workflows/<workflow-name>/workflow_generator.py
-$HOME/work/workflows/<workflow-name>/bin/…
-$HOME/work/workflows/<workflow-name>/Apptainer/…
+$HOME/workflows/<workflow-name>/specification.md
+$HOME/workflows/<workflow-name>/workflow_generator.py
+$HOME/workflows/<workflow-name>/bin/…
+$HOME/workflows/<workflow-name>/Apptainer/…
 ```
 
 Create the project directory first, then write into it.
+
+Two other directories at `$HOME` are Studio's, not yours to reorganize:
+`data/` is where files the user uploads land, and `work/` may hold projects from
+before the workspace moved — those are still listed, so leave them where they
+are unless the user asks you to move one.
 
 ## Writing files
 
@@ -99,7 +92,7 @@ are the two that get dropped when the generator took a while to write.
 The Studio-specific part is only *where* to verify:
 
 ```bash
-ls -R $HOME/work/workflows/<workflow-name>
+ls -R $HOME/workflows/<workflow-name>
 ```
 
 ## How to talk to the user

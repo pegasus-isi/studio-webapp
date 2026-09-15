@@ -32,22 +32,24 @@ if [ -z "${OPENCODE_SERVER_PASSWORD:-}" ]; then
     exit 1
 fi
 
-# Rooted at ~/work, which is where the always-on knowledge tells every model to
-# put a workflow — `$HOME/work/workflows/<name>/`, the only directory the
-# Workflows tab scans.
+# Rooted at the workspace root, which is where the always-on knowledge tells
+# every model to put a workflow — `workflows/<name>/`, relative to here, the
+# only directory the Workflows tab scans.
 #
 # The engine joins a *relative* path onto the directory its session was created
 # in, so this is what decides whether `workflows/<name>/workflow_generator.py` —
-# the exact string the overlay's path table prints — means the right place. At
-# $HOME it does not: the project lands in $HOME/workflows/<name>/, invisible to
-# the tab, no Generate/Plan/Run button, and nothing errors. Measured with a
-# small model on a one-step task: four of its six files stranded there.
+# the exact string the overlay's path table prints — means the right place.
+# Root it anywhere else and the project lands somewhere invisible to the tab,
+# with no Generate/Plan/Run button and nothing erroring. Measured with a small
+# model on a one-step task, back when the two disagreed: four of its six files
+# stranded (#400).
 #
 # The chat panel no longer overrides this per session either (see
 # use-opencode-chat.ts), so one relative path means one place in every
 # conversation — which is the only way the guidance can stay a single sentence.
-mkdir -p "${ROOT}/work"
-cd "${ROOT}/work"
+WORKSPACE="${STUDIO_WORKSPACE_DIR:-${ROOT}}"
+mkdir -p "${WORKSPACE}"
+cd "${WORKSPACE}"
 
 # The npm prefix that `npm install -g` writes to for this user comes first, so
 # a user-upgraded opencode wins over the image-baked one — same precedence the

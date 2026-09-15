@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from collections.abc import Sequence
 from typing import Any
 
 import structlog
@@ -105,24 +106,38 @@ def _site_catalog_storage(catalog_path: str, output_site: str) -> str | None:
     return None
 
 
-def project_dir_for_run(run_dir: str, workflows_root: str) -> str | None:
+def project_dir_for_run(
+    run_dir: str, workflows_root: str | Sequence[str]
+) -> str | None:
     """The project directory a run belongs to.
 
     Runs live at `<workflows_root>/<project>/…/run0001`, so the project is the
     first path component under the workflows root. Returns None for a run that
-    isn't under it at all (a workflow submitted by hand elsewhere).
+    isn't under any of them (a workflow submitted by hand elsewhere).
+
+    Several roots are accepted because projects are listed from more than one:
+    the workspace's own `workflows/`, plus the legacy `work/workflows/`. A run
+    in the legacy tree that resolved to no project lost its sites.yml, and with
+    it the difference between "this workflow puts results here and there are
+    none yet" and "we guessed and found nothing".
     """
+    roots = [workflows_root] if isinstance(workflows_root, str) else workflows_root
     run = os.path.realpath(run_dir)
-    root = os.path.realpath(workflows_root)
-    if not run.startswith(root + os.sep):
-        return None
-    relative = run[len(root) + 1 :]
-    project = relative.split(os.sep, 1)[0]
-    return os.path.join(root, project) if project else None
+    for candidate in roots:
+        root = os.path.realpath(candidate)
+        if not run.startswith(root + os.sep):
+            continue
+        relative = run[len(root) + 1 :]
+        project = relative.split(os.sep, 1)[0]
+        if project:
+            return os.path.join(root, project)
+    return None
 
 
 def resolve_output_dir(
-    run_dir: str, workflows_root: str, output_site: str = "local"
+    run_dir: str,
+    workflows_root: str | Sequence[str],
+    output_site: str = "local",
 ) -> tuple[str | None, str]:
     """(output directory, how it was found).
 
@@ -210,7 +225,7 @@ def collect(output_dir: str) -> tuple[list[dict[str, Any]], bool]:
 
 def listing(
     run_dir: str,
-    workflows_root: str,
+    workflows_root: str | Sequence[str],
     *,
     output_site: str = "local",
     offset: int = 0,

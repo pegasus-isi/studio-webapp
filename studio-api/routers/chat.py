@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 
 from llm.model_limits import FLOOR_MAX_TOKENS, anthropic_max_tokens
 from models import ChatHistoryResponse, ChatMessage
+from workspace import is_protected, workflows_dir, workspace_root
 
 log = structlog.get_logger()
 
@@ -281,11 +282,11 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write content to a file in ~/work/. Creates parent directories.",
+            "description": "Write content to a file in the workspace. Creates parent directories.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File path relative to ~/work/"},
+                    "path": {"type": "string", "description": "File path relative to the workspace root"},
                     "content": {"type": "string", "description": "Content to write"},
                 },
                 "required": ["path", "content"],
@@ -296,11 +297,11 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read a file from ~/work/ (max 100KB).",
+            "description": "Read a file from the workspace (max 100KB).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File path relative to ~/work/"},
+                    "path": {"type": "string", "description": "File path relative to the workspace root"},
                 },
                 "required": ["path"],
             },
@@ -310,11 +311,11 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "list_directory",
-            "description": "List files and directories in ~/work/.",
+            "description": "List files and directories in the workspace.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Directory path (default: ~/work/)"},
+                    "path": {"type": "string", "description": "Directory path relative to the workspace root (default: the root itself)"},
                 },
                 "required": [],
             },
@@ -324,7 +325,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "run_command",
-            "description": "Execute a shell command in ~/work/ (5 min timeout).",
+            "description": "Execute a shell command in the workspace (5 min timeout).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -338,7 +339,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "create_directory",
-            "description": "Create a directory in ~/work/.",
+            "description": "Create a directory in the workspace.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -367,10 +368,7 @@ TOOL_DEFINITIONS_ANTHROPIC = [
     for t in TOOL_DEFINITIONS
 ]
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
+WORKSPACE_ROOT = workspace_root()
 
 _MAX_READ_BYTES = 100 * 1024
 _MAX_OUTPUT_BYTES = 8 * 1024
@@ -389,6 +387,10 @@ def _safe_path(path: str) -> str:
     root = os.path.realpath(WORKSPACE_ROOT)
     if not resolved.startswith(root + os.sep) and resolved != root:
         raise ValueError(f"Access denied: path must be inside {WORKSPACE_ROOT}")
+    if is_protected(resolved, root):
+        # Reading is denied as well as writing: an assistant that can read the
+        # Condor token or the settings DB can put either in a message.
+        raise ValueError("Access denied: that directory holds credentials")
     return resolved
 
 
@@ -571,7 +573,7 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
         "tool-call object as your message.\n\n"
         "WORKSPACE RULES:\n"
         f"- Each workflow goes in its own directory under "
-        f"{os.path.join(WORKSPACE_ROOT, 'workflows')}\n"
+        f"{workflows_dir(WORKSPACE_ROOT)}\n"
         "- Use kebab-case directory names (e.g., csv-summary-workflow/)\n"
     )
 
