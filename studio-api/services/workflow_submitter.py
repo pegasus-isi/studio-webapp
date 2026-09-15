@@ -13,13 +13,11 @@ import time
 import structlog
 
 from services.procutil import communicate_or_kill
+from workspace import workspace_root
 
 log = structlog.get_logger()
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
+WORKSPACE_ROOT = workspace_root()
 
 _CMD_TIMEOUT = 300  # 5 minutes
 

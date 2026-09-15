@@ -91,3 +91,33 @@ def test_endpoint_404s_for_an_unknown_project(client):
 def test_endpoint_404s_for_a_traversal_attempt(client):
     res = client.delete("/api/workflows/projects/..%2F..%2Fetc")
     assert res.status_code in (404, 405)
+
+
+def test_endpoint_deletes_a_project_left_in_the_legacy_directory(
+    client, monkeypatch, tmp_path
+):
+    """A project in $HOME/work/workflows is listed, so it has to be deletable.
+
+    The containment guard used to check only the current workflows directory —
+    with the workspace at $HOME (#401) that would show a legacy project with a
+    Delete button that always returned 403.
+    """
+    from routers import workflows as wf
+    from services import workflow_scanner as scanner
+
+    legacy_root = tmp_path / "work" / "workflows"
+    project = legacy_root / "old-analysis"
+    project.mkdir(parents=True)
+    (project / "workflow_generator.py").write_text("pass\n")
+
+    monkeypatch.setattr(scanner, "WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(scanner, "WORKFLOWS_DIR", str(tmp_path / "workflows"))
+
+    async def _projects(*a, **kw):
+        return [{"project_id": "old-analysis", "project_dir": str(project)}]
+
+    monkeypatch.setattr(wf, "discover_projects_async", _projects)
+
+    res = client.delete("/api/workflows/projects/old-analysis")
+    assert res.status_code == 200, res.text
+    assert not project.exists()

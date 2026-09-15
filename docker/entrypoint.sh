@@ -8,7 +8,13 @@
 
 set -euo pipefail
 
-WORK="${HOME:-/tmp}/work"
+# The workspace root: where workflow projects, uploaded data and the terminal's
+# cwd all live. $HOME since #401 — it used to be $HOME/work, a level that
+# marked a persistence boundary this deployment does not have (the spawner
+# mounts the whole home over NFS) while disagreeing with everything that had
+# already moved up here. Nothing under $HOME/work is moved or removed; it is
+# still listed for anyone who has projects there.
+WORK="${STUDIO_WORKSPACE_DIR:-${HOME:-/tmp}}"
 # Studio's own state lives beside the user's other config, not inside the
 # directory they keep workflows in: a `rm -rf` in the workspace should not be
 # able to take the settings database with it. init_db.py migrates an existing
@@ -245,8 +251,10 @@ if [ "${1:-}" = "--render-only" ]; then
 fi
 
 # workflows/ is where the Marketplace "Add" clones into and where the scaffold
-# skills are told to put projects, so it should exist before anyone looks.
-mkdir -p "${WORK}" "${STUDIO_DIR}" "${WORK}/workflows"
+# skills are told to put projects; data/ is where uploads land. Both exist
+# before anyone looks: an empty directory answers "where does this go?", and a
+# missing one leaves the question open.
+mkdir -p "${WORK}" "${STUDIO_DIR}" "${WORK}/workflows" "${WORK}/data"
 
 # ---- Marketplace checkout (skills, agents, templates) ----
 # The image ships a pinned copy at /opt/pegasus-ai/marketplace. It is a template

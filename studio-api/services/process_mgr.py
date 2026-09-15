@@ -11,13 +11,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
+from workspace import workspace_root
 
 log = structlog.get_logger()
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
+WORKSPACE_ROOT = workspace_root()
 
 
 @dataclass

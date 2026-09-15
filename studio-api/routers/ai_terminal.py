@@ -21,15 +21,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from security import reject_ws_if_cross_origin
 from services.installer import get_tool_info
 from services.process_mgr import process_manager
+from workspace import workspace_root
 
 log = structlog.get_logger()
 
 router = APIRouter(tags=["ai_terminal"])
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
+WORKSPACE_ROOT = workspace_root()
 
 
 @router.websocket("/ws/terminal/{tool_id}")

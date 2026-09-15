@@ -19,15 +19,13 @@ from models import (
     FileWriteRequest,
     MkdirRequest,
 )
+from workspace import is_protected, workspace_root
 
 log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
+WORKSPACE_ROOT = workspace_root()
 
 _MAX_READ_BYTES = 100 * 1024  # 100 KB
 
@@ -64,6 +62,13 @@ def _safe_path(path: str) -> str:
         raise HTTPException(
             status_code=403,
             detail=f"Access denied: path must be inside {WORKSPACE_ROOT}",
+        )
+    if is_protected(resolved, root):
+        # The root is $HOME now, so "inside the workspace" is no longer enough
+        # on its own — it includes the Condor token and Studio's own database.
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: that directory holds credentials",
         )
     return resolved
 

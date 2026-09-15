@@ -120,6 +120,17 @@ writable by the injected uid, so **never bake a rendered config into the image**
   WebSocket`, `router.push("/…")`) — always go through `lib/urls.ts`. Left-nav links are
   full-page reloads, so panel/tab/chat state persists via Zustand `persist`
   (`lib/stores/`).
+- **The workspace root is `$HOME`** (`studio-api/workspace.py`, #401). Projects
+  live in `$HOME/workflows/<name>/`, uploads in `$HOME/data/`. It used to be
+  `$HOME/work`, a level copied from JupyterHub images where only that subdir is
+  on the persistent volume — Studio mounts the whole home, so it marked nothing
+  while disagreeing with JupyterLab's root, `.studio`, the generated
+  `CLAUDE.md`/`AGENTS.md` and the run scanner, all of which had already moved up.
+  Nothing was migrated: `$HOME/work/workflows` is still listed (`project_roots()`),
+  never written to. Because the root is now `$HOME`, "inside the workspace" is no
+  longer sufficient for the file tools — `workspace.is_protected()` keeps them out
+  of `.studio`, `.ssh`, `.condor` (the IDTOKEN) and friends. Resolve the root
+  through `workspace.py`; never rebuild it from `$HOME` inline.
 - **Knowledge base** — skills, agents, templates and examples are authored in
   [pegasus-isi/claude-plugin-marketplace](https://github.com/pegasus-isi/claude-plugin-marketplace)
   and checked out into the image at `/opt/pegasus-ai/marketplace`, tracking
@@ -181,7 +192,7 @@ writable by the injected uid, so **never bake a rendered config into the image**
   keeping its own `KNOWLEDGE_ROOT` after the knowledge base moved is how the
   chat lost its context, personas and skills at once (#179).
   The Marketplace is sourced live from GitHub (PegasusHub registry +
-  curated Pegasus-ISI list), nothing baked in. "Add" git-clones into `~/work/workflows`.
+  curated Pegasus-ISI list), nothing baked in. "Add" git-clones into `~/workflows`.
 - Deliberate exclusions: JupyterLab ships **without** `jupyter-ai` and without
   RTC/collaboration extensions (they break behind the proxy) — don't re-add. The ep/
   spawner running `privileged`/Apptainer nesting is intentional.

@@ -1525,7 +1525,7 @@ function WorkflowDiscoverySection() {
         Runs are found by scanning for <code>braindump.yml</code> under{" "}
         <code>{settings?.defaults.scan_root ?? "your home directory"}</code>;
         workflow projects live in{" "}
-        <code>{settings?.defaults.workflows_dir ?? "~/work/workflows"}</code>.
+        <code>{settings?.defaults.workflows_dir ?? "~/workflows"}</code>.
         Add directories below to also scan them (runs on a mounted volume),
         or path fragments to skip (a large data directory slowing the list).
         Your additions extend the defaults — they never replace them.

@@ -2,18 +2,15 @@
 # Start JupyterLab rooted at the user's HOME.
 #
 # It used to be rooted at ~/work, which hid everything else the user owns: the
-# generated tool config (CLAUDE.md, AGENTS.md) now lives at $HOME, workflow runs
-# are discovered by scanning all of $HOME, and workflow projects are not
-# required to sit under ~/work. A browser that could not see above ~/work made
-# those files look absent.
+# generated tool config (CLAUDE.md, AGENTS.md) lives at $HOME, and workflow runs
+# are discovered by scanning all of $HOME. A browser that could not see above
+# ~/work made those files look absent. Since #401 the workspace is $HOME too,
+# so this is now the same directory the file panel and the agent tools show.
 #
 # HOME is set by KubeSpawner; fall back to /tmp if unset.
 set -euo pipefail
 
 ROOT="${HOME:-/tmp}"
-# Still created: it remains the default home for workflow projects and holds
-# .studio/studio.db.
-mkdir -p "${ROOT}/work"
 cd "$ROOT"
 
 BASE_URL="${STUDIO_JUPYTER_BASE_URL:-/jupyter/}"

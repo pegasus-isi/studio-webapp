@@ -107,7 +107,8 @@ export function useOpenCodeChat() {
    * The directory this session is rooted in, as the server reports it.
    *
    * Every session is created without one now, so this is the engine's own
-   * default (~/work) — but it is still read back rather than assumed. Agents,
+   * default (the workspace root) — but it is still read back rather than
+   * assumed. Agents,
    * skills and commands all resolve per directory, so anything describing what
    * this session can use has to ask about *this* one, and a session created
    * before that default changed keeps the directory it was made with.
@@ -143,12 +144,11 @@ export function useOpenCodeChat() {
   // No `directory` is passed at session creation, deliberately. The engine
   // joins a *relative* path onto its session's directory, and the always-on
   // knowledge tells every model to write `workflows/<name>/…`, so a session
-  // rooted anywhere but ~/work makes that string mean the wrong place: at
-  // $HOME the project lands in $HOME/workflows/<name>/, and rooted at the
-  // workflow's own folder the same string doubles into
+  // rooted anywhere but the workspace root makes that string mean the wrong
+  // place: rooted at the workflow's own folder the same string doubles into
   // …/workflows/<name>/workflows/<name>/. Rooting every session at the engine's
-  // default — now ~/work, see docker/supervisor/scripts/opencode.sh — makes one
-  // relative path mean one place in every conversation.
+  // default — the workspace root, see docker/supervisor/scripts/opencode.sh —
+  // makes one relative path mean one place in every conversation.
   //
   // What this gives up is that a workflow-scoped chat no longer starts *inside*
   // that workflow's folder. It costs one path segment: the Active Context block

@@ -14,13 +14,11 @@ from knowledge.adapters import get_adapter
 from knowledge.common import config_root, prune_legacy_workspace_copies
 from services.procutil import communicate_or_kill
 from services.tool_env import npm_prefix, with_tool_paths
+from workspace import legacy_workspace_root, workspace_root
 
 log = structlog.get_logger()
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
+WORKSPACE_ROOT = workspace_root()
 
 # Tool registry loaded from static JSON
 _TOOL_REGISTRY: list[dict[str, Any]] | None = None
@@ -134,7 +132,7 @@ class ToolInstaller:
         llm_config = await db.get_llm_config() or {}
         adapter = get_adapter(tool_id)
         if adapter:
-            prune_legacy_workspace_copies(WORKSPACE_ROOT)
+            prune_legacy_workspace_copies(legacy_workspace_root(WORKSPACE_ROOT))
             adapter.install(config_root(), llm_config)
 
         # Update DB
@@ -149,7 +147,7 @@ class ToolInstaller:
             # Config lives at the config root now; also clear anything an older
             # build left in the workspace so uninstall really removes it all.
             adapter.uninstall(config_root())
-            prune_legacy_workspace_copies(WORKSPACE_ROOT)
+            prune_legacy_workspace_copies(legacy_workspace_root(WORKSPACE_ROOT))
 
         await db.remove_tool(tool_id)
         log.info("tool_uninstalled", tool_id=tool_id)

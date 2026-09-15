@@ -391,7 +391,7 @@ async def _diagnose(run_dir: str) -> str:
 
 async def _outputs(run_dir: str) -> str:
     from services import run_outputs
-    from services.workflow_scanner import WORKFLOWS_DIR
+    from services.workflow_scanner import project_roots
 
     loop = asyncio.get_event_loop()
     # The listing walks the filesystem (NFS in production) — keep it off the
@@ -399,7 +399,7 @@ async def _outputs(run_dir: str) -> str:
     result = await loop.run_in_executor(
         None,
         lambda: run_outputs.listing(
-            run_dir, WORKFLOWS_DIR, offset=0, limit=_MAX_OUTPUT_FILES
+            run_dir, project_roots(), offset=0, limit=_MAX_OUTPUT_FILES
         ),
     )
     return json.dumps(result, indent=1)

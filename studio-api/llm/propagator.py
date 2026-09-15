@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -11,16 +10,14 @@ import structlog
 from knowledge.adapters import get_adapter
 from knowledge.common import config_root, prune_legacy_workspace_copies
 from llm.providers import PROVIDER_DEFAULTS, fetch_models, provider_type
+from workspace import legacy_workspace_root, workspace_root
 
 if TYPE_CHECKING:
     from db import Database
 
 log = structlog.get_logger()
 
-WORKSPACE_ROOT = os.environ.get(
-    "STUDIO_WORKSPACE_DIR",
-    os.path.join(os.environ.get("HOME", "/tmp"), "work"),
-)
+WORKSPACE_ROOT = workspace_root()
 
 # Bound on each provider's /models probe. Propagation runs at startup and on
 # every provider save, so a hung endpoint must delay it by at most this long
@@ -157,7 +154,7 @@ class LLMPropagator:
             if adapter is None:
                 continue
             try:
-                prune_legacy_workspace_copies(WORKSPACE_ROOT)
+                prune_legacy_workspace_copies(legacy_workspace_root(WORKSPACE_ROOT))
                 adapter.update_llm_config(config_root(), config)
                 log.info("llm_propagated", tool_id=tool_id)
             except Exception as e:

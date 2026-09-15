@@ -28,7 +28,13 @@ _BUSY_TIMEOUT_MS = 5000
 _CONNECT_ATTEMPTS = 3
 _CONNECT_RETRY_DELAY_S = 2.0
 
-def _default_workspace() -> str:
+def _legacy_workspace() -> str:
+    """The pre-#401 workspace root, for finding a database left behind in it.
+
+    Not where anything is written now — see workspace.py. An explicit
+    STUDIO_WORKSPACE_DIR is still honored, because a deployment that set one
+    had its old database under that directory too.
+    """
     explicit = os.environ.get("STUDIO_WORKSPACE_DIR")
     if explicit:
         return explicit
@@ -56,7 +62,7 @@ _DEFAULT_DB_DIR = _state_dir()
 _DEFAULT_DB_PATH = os.path.join(_DEFAULT_DB_DIR, "studio.db")
 
 # Where the database used to live. Kept only to move it on first start.
-_LEGACY_DB_PATH = os.path.join(_default_workspace(), ".studio", "studio.db")
+_LEGACY_DB_PATH = os.path.join(_legacy_workspace(), ".studio", "studio.db")
 
 
 def _migrate_legacy_db(new_path: str) -> bool:
