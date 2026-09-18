@@ -15,6 +15,7 @@ import {
 } from "@/lib/hooks/use-llm";
 import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
+import { chatFeatures } from "@/lib/chat-features";
 
 export function ChatInput() {
   const [input, setInput] = useState("");
@@ -263,9 +264,11 @@ export function ChatInput() {
 
       // Include provider/model overrides if set. With the Default provider,
       // send neither so the server uses the configured default model.
-      if (chatProvider) {
+      // Bot mode hides the selectors: never leak stale persisted store
+      // values as overrides for a hidden control.
+      if (chatFeatures.showProviderSelect && chatProvider) {
         body.provider = chatProvider;
-        if (chatModel) body.model = chatModel;
+        if (chatFeatures.showModelSelect && chatModel) body.model = chatModel;
       }
 
       const response = await fetch(apiUrl("/chat/stream"), {
@@ -409,6 +412,8 @@ export function ChatInput() {
         {/* Context scope / Provider / Model selectors */}
         <div className="flex items-center gap-2 text-xs">
           <ChatContextChip />
+          {chatFeatures.showProviderSelect && (
+          <>
           <label className="ml-1 text-fgmuted">Provider:</label>
           <select
             value={chatProvider || ""}
@@ -430,7 +435,11 @@ export function ChatInput() {
               </option>
             ))}
           </select>
+          </>
+          )}
 
+          {chatFeatures.showModelSelect && (
+          <>
           <label className="ml-2 text-fgmuted">Model:</label>
           {/* Every model the provider offers, listed. Choosing one is optional —
               the first entry leaves it to the provider's configured default — so
@@ -475,6 +484,8 @@ export function ChatInput() {
               }
               className="w-48 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:cursor-not-allowed disabled:bg-muted disabled:text-fgsubtle"
             />
+          )}
+          </>
           )}
         </div>
 
