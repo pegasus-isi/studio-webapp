@@ -19,7 +19,7 @@ from models import (
     FileWriteRequest,
     MkdirRequest,
 )
-from workspace import is_protected, workspace_root
+from workspace import PROTECTED_SUBDIRS, data_dir, is_protected, workflows_dir, workspace_root
 
 log = structlog.get_logger()
 
@@ -58,10 +58,10 @@ def _safe_path(path: str) -> str:
         return WORKSPACE_ROOT
     p = path.strip()
     if not os.path.isabs(p):
-        # tolerate relative paths like "workflows/..." — join to WORKSPACE_ROOT
-        # so "workflows/hello.py" → "/home/.../work/workflows/hello.py"
-        p = os.path.join(WORKSPACE_ROOT, p)
-    resolved = os.path.realpath(os.path.expanduser(p))
+        # Relative paths are relative to $HOME, e.g.
+        # "workflows/hello.py" -> "$HOME/workflows/hello.py".
+        path = os.path.join(WORKSPACE_ROOT, p)
+    resolved = os.path.realpath(os.path.expanduser(path))
     root = os.path.realpath(WORKSPACE_ROOT)
     if not resolved.startswith(root + os.sep) and resolved != root:
         raise HTTPException(
@@ -242,10 +242,11 @@ async def search_files(
     q: str = Query("", max_length=100, description="Fuzzy search query"),
     limit: int = Query(20, ge=1, le=50, description="Max results"),
 ) -> list[dict]:
-    """Fuzzy file/dir search under WORKSPACE_ROOT for @ mentions.
+    """Fuzzy file/dir search for @ mentions, scoped to projects + uploads.
 
-    Returns list of {path, type: file|dir} relative to WORKSPACE_ROOT,
-    capped and sorted. Respects .gitignore-ish ignores.
+    Walks only the new project and upload directories — not the whole $HOME —
+    and returns list of {path, type: file|dir} with paths relative to
+    WORKSPACE_ROOT ($HOME), capped and sorted. Respects .gitignore-ish ignores.
     """
     q = q.strip().lower()
     results: list[dict] = []
@@ -262,28 +263,52 @@ async def search_files(
         ".ipynb_checkpoints",
         ".venv",
         "venv",
+        *PROTECTED_SUBDIRS,  # .studio .ssh .condor .config .local .gnupg — never descend
     }
-    for root, dirs, files in os.walk(WORKSPACE_ROOT):
-        # prune ignored dirs in-place
-        dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
-        rel_root = os.path.relpath(root, WORKSPACE_ROOT)
-        if rel_root == ".":
-            rel_root = ""
-        for name in dirs + files:
-            rel = os.path.join(rel_root, name) if rel_root else name
-            if q and q not in rel.lower():
-                continue
-            full = os.path.join(root, name)
-            try:
-                is_dir = os.path.isdir(full)
-            except OSError:
-                continue
-            # _safe_path check — reuse confinement
-            try:
-                _safe_path(rel)
-            except HTTPException:
-                continue
-            results.append({"path": rel, "type": "dir" if is_dir else "file"})
+    # Fresh start: only new projects + uploads. Legacy $HOME/work/workflows
+    # is listed in the Workflows tab but intentionally not @-searchable.
+    scan_roots = [
+        workflows_dir(WORKSPACE_ROOT),
+        data_dir(WORKSPACE_ROOT),
+    ]
+    # Always list the roots themselves (even missing/empty): "workflows" and
+    # "data" are well-known names and valid tool paths — write_file makedirs
+    # them on demand, so there is always something passable to @-mention.
+    for scan_root in dict.fromkeys(scan_roots):
+        rel = os.path.relpath(scan_root, WORKSPACE_ROOT)  # "workflows" / "data"
+        if q and q not in rel.lower():
+            continue
+        try:
+            _safe_path(scan_root)  # passes even when missing: containment only
+        except HTTPException:
+            continue
+        results.append({"path": rel, "type": "dir"})
+    for scan_root in dict.fromkeys(scan_roots):
+        if not os.path.isdir(scan_root):
+            continue
+        for root, dirs, files in os.walk(scan_root):
+            # prune ignored + all dot-dirs in-place; dot-*files* (e.g. .pegasushub.yml)
+            # are still returned below so the model can see project markers.
+            dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
+            for name in dirs + files:
+                full = os.path.join(root, name)
+                rel = os.path.relpath(full, WORKSPACE_ROOT)  # stays $HOME-relative
+                if q and q not in rel.lower():
+                    continue
+                try:
+                    is_dir = os.path.isdir(full)
+                except OSError:
+                    continue
+                # _safe_path check on the absolute path — reuse confinement
+                # (returned rel stays $HOME-relative: that is the form the
+                # frontend passes back to /files and /files/read).
+                try:
+                    _safe_path(full)
+                except HTTPException:
+                    continue
+                results.append({"path": rel, "type": "dir" if is_dir else "file"})
+                if len(results) >= limit * 3:
+                    break
             if len(results) >= limit * 3:
                 break
         if len(results) >= limit * 3:
