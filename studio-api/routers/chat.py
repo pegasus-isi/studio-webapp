@@ -1836,8 +1836,9 @@ async def chat_feedback(request: Request) -> dict:
     """Rate an assistant reply useful / not useful.
 
     Body: ``{"message_id": <int>, "value": 1 | -1 | 0}`` where 1 = useful,
-    -1 = not useful, 0 = clear the rating. First votes are forwarded to the
-    bot server's feedback table (one-shot); clears stay local.
+    -1 = not useful, 0 = clear a not-yet-recorded rating. Votes are one-shot:
+    once recorded, further calls return the stored value unchanged; only first
+    votes are forwarded to the bot server's feedback table.
     """
     from main import db
 

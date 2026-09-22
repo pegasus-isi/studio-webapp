@@ -276,10 +276,12 @@ def test_chat_feedback_roundtrip(client, tmp_db):
     rows = client.get("/api/chat/history?conversation_id=C").json()["messages"]
     assert rows[-1]["feedback"] == 1
 
-    # Clear it.
-    client.post("/api/chat/feedback", json={"message_id": mid, "value": 0})
+    # One-shot: a clear after a recorded vote is a noop returning the vote.
+    res = client.post("/api/chat/feedback", json={"message_id": mid, "value": 0})
+    assert res.status_code == 200
+    assert res.json()["value"] == 1
     rows = client.get("/api/chat/history?conversation_id=C").json()["messages"]
-    assert rows[-1]["feedback"] is None
+    assert rows[-1]["feedback"] == 1
 
 
 def test_chat_feedback_validation(client):
