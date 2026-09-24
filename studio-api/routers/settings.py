@@ -310,19 +310,27 @@ class UIPreferences(BaseModel):
     # returning user may never want to see again, and the Next server reads
     # this flag when deciding where the app root redirects.
     skip_welcome: bool = False
-    # Which agent engine the chat panel talks to (#367).
+    # Which agent engine the chat panel talks to (#367, defaulted in #403).
     #
     # "opencode" makes the panel a client of the supervised `opencode serve`
     # process, which brings context compaction, cross-session memory,
-    # subagents, MCP and skills — none of which the builtin loop has. It is
-    # opt-in while it is being tried in a real pod: the builtin loop is what
-    # every existing conversation was written against, and a per-user
-    # preference means switching back is a toggle rather than a rollback.
+    # subagents, MCP and skills — none of which the builtin loop has. It was
+    # opt-in while it was being tried in a real pod; the telemetry from that
+    # trial (studio-system#9) shows real sessions, tool calls and the Pegasus
+    # MCP tools succeeding in a live pod, which was the gate for flipping.
+    #
+    # "builtin" stays selectable, so switching back is a toggle rather than a
+    # rollback, until the loop is deleted (the rest of #367 step 5).
+    #
+    # Changing this default does not by itself move an existing user: the PUT
+    # is wholesale, so anyone who has ever saved a preference has a
+    # `chat_engine` stored. `db._migrate` clears a stored "builtin" once, so
+    # the value left over from *this* default does not outlive it.
     #
     # A string rather than a boolean because the intended end state is one
-    # engine, not two (the builtin loop is to be deleted once this is proven),
-    # and a retired value should read as a stale name, not an inverted flag.
-    chat_engine: Literal["builtin", "opencode"] = "builtin"
+    # engine, not two, and a retired value should read as a stale name rather
+    # than an inverted flag.
+    chat_engine: Literal["builtin", "opencode"] = "opencode"
 
 
 _UI_PREFS_KEY = "ui_preferences"

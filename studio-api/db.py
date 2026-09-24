@@ -197,6 +197,10 @@ CREATE TABLE IF NOT EXISTS workflow_secrets (
 """
 
 
+#: Marker recording that the #403 chat-engine default migration has run.
+_CHAT_ENGINE_MIGRATION_KEY = "migrated_chat_engine_default_opencode"
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -286,6 +290,66 @@ class Database:
             """INSERT OR IGNORE INTO notification_log (dedup_key, created_at)
                SELECT dedup_key, created_at FROM notifications
                WHERE dedup_key IS NOT NULL"""
+        )
+
+        await self._migrate_chat_engine_default()
+
+    async def _migrate_chat_engine_default(self) -> None:
+        """Clear a `chat_engine` left over from when "builtin" was the default.
+
+        #403 made OpenCode the default engine. Flipping the model default is
+        not enough on its own: `PUT /api/settings/ui` replaces preferences
+        wholesale and the client sends the full object, so every user who has
+        ever changed *any* UI setting has a `chat_engine` written into their
+        row. Since "builtin" was the default being written, a stored "builtin"
+        is overwhelmingly a side effect of saving an unrelated toggle rather
+        than a choice — so it is dropped and the key resolves to the new
+        default instead.
+
+        Deliberately only "builtin": a stored "opencode" is already what we
+        want, and an unrecognised value is left for the endpoint's own
+        stale-value handling rather than second-guessed here.
+
+        Guarded by a marker key, because `_migrate` runs on *every* connect and
+        this is a one-time correction, not an invariant. Without the marker a
+        user who re-selected Built-in would be silently switched back on the
+        next restart, which is the one behaviour this must not have.
+        """
+        async with self.db.execute(
+            "SELECT 1 FROM app_settings WHERE key = ?", (_CHAT_ENGINE_MIGRATION_KEY,)
+        ) as cursor:
+            if await cursor.fetchone() is not None:
+                return
+
+        async with self.db.execute(
+            "SELECT value FROM app_settings WHERE key = 'ui_preferences'"
+        ) as cursor:
+            row = await cursor.fetchone()
+
+        if row is not None:
+            try:
+                prefs = json.loads(row["value"])
+            except (TypeError, ValueError):
+                # A corrupt blob is the settings endpoint's problem, not this
+                # migration's; leave it exactly as found.
+                prefs = None
+            if isinstance(prefs, dict) and prefs.get("chat_engine") == "builtin":
+                prefs.pop("chat_engine")
+                await self.db.execute(
+                    "UPDATE app_settings SET value = ?, updated_at = ? "
+                    "WHERE key = 'ui_preferences'",
+                    (json.dumps(prefs), _now()),
+                )
+                log.info("db_migrated", change="ui_preferences.chat_engine_cleared")
+
+        # Written whether or not anything was cleared — including for a user
+        # with no preferences row at all, who would otherwise have this run
+        # again on every start until they saved one.
+        await self.db.execute(
+            """INSERT INTO app_settings (key, value, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO NOTHING""",
+            (_CHAT_ENGINE_MIGRATION_KEY, json.dumps(True), _now()),
         )
 
     async def close(self) -> None:

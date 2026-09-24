@@ -21,10 +21,12 @@
  * lives in a Zustand store, and combined for OpenCode, whose state lives in
  * OpenCode. Both fill the same flex column, so the caller lays out neither.
  *
- * Nothing is rendered until the preference has loaded. The fallback is
- * "builtin", and mounting that engine for a beat is not free: it fetches
- * history and can reattach to a turn, so a late preference response would
- * swap engines under a panel that had already started working.
+ * Nothing is rendered until the preference has loaded. Mounting an engine for
+ * a beat is not free — the builtin one fetches history and can reattach to a
+ * turn — so a late preference response would swap engines under a panel that
+ * had already started working. The fallback is "opencode" since #403, which
+ * only matters when the fetch fails outright; it must stay equal to the
+ * server default in `settings.py`.
  */
 
 import { useEffect } from "react";

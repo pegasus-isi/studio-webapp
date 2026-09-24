@@ -166,15 +166,18 @@ writable by the injected uid, so **never bake a rendered config into the image**
   and anything owned by the request died with it. Reach for this shape rather
   than sequencing calls in the browser.
 - **Chat has two engines, chosen per user** by the `chat_engine` UI preference
-  (#367). `builtin` is the in-process agent loop in `routers/chat.py` (direct
-  provider calls with tool use, Anthropic + OpenAI-compatible + Responses API)
-  and is still the default. `opencode` makes the panel a thin client of the
+  (#367). `opencode` is the default since #403, which also clears a stored
+  `builtin` once (`db._migrate`) — the wholesale settings PUT means a flipped
+  model default moves nobody on its own. `builtin` is the in-process agent
+  loop in `routers/chat.py` (direct provider calls with tool use, Anthropic +
+  OpenAI-compatible + Responses API), still selectable so switching back is a
+  toggle rather than a rollback. `opencode` makes the panel a thin client of the
   supervised `opencode serve` process in the same pod: `routers/opencode.py`
   proxies `/api/opencode/*` to `127.0.0.1:4096` **verbatim**, including the SSE
   stream, and `studio-web/lib/opencode/` + `components/chat/opencode-parts.tsx`
   render OpenCode's own parts through a registry with a fallback. The intended
-  end state is one engine — the builtin loop goes once OpenCode is proven in a
-  real pod — so **do not add features to the builtin loop**; see #367 and
+  end state is one engine — the builtin loop and its tables go next, the rest
+  of #367 step 5 — so **do not add features to the builtin loop**; see #367 and
   `docs/OPENCODE-CHAT-SPIKE.md`, which records what the spike established
   (config changes need a process restart, text streams as `message.part.delta`
   and not as whole parts, the plugin hook does receive the session id).
