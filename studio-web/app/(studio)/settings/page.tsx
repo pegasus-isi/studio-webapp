@@ -984,8 +984,9 @@ function ChatEngineSection() {
           }}
           className="mt-0.5 shrink-0 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:opacity-50"
         >
-          <option value="builtin">Built-in</option>
+          {/* Default first (#403). */}
           <option value="opencode">OpenCode</option>
+          <option value="builtin">Built-in</option>
         </select>
       </div>
 

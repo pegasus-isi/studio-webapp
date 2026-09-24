@@ -22,10 +22,10 @@ def test_simple_run_is_on_by_default(client):
         "welcome_dismissed": False,
         "nav_advanced_open": False,
         "skip_welcome": False,
-        # The builtin loop stays the default while the OpenCode engine is
-        # being tried in a real pod (#367). Asserted so flipping it is an
-        # edit to this line, not a side effect.
-        "chat_engine": "builtin",
+        # OpenCode became the default in #403, once the trial in a real pod
+        # showed it working. Asserted so flipping it is an edit to this line,
+        # not a side effect.
+        "chat_engine": "opencode",
     }
 
 
@@ -36,7 +36,9 @@ def test_preferences_round_trip(client):
         "welcome_dismissed": True,
         "nav_advanced_open": True,
         "skip_welcome": True,
-        "chat_engine": "opencode",
+        # The non-default engine, so the round trip proves a stored value is
+        # served back rather than coincidentally matching the default.
+        "chat_engine": "builtin",
     }
     saved = client.put("/api/settings/ui", json=payload)
     assert saved.status_code == 200
@@ -66,7 +68,7 @@ def test_unknown_keys_in_stored_settings_are_ignored(client, monkeypatch):
         "welcome_dismissed": False,
         "nav_advanced_open": False,
         "skip_welcome": False,
-        "chat_engine": "builtin",
+        "chat_engine": "opencode",
     }
 
 
@@ -88,7 +90,7 @@ def test_corrupt_stored_settings_fall_back_to_defaults(client, monkeypatch):
         "welcome_dismissed": False,
         "nav_advanced_open": False,
         "skip_welcome": False,
-        "chat_engine": "builtin",
+        "chat_engine": "opencode",
     }
 
 
@@ -122,7 +124,7 @@ def test_a_retired_preference_value_does_not_break_the_endpoint(client, monkeypa
     assert res.status_code == 200
     body = res.json()
     # The unusable value falls back to the default...
-    assert body["chat_engine"] == "builtin"
+    assert body["chat_engine"] == "opencode"
     # ...and the preferences beside it survive.
     assert body["skip_welcome"] is True
 
