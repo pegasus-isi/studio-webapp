@@ -107,11 +107,37 @@ STUDIO_BIND_ADDR="${STUDIO_BIND_ADDR:-127.0.0.1}"
 #   4. studio-api requires the proxy-stamped X-Studio-Internal secret, because
 #      loopback is not a boundary between local users.
 STUDIO_AUTH_TOKEN="${STUDIO_AUTH_TOKEN:-}"
-# Only used by the gate's /auth location today. Full prefix rendering is a
-# separate piece of work; empty here means /auth sits at the root, which is
-# what the container and OOD's own path-stripping proxy both give us.
+# Read regardless of the gate: Open OnDemand assigns this per session (a
+# node/host/port path such as /node/compute-1/20153) whether or not the
+# session token gate is on, and it drives the prefix-aware proxy locations
+# rendered below (prefix-proxy.conf.tmpl). The gate's own /auth location,
+# further down, additionally reads it when the gate is enabled. Empty means
+# the app sits at the root, which is what the plain container and KubeSpawner
+# (which pattern-matches /user/<name> itself, rather than being told a
+# prefix) both give us.
 STUDIO_URL_PREFIX="${STUDIO_URL_PREFIX:-}"
 STUDIO_URL_PREFIX="${STUDIO_URL_PREFIX%/}"
+if [ -n "${STUDIO_URL_PREFIX}" ]; then
+    case "${STUDIO_URL_PREFIX}" in
+        /*) ;;
+        *)
+            echo "[studio] FATAL: STUDIO_URL_PREFIX must start with '/'" \
+                 "(got '${STUDIO_URL_PREFIX}')" >&2
+            exit 1
+            ;;
+    esac
+    # It lands in nginx location literals and (when the gate is on) a regex
+    # and a cookie Path. Constrain the charset for the same reason as the
+    # token below — a prefix containing a quote or brace would produce a
+    # config that either fails to parse or parses into something else.
+    case "${STUDIO_URL_PREFIX}" in
+        *[!A-Za-z0-9_/-]*)
+            echo "[studio] FATAL: STUDIO_URL_PREFIX may only contain" \
+                 "[A-Za-z0-9_/-]" >&2
+            exit 1
+            ;;
+    esac
+fi
 if [ -n "${STUDIO_AUTH_TOKEN}" ]; then
     # The token lands in a sed replacement, an nginx regex, an nginx string
     # literal and a cookie value. Constrain the charset so it cannot break out
@@ -124,16 +150,6 @@ if [ -n "${STUDIO_AUTH_TOKEN}" ]; then
             exit 1
             ;;
     esac
-    if [ -n "${STUDIO_URL_PREFIX}" ]; then
-        case "${STUDIO_URL_PREFIX}" in
-            /*) ;;
-            *)
-                echo "[studio] FATAL: STUDIO_URL_PREFIX must start with '/'" \
-                     "(got '${STUDIO_URL_PREFIX}')" >&2
-                exit 1
-                ;;
-        esac
-    fi
     STUDIO_JUPYTER_TOKEN="${STUDIO_JUPYTER_TOKEN:-$("${PYTHON}" -c 'import secrets; print(secrets.token_urlsafe(32))')}"
     STUDIO_INTERNAL_SECRET="${STUDIO_INTERNAL_SECRET:-$("${PYTHON}" -c 'import secrets; print(secrets.token_urlsafe(32))')}"
     echo "[studio] Session token gate ENABLED"
@@ -141,23 +157,31 @@ else
     STUDIO_JUPYTER_TOKEN="${STUDIO_JUPYTER_TOKEN:-}"
     STUDIO_INTERNAL_SECRET="${STUDIO_INTERNAL_SECRET:-}"
 fi
-# STUDIO_AUTH_TOKEN and STUDIO_URL_PREFIX are deliberately NOT exported. They
-# are used by render_template below, which runs in this shell, and nothing
-# downstream needs them. The token is the browser's session credential — the
-# one value that lets a request in through the gate — and exporting it would
-# put it in the environment of every supervisord child, which includes the
-# chat engine's tool shells and every terminal the user opens. A prompt
-# injection that got one command run could then read the session credential
-# straight out of `environ`. Same-uid processes are not a privilege boundary,
-# but a credential that never leaves this shell cannot be exfiltrated from one.
+# STUDIO_AUTH_TOKEN is deliberately NOT exported. It is used by render_template
+# below, which runs in this shell, and nothing downstream needs the raw value —
+# it is the browser's session credential, and exporting it would put it in the
+# environment of every supervisord child, which includes the chat engine's tool
+# shells and every terminal the user opens. A prompt injection that got one
+# command run could then read the session credential straight out of `environ`.
+# Same-uid processes are not a privilege boundary, but a credential that never
+# leaves this shell cannot be exfiltrated from one.
 #
-# These two do have to travel: jupyter.sh reads the token, and
-# security.InternalSecretMiddleware plus studio-web's server components read
-# the secret. supervisord interpolates them into its config, so they must be in
-# its environment, and its children inherit. That residual is bounded — same
-# uid, and /proc/<pid>/environ is unreadable by the other local users this gate
-# exists to keep out.
+# STUDIO_JUPYTER_TOKEN and STUDIO_INTERNAL_SECRET do have to travel: jupyter.sh
+# reads the token, and security.InternalSecretMiddleware plus studio-web's
+# server components read the secret. supervisord interpolates them into its
+# config, so they must be in its environment, and its children inherit. That
+# residual is bounded — same uid, and /proc/<pid>/environ is unreadable by the
+# other local users this gate exists to keep out.
 export STUDIO_JUPYTER_TOKEN STUDIO_INTERNAL_SECRET
+
+# STUDIO_URL_PREFIX is not a credential — it's a public URL path segment — so
+# unlike the token above it travels freely. jupyter.sh needs it: JupyterLab
+# registers its routes and renders asset links from --ServerApp.base_url at
+# startup, so it has to be told the prefix it's actually served under (the
+# nginx jupyter location passes the full prefixed path through unmodified —
+# see prefix-proxy.conf.tmpl — for exactly this reason, the same way it does
+# for KubeSpawner's JUPYTERHUB_SERVICE_PREFIX today).
+export STUDIO_URL_PREFIX
 
 # Read by supervisord's %(ENV_...)s expansion, by jupyter.sh and the Jupyter
 # server config, by routers/jupyter.py (status), knowledge/opencode.py (the MCP
@@ -203,6 +227,18 @@ render_template() {
                 return 0
             fi
             ;;
+        prefix-*.conf.tmpl)
+            # Locations keyed on the literal prefix string, not a regex capture
+            # (unlike the /user/[^/]+ locations above them, STUDIO_URL_PREFIX is
+            # already a known, fixed value per session) — so with no prefix set
+            # there is nothing to key them on, and the include must still
+            # resolve to a harmless comment rather than a duplicate `location /`.
+            if [ -z "${STUDIO_URL_PREFIX}" ]; then
+                printf '# STUDIO_URL_PREFIX unset — no reverse-proxy prefix to route on.\n' \
+                    > "${dst}"
+                return 0
+            fi
+            ;;
     esac
     sed -e "s|@STUDIO_PORT@|${STUDIO_PORT}|g" \
         -e "s|@STUDIO_AUTH_TOKEN@|${STUDIO_AUTH_TOKEN}|g" \
@@ -228,6 +264,8 @@ render_template /opt/pegasus-ai/templates/nginx.conf.tmpl \
                 "${STUDIO_RUNTIME_DIR}/nginx.conf"
 render_template /opt/pegasus-ai/templates/studio-proxy.conf.tmpl \
                 "${STUDIO_RUNTIME_DIR}/studio-proxy.conf"
+render_template /opt/pegasus-ai/templates/prefix-proxy.conf.tmpl \
+                "${STUDIO_RUNTIME_DIR}/prefix-proxy.conf"
 for gate in gate-map gate-server gate-api-headers gate-jupyter-headers; do
     render_template "/opt/pegasus-ai/templates/${gate}.conf.tmpl" \
                     "${STUDIO_RUNTIME_DIR}/${gate}.conf"

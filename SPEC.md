@@ -81,6 +81,57 @@ container runtime.
 The image intentionally avoids a fixed user. KubeSpawner or the local container
 runtime supplies the UID and `$HOME`.
 
+## Open OnDemand / Apptainer Packaging
+
+[`ood-app/`](ood-app/) builds a second image, `ood-app/studio-el9.def`, for
+[Open OnDemand](https://openondemand.org/) instead of K8s/KubeSpawner. It is
+the same product — studio-api, studio-web, JupyterLab, HTCondor, Pegasus WMS,
+nginx, supervisord, the session token gate — reusing `docker/`, `studio-api/`,
+and `studio-web/` as-is, on a different base:
+
+| | K8s/Docker | Open OnDemand/Apptainer |
+|---|---|---|
+| Base image | `debian:trixie-slim` (matches the HTCondor AP's distro, #334) | `rockylinux:9` (matches HPC clusters, which skew RHEL-family) |
+| Packaged as | multi-stage `Dockerfile` | single-stage `ood-app/studio-el9.def` |
+| Spawned by | KubeSpawner | an OOD batch-connect app (not in this repo — see below) |
+| Front port published by | the K8s Service | the OOD portal's own allocator |
+
+Two things are true of this deployment that are not (yet) true of K8s, both
+already handled by shared code rather than anything `ood-app`-specific:
+
+- **The container does not get its own network namespace.** Apptainer gives it
+  the *host* network namespace by default, and Open OnDemand runs several
+  users' sessions on one shared compute node — so every listener has to be
+  configurable (`STUDIO_ALLOC_PORTS=1`, see Runtime Architecture above) and
+  the front proxy port needs its own isolation, which is what the session
+  token gate (#218, `STUDIO_AUTH_TOKEN`) is for.
+- **The URL isn't served at the app root.** Open OnDemand's own reverse proxy
+  assigns each session a path like `/node/compute-1/20153` (`STUDIO_URL_PREFIX`),
+  a different shape from KubeSpawner's `/user/<name>` convention that the nginx
+  templates originally only knew how to route. `docker/nginx/prefix-proxy.conf.tmpl`
+  generalizes this: locations keyed on the literal, per-session prefix value,
+  rendered inert (a comment) when unset — so the K8s path is unaffected.
+
+**Why a rebuild rather than `apptainer run docker://...` against the existing
+image**: the intent is for HTCondor to submit workflow jobs onward into the
+target cluster's own Slurm queue (a local schedd, using HTCondor's Slurm/BLAHP
+grid support) rather than only the shared remote AP (`ap.pegasus-ai.org`) that
+K8s deployments use. That means bind-mounting the cluster's own Slurm client
+tools and munge authentication into the container, which only works reliably
+if the container's OS matches the host's closely enough to be library-ABI
+compatible — hence Rocky9, not Debian, for this build. **This is not built
+yet**: `docker/htcondor/90-studio.conf` is installed unmodified, so today an
+OOD session is still a remote-AP HTCondor client like everything else; the
+Rocky9 base is a prerequisite for local Slurm submission, not evidence it
+exists.
+
+**Not part of this repo**: the OOD batch-connect app itself (`form.yml`,
+`submit.yml.erb`, `before.sh.erb` — the Slurm job script that runs
+`apptainer instance start`, generates `STUDIO_AUTH_TOKEN`, and passes down
+`STUDIO_URL_PREFIX`) is expected to live in a site-specific OOD apps catalog
+repo that references this image, not here. See `ood-app/README.md` for
+current status, build/run commands, and known issues.
+
 ## Workspace
 
 The workspace defaults to `$HOME/work`; application code also supports
@@ -362,6 +413,12 @@ Requirements:
 
 KubeSpawner should set the runtime UID and `$HOME`. The image does not create or
 depend on a named application user.
+
+Open OnDemand deployment uses the second image built from
+[`ood-app/studio-el9.def`](ood-app/studio-el9.def) instead (see [Open OnDemand
+/ Apptainer Packaging](#open-ondemand--apptainer-packaging)); the requirements
+above still apply, plus a Slurm cluster whose distro/ABI the container's Rocky9
+base is close enough to for bind-mounted host tools to run.
 
 ## Future V2 Direction
 

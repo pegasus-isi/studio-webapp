@@ -16,6 +16,12 @@ cd "$ROOT"
 BASE_URL="${STUDIO_JUPYTER_BASE_URL:-/jupyter/}"
 if [ -n "${JUPYTERHUB_SERVICE_PREFIX:-}" ]; then
     BASE_URL="${JUPYTERHUB_SERVICE_PREFIX%/}/jupyter/"
+elif [ -n "${STUDIO_URL_PREFIX:-}" ]; then
+    # Open OnDemand's equivalent of JUPYTERHUB_SERVICE_PREFIX above: nginx's
+    # prefix-proxy.conf.tmpl jupyter location passes the full request path
+    # through unmodified (no URI on its proxy_pass), so this server has to be
+    # told the same prefix or every asset link it renders 404s one level up.
+    BASE_URL="${STUDIO_URL_PREFIX%/}/jupyter/"
 fi
 
 # --ServerApp.token is empty unless the session token gate is on. An empty
