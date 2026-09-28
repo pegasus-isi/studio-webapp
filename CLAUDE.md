@@ -119,7 +119,20 @@ writable by the injected uid, so **never bake a rendered config into the image**
   hardcode absolute app paths** (`fetch("/api…")`, `href="/…"`, absolute `new
   WebSocket`, `router.push("/…")`) — always go through `lib/urls.ts`. Left-nav links are
   full-page reloads, so panel/tab/chat state persists via Zustand `persist`
-  (`lib/stores/`).
+  (`lib/stores/`). Open OnDemand assigns its own, differently-shaped prefix
+  (`STUDIO_URL_PREFIX`, e.g. `/node/compute-1/20153`, not `/user/<name>`) —
+  `docker/nginx/prefix-proxy.conf.tmpl` routes on it generically, rendered
+  inert when unset. `middleware.ts`/`lib/server/base-path.ts` needed no
+  change: nginx strips the prefix before the request reaches studio-web
+  either way, and `base-path.ts` reads `x-forwarded-prefix` generically.
+- **`ood-app/`** builds a second, Rocky9-based image for Open OnDemand instead
+  of K8s/KubeSpawner — same `docker/`, `studio-api/`, `studio-web/`, rebuilt on
+  a different base because the intent is for HTCondor to submit onward into
+  the cluster's own Slurm queue, which needs the cluster's bind-mounted Slurm
+  tools to be library-ABI compatible (not built yet — see `ood-app/README.md`
+  for current status). Read `ood-app/README.md` and `SPEC.md`'s "Open OnDemand
+  / Apptainer Packaging" section before changing anything under `docker/` that
+  the OOD image also relies on.
 - **The workspace root is `$HOME`** (`studio-api/workspace.py`, #401). Projects
   live in `$HOME/workflows/<name>/`, uploads in `$HOME/data/`. It used to be
   `$HOME/work`, a level copied from JupyterHub images where only that subdir is

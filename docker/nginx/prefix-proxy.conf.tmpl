@@ -1,0 +1,92 @@
+# Generic reverse-proxy prefix — Open OnDemand, or any other proxy in front of
+# Studio that assigns a per-session URL prefix outside KubeSpawner's
+# /user/<name> convention (OOD's is shaped like /node/<host>/<port>). Rendered
+# by docker/entrypoint.sh into $STUDIO_RUNTIME_DIR/prefix-proxy.conf, included
+# from studio-proxy.conf.tmpl's server block; rendered comment-only when
+# STUDIO_URL_PREFIX is unset (the K8s and plain-container default), so this
+# file is always safe to include unconditionally.
+#
+# Unlike the /user/[^/]+ locations above, which have to regex-capture an
+# unknown username, STUDIO_URL_PREFIX is a single literal known in advance for
+# the whole session — so plain (non-regex) locations suffice, and nginx's own
+# prefix replacement (the part of the URI a location matched is swapped for
+# proxy_pass's own URI component) does the rewriting. No manual capture and
+# reconstruction, so there's no equivalent of the truncation bug the comments
+# above describe for the regex case.
+
+location = @STUDIO_URL_PREFIX@ {
+    return 308 $uri/$is_args$args;
+}
+
+location @STUDIO_URL_PREFIX@/api/ {
+    proxy_pass http://studio_api/api/;
+    include @STUDIO_RUNTIME_DIR@/gate-api-headers.conf;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # SSE support — same reasoning as the unprefixed /api/ location below.
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600s;
+}
+
+location @STUDIO_URL_PREFIX@/ws/ {
+    proxy_pass http://studio_api/ws/;
+    include @STUDIO_RUNTIME_DIR@/gate-api-headers.conf;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+
+location @STUDIO_URL_PREFIX@/jupyter/ {
+    # NOT `.../jupyter/` on proxy_pass — that would strip the prefix, but
+    # JupyterLab itself is started with --ServerApp.base_url set to this same
+    # prefix (jupyter.sh, keyed on this same STUDIO_URL_PREFIX) because it
+    # registers routes and renders asset links from base_url at startup, not
+    # per-request. A proxy_pass with no URI passes $request_uri through
+    # unmodified so the backend sees the path it was actually configured for —
+    # same reason the KubeSpawner jupyter location above has no URI either.
+    proxy_pass http://127.0.0.1:@STUDIO_JUPYTER_PORT@;
+    include @STUDIO_RUNTIME_DIR@/gate-jupyter-headers.conf;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 86400s;
+    proxy_send_timeout 86400s;
+}
+
+# --- Frontend (Next.js), plus its /_next/ assets ---
+# nginx's own prefix replacement strips @STUDIO_URL_PREFIX@ before this reaches
+# studio_web, so it sees plain paths — same as it does behind KubeSpawner — and
+# lib/server/base-path.ts puts the prefix back into `<base href>` from
+# X-Forwarded-Prefix. The sub_filter rewrites cover the same gap the
+# KubeSpawner asset location above documents: once the served HTML points
+# root-relative /_next/... at this prefix, the browser's follow-up request for
+# it has to land back in this same location, not the unprefixed one.
+location @STUDIO_URL_PREFIX@/ {
+    proxy_pass http://studio_web/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix "@STUDIO_URL_PREFIX@";
+
+    proxy_set_header Accept-Encoding "";
+    sub_filter_once off;
+    sub_filter 'href="/_next/' 'href="@STUDIO_URL_PREFIX@/_next/';
+    sub_filter 'src="/_next/' 'src="@STUDIO_URL_PREFIX@/_next/';
+    sub_filter 'href="./_next/' 'href="@STUDIO_URL_PREFIX@/_next/';
+    sub_filter 'src="./_next/' 'src="@STUDIO_URL_PREFIX@/_next/';
+}
