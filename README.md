@@ -9,6 +9,11 @@ Authentication is handled upstream by JupyterHub/KubeSpawner, Open OnDemand, or
 an ingress layer. The container has no built-in auth and runs as the UID provided
 by the spawner.
 
+Two images share this codebase: the Debian-based one this README covers
+(spawned by KubeSpawner/JupyterHub), and a Rocky9/Apptainer build for [Open
+OnDemand](ood-app/README.md) — see that README and
+[SPEC.md](SPEC.md#open-ondemand--apptainer-packaging) for what differs and why.
+
 ## Runtime
 
 ```
@@ -311,10 +316,11 @@ cd studio-web && node_modules/.bin/tsc --noEmit   # NOT `npm test`/`npm run lint
 | Path | Contents |
 |------|----------|
 | [Dockerfile](Dockerfile) | Multi-stage container build |
-| [docker/](docker/) | nginx, Jupyter, HTCondor, entrypoint, and supervisord config |
+| [docker/](docker/) | nginx, Jupyter, HTCondor, entrypoint, and supervisord config (shared with `ood-app/`) |
 | [studio-api/](studio-api/) | FastAPI backend, SQLite state, tool adapters, workflow services |
 | [studio-web/](studio-web/) | Next.js frontend |
 | [knowledge/overlay/](knowledge/overlay/) | Studio-specific environment context; the shared skills/agents come from the marketplace checkout at `/opt/pegasus-ai/marketplace` |
+| [ood-app/](ood-app/README.md) | Open OnDemand/Apptainer image build (Rocky9), for HPC clusters instead of K8s |
 | [SPEC.md](SPEC.md) | Current design specification |
 
 ## License

@@ -121,6 +121,11 @@ server {
         sub_filter 'src="./_next/' 'src="$studio_prefix/_next/';
     }
 
+    # Open OnDemand (or any other reverse proxy assigning a per-session URL
+    # prefix outside KubeSpawner's /user/<name> convention) — see
+    # prefix-proxy.conf.tmpl. Comment-only when STUDIO_URL_PREFIX is unset.
+    include @STUDIO_RUNTIME_DIR@/prefix-proxy.conf;
+
     # --- Frontend (Next.js) ---
     location / {
         proxy_pass http://studio_web;
