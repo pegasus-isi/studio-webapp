@@ -534,6 +534,16 @@ export function useOpenCodeChat() {
         // plan mode applies to the next turn without re-rendering anything.
         const selected = useOpenCodeStore.getState().agentByConv[convId];
         await oc.promptAsync(id, { parts, model, agent: selected || undefined });
+        // A turn sent while the chat is about a run is the user asking the AI
+        // about it — whichever way the scope got there (the dashboard's button,
+        // the chip, following the Workflows page). The server links it to that
+        // run's failure episode, and 404s a run that has none, which is the
+        // common case and not an error.
+        if (activeScope?.type === "run") {
+          void api
+            .markEpisodeAsked(activeScope.id, { conversation_id: id, turn: true })
+            .catch(() => undefined);
+        }
       } catch (e) {
         dispatch({ kind: "error", error: (e as Error).message });
         dispatch({ kind: "busy", busy: false });

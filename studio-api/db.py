@@ -213,6 +213,48 @@ CREATE TABLE IF NOT EXISTS workflow_secrets (
     value           TEXT NOT NULL,          -- secretbox-encrypted (S7)
     updated_at      TEXT NOT NULL
 );
+
+-- "Did the AI help?" (services/feedback_episodes.py). One row per failed run:
+-- the failure, whether the AI was asked about it, the re-run that followed and
+-- what the user said. An admin collection script reads these columns by name,
+-- so rename nothing. run_dir/rerun_dir are additive: a wf_uuid can repeat
+-- across submit dirs (see upsert_workflow_run), so the directory is what
+-- actually identifies a run when matching a re-run and its result.
+CREATE TABLE IF NOT EXISTS feedback_episodes (
+    id                  TEXT PRIMARY KEY,
+    workflow            TEXT,
+    run_id              TEXT NOT NULL,
+    failure_category    TEXT,
+    failed_at           TEXT NOT NULL,
+    asked_ai_at         TEXT,
+    conversation_id     TEXT,
+    ai_turns            INTEGER DEFAULT 0,
+    rerun_id            TEXT,
+    rerun_submitted_at  TEXT,
+    rerun_status        TEXT,
+    closed_at           TEXT,
+    prompt_type         TEXT,
+    prompted_at         TEXT,
+    answer              TEXT,   -- fixed|partly|no_help|did_not_try|fixed_myself|ask_ai|dismissed
+    tags                TEXT,   -- JSON list of give-up tags
+    comment             TEXT,
+    answered_at         TEXT,
+    run_dir             TEXT,
+    rerun_dir           TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_episodes_run
+    ON feedback_episodes (run_id);
+
+-- Give-up tags from a chat not scoped to any episode.
+CREATE TABLE IF NOT EXISTS feedback_giveups (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT,
+    conversation_id TEXT,
+    episode_id      TEXT,
+    reason          TEXT,   -- stop | error
+    tag             TEXT
+);
 """
 
 
@@ -1060,3 +1102,107 @@ class Database:
         ) as cursor:
             row = await cursor.fetchone()
         return bool(row["used"]) if row else False
+
+    # --- AI-help feedback episodes (services/feedback_episodes.py) ---
+
+    #: Columns an episode write may touch. A whitelist rather than trusting the
+    #: caller's keys, because they are interpolated into the SQL.
+    _EPISODE_COLUMNS = frozenset({
+        "workflow", "run_id", "failure_category", "failed_at", "asked_ai_at",
+        "conversation_id", "ai_turns", "rerun_id", "rerun_submitted_at",
+        "rerun_status", "closed_at", "prompt_type", "prompted_at", "answer",
+        "tags", "comment", "answered_at", "run_dir", "rerun_dir",
+    })
+
+    async def add_feedback_episode(self, **fields: Any) -> dict[str, Any]:
+        unknown = set(fields) - self._EPISODE_COLUMNS - {"id"}
+        if unknown:
+            raise ValueError(f"unknown episode columns: {sorted(unknown)}")
+        fields.setdefault("id", f"ep_{uuid.uuid4().hex[:16]}")
+        cols = ", ".join(fields)
+        marks = ", ".join("?" for _ in fields)
+        await self.db.execute(
+            f"INSERT INTO feedback_episodes ({cols}) VALUES ({marks})",
+            tuple(fields.values()),
+        )
+        await self.db.commit()
+        episode = await self.get_feedback_episode(fields["id"])
+        assert episode is not None
+        return episode
+
+    async def update_feedback_episode(self, episode_id: str, **fields: Any) -> None:
+        if not fields:
+            return
+        unknown = set(fields) - self._EPISODE_COLUMNS
+        if unknown:
+            raise ValueError(f"unknown episode columns: {sorted(unknown)}")
+        assignments = ", ".join(f"{k} = ?" for k in fields)
+        await self.db.execute(
+            f"UPDATE feedback_episodes SET {assignments} WHERE id = ?",
+            (*fields.values(), episode_id),
+        )
+        await self.db.commit()
+
+    async def get_feedback_episode(self, episode_id: str) -> dict[str, Any] | None:
+        async with self.db.execute(
+            "SELECT * FROM feedback_episodes WHERE id = ?", (episode_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def find_feedback_episode(self, key: str) -> dict[str, Any] | None:
+        """An episode by its own id, else the newest one for a run id.
+
+        The browser mostly knows a *run* (the chat is scoped to one, the
+        dashboard links one), not an episode, so every endpoint accepts either
+        rather than making the client look the episode up first.
+        """
+        episode = await self.get_feedback_episode(key)
+        if episode is not None:
+            return episode
+        async with self.db.execute(
+            """SELECT * FROM feedback_episodes WHERE run_id = ?
+               ORDER BY failed_at DESC LIMIT 1""",
+            (key,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def list_feedback_episodes(
+        self, where: str = "1", params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+        """Episodes matching a WHERE fragment, newest failure first.
+
+        `where` is always a literal from services/feedback_episodes.py; values
+        go through `params`, never into the string.
+        """
+        async with self.db.execute(
+            f"SELECT * FROM feedback_episodes WHERE {where} ORDER BY failed_at DESC",
+            params,
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def add_feedback_giveup(
+        self,
+        *,
+        conversation_id: str | None,
+        episode_id: str | None,
+        reason: str,
+        tag: str,
+    ) -> int:
+        cursor = await self.db.execute(
+            """INSERT INTO feedback_giveups
+               (created_at, conversation_id, episode_id, reason, tag)
+               VALUES (?, ?, ?, ?, ?)""",
+            (_now(), conversation_id, episode_id, reason, tag),
+        )
+        await self.db.commit()
+        return int(cursor.lastrowid or 0)
+
+    async def get_workflow_run(self, run_id: str) -> dict[str, Any] | None:
+        async with self.db.execute(
+            "SELECT * FROM workflow_runs WHERE run_id = ?", (run_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row else None

@@ -26,6 +26,8 @@ import { cn } from "@/lib/utils";
 import { AppLink } from "@/components/layout/app-link";
 import { GlossaryList } from "@/components/ui/glossary-term";
 import { GuidedTour, type TourStep } from "@/components/onboarding/guided-tour";
+import { FeedbackPromptCard } from "@/components/feedback/feedback-prompt-card";
+import { askAboutFailedRun } from "@/lib/feedback/feedback";
 import {
   CollectionNotice,
   ProfileForm,
@@ -204,7 +206,7 @@ function AttentionStrip({
   onAsk,
 }: {
   runs: RecentRun[];
-  onAsk: (prompt: string) => void;
+  onAsk: (run: RecentRun, label: string, prompt: string) => void;
 }) {
   const bad = runs.filter((r) => statusTone(r) === "bad");
   const running = runs.filter((r) => statusTone(r) === "run");
@@ -225,6 +227,8 @@ function AttentionStrip({
         <button
           onClick={() =>
             onAsk(
+              first,
+              label,
               `The run "${label}" failed — ${first.failed_jobs} of ${first.total_jobs} tasks did not complete. Explain what went wrong and how to fix it.`
             )
           }
@@ -377,7 +381,17 @@ export function DashboardView() {
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-auto">
         <div className="mx-auto max-w-3xl px-6 pb-8 pt-12">
-          <AttentionStrip runs={data?.runs.recent ?? []} onAsk={send} />
+          {/* The chat panel hosts feedback prompts; this is where they go
+              when it is closed. */}
+          <FeedbackPromptCard placement="dashboard" />
+          <AttentionStrip
+            runs={data?.runs.recent ?? []}
+            onAsk={(run, label, prompt) =>
+              // Scopes the chat to the run and marks its failure episode as
+              // asked, so the turns that follow count toward it.
+              askAboutFailedRun({ runId: run.run_id, label, draft: prompt })
+            }
+          />
 
           {/* Welcome */}
           <div className="flex flex-col items-center text-center">

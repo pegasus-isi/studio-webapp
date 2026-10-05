@@ -594,6 +594,17 @@ async def _notify_run_started(result: dict) -> None:
     except Exception as e:  # never let a notification failure break submit
         log.warning("run_started_notify_failed", run_dir=run_dir, error=str(e))
 
+    # A submit may be the re-run that closes a feedback episode. Linked here
+    # so the episode records the real submit time; the watch loop links it
+    # too, from state, for runs submitted outside Studio.
+    try:
+        from main import db
+        from services import feedback_episodes
+
+        await feedback_episodes.observe_submit(db, run_dir)
+    except Exception as e:  # noqa: BLE001 — instrumentation must not break submit
+        log.warning("feedback_submit_observe_failed", run_dir=run_dir, error=str(e))
+
 
 @router.post("/projects/{project_id}/submit")
 async def submit_project(

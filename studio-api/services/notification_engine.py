@@ -80,6 +80,9 @@ class NotificationEngine:
         self._seen: dict[str, _RunState] = {}
         # Notification kinds the user has muted (suppressed entirely).
         self._muted: set[str] = set()
+        # "<episode>:<prompt type>" already poked at the browsers, so a prompt
+        # that stays due is announced once rather than every 10s scan.
+        self._poked: set[str] = set()
 
     _MUTED_SETTING_KEY = "muted_notification_kinds"
 
@@ -206,6 +209,9 @@ class NotificationEngine:
         live_dirs = {r["run_dir"] for r in runs}
         for gone in [d for d in self._seen if d not in live_dirs]:
             del self._seen[gone]
+        # What feedback_episodes needs from this scan, collected as we go and
+        # handed over once at the end (see _advance_feedback).
+        observations: list[dict[str, Any]] = []
         for run in runs:
             run_dir = run["run_dir"]
             run_id = run["run_id"]
@@ -227,6 +233,13 @@ class NotificationEngine:
 
             prev = self._seen.get(run_dir)
             self._seen[run_dir] = _RunState(status, failed, total)
+            observations.append({
+                "run_id": run_id,
+                "run_dir": run_dir,
+                "workflow": wf_name,
+                "status": status,
+                "prev_status": prev.status if prev else None,
+            })
 
             if seed_only or prev is None:
                 # First sighting — record baseline. Normally we don't alert,
@@ -244,6 +257,57 @@ class NotificationEngine:
 
             # Resource-pressure extension point (see _check_resources docstring).
             await self._check_resources(run_id, label, detail)
+
+        await self._advance_feedback(observations, seed_only)
+
+    async def _advance_feedback(
+        self, observations: list[dict[str, Any]], seed_only: bool
+    ) -> None:
+        """Move AI-help feedback episodes along, then poke browsers about any
+        prompt that just became due.
+
+        The poke is broadcast-only — never stored — so it cannot land in the
+        bell's history: it is a prompt, not a notification. It carries no
+        decision either; the browser asks /api/feedback/episodes/pending, which
+        applies the per-session rule the broadcast cannot know about.
+
+        Isolated in its own try: feedback is instrumentation, and nothing here
+        may cost the user a workflow alert.
+        """
+        if self._db is None:
+            return
+        try:
+            from services import feedback_episodes
+
+            await feedback_episodes.process_scan(
+                self._db, observations, seed_only=seed_only
+            )
+            due = await feedback_episodes.due_prompts(self._db)
+        except Exception as e:  # noqa: BLE001
+            log.warning("feedback_scan_failed", error=str(e))
+            return
+        due_keys = {f"{episode_id}:{prompt_type}" for episode_id, prompt_type in due}
+        # Forget what is no longer due, so the set stays as small as the queue.
+        self._poked &= due_keys
+        for episode_id, prompt_type in due:
+            key = f"{episode_id}:{prompt_type}"
+            if key in self._poked:
+                continue
+            self._poked.add(key)
+            self._broadcast({
+                "id": f"feedback:{key}",
+                "kind": "feedback_prompt",
+                "severity": "info",
+                "title": "",
+                "body": None,
+                "run_id": None,
+                "link": None,
+                "meta": {"episode_id": episode_id, "prompt_type": prompt_type},
+                # Read, so any consumer that does not know this kind treats it
+                # as already seen: no toast, no unread badge.
+                "read": True,
+                "created_at": "",
+            })
 
     async def _notify_terminal_if_new(
         self, run_id: str, label: str, status: str, failed: int, total: int

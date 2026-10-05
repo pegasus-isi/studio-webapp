@@ -16,6 +16,7 @@ from routers import (
     ai_terminal,
     chat,
     dashboard,
+    episodes,
     feedback,
     files,
     health,
@@ -386,6 +387,7 @@ app.include_router(feedback.router)
 app.include_router(opencode.router)
 app.include_router(mcp.router)
 app.include_router(notifications.router)
+app.include_router(episodes.router)
 app.include_router(dashboard.router)
 app.include_router(provisioning.router)
 app.include_router(pegasus_bot.router)
