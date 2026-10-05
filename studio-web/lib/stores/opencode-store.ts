@@ -70,6 +70,15 @@ interface OpenCodeStore {
    */
   agentByConv: Record<string, string>;
   setAgent: (convId: string, agent: string) => void;
+
+  /**
+   * The model picked in the chat panel ("provider/model", "" = the configured
+   * default), mirrored here so the feedback link can report it. Not persisted:
+   * the picker itself resets on reload, and a stored value would then name a
+   * model the user is no longer using.
+   */
+  currentModel: string;
+  setCurrentModel: (model: string) => void;
 }
 
 export const useOpenCodeStore = create<OpenCodeStore>()(
@@ -77,6 +86,9 @@ export const useOpenCodeStore = create<OpenCodeStore>()(
     (set) => ({
       sessionByConv: {},
       agentByConv: {},
+      currentModel: "",
+
+      setCurrentModel: (model) => set({ currentModel: model }),
 
       setAgent: (convId, agent) =>
         set((s) => ({ agentByConv: { ...s.agentByConv, [convId]: agent } })),
@@ -97,6 +109,10 @@ export const useOpenCodeStore = create<OpenCodeStore>()(
       name: "studio-opencode",
       version: 1,
       storage: createJSONStorage(() => safeLocalStorage),
+      partialize: (s) => ({
+        sessionByConv: s.sessionByConv,
+        agentByConv: s.agentByConv,
+      }),
     }
   )
 );

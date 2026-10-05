@@ -31,6 +31,7 @@ import type {
   QuestionRequest,
 } from "@/lib/opencode/client";
 import { usePanelStore } from "@/lib/stores/panel-store";
+import { useOpenCodeStore } from "@/lib/stores/opencode-store";
 import { cn } from "@/lib/utils";
 
 const STARTERS = [
@@ -169,6 +170,10 @@ export function OpenCodeChat() {
       });
     }
   }, [chatDraft, setChatDraft]);
+
+  // Mirrored for the feedback link, which reports the model in use.
+  const setCurrentModel = useOpenCodeStore((s) => s.setCurrentModel);
+  useEffect(() => setCurrentModel(picked), [picked, setCurrentModel]);
 
   const model = useMemo(() => {
     if (!picked) return undefined;

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { stripAppBasePath } from "@/lib/urls";
 import { AppLink } from "@/components/layout/app-link";
 import { UserMenu } from "@/components/layout/user-menu";
+import { FeedbackButton } from "@/components/layout/feedback-button";
 import { cn } from "@/lib/utils";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import {
@@ -76,6 +77,12 @@ const ICON = {
   more: (
     <>
       <path d="M5 12h.01M12 12h.01M19 12h.01" />
+    </>
+  ),
+  feedback: (
+    <>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      <path d="M12 7v4M12 14h.01" />
     </>
   ),
   settings: (
@@ -281,9 +288,16 @@ export function Sidebar() {
         {(!simplified || advancedOpen) &&
           panelButton("terminal", "Terminal", terminalOpen, toggleTerminal)}
 
+        {/* Feedback sits with Settings at the foot of the rail: always in
+            reach for early users reporting as they go, out of the way of the
+            task cells above. Opens the form in a new tab. */}
+        <div className="mx-auto my-1 h-px w-7 bg-line" />
+        <FeedbackButton className={cellClass(false)}>
+          <Glyph name="feedback" />
+          {cellLabel("Feedback")}
+        </FeedbackButton>
         {/* Settings is a place you go, not a property of your account, so it
             gets a rail cell as well as its entry in the account menu. */}
-        <div className="mx-auto my-1 h-px w-7 bg-line" />
         {renderItem({
           href: "/settings",
           label: "Settings",
