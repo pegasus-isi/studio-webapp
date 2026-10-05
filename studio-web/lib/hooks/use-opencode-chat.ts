@@ -482,6 +482,11 @@ export function useOpenCodeChat() {
       const id = sessionRef.current;
       if (!id || !text.trim()) return;
       dispatch({ kind: "error", error: null });
+      // This transcript lives in the OpenCode session, not the chat store, so
+      // addMessage's auto-title never ran and every conversation stayed
+      // "New chat" in the switcher. Only the user's own text names it — the
+      // synthetic context parts below are not what they asked.
+      useChatStore.getState().titleFromMessage(convId, text);
       // Optimistic: the user pressed send, and the first event can be a second
       // away while a reasoning model thinks. `session.status` corrects it.
       dispatch({ kind: "busy", busy: true });
