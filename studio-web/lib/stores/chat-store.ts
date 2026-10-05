@@ -127,6 +127,10 @@ interface ChatStore {
   newConversation: () => void;
   switchConversation: (id: string) => void;
   renameConversation: (id: string, title: string) => void;
+  // Name a still-untitled conversation after its first user message. Shared by
+  // both engines: the builtin path calls it via addMessage, the OpenCode path
+  // (whose transcript never passes through addMessage) calls it on send.
+  titleFromMessage: (id: string, text: string) => void;
   deleteConversation: (id: string) => void;
 }
 
@@ -174,6 +178,20 @@ function _mutateLastAssistant(
   };
 }
 
+// Title an untitled conversation from its first user message. Returns the
+// same array when nothing changes so callers can skip a store update.
+function _titled(
+  conversations: ConversationMeta[],
+  id: string,
+  text: string
+): ConversationMeta[] {
+  const conv = conversations.find((c) => c.id === id);
+  if (!conv || (conv.title && conv.title !== "New chat")) return conversations;
+  const title = deriveTitle(text);
+  if (title === conv.title) return conversations;
+  return conversations.map((c) => (c.id === id ? { ...c, title } : c));
+}
+
 const _firstId = newId();
 
 export const useChatStore = create<ChatStore>()(
@@ -192,18 +210,10 @@ export const useChatStore = create<ChatStore>()(
       addMessage: (msg) =>
         set((s) => {
           const arr = [...(s.messagesById[s.activeId] || []), msg];
-          // Auto-title the conversation from the first user message.
-          let conversations = s.conversations;
-          if (msg.role === "user") {
-            const conv = s.conversations.find((c) => c.id === s.activeId);
-            if (conv && (!conv.title || conv.title === "New chat")) {
-              conversations = s.conversations.map((c) =>
-                c.id === s.activeId
-                  ? { ...c, title: deriveTitle(msg.content) }
-                  : c
-              );
-            }
-          }
+          const conversations =
+            msg.role === "user"
+              ? _titled(s.conversations, s.activeId, msg.content)
+              : s.conversations;
           return {
             messagesById: { ...s.messagesById, [s.activeId]: arr },
             messages: arr,
@@ -341,6 +351,12 @@ export const useChatStore = create<ChatStore>()(
             c.id === id ? { ...c, title: title || c.title } : c
           ),
         })),
+
+      titleFromMessage: (id, text) =>
+        set((s) => {
+          const conversations = _titled(s.conversations, id, text);
+          return conversations === s.conversations ? s : { conversations };
+        }),
 
       deleteConversation: (id) =>
         set((s) => {
