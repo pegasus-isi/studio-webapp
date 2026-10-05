@@ -17,6 +17,11 @@ import {
 } from "@/lib/hooks/use-ui-prefs";
 import { announceEngineChange } from "@/lib/chat-engine-channel";
 import { ToolCard } from "@/components/tools/tool-card";
+import {
+  CollectionNotice,
+  FeedbackPromptsToggle,
+  ProfileForm,
+} from "@/components/onboarding/feedback-consent";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { cn } from "@/lib/utils";
@@ -25,7 +30,13 @@ import type { ProviderConfig } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 import * as oc from "@/lib/opencode/client";
 
-type Tab = "providers" | "tools" | "chat" | "pegasus" | "notifications";
+type Tab =
+  | "providers"
+  | "tools"
+  | "chat"
+  | "pegasus"
+  | "notifications"
+  | "feedback";
 
 // What an ordinary user changes, versus what an operator does. Pegasus Options
 // sits on the everyday side because it holds the Simplified Run toggle — the
@@ -34,6 +45,7 @@ const EVERYDAY_TABS: [Tab, string][] = [
   ["notifications", "Notifications"],
   ["pegasus", "Pegasus Options"],
   ["chat", "Chat"],
+  ["feedback", "Feedback & privacy"],
 ];
 
 const ADVANCED_TABS: [Tab, string][] = [
@@ -136,6 +148,7 @@ export default function SettingsPage() {
         {activeTab === "chat" && <ChatTab />}
         {activeTab === "pegasus" && <PegasusOptionsTab />}
         {activeTab === "notifications" && <NotificationsTab />}
+        {activeTab === "feedback" && <FeedbackTab />}
       </div>
     </div>
   );
@@ -906,6 +919,49 @@ function TelemetrySection() {
       {error && (
         <p className="mt-2 text-xs text-red-700 dark:text-rose-400">{error}</p>
       )}
+    </div>
+  );
+}
+
+/* ─── Feedback & privacy (early-user feedback program) ─── */
+
+/**
+ * The permanent home of what the first-run tour said once: what is recorded,
+ * the switch for the feedback prompts, the profile answers, and the chat-text
+ * consent. The consent control is the same component the Chat tab shows,
+ * repeated here because the notice points "below" at it — a privacy notice
+ * whose controls live on another tab is one most people never act on.
+ */
+function FeedbackTab() {
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-fg">Feedback &amp; privacy</h2>
+        <p className="text-sm text-fgmuted">
+          What Studio records to improve itself, and how to turn it off.
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-line bg-surface p-4">
+        <h3 className="text-sm font-semibold text-fg">What we collect</h3>
+        <CollectionNotice where="settings" className="mt-1" />
+      </div>
+
+      <div className="rounded-lg border border-line bg-surface p-4">
+        <FeedbackPromptsToggle />
+      </div>
+
+      <div className="rounded-lg border border-line bg-surface p-4">
+        <h3 className="text-sm font-semibold text-fg">About you</h3>
+        <p className="mt-1 mb-3 text-xs leading-relaxed text-fgmuted">
+          Optional. These let us tell apart, say, a first-year student from
+          someone who has run HTCondor for years when we read the feedback.
+          Leave any of them blank.
+        </p>
+        <ProfileForm />
+      </div>
+
+      <TelemetrySection />
     </div>
   );
 }

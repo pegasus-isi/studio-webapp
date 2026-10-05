@@ -27,6 +27,10 @@ import { AppLink } from "@/components/layout/app-link";
 import { GlossaryList } from "@/components/ui/glossary-term";
 import { GuidedTour, type TourStep } from "@/components/onboarding/guided-tour";
 import {
+  CollectionNotice,
+  ProfileForm,
+} from "@/components/onboarding/feedback-consent";
+import {
   useUIPreferences,
   useUpdateUIPreferences,
 } from "@/lib/hooks/use-ui-prefs";
@@ -298,6 +302,27 @@ const TOUR: TourStep[] = [
     anchor: "home-openers",
     title: "Start here",
     body: "Pick whichever of these is closest to what you want. It opens the assistant with the question already written, and you can edit it before sending.",
+  },
+  // The closing two have no anchor: what Studio records, and who is using it,
+  // are not things on the page. The notice comes before the questions so
+  // nobody is asked about themselves before being told what is kept.
+  {
+    title: "What we collect",
+    render: () => <CollectionNotice where="tour" />,
+  },
+  {
+    title: "Tell us a little about you",
+    body: "Four optional questions, so we can tell whose experience is whose. Skip any or all; you can change them in Settings.",
+    width: 340,
+    ownControls: true,
+    render: ({ next }) => (
+      <ProfileForm
+        compact
+        saveLabel="Save and finish"
+        onDone={() => next()}
+        onSkip={next}
+      />
+    ),
   },
 ];
 

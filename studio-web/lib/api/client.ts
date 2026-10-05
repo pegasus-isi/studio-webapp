@@ -1147,6 +1147,41 @@ export async function updateTelemetryConsent(contentCapture: boolean) {
   });
 }
 
+// --- User profile (early-user feedback program) ---
+
+export type ProfileRole =
+  | "graduate_student"
+  | "postdoc"
+  | "research_scientist"
+  | "faculty"
+  | "research_software_engineer"
+  | "other";
+
+export type PegasusExperience = "never" | "tried" | "regular";
+
+export type UserProfile = {
+  research_field: string | null;
+  role: ProfileRole | null;
+  pegasus_experience: PegasusExperience | null;
+  coding_comfort: number | null;
+  /** Server-stamped on save; null until the user has answered (or skipped
+   *  every question and saved) at least once. */
+  answered_at: string | null;
+};
+
+export async function getUserProfile() {
+  return request<UserProfile>("/settings/profile");
+}
+
+export async function updateUserProfile(
+  profile: Omit<UserProfile, "answered_at">
+) {
+  return request<UserProfile>("/settings/profile", {
+    method: "PUT",
+    body: JSON.stringify(profile),
+  });
+}
+
 // --- Jupyter ---
 
 export async function getJupyterStatus() {
