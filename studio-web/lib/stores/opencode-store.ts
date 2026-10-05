@@ -79,6 +79,19 @@ interface OpenCodeStore {
    */
   currentModel: string;
   setCurrentModel: (model: string) => void;
+
+  /**
+   * OpenCode assistant message id -> the user's 👍 (1) / 👎 (-1) on it.
+   *
+   * The backend (`/api/feedback/message`) is the record; this copy exists only
+   * so the selected thumb survives a reload, since there is no read endpoint
+   * and the transcript itself comes from OpenCode, which knows nothing about
+   * ratings. Keyed by message id alone because OpenCode's ids are unique
+   * across sessions. Absent means unrated.
+   */
+  ratingByMessage: Record<string, 1 | -1>;
+  /** 0 un-rates, dropping the key so the map holds only real votes. */
+  setRating: (messageID: string, rating: 1 | -1 | 0) => void;
 }
 
 export const useOpenCodeStore = create<OpenCodeStore>()(
@@ -89,6 +102,16 @@ export const useOpenCodeStore = create<OpenCodeStore>()(
       currentModel: "",
 
       setCurrentModel: (model) => set({ currentModel: model }),
+
+      ratingByMessage: {},
+
+      setRating: (messageID, rating) =>
+        set((s) => {
+          const next = { ...s.ratingByMessage };
+          if (rating === 0) delete next[messageID];
+          else next[messageID] = rating;
+          return { ratingByMessage: next };
+        }),
 
       setAgent: (convId, agent) =>
         set((s) => ({ agentByConv: { ...s.agentByConv, [convId]: agent } })),
@@ -112,6 +135,7 @@ export const useOpenCodeStore = create<OpenCodeStore>()(
       partialize: (s) => ({
         sessionByConv: s.sessionByConv,
         agentByConv: s.agentByConv,
+        ratingByMessage: s.ratingByMessage,
       }),
     }
   )

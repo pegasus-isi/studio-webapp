@@ -1064,6 +1064,27 @@ export async function setChatFeedback(messageId: number, value: 1 | -1 | 0) {
   );
 }
 
+/**
+ * Rate an OpenCode assistant reply: 1 = helpful, -1 = not helpful, 0 = clear.
+ *
+ * Separate from `setChatFeedback`, which rates the builtin engine's own
+ * message rows; OpenCode replies have no row there and are identified by
+ * OpenCode's session and message ids instead. Never sends message text.
+ */
+export async function setMessageFeedback(body: {
+  session_id: string;
+  message_id: string;
+  conversation_id?: string;
+  model?: string;
+  agent?: string;
+  rating: 1 | -1 | 0;
+}) {
+  return request<{ ok: boolean }>("/feedback/message", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function getChatHistory(limit = 100, conversationId?: string) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (conversationId) params.set("conversation_id", conversationId);

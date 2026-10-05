@@ -25,13 +25,15 @@ import {
   useOpenCodeChat,
   type RenderedMessage,
 } from "@/lib/hooks/use-opencode-chat";
+import * as api from "@/lib/api/client";
 import * as oc from "@/lib/opencode/client";
 import type {
   PermissionRequest,
   QuestionRequest,
 } from "@/lib/opencode/client";
-import { usePanelStore } from "@/lib/stores/panel-store";
+import { useChatStore } from "@/lib/stores/chat-store";
 import { useOpenCodeStore } from "@/lib/stores/opencode-store";
+import { usePanelStore } from "@/lib/stores/panel-store";
 import { cn } from "@/lib/utils";
 
 const STARTERS = [
@@ -320,8 +322,17 @@ export function OpenCodeChat() {
           </div>
         ) : (
           <div className="mx-auto max-w-3xl space-y-4">
-            {turns.map((turn) => (
-              <TurnBubble key={turn.key} turn={turn} />
+            {turns.map((turn, i) => (
+              <TurnBubble
+                key={turn.key}
+                turn={turn}
+                // Only the last turn can still be growing. While the session
+                // is busy its final step may finish (finish: "tool-calls")
+                // moments before the next step's message arrives, and thumbs
+                // flashing in and out between steps would invite rating half
+                // an answer.
+                settled={!chat.busy || i < turns.length - 1}
+              />
             ))}
 
             {chat.permissions.map((request) => (
@@ -754,7 +765,11 @@ function assistantError(message: RenderedMessage) {
  * objects inside *are* stable (the reducer replaces only what changed), which
  * is what makes this comparison both cheap and effective.
  */
-function sameTurn(a: { turn: Turn }, b: { turn: Turn }): boolean {
+function sameTurn(
+  a: { turn: Turn; settled: boolean },
+  b: { turn: Turn; settled: boolean }
+): boolean {
+  if (a.settled !== b.settled) return false;
   const left = a.turn.messages;
   const right = b.turn.messages;
   if (left.length !== right.length) return false;
@@ -770,7 +785,13 @@ function sameTurn(a: { turn: Turn }, b: { turn: Turn }): boolean {
   return true;
 }
 
-const TurnBubble = memo(function TurnBubble({ turn }: { turn: Turn }) {
+const TurnBubble = memo(function TurnBubble({
+  turn,
+  settled,
+}: {
+  turn: Turn;
+  settled: boolean;
+}) {
   const isUser = turn.role === "user";
   const shown = turn.messages.filter(
     (m) => hasRenderableContent(m) || assistantError(m)
@@ -780,6 +801,18 @@ const TurnBubble = memo(function TurnBubble({ turn }: { turn: Turn }) {
   const assistants = turn.messages
     .map((m) => m.info)
     .filter((info): info is AssistantMessage => info.role === "assistant");
+
+  // A turn is rated through its last step: that is the message carrying the
+  // answer, and the one whose model/agent produced it. Not rateable until it
+  // has completed, nor when it ended in a real error (there is no reply to
+  // judge, and the error box already says what happened). A user-stopped turn
+  // is still rateable: what it got to say may well have been the answer.
+  const final = assistants[assistants.length - 1];
+  const rateable =
+    settled &&
+    final !== undefined &&
+    final.time.completed !== undefined &&
+    (!final.error || isAbortError(final.error));
 
   return (
     <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
@@ -820,9 +853,123 @@ const TurnBubble = memo(function TurnBubble({ turn }: { turn: Turn }) {
             footers turned a three-tool answer into three token counts. */}
         {assistants.length > 0 && <UsageFooter messages={assistants} />}
       </div>
+
+      {rateable && <ReplyRating message={final} />}
     </div>
   );
 }, sameTurn);
+
+/**
+ * Per-message request chains, so two quick clicks on the same reply reach the
+ * server in the order they were made. Without this, 👍 then un-rate could
+ * land as un-rate then 👍, leaving the backend with the opposite of what the
+ * thumb shows. Module-level because a rating outlives any one mount of the
+ * bubble (switching conversation and back re-mounts it mid-request).
+ */
+const ratingQueue = new Map<string, Promise<unknown>>();
+/** Bumped per click; a failure reverts only if no later click superseded it. */
+const ratingSeq = new Map<string, number>();
+
+function enqueueRating(messageID: string, run: () => Promise<unknown>) {
+  const prev = ratingQueue.get(messageID) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(run);
+  ratingQueue.set(messageID, next);
+  void next
+    .catch(() => undefined)
+    .finally(() => {
+      if (ratingQueue.get(messageID) === next) ratingQueue.delete(messageID);
+    });
+  return next;
+}
+
+/**
+ * 👍/👎 on one finished reply, in the builtin panel's style.
+ *
+ * Optimistic: the thumb flips at once and the store copy keeps it across
+ * reloads. A failed save puts back whatever was shown before the click and
+ * says so briefly, rather than leaving a thumb lit that the server never saw.
+ * Clicking the lit thumb again clears the rating.
+ */
+function ReplyRating({ message }: { message: AssistantMessage }) {
+  const rating = useOpenCodeStore((s) => s.ratingByMessage[message.id]);
+  const setRating = useOpenCodeStore((s) => s.setRating);
+  const conversationID = useChatStore((s) => s.activeId);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!failed) return;
+    const timer = setTimeout(() => setFailed(false), 4000);
+    return () => clearTimeout(timer);
+  }, [failed]);
+
+  const rate = (value: 1 | -1) => {
+    const before = rating ?? 0;
+    const next = before === value ? 0 : value;
+    const seq = (ratingSeq.get(message.id) ?? 0) + 1;
+    ratingSeq.set(message.id, seq);
+    setFailed(false);
+    setRating(message.id, next);
+
+    const model =
+      message.providerID && message.modelID
+        ? `${message.providerID}/${message.modelID}`
+        : message.modelID || undefined;
+    enqueueRating(message.id, () =>
+      api.setMessageFeedback({
+        session_id: message.sessionID,
+        message_id: message.id,
+        conversation_id: conversationID || undefined,
+        model,
+        // `mode` is the agent that actually produced this reply, which can
+        // differ from the picker's current value if it was switched since.
+        agent: message.mode || undefined,
+        rating: next,
+      })
+    ).catch(() => {
+      if (ratingSeq.get(message.id) !== seq) return;
+      setRating(message.id, before);
+      setFailed(true);
+    });
+  };
+
+  const btn = (active: boolean) =>
+    cn(
+      "rounded p-1 text-fgsubtle transition-colors hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pegasus-500",
+      active && "bg-muted text-pegasus-600 dark:text-pegasus-300"
+    );
+
+  return (
+    <div className="mt-1 flex items-center gap-1 px-1">
+      <button
+        type="button"
+        onClick={() => rate(1)}
+        title="Helpful"
+        aria-label="Helpful"
+        aria-pressed={rating === 1}
+        className={btn(rating === 1)}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        onClick={() => rate(-1)}
+        title="Not helpful"
+        aria-label="Not helpful"
+        aria-pressed={rating === -1}
+        className={btn(rating === -1)}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" />
+        </svg>
+      </button>
+      <span role="status" aria-live="polite" className="text-xs text-fgsubtle">
+        {failed ? "Couldn't save rating" : ""}
+      </span>
+    </div>
+  );
+}
 
 function UsageFooter({ messages }: { messages: AssistantMessage[] }) {
   const summary = formatTurnUsage(messages);

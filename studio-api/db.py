@@ -152,6 +152,25 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 -- the index here would reference a missing column and abort the whole schema
 -- script.
 
+-- 👍/👎 on OpenCode assistant replies. The builtin chat rates rows of its own
+-- chat_messages table, but OpenCode keeps its transcript in its own store, so
+-- there is no local row to hang a rating on: ratings are keyed by OpenCode's
+-- (session_id, message_id) instead. Deliberately holds no message text, only
+-- the vote and which model/agent produced the reply.
+-- rating: 1 = helpful, -1 = not helpful. Un-rating deletes the row.
+CREATE TABLE IF NOT EXISTS message_feedback (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    session_id      TEXT NOT NULL,
+    message_id      TEXT NOT NULL,
+    conversation_id TEXT,
+    model           TEXT,
+    agent           TEXT,
+    rating          INTEGER NOT NULL,
+    UNIQUE(session_id, message_id)
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
     id              TEXT PRIMARY KEY,
     kind            TEXT NOT NULL,          -- workflow_state | job_failure | resource | manual
@@ -724,6 +743,65 @@ class Database:
             changed = (cursor.rowcount or 0) > 0
         await self.db.commit()
         return changed
+
+    async def upsert_message_feedback(
+        self,
+        session_id: str,
+        message_id: str,
+        rating: int,
+        conversation_id: str | None = None,
+        model: str | None = None,
+        agent: str | None = None,
+    ) -> None:
+        """Record (or change) the rating of one OpenCode assistant reply.
+
+        A changed vote updates the existing row rather than adding one, so the
+        table holds the user's current opinion of each reply, not a click log;
+        `created_at` keeps when it was first rated. The context columns are
+        refreshed too, because the first rating may have been sent before the
+        client knew the model (the reply's metadata arrives with the stream).
+        """
+        now = _now()
+        await self.db.execute(
+            """INSERT INTO message_feedback
+                   (created_at, updated_at, session_id, message_id,
+                    conversation_id, model, agent, rating)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(session_id, message_id) DO UPDATE SET
+                   updated_at = excluded.updated_at,
+                   rating = excluded.rating,
+                   conversation_id = COALESCE(excluded.conversation_id,
+                                              message_feedback.conversation_id),
+                   model = COALESCE(excluded.model, message_feedback.model),
+                   agent = COALESCE(excluded.agent, message_feedback.agent)""",
+            (now, now, session_id, message_id, conversation_id, model, agent, rating),
+        )
+        await self.db.commit()
+
+    async def clear_message_feedback(self, session_id: str, message_id: str) -> bool:
+        """Un-rate one reply. Returns True if a rating existed.
+
+        Clearing a reply that was never rated is not an error: the client may
+        retry an un-rate whose first attempt landed but whose response was lost.
+        """
+        async with self.db.execute(
+            "DELETE FROM message_feedback WHERE session_id = ? AND message_id = ?",
+            (session_id, message_id),
+        ) as cursor:
+            deleted = (cursor.rowcount or 0) > 0
+        await self.db.commit()
+        return deleted
+
+    async def get_message_feedback(
+        self, session_id: str, message_id: str
+    ) -> dict[str, Any] | None:
+        """One reply's stored rating row, or None if it is unrated."""
+        async with self.db.execute(
+            "SELECT * FROM message_feedback WHERE session_id = ? AND message_id = ?",
+            (session_id, message_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row else None
 
     async def prune_chat_messages(self, max_rows: int = 5000) -> int:
         """Cap total stored chat messages, deleting the oldest beyond `max_rows`.

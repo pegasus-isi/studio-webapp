@@ -16,6 +16,7 @@ from routers import (
     ai_terminal,
     chat,
     dashboard,
+    feedback,
     files,
     health,
     jupyter,
@@ -381,6 +382,7 @@ app.include_router(terminal.router)
 app.include_router(ai_terminal.router)
 app.include_router(workflows.router)
 app.include_router(chat.router)
+app.include_router(feedback.router)
 app.include_router(opencode.router)
 app.include_router(mcp.router)
 app.include_router(notifications.router)
