@@ -191,6 +191,39 @@ def classify_job_failure(stderr: str, exitcode: Any = None) -> tuple[str, str]:
     return _apply(_JOB_RULES, haystack, _JOB_FALLBACK)
 
 
+#: A stable slug per _JOB_RULES entry, by position, for aggregating failures
+#: (the AI-help feedback episodes store it). The cause sentences above are for
+#: people and get reworded; a slug must not, or the stored data stops grouping.
+_JOB_CATEGORIES: tuple[str, ...] = (
+    "out_of_memory",
+    "out_of_memory",
+    "disk_full",
+    "container",
+    "missing_file",
+    "permission",
+    "missing_python_package",
+    "missing_program",
+    "network",
+)
+assert len(_JOB_CATEGORIES) == len(_JOB_RULES), "one category per job rule"
+
+
+def categorize_jobs(jobs: list[dict[str, Any]]) -> str:
+    """One category slug for a failed run: the first failed job's.
+
+    ``unknown`` when a job failed in a way no rule recognises, and
+    ``no_failed_job`` when the run failed without any job failing (a planning
+    or DAGMan-level failure), which is a different problem worth keeping apart.
+    """
+    for card in diagnose_jobs(jobs):
+        haystack = f"{card.get('technical') or ''}\nexitcode: {card.get('exitcode')}"
+        for (pattern, _cause, _action), category in zip(_JOB_RULES, _JOB_CATEGORIES):
+            if pattern.search(haystack):
+                return category
+        return "unknown"
+    return "no_failed_job"
+
+
 def classify_hold(reason: str) -> tuple[str, str]:
     """Explain why the cluster is holding a step instead of running it."""
     return _apply(_HOLD_RULES, reason or "", _HOLD_FALLBACK)

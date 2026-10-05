@@ -34,6 +34,10 @@ import type {
 import { useChatStore } from "@/lib/stores/chat-store";
 import { useOpenCodeStore } from "@/lib/stores/opencode-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
+import { useChatContextStore } from "@/lib/stores/chat-context-store";
+import { useFeedbackStore } from "@/lib/feedback/feedback";
+import { FeedbackPromptCard } from "@/components/feedback/feedback-prompt-card";
+import { GiveUpRow } from "@/components/feedback/give-up-row";
 import { cn } from "@/lib/utils";
 
 const STARTERS = [
@@ -236,6 +240,40 @@ export function OpenCodeChat() {
     [selectable, chat.agent]
   );
   const turns = useMemo(() => groupTurns(chat.messages), [chat.messages]);
+
+  // Give-up row (#D): under a turn that was stopped or died in an engine
+  // error — but only one this view watched happen. A reply first seen already
+  // errored is history (a reload, another conversation), and asking about it
+  // would be asking about something the user may not even remember. So a
+  // message qualifies once it has been seen *without* an error first.
+  const convId = useChatStore((s) => s.activeId);
+  const scope = useChatContextStore((s) => s.scopeByConv[convId]);
+  const promptsEnabled = useFeedbackStore((s) => s.promptsEnabled);
+  const seenLive = useRef(new Set<string>());
+  const [giveUpDone, setGiveUpDone] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    for (const m of chat.messages) {
+      if (m.info.role === "assistant" && !assistantError(m)) {
+        seenLive.current.add(m.info.id);
+      }
+    }
+  }, [chat.messages]);
+  const giveUp = useMemo(() => {
+    if (chat.busy || !promptsEnabled) return null;
+    const last = chat.messages[chat.messages.length - 1];
+    if (!last || last.info.role !== "assistant") return null;
+    const err = assistantError(last);
+    if (!err) return null;
+    if (!seenLive.current.has(last.info.id) || giveUpDone.has(last.info.id)) {
+      return null;
+    }
+    return {
+      messageID: last.info.id,
+      reason: (isAbortError(err) ? "stop" : "error") as "stop" | "error",
+    };
+  }, [chat.messages, chat.busy, promptsEnabled, giveUpDone]);
+  const closeGiveUp = (messageID: string) =>
+    setGiveUpDone((prev) => new Set(prev).add(messageID));
   const lastMessage = chat.messages[chat.messages.length - 1];
   const showThinking =
     chat.busy &&
@@ -334,6 +372,25 @@ export function OpenCodeChat() {
                 settled={!chat.busy || i < turns.length - 1}
               />
             ))}
+            {giveUp && (
+              <GiveUpRow
+                reason={giveUp.reason}
+                onClose={() => closeGiveUp(giveUp.messageID)}
+                onPick={(tag) => {
+                  closeGiveUp(giveUp.messageID);
+                  // Against the episode when the chat is about a run; the
+                  // server files it standalone if that run has none.
+                  void api
+                    .recordGiveUp({
+                      conversation_id: chat.sessionID ?? convId,
+                      episode_id: scope?.type === "run" ? scope.id : undefined,
+                      reason: giveUp.reason,
+                      tag,
+                    })
+                    .catch(() => undefined);
+                }}
+              />
+            )}
 
             {chat.permissions.map((request) => (
               <PermissionCard
@@ -365,6 +422,10 @@ export function OpenCodeChat() {
 
       <div className="border-t border-line bg-surface p-4">
         <div className="mx-auto max-w-3xl space-y-2">
+          {/* Above the composer rather than in the transcript: it is about
+              the conversation, not part of it, and must be visible without
+              scrolling to the bottom of a long reply. */}
+          <FeedbackPromptCard placement="chat" busy={chat.busy} />
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <ChatContextChip />
 

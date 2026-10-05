@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
 import { useNotificationStore } from "@/lib/stores/notification-store";
+import { FEEDBACK_PENDING_KEY } from "@/lib/feedback/feedback";
 
 /**
  * Reads notification state from the store and exposes mutating actions that
@@ -89,11 +90,20 @@ export function useNotificationStream() {
 
       es.onmessage = (e) => {
         if (!e.data || e.data.startsWith(":")) return;
+        let n: api.Notification;
         try {
-          receive(JSON.parse(e.data) as api.Notification);
+          n = JSON.parse(e.data) as api.Notification;
         } catch {
-          /* ignore malformed frames */
+          return; /* ignore malformed frames */
         }
+        // A feedback prompt became due. It is a prompt, not a notification:
+        // it never enters the bell, it only tells this tab to ask the server
+        // whether it may show one (the per-session rule lives there).
+        if (n.kind === "feedback_prompt") {
+          qc.invalidateQueries({ queryKey: FEEDBACK_PENDING_KEY });
+          return;
+        }
+        receive(n);
       };
 
       es.onerror = () => {

@@ -1267,3 +1267,69 @@ export async function updateNotificationPrefs(muted: string[]) {
     body: JSON.stringify({ muted }),
   });
 }
+
+// --- AI-help feedback episodes (routers/episodes.py) ---
+//
+// Every `key` below is an episode id *or* a run id: the browser usually knows
+// the run (chat scope, dashboard), and the server resolves the episode.
+
+export type FeedbackAnswer =
+  | "fixed"
+  | "partly"
+  | "no_help"
+  | "did_not_try"
+  | "fixed_myself"
+  | "ask_ai"
+  | "dismissed";
+
+export type GiveUpTag = "wrong_direction" | "too_slow" | "error" | "other";
+
+export interface FeedbackPrompt {
+  episode_id: string;
+  prompt_type: "help" | "nudge" | "help_after_nudge";
+  kind: "help" | "nudge";
+  workflow: string | null;
+  run_id: string;
+  rerun_status: string | null;
+  failure_category: string | null;
+  /** The card's sentence, written server-side so every surface agrees. */
+  message: string;
+}
+
+export async function getPendingFeedbackPrompt(session: string) {
+  return request<{ prompt: FeedbackPrompt | null; prompts_enabled: boolean }>(
+    `/feedback/episodes/pending?session=${encodeURIComponent(session)}`
+  );
+}
+
+export async function markEpisodeAsked(
+  key: string,
+  data: { conversation_id?: string; turn: boolean }
+) {
+  return request<{ status: string; episode_id: string }>(
+    `/feedback/episodes/${encodeURIComponent(key)}/asked`,
+    { method: "POST", body: JSON.stringify(data) }
+  );
+}
+
+export async function answerEpisode(
+  key: string,
+  data: { answer: FeedbackAnswer; comment?: string; session?: string }
+) {
+  return request<{ status: string; answer: FeedbackAnswer }>(
+    `/feedback/episodes/${encodeURIComponent(key)}/answer`,
+    { method: "POST", body: JSON.stringify(data) }
+  );
+}
+
+export async function recordGiveUp(data: {
+  conversation_id?: string;
+  episode_id?: string;
+  reason: "stop" | "error";
+  tag: GiveUpTag;
+}) {
+  return request<{ status: string }>("/feedback/episodes/giveup", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}

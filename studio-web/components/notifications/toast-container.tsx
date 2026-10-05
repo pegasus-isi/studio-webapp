@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { appRelativePath } from "@/lib/urls";
 import { useNotificationStore } from "@/lib/stores/notification-store";
 import { useNotificationStream } from "@/lib/hooks/use-notifications";
+import { useFeedbackPromptSync } from "@/lib/feedback/feedback";
 import type { Notification, NotificationSeverity } from "@/lib/api/client";
 import {
   severityAccent,
@@ -22,6 +23,9 @@ export function ToastContainer() {
   // Single mount point for the live feed: loads history + opens the SSE stream
   // that feeds both these toasts and the bell dropdown.
   useNotificationStream();
+  // And the feedback prompt it pokes about — mounted here for the same
+  // reason: once per studio tab, never in the JupyterLab chat iframe.
+  useFeedbackPromptSync();
 
   const toasts = useNotificationStore((s) => s.toasts);
   const dismissToast = useNotificationStore((s) => s.dismissToast);
