@@ -111,6 +111,7 @@ does not need them:
 | GET/PUT | `/api/settings` | LLM-config accessor (shares the validated `llm` save path) |
 | GET/PUT | `/api/settings/workflow-scan` | user-added run-scan roots/excludes, merged with the env defaults (#306) |
 | GET/PUT | `/api/settings/telemetry` | whether this user's traces may carry chat text. Its own row, not a `UIPreferences` field, because that PUT replaces the bag wholesale and its GET substitutes defaults for invalid values — both wrong for a consent flag. Saving propagates, since the engine reads plugin options once at startup |
+| GET/PUT | `/api/settings/profile` | the optional four-question profile (research field, role, Pegasus/HTCondor experience, coding comfort 1–5) for the feedback program, stored in the `user_profile` setting with a server-stamped `answered_at`. Its own row for the same reasons as telemetry consent; the free-text field is never logged |
 | GET/PUT | `/api/llm/config` | active provider/model; **keys are write-only** — GETs return `has_api_key`, never the value |
 | GET/PUT | `/api/llm/provider-configs` | saved providers (also write-only keys) |
 | GET | `/api/llm/provider-configs/{id}/models` | model discovery using the **stored** key (server-side) |
@@ -265,6 +266,28 @@ Supervised by supervisord, whose config takes those ports through its own
 3. Backgrounds `propagate_llm.py` (hard-timeout'd) to sync tool configs.
 4. `exec supervisord` — which starts nginx, studio-api (uvicorn), and
    JupyterLab.
+
+## Collecting early-user feedback
+
+`scripts/collect_feedback.py` gathers the feedback program's data from every
+user's Studio database into CSVs. It is standard-library Python so it runs on
+the HTCondor access point (which mounts the homes) with the system interpreter
+and no venv:
+
+```bash
+sudo python3 scripts/collect_feedback.py --homes /home --out ./feedback-$(date +%F)
+# optionally: --since 2026-10-01
+```
+
+It looks for `<home>/<user>/.studio/studio.db` (falling back to the legacy
+`<home>/<user>/work/.studio/studio.db`), opens each **read-only**, and writes
+`funnel.csv` (onboarding milestones + `preexisting_workspace`), `profiles.csv`,
+`message_feedback.csv`, `episodes.csv` and `giveups.csv`. Tables or settings an
+older image lacks yield no rows; a locked or unreadable database is reported on
+stderr and skipped. `--since` filters each file on its own timestamp (the
+funnel on `first_seen`, profiles on `answered_at`). The printed summary
+includes the median time to first success, over new workspaces only:
+pre-existing ones are excluded, as `services/onboarding_metrics.py` explains.
 
 ## Supported LLM Providers
 

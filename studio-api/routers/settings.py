@@ -427,6 +427,39 @@ async def update_telemetry_consent(req: TelemetryConsent) -> TelemetryConsent:
     )
 
 
+@router.get("/profile")
+async def get_user_profile() -> dict:
+    """The four-question profile (feedback program); fields may all be None."""
+    from main import db
+    from services import user_profile
+
+    return (await user_profile.load(db)).model_dump()
+
+
+@router.put("/profile")
+async def update_user_profile(req: dict) -> dict:
+    """Store the profile answers.
+
+    Validated by hand rather than by typing the parameter as `UserProfile`:
+    FastAPI would 422 an unknown role with a nested error blob, and the
+    Settings form needs a sentence it can show. `answered_at` in the body is
+    ignored — it records when *we* received the answers.
+    """
+    from main import db
+    from services import user_profile
+
+    body = {k: v for k, v in req.items() if k != "answered_at"}
+    try:
+        profile = user_profile.UserProfile(**body)
+    except ValidationError as e:
+        first = e.errors()[0]
+        where = ".".join(str(p) for p in first.get("loc", ())) or "profile"
+        raise HTTPException(
+            status_code=400, detail=f"Invalid {where}: {first.get('msg')}"
+        ) from e
+    return (await user_profile.save(db, profile)).model_dump()
+
+
 @router.get("", response_model=SettingsResponse)
 async def get_settings() -> SettingsResponse:
     from main import db
