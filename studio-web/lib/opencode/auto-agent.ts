@@ -55,11 +55,21 @@ const SCOPE_BROKEN = [
   /^### Diagnosed failures/m,
 ];
 
-const CREATE =
-  /\b(create|build|write|design|scaffold|generate|set ?up|make (me )?an?|i'?d like an?|i want an?|new workflow|add (an? )?(\w+ )?(job|step|stage|task)s?|(change|modify|update|extend) the (workflow|dag|generator|pipeline)|convert|port)\b/i;
+// A creation verb is not enough on its own: "why does the build fail?",
+// "write the CSV to S3" and "connection refused on port 8080" all contain one
+// and are debugging or data questions. So the verb must govern something a
+// workflow is made of, within the same clause.
+const CREATE_VERB =
+  "(create|build|write|design|scaffold|generate|set ?up|make|convert|port|add|extend|modify|change|update)";
+const CREATE_OBJECT =
+  "(workflows?|pipelines?|dags?|generators?|wrappers?|dockerfiles?|containers?|jobs?|steps?|stages?|tasks?|transformations?|catalogs?)";
+const CREATE = new RegExp(
+  `\\b${CREATE_VERB}\\b[^.?!\\n]{0,40}?\\b${CREATE_OBJECT}\\b|\\b(i'?d like|i want|i need|can you make)\\b[^.?!\\n]{0,40}?\\b(workflows?|pipelines?)\\b|\\bnew workflow\\b`,
+  "i"
+);
 
 const DEBUG =
-  /\b(fail(ed|s|ing|ure)?|errors?|exception|traceback|held|on hold|hold reason|stuck|hang(s|ing)?|crash(ed|es)?|broken|debug|not working|doesn'?t work|exit code|pegasus-analyzer|why did)\b/i;
+  /\b(fail(ed|s|ing|ure)?|errors?|exception|traceback|held|on hold|hold reason|stuck|hang(s|ing)?|crash(ed|es)?|broken|debug|not working|doesn'?t work|won'?t (run|start|submit)|can'?t|cannot|unable to|exit(s|ed)? (with )?(code|status)|exit code|non-?zero|refused|denied|timed? ?out|killed|oom|segfault|no such file|not found|pegasus-analyzer|why did)\b/i;
 
 const DATA =
   /\b(datasets?|download|fetch|ingest|api|endpoint|csv|tsv|json|netcdf|hdf5|parquet|preprocess(ing)?|clean(ing)? (the )?data|schema|file formats?|s3|bucket|data source)\b/i;

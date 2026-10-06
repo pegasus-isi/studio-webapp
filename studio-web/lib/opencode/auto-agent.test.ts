@@ -48,6 +48,23 @@ describe("routeAgent", () => {
     expect(route("yes, go ahead")).toBe(ARCHITECT);
   });
 
+  it("does not mistake a stray creation verb for a design request", () => {
+    expect(route("why does the build fail?")).toBe(DEBUGGER);
+    expect(route("the job can't write its output and exits with code 1")).toBe(DEBUGGER);
+    expect(route("connection refused on port 8080")).toBe(DEBUGGER);
+    expect(route("write the CSV to S3 instead of local disk")).toBe(DATA_ENGINEER);
+    expect(route("how do I make a request to the USGS API?")).toBe(DATA_ENGINEER);
+    expect(route("generate a sample dataset in parquet")).toBe(DATA_ENGINEER);
+  });
+
+  it("still recognises design requests phrased several ways", () => {
+    expect(route("create a workflow that runs fastqc on every sample")).toBe(ARCHITECT);
+    expect(route("can you add a plotting step after merge?")).toBe(ARCHITECT);
+    expect(route("convert my Snakemake pipeline")).toBe(ARCHITECT);
+    expect(route("I want a Pegasus workflow for EEG analysis")).toBe(ARCHITECT);
+    expect(route("write a wrapper for the fetch job that retries on failure")).toBe(ARCHITECT);
+  });
+
   it("never picks an agent the engine does not have", () => {
     expect(routeAgent({ text: "why did it fail?", available: [ARCHITECT] }).agent).toBe(ARCHITECT);
     expect(routeAgent({ text: "hello", available: ["build"] }).agent).toBeUndefined();
