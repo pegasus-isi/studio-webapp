@@ -39,6 +39,7 @@ import {
 } from "@/lib/opencode/transcript";
 
 export type { RenderedMessage };
+import { routeAgent } from "@/lib/opencode/auto-agent";
 import { subscribeEvents, type RawEvent } from "@/lib/opencode/events";
 import * as api from "@/lib/api/client";
 import { useChatStore } from "@/lib/stores/chat-store";
@@ -471,6 +472,10 @@ export function useOpenCodeChat() {
     () => selectMessages(state),
     [state]
   );
+  // For send, which is memoised on convId alone and so would otherwise see the
+  // transcript as it was when the conversation was opened.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   const setAgent = useCallback(
     (next: string) => setAgentForConv(convId, next),
@@ -478,7 +483,13 @@ export function useOpenCodeChat() {
   );
 
   const send = useCallback(
-    async (text: string, model?: { providerID: string; modelID: string }) => {
+    async (
+      text: string,
+      model?: { providerID: string; modelID: string },
+      // Agents the engine offers. Needed only in Auto mode, which must not
+      // route to an agent this engine does not have.
+      available?: readonly string[]
+    ) => {
       const id = sessionRef.current;
       if (!id || !text.trim()) return;
       dispatch({ kind: "error", error: null });
@@ -517,13 +528,17 @@ export function useOpenCodeChat() {
       // it, the renderer collapses it, and it costs no backend involvement in
       // the turn itself.
       const activeScope = useChatContextStore.getState().scopeByConv[convId];
+      let scopeBlock: string | null = null;
       if (activeScope) {
         try {
           const { block } = await api.getChatScopeBlock(
             activeScope.type,
             activeScope.id
           );
-          if (block) parts.push({ type: "text", text: block, synthetic: true });
+          if (block) {
+            scopeBlock = block;
+            parts.push({ type: "text", text: block, synthetic: true });
+          }
         } catch {
           // Context is an enhancement; a failed lookup must not eat the turn.
         }
@@ -532,8 +547,23 @@ export function useOpenCodeChat() {
       try {
         // The agent is read at send time rather than captured, so switching to
         // plan mode applies to the next turn without re-rendering anything.
-        const selected = useOpenCodeStore.getState().agentByConv[convId];
-        await oc.promptAsync(id, { parts, model, agent: selected || undefined });
+        // No stored agent is Auto: the specialist is chosen per message, from
+        // the words and the run in context (lib/opencode/auto-agent.ts).
+        let selected: string | undefined =
+          useOpenCodeStore.getState().agentByConv[convId] || undefined;
+        if (!selected && available) {
+          const history = messagesRef.current;
+          let previous: string | null = null;
+          for (let i = history.length - 1; i >= 0; i--) {
+            const info = history[i].info;
+            if (info.role === "assistant") {
+              previous = info.mode;
+              break;
+            }
+          }
+          selected = routeAgent({ text, scopeBlock, previous, available }).agent;
+        }
+        await oc.promptAsync(id, { parts, model, agent: selected });
         // A turn sent while the chat is about a run is the user asking the AI
         // about it — whichever way the scope got there (the dashboard's button,
         // the chip, following the Workflows page). The server links it to that

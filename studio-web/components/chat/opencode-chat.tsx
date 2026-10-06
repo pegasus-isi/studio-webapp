@@ -196,7 +196,11 @@ export function OpenCodeChat() {
     const text = input.trim();
     if (!text || chat.busy) return;
     setInput("");
-    void chat.send(text, model);
+    void chat.send(
+      text,
+      model,
+      selectable.map((a) => a.name)
+    );
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -466,10 +470,13 @@ export function OpenCodeChat() {
                   id="opencode-agent"
                   value={chat.agent ?? ""}
                   onChange={(e) => chat.setAgent(e.target.value)}
-                  title={activeAgent?.description || "Which agent answers"}
+                  title={activeAgent?.description || AUTO_DESCRIPTION}
                   className="rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
                 >
-                  <option value="">Default</option>
+                  {/* Empty is Auto, so every existing conversation that
+                      never picked a mode gets routing rather than the
+                      engine's generic agent. */}
+                  <option value="">Auto</option>
                   {selectable.map((a) => (
                     <option key={a.name} value={a.name}>
                       {a.name}
@@ -542,8 +549,10 @@ export function OpenCodeChat() {
             />
           )}
 
-          {activeAgent?.description && (
-            <p className="text-xs text-fgmuted">{activeAgent.description}</p>
+          {selectable.length > 1 && (
+            <p className="text-xs text-fgmuted">
+              {activeAgent?.description || AUTO_DESCRIPTION}
+            </p>
           )}
 
           <div className="flex items-end gap-2">
@@ -595,6 +604,9 @@ export function OpenCodeChat() {
  * a text part exists before its first delta lands, so "has parts" is not the
  * same question as "has content".
  */
+const AUTO_DESCRIPTION =
+  "Auto: picks workflow-architect, data-engineer or pipeline-debugger for each message";
+
 function hasRenderableContent(message: RenderedMessage): boolean {
   return message.parts.some((part) => {
     if (
@@ -904,6 +916,12 @@ const TurnBubble = memo(function TurnBubble({
     <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
       <span className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
         {isUser ? "You" : "AI"}
+        {/* Which agent answered. In Auto mode this is the only place the
+            routing decision shows, and a wrong pick has to be visible to be
+            overridden. */}
+        {!isUser && assistants[0]?.mode && (
+          <span className="normal-case tracking-normal"> · {assistants[0].mode}</span>
+        )}
       </span>
       <div
         className={cn(
