@@ -57,6 +57,13 @@ describe("routeAgent", () => {
     expect(route("generate a sample dataset in parquet")).toBe(DATA_ENGINEER);
   });
 
+  it("treats a failure report that names a workflow part as debugging", () => {
+    expect(route("pegasus-plan failed to generate the DAG")).toBe(DEBUGGER);
+    expect(route("the generator crashes when it writes the replica catalog")).toBe(DEBUGGER);
+    expect(route("my workflow can't build the container, exit code 255")).toBe(DEBUGGER);
+    expect(route("could you create a new job? the old one keeps failing")).toBe(ARCHITECT);
+  });
+
   it("still recognises design requests phrased several ways", () => {
     expect(route("create a workflow that runs fastqc on every sample")).toBe(ARCHITECT);
     expect(route("can you add a plotting step after merge?")).toBe(ARCHITECT);

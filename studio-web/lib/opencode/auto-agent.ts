@@ -12,7 +12,8 @@
  * Order matters, and each step exists because the one after it misfired:
  *
  * 1. A request to create or change a workflow goes to the architect even when
- *    it mentions failure or data. Creation requests are full of both ("if a
+ *    it mentions failure or data, provided it is phrased as a request (see
+ *    REQUEST): a failure report that merely names a workflow part is not. Creation requests are full of both ("if a
  *    gauge fails, note it", "fetch daily CSV from USGS"), and routing those
  *    to the debugger or data engineer took the design away from the agent
  *    that owns it. That holds with a broken run in context too: "add a
@@ -68,6 +69,16 @@ const CREATE = new RegExp(
   "i"
 );
 
+// Phrased as a request for something new. Needed only when a message carries
+// both creation and failure language: "pegasus-plan failed to generate the
+// DAG" names a workflow part after a creation verb and is a failure report,
+// while "write a wrapper that retries on failure" and "I'd like a workflow
+// that fails if..." are design requests that happen to mention failure.
+const REQUEST = new RegExp(
+  `^\\s*(please\\s+)?${CREATE_VERB}\\b|\\b(i'?d like|i want|i need)\\b|\\b(can|could|would) you (please )?${CREATE_VERB}\\b`,
+  "i"
+);
+
 const DEBUG =
   /\b(fail(ed|s|ing|ure)?|errors?|exception|traceback|held|on hold|hold reason|stuck|hang(s|ing)?|crash(ed|es)?|broken|debug|not working|doesn'?t work|won'?t (run|start|submit)|can'?t|cannot|unable to|exit(s|ed)? (with )?(code|status)|exit code|non-?zero|refused|denied|timed? ?out|killed|oom|segfault|no such file|not found|pegasus-analyzer|why did)\b/i;
 
@@ -83,7 +94,9 @@ export function routeAgent(input: RouteInput): Route {
   const text = input.text;
 
   const routed =
-    (CREATE.test(text) && pick(ARCHITECT, "asks to create or change a workflow")) ||
+    (CREATE.test(text) &&
+      (!DEBUG.test(text) || REQUEST.test(text)) &&
+      pick(ARCHITECT, "asks to create or change a workflow")) ||
     (SCOPE_BROKEN.some((re) => re.test(block)) &&
       pick(DEBUGGER, "the run in context has failures")) ||
     (DEBUG.test(text) && pick(DEBUGGER, "mentions a failure")) ||
