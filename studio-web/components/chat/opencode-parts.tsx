@@ -18,7 +18,7 @@
  * redundant; deleting it makes every reply appear only when it finishes.
  */
 
-import { Component, useState } from "react";
+import { Component, createContext, useContext, useEffect, useState } from "react";
 import type { Part } from "@opencode-ai/sdk";
 import { ChatMarkdown } from "@/components/chat/markdown";
 import { cn } from "@/lib/utils";
@@ -110,12 +110,94 @@ function TextPartView({ part }: { part: PartOf<"text"> }) {
   return <ChatMarkdown content={part.text} />;
 }
 
-function ReasoningPartView({ part }: { part: PartOf<"reasoning"> }) {
-  if (!part.text.trim()) return null;
+/** "42s", "3m 05s". */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m}m ${String(s).padStart(2, "0")}s` : `${s}s`;
+}
+
+/**
+ * Milliseconds since `start`, re-rendering once a second while `live`.
+ *
+ * The tick is the point: a model can reason for minutes without emitting
+ * anything the transcript would otherwise redraw for, and a counter that
+ * moves is the cheapest proof the turn has not hung.
+ */
+export function useElapsed(start: number | undefined, live: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [live]);
+  return start === undefined ? 0 : now - start;
+}
+
+/** A dot that pulses while something is in progress. */
+export function LiveDot() {
   return (
-    <Collapsed label="Reasoning">
-      <Pre height="short">{part.text}</Pre>
-    </Collapsed>
+    <span className="relative mr-1.5 inline-flex h-2 w-2 align-middle">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-pegasus-500 opacity-60" />
+      <span className="relative inline-flex h-2 w-2 rounded-full bg-pegasus-500" />
+    </span>
+  );
+}
+
+/**
+ * Whether the message these parts belong to can still grow. A part's own
+ * `time.end` is not enough: a turn that is stopped or dies in an error leaves
+ * an open reasoning part open forever, and without this its counter would tick
+ * on under a reply that has already ended. Defaults to false, so a part
+ * rendered outside a live turn (history, a reload) never looks active.
+ */
+export const MessageLiveContext = createContext(false);
+
+function lastLine(text: string): string {
+  const lines = text.trimEnd().split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line) return line;
+  }
+  return "";
+}
+
+function ReasoningPartView({ part }: { part: PartOf<"reasoning"> }) {
+  // `time.end` is unset until the reasoning block closes. While it is open the
+  // block stays collapsed (expanded it buries the reply under the monologue)
+  // but must not look idle: a static "Reasoning" label over minutes of model
+  // thought reads as a hung chat. So the label counts, and the newest line of
+  // the reasoning shows underneath, changing as the model writes.
+  const live = useContext(MessageLiveContext) && part.time?.end === undefined;
+  const elapsed = useElapsed(part.time?.start, live);
+  if (!part.text.trim()) return null;
+  const duration =
+    part.time?.end !== undefined && part.time.start !== undefined
+      ? part.time.end - part.time.start
+      : undefined;
+  const label = live ? (
+    <>
+      <LiveDot />
+      Thinking · {formatElapsed(elapsed)}
+    </>
+  ) : duration !== undefined && duration >= 1000 ? (
+    `Thought for ${formatElapsed(duration)}`
+  ) : (
+    "Reasoning"
+  );
+  return (
+    <div>
+      <Collapsed label={label}>
+        <Pre height="short">{part.text}</Pre>
+      </Collapsed>
+      {live && (
+        <div className="mt-1 truncate px-2 text-xs italic text-fgsubtle">
+          {lastLine(part.text)}
+        </div>
+      )}
+    </div>
   );
 }
 

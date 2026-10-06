@@ -16,7 +16,12 @@
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { AssistantMessage } from "@opencode-ai/sdk";
-import { PartView } from "@/components/chat/opencode-parts";
+import {
+  MessageLiveContext,
+  PartView,
+  formatElapsed,
+  useElapsed,
+} from "@/components/chat/opencode-parts";
 import { ChatContextChip } from "@/components/chat/context-chip";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 import {
@@ -275,12 +280,22 @@ export function OpenCodeChat() {
   const closeGiveUp = (messageID: string) =>
     setGiveUpDone((prev) => new Set(prev).add(messageID));
   const lastMessage = chat.messages[chat.messages.length - 1];
+  // Shown for the whole of a busy turn, not only until the first part lands:
+  // once reasoning or a tool call is on screen the bubble above may not change
+  // for minutes, and with the dots gone there was nothing left that moved.
+  // Hidden while a permission or question card is up, since then the turn is
+  // waiting on the user, not working.
   const showThinking =
-    chat.busy &&
-    chat.permissions.length === 0 &&
-    chat.questions.length === 0 &&
-    (lastMessage?.info.role !== "assistant" ||
-      !hasRenderableContent(lastMessage));
+    chat.busy && chat.permissions.length === 0 && chat.questions.length === 0;
+  const thinkingBare =
+    lastMessage?.info.role !== "assistant" || !hasRenderableContent(lastMessage);
+  const turnStart = useMemo(() => {
+    for (let i = chat.messages.length - 1; i >= 0; i--) {
+      const info = chat.messages[i].info;
+      if (info.role === "user") return info.time.created;
+    }
+    return undefined;
+  }, [chat.messages]);
 
   return (
     <>
@@ -414,7 +429,17 @@ export function OpenCodeChat() {
                 <span className="[overflow-wrap:anywhere]">{chat.error}</span>
               </div>
             )}
-            {showThinking && <ThinkingIndicator />}
+            {showThinking && (
+              <ThinkingIndicator
+                bare={thinkingBare}
+                activity={
+                  lastMessage?.info.role === "assistant"
+                    ? currentActivity(lastMessage)
+                    : "Thinking"
+                }
+                start={turnStart}
+              />
+            )}
             <div ref={bottomRef} />
           </div>
         )}
@@ -890,9 +915,20 @@ const TurnBubble = memo(function TurnBubble({
       >
         {shown.map((message) => (
           <div key={message.info.id} className="space-y-2">
-            {message.parts.map((part) => (
-              <PartView key={part.id} part={part} />
-            ))}
+            <MessageLiveContext.Provider
+              value={
+                !settled &&
+                !assistantError(message) &&
+                !(
+                  message.info.role === "assistant" &&
+                  message.info.time.completed !== undefined
+                )
+              }
+            >
+              {message.parts.map((part) => (
+                <PartView key={part.id} part={part} />
+              ))}
+            </MessageLiveContext.Provider>
             {/* A stop the user asked for is not a failure. OpenCode records it
                 as MessageAbortedError, so without this a red "Error:" box is
                 the reward for pressing the Stop button. */}
@@ -1076,24 +1112,83 @@ function formatTurnUsage(messages: AssistantMessage[]): string | null {
   return parts.join(", ");
 }
 
-function ThinkingIndicator() {
+/**
+ * What the model is doing right now, from the newest part of the reply.
+ * Coarse on purpose: it is a status line, and the parts above carry the detail.
+ */
+function currentActivity(message: RenderedMessage): string {
+  for (let i = message.parts.length - 1; i >= 0; i--) {
+    const part = message.parts[i];
+    if (part.type === "tool") {
+      const st = part.state;
+      if (st.status === "running") return `Running ${st.title || part.tool}`;
+      if (st.status === "pending") return `Starting ${part.tool}`;
+      // A finished tool means the model is deciding what to do with its output.
+      return "Thinking";
+    }
+    if (part.type === "reasoning" && part.text.trim()) {
+      return part.time?.end === undefined ? "Thinking" : "Working";
+    }
+    if (part.type === "text" && part.text.trim() && !part.synthetic) {
+      return "Writing";
+    }
+  }
+  return "Thinking";
+}
+
+function ThinkingIndicator({
+  bare,
+  activity,
+  start,
+}: {
+  /** Nothing of the reply is on screen yet: show the full placeholder bubble. */
+  bare: boolean;
+  activity: string;
+  start: number | undefined;
+}) {
+  const elapsed = useElapsed(start, true);
+  const dots = (
+    <span className="flex shrink-0 gap-1">
+      {[0, 150, 300].map((d) => (
+        <span
+          key={d}
+          className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-fgsubtle"
+          style={{ animationDelay: `${d}ms` }}
+        />
+      ))}
+    </span>
+  );
+  const time =
+    start !== undefined && elapsed >= 1000 ? (
+      <span className="shrink-0 tabular-nums text-fgsubtle" aria-hidden>
+        {formatElapsed(elapsed)}
+      </span>
+    ) : null;
+  if (bare) {
+    return (
+      <div className="flex justify-start" role="status" aria-live="polite">
+        <div className="mr-2 mt-1 shrink-0">
+          <PegasusLogo size={24} />
+        </div>
+        <div className="flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-3 text-xs">
+          <span className="text-fgmuted">{activity}</span>
+          {dots}
+          {time}
+        </div>
+      </div>
+    );
+  }
+  // The reply has started: a slim line under it rather than a second bubble,
+  // so it reads as the status of that reply.
   return (
-    <div className="flex justify-start">
-      <div className="mr-2 mt-1 shrink-0">
-        <PegasusLogo size={24} />
-      </div>
-      <div className="flex items-center gap-1 rounded-lg border border-line bg-surface px-4 py-3">
-        <span className="text-xs text-fgmuted">Thinking</span>
-        <span className="flex gap-1">
-          {[0, 150, 300].map((d) => (
-            <span
-              key={d}
-              className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-fgsubtle"
-              style={{ animationDelay: `${d}ms` }}
-            />
-          ))}
-        </span>
-      </div>
+    <div
+      className="flex min-w-0 items-center gap-2 px-1 text-xs"
+      role="status"
+      aria-live="polite"
+    >
+      {dots}
+      <span className="min-w-0 truncate text-fgmuted">{activity}</span>
+      {time}
     </div>
   );
 }
