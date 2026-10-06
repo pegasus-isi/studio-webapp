@@ -6,11 +6,12 @@
  *
  * Auto-follows the Workflows page — opening a run there scopes the chat to it
  * — until the user picks explicitly, which pins the conversation (see
- * chat-context-store). Lists are fetched lazily when the dropdown opens; the
- * chip itself costs nothing.
+ * chat-context-store). Lists are fetched when the dropdown opens and polled
+ * while it stays open; the chip itself costs nothing.
  */
 
 import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
 import { genId, useChatStore } from "@/lib/stores/chat-store";
 import {
@@ -20,38 +21,13 @@ import {
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { cn } from "@/lib/utils";
 
-// One in-flight/settled fetch per list per page load — the dropdown reuses it
-// and auto-follow label resolution rides the same promise. The workflows scan
-// walks the filesystem server-side; opening the dropdown twice shouldn't walk
-// it twice.
-let _runsPromise: Promise<api.WorkflowRun[]> | null = null;
-let _projectsPromise: Promise<api.WorkflowProject[]> | null = null;
-
-function fetchRuns(): Promise<api.WorkflowRun[]> {
-  if (!_runsPromise) {
-    _runsPromise = api
-      .getWorkflows()
-      .then((r) => r.workflows)
-      .catch(() => {
-        _runsPromise = null; // let a later open retry
-        return [];
-      });
-  }
-  return _runsPromise;
-}
-
-function fetchProjects(): Promise<api.WorkflowProject[]> {
-  if (!_projectsPromise) {
-    _projectsPromise = api
-      .getWorkflowProjects()
-      .then((r) => r.projects)
-      .catch(() => {
-        _projectsPromise = null;
-        return [];
-      });
-  }
-  return _projectsPromise;
-}
+// The lists ride the same React Query cache as the Workflows page (same keys,
+// same response shape), so a workflow the agent just created shows up here as
+// soon as it shows up there. They used to live in a module-level promise that
+// was fetched once per page load and never invalidated: a project created
+// mid-session was missing from the dropdown until a browser refresh.
+const RUNS_KEY = ["workflows"];
+const PROJECTS_KEY = ["workflow-projects"];
 
 function runLabel(run: { name?: string; run_name?: string; run_id: string }) {
   const wf = run.name || "";
@@ -74,8 +50,27 @@ export function ChatContextChip() {
 
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [runs, setRuns] = useState<api.WorkflowRun[] | null>(null);
-  const [projects, setProjects] = useState<api.WorkflowProject[] | null>(null);
+  // Fetched only while the dropdown is open (the chip itself stays free), and
+  // polled while it is, so a workflow that appears mid-glance still lands.
+  // Opening refetches anything older than the client's 5s staleTime.
+  const runsQ = useQuery({
+    queryKey: RUNS_KEY,
+    queryFn: () => api.getWorkflows(),
+    enabled: open,
+    refetchInterval: open ? 5_000 : false,
+  });
+  const projectsQ = useQuery({
+    queryKey: PROJECTS_KEY,
+    queryFn: () => api.getWorkflowProjects(),
+    enabled: open,
+    refetchInterval: open ? 5_000 : false,
+  });
+  // null = still loading; a failed fetch reads as an empty list, as before.
+  const runs: api.WorkflowRun[] | null =
+    runsQ.data?.workflows ?? (runsQ.isError ? [] : null);
+  const projects: api.WorkflowProject[] | null =
+    projectsQ.data?.projects ?? (projectsQ.isError ? [] : null);
+  const qc = useQueryClient();
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => setMounted(true), []);
@@ -108,25 +103,30 @@ export function ChatContextChip() {
         id: selectedRunId,
         label: selectedRunId.slice(0, 8),
       });
-      fetchRuns().then((list) => {
-        const run = list.find((r) => r.run_id === selectedRunId);
-        if (run) {
-          followSelection(activeId, {
-            type: "run",
-            id: selectedRunId,
-            label: runLabel(run),
-          });
-        }
-      });
+      qc.fetchQuery({
+        queryKey: RUNS_KEY,
+        queryFn: () => api.getWorkflows(),
+        staleTime: 5_000,
+      })
+        .then((r) => r.workflows)
+        .catch(() => [] as api.WorkflowRun[])
+        .then((list) => {
+          const run = list.find((r) => r.run_id === selectedRunId);
+          if (run) {
+            followSelection(activeId, {
+              type: "run",
+              id: selectedRunId,
+              label: runLabel(run),
+            });
+          }
+        });
     }
     // Leaving the page (both null) keeps the last-followed scope: the chat is
     // usually *about* what the user just looked at.
-  }, [selectedRunId, selectedProjectId, activeId, followSelection]);
+  }, [selectedRunId, selectedProjectId, activeId, followSelection, qc]);
 
   const openDropdown = () => {
     setOpen((v) => !v);
-    fetchProjects().then(setProjects);
-    fetchRuns().then(setRuns);
   };
 
   // Announce explicit context switches inside the transcript so a scroll-back
