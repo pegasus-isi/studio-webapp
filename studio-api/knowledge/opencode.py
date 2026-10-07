@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 from typing import Any
 
 import structlog
@@ -19,6 +18,12 @@ from knowledge.common import (
     model_limits_by_bare_id,
     build_knowledge_appendix,
     ensure_context_file,
+    record_generated_file,
+    remove_file_if,
+    remove_if_unmodified,
+    remove_generated_context_file,
+    rmdir_if_empty,
+    unlink_if_links_into,
 )
 from llm.providers import PROVIDERS, provider_type
 
@@ -220,6 +225,20 @@ def _link_agents_into_global() -> int:
         except OSError as e:
             log.warning("opencode_agent_link_failed", agent=name, error=str(e))
     return linked
+
+
+def _looks_like_our_config(text: str) -> bool:
+    """An opencode.json written by update_llm_config(): it always carries the
+    Studio MCP servers. A user's own config would not name gitmcp.io/pegasus."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    mcp = data.get("mcp") if isinstance(data, dict) else None
+    if not isinstance(mcp, dict):
+        return False
+    docs = mcp.get("pegasus-docs")
+    return isinstance(docs, dict) and docs.get("url") == "https://gitmcp.io/pegasus-isi/pegasus"
 
 
 class OpenCodeAdapter(KnowledgeAdapter):
@@ -452,6 +471,9 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 except (OSError, ValueError):
                     unchanged = False
                 if unchanged:
+                    # Still ours; make sure that is on record (an install
+                    # that predates the manifest gets one on first restart).
+                    record_generated_file(path)
                     log.info("opencode_config_unchanged", path=path)
                     continue
                 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -464,30 +486,31 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 with open(tmp, "w") as f:
                     f.write(blob)
                 os.replace(tmp, path)
+                record_generated_file(path)
                 self.config_changed = True
                 log.info("opencode_config_written", path=path)
             except OSError as e:
                 log.warning("opencode_config_write_failed", path=path, error=str(e))
 
     def uninstall(self, workspace: str) -> None:
-        paths = [
-            os.path.join(workspace, t)
-            for t in ("AGENTS.md", "opencode.json", ".opencode")
-        ]
-        # Everything we write under $HOME: the global config, its context file,
-        # and the agent links.
+        # ``workspace`` is $HOME. Only what we generated goes, file by file.
+        remove_generated_context_file(os.path.join(workspace, "AGENTS.md"))
+        # Workspaces seeded before the workspace copy was dropped still have
+        # one; at $HOME a file by that name is the user's unless it is ours.
+        remove_if_unmodified(os.path.join(workspace, "opencode.json"), _looks_like_our_config)
+        # <workspace>/.opencode is not handled here: it was only ever written
+        # under ~/work, which installer.uninstall() prunes by exact name.
+
         gdir = _global_config_dir()
-        paths += [
-            os.path.join(gdir, "opencode.json"),
-            os.path.join(gdir, "AGENTS.md"),
-            os.path.join(gdir, "agent"),
-        ]
-        for path in paths:
-            try:
-                if os.path.isfile(path):
-                    os.remove(path)
-                elif os.path.isdir(path):
-                    shutil.rmtree(path)
-            except OSError:
-                pass
+        remove_generated_context_file(os.path.join(gdir, "AGENTS.md"))
+        remove_if_unmodified(os.path.join(gdir, "opencode.json"), _looks_like_our_config)
+
+        # Only the links we made. A hand-written agent beside them stays —
+        # the same rule _link_agents_into_global() applies on every refresh.
+        agent_dir = os.path.join(gdir, "agent")
+        if os.path.isdir(agent_dir):
+            for name in os.listdir(agent_dir):
+                unlink_if_links_into(os.path.join(agent_dir, name))
+        rmdir_if_empty(agent_dir)
+        rmdir_if_empty(gdir)
         log.info("opencode_uninstalled", workspace=workspace)

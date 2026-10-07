@@ -6,10 +6,12 @@ any tool's context file (CLAUDE.md, AGENTS.md, context.md, etc.).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
+from collections.abc import Callable
 from typing import Any
 
 import structlog
@@ -528,6 +530,299 @@ def unmerge_json_top(path: str, keys: list[str]) -> None:
             os.remove(path)
     except OSError:
         pass
+
+
+# --- uninstall primitives ------------------------------------------------------
+#
+# The adapters' uninstall() receives config_root() == $HOME, where ``.claude``,
+# ``.codex``, ``.agents``, ``.antigravity`` and ``.config/opencode`` are the
+# tools' real state: credentials, transcripts, sessions, the user's own skills
+# and agents. The helpers below are the only way adapters remove anything, and
+# each one deletes only what it can positively identify as Studio-generated.
+# Leaving a stale generated file behind is acceptable; deleting something the
+# user or the tool wrote is not (NEW-01).
+
+
+def _config_home() -> str:
+    return os.environ.get("XDG_CONFIG_HOME") or os.path.join(config_root(), ".config")
+
+
+def is_protected_dir(path: str) -> bool:
+    """True for ``$HOME`` and anything one level below it (``~/.claude``,
+    ``~/.codex``, ``~/.agents``, ``~/.antigravity``, ``~/work``), and for one
+    level below the XDG config dir (``~/.config/opencode``).
+
+    Those directories belong to a tool or to the user. Studio only ever puts
+    individual files inside them, so nothing in this package has a reason to
+    delete one recursively — and doing so took Claude Code credentials and
+    every transcript with it (NEW-01). Follows ``realpath`` so an alias to one
+    of them is caught too.
+    """
+    real = os.path.realpath(path)
+    for root in (os.path.realpath(config_root()), os.path.realpath(_config_home())):
+        if real == root or os.path.dirname(real) == root:
+            return True
+    return False
+
+
+def safe_rmtree(path: str) -> bool:
+    """The one recursive delete knowledge code is allowed to call.
+
+    Refuses protected directories (see ``is_protected_dir``) instead of
+    raising: a refusal must never turn an uninstall into a 500 that leaves the
+    DB row behind. Returns True if something was removed.
+    """
+    if is_protected_dir(path):
+        log.error("rmtree_refused_protected_dir", path=path)
+        return False
+    if not os.path.isdir(path) or os.path.islink(path):
+        return False
+    shutil.rmtree(path)
+    return True
+
+
+def rmdir_if_empty(path: str) -> bool:
+    """Remove a directory Studio may have created — only if nothing is in it.
+
+    ``os.rmdir`` fails on a non-empty directory; that failure is the guarantee.
+    """
+    if os.path.islink(path) or not os.path.isdir(path):
+        return False
+    if os.path.realpath(path) == os.path.realpath(config_root()):
+        return False
+    try:
+        os.rmdir(path)
+    except OSError:
+        return False
+    log.info("empty_generated_dir_removed", path=path)
+    return True
+
+
+def remove_generated_context_file(path: str) -> bool:
+    """Undo ensure_context_file()/upsert_managed_block()/a wholesale install write.
+
+    The managed block is always dropped. The file itself is deleted only when
+    what remains is ours: nothing, a phrase only the generated document
+    contains, or exactly the document we would generate now (install() and the
+    entrypoint write it wholesale, without markers). Anything else was written
+    by the user and is put back without the block. Returns True if the file
+    was deleted.
+    """
+    if os.path.islink(path) or not os.path.isfile(path):
+        return False
+    try:
+        with open(path) as f:
+            existing = f.read()
+    except OSError:
+        return False
+
+    remainder = _BLOCK_RE.sub("", existing).strip()
+    ours = (
+        not remainder
+        or _looks_generated(remainder)
+        or remainder == context_body().strip()
+        or remainder == layout.context_document().strip()
+    )
+    try:
+        if ours:
+            os.remove(path)
+            log.info("generated_context_file_removed", path=path)
+            return True
+        if remainder != existing.strip():
+            with open(path, "w") as f:
+                f.write(remainder + "\n")
+            log.info("managed_block_removed_user_content_kept", path=path)
+    except OSError as e:
+        log.warning("context_file_cleanup_failed", path=path, error=str(e))
+    return False
+
+
+def knowledge_roots() -> list[str]:
+    """Realpaths a Studio-made symlink may point into.
+
+    More than ``knowledge_root()``: the link may predate a change in which
+    root wins (image seed vs. the user's checkout), and a stale link into the
+    old root is still ours to remove.
+    """
+    roots = {
+        layout.knowledge_root(),
+        layout.marketplace_root(),
+        layout.user_marketplace_root(),
+        layout.SITE_MARKETPLACE,
+        "/opt/pegasus-ai/knowledge",
+    }
+    return [os.path.realpath(r) for r in roots if r]
+
+
+def unlink_if_links_into(path: str, roots: list[str] | None = None) -> bool:
+    """Remove ``path`` only if it is a symlink into the knowledge tree.
+
+    A real directory under the same name — the user's own ``~/.agents/skills``,
+    an agent they wrote by hand — is left exactly as it is. A dangling link
+    still resolves to a path string, so a link into a root that has since been
+    deleted is recognised and removed too.
+    """
+    if not os.path.islink(path):
+        return False
+    target = os.path.realpath(path)
+    roots = knowledge_roots() if roots is None else roots
+    if not any(target == r or target.startswith(r + os.sep) for r in roots):
+        log.info("symlink_kept_not_into_knowledge_tree", path=path, target=target)
+        return False
+    try:
+        os.unlink(path)
+    except OSError:
+        return False
+    log.info("knowledge_symlink_removed", path=path)
+    return True
+
+
+def remove_file_if(path: str, looks_ours: Callable[[str], bool]) -> bool:
+    """Delete a regular file only when its content passes ``looks_ours``.
+
+    A predicate that raises (malformed JSON, say) counts as "not ours": the
+    file stays.
+    """
+    if os.path.islink(path) or not os.path.isfile(path):
+        return False
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError:
+        return False
+    try:
+        if not looks_ours(text):
+            log.info("file_kept_not_generated", path=path)
+            return False
+    except Exception:
+        return False
+    try:
+        os.remove(path)
+    except OSError:
+        return False
+    log.info("generated_file_removed", path=path)
+    return True
+
+
+# ---- generated-file manifest ----------------------------------------------
+#
+# A fingerprint ("this JSON names the Studio MCP server") tells a file Studio
+# wrote apart from one the user wrote from scratch. It cannot tell a file
+# Studio wrote apart from one Studio wrote and the user then edited — a
+# provider added by hand to opencode.json, a profile tuned in config.toml —
+# and deleting that on uninstall throws away the user's work just as surely
+# as deleting ~/.claude did. So every whole-file config write is recorded
+# here with a hash of its content, and uninstall removes the file only while
+# it still matches. Edited means it is the user's now, and it stays.
+
+
+def _generated_manifest_path() -> str:
+    home = os.environ.get("HOME", "")
+    base = os.path.join(home, ".studio") if home else "/tmp/studio-state"
+    return os.path.join(base, "generated-files.json")
+
+
+def _read_manifest() -> dict[str, str]:
+    try:
+        with open(_generated_manifest_path()) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_manifest(data: dict[str, str]) -> None:
+    path = _generated_manifest_path()
+    if not data:
+        # Nothing left to remember: leave no trace, so an uninstall of the
+        # last tool returns a pristine home.
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        rmdir_if_empty(os.path.dirname(path))
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+    except OSError as e:
+        log.warning("generated_manifest_write_failed", path=path, error=str(e))
+
+
+def _sha256(path: str) -> str | None:
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def record_generated_file(path: str) -> None:
+    """Remember the content Studio just wrote to ``path``.
+
+    Call after every whole-file config write (opencode.json, crush.json,
+    config.toml). ``remove_if_unmodified`` then knows whether the file is
+    still Studio's or has become the user's.
+    """
+    digest = _sha256(path)
+    if digest is None:
+        return
+    data = _read_manifest()
+    data[os.path.abspath(path)] = digest
+    _write_manifest(data)
+
+
+def remove_if_unmodified(path: str, looks_ours: Callable[[str], bool]) -> bool:
+    """Remove a generated config only if it is still exactly what Studio wrote.
+
+    With a manifest record: byte-identical means ours, remove it and drop
+    the record; anything else means the user edited it since, and it stays
+    with a warning in the log. The record stays with it: dropping it would
+    leave the next uninstall with no evidence but the content fingerprint,
+    which an edited copy still passes — and the file that survived the
+    first uninstall would go on the second.
+
+    Without a record (a config written before the manifest existed) the only
+    evidence is the content, so this falls back to the ``looks_ours``
+    fingerprint — the best that can be done for an install that predates
+    this, and the reason every write now records.
+    """
+    key = os.path.abspath(path)
+    data = _read_manifest()
+    recorded = data.get(key)
+    if os.path.islink(path) or not os.path.isfile(path):
+        if recorded is not None:
+            del data[key]
+            _write_manifest(data)
+        return False
+    if recorded is None:
+        return remove_file_if(path, looks_ours)
+    if _sha256(path) != recorded:
+        log.warning("generated_file_kept_user_modified", path=path)
+        return False
+    try:
+        os.remove(path)
+    except OSError:
+        return False
+    del data[key]
+    _write_manifest(data)
+    log.info("generated_file_removed", path=path)
+    return True
+
+
+def remove_json_if_empty(path: str) -> bool:
+    """Delete a JSON file that is exactly ``{}`` once our keys are unmerged."""
+    if os.path.islink(path) or not os.path.isfile(path):
+        return False
+    try:
+        with open(path) as f:
+            if json.load(f) != {}:
+                return False
+        os.remove(path)
+    except (json.JSONDecodeError, OSError):
+        return False
+    return True
 
 
 def link_tree(src: str, dst: str) -> bool:

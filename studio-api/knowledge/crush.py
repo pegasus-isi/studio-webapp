@@ -21,6 +21,10 @@ from knowledge.common import (
     build_knowledge_appendix,
     ensure_context_file,
     model_limits_by_bare_id,
+    record_generated_file,
+    remove_if_unmodified,
+    remove_generated_context_file,
+    rmdir_if_empty,
 )
 from llm.providers import PROVIDERS, provider_type
 
@@ -56,6 +60,20 @@ _MODEL_DEFAULTS = {
     "can_reason": False,
     "supports_attachments": False,
 }
+
+
+def _looks_like_our_config(text: str) -> bool:
+    """A crush.json written by update_llm_config(): it always carries the
+    Studio MCP servers. A user's own config would not name gitmcp.io/pegasus."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    mcp = data.get("mcp") if isinstance(data, dict) else None
+    if not isinstance(mcp, dict):
+        return False
+    docs = mcp.get("pegasus-docs")
+    return isinstance(docs, dict) and docs.get("url") == "https://gitmcp.io/pegasus-isi/pegasus"
 
 
 def _global_config_dir() -> str:
@@ -201,6 +219,7 @@ class CrushAdapter(KnowledgeAdapter):
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=2)
                 f.write("\n")
+            record_generated_file(config_path)
             log.info(
                 "crush_config_written",
                 path=config_path,
@@ -223,12 +242,15 @@ class CrushAdapter(KnowledgeAdapter):
                 os.environ.setdefault("GEMINI_API_KEY", api_key)
 
     def uninstall(self, workspace: str) -> None:
+        # ``workspace`` is $HOME and ~/.config/crush is the tool's own config
+        # dir, which the user may have populated by hand (a crush.json of
+        # their own, themes). Only what update_llm_config() wrote goes: the
+        # context file by its generator fingerprint, crush.json by the Studio
+        # MCP servers it always carries, and the directory only if that
+        # emptied it — the same rule the other adapters follow (NEW-01).
+        remove_generated_context_file(os.path.join(workspace, "AGENTS.md"))
         global_dir = _global_config_dir()
-        for name in ("crush.json", "AGENTS.md"):
-            path = os.path.join(global_dir, name)
-            try:
-                if os.path.isfile(path):
-                    os.remove(path)
-            except OSError:
-                pass
+        remove_generated_context_file(os.path.join(global_dir, "AGENTS.md"))
+        remove_if_unmodified(os.path.join(global_dir, "crush.json"), _looks_like_our_config)
+        rmdir_if_empty(global_dir)
         log.info("crush_uninstalled", workspace=workspace)
