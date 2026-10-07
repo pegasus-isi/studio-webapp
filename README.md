@@ -267,10 +267,10 @@ plan against, not a fixed pair: "This machine" (`local`), plus every site in
 the project's `sites.yml`, the sites of a hosted site catalog named in
 `~/.pegasusrc` (`pegasus.catalog.site.repo.file`; hosted catalogs call theirs
 `compute`), and `STUDIO_EXEC_SITE`. A condor pool shows as "Shared cluster", a
-Slurm or other batch site as "HPC cluster". Without a hosted catalog the
-default HTCondor `condorpool` is always offered, because generators built on
-the pegasus-ai `custom_sites.py` template create it when nothing else defines
-one.
+Slurm or other batch site as "HPC cluster". When none of those defines an
+execution site, the default HTCondor `condorpool` is offered, because
+generators built on the pegasus-ai `custom_sites.py` template create it in
+that case; otherwise the project's own site is preselected.
 
 Those generators state only cores, memory and runtime, and take the site's
 scheduler settings as options (`--site-style`, `--queue`, `--project`, ...).
