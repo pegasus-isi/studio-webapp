@@ -5,6 +5,8 @@ import { usePanelStore } from "@/lib/stores/panel-store";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { useTools, useStartTool } from "@/lib/hooks/use-tools";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
+import { usePaneSize } from "@/lib/hooks/use-pane-size";
+import { cn } from "@/lib/utils";
 import { TerminalTabs } from "@/components/terminal/terminal-tabs";
 
 export function GlobalTerminalPanel() {
@@ -18,6 +20,24 @@ export function GlobalTerminalPanel() {
   const runAction = useActionToast();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // The panel used to be a fixed 300px, which is wrong in both directions: too
+  // short for a build log or an htop, too tall once you only want a prompt
+  // while reading a workflow above it. Same hook as the workflow list and the
+  // graph pane, so the height persists per browser like theirs do. The
+  // terminal view refits xterm and tells the PTY on every container resize,
+  // so the shell sees the new rows without anything further here.
+  // `invert` because the panel hangs from the bottom of the viewport: the
+  // handle is on its top edge and dragging *up* makes it taller.
+  const { size: height, dragging, startDrag, onHandleKeyDown, paneRef } =
+    usePaneSize({
+      storageKey: "terminal-pane",
+      defaultSize: 300,
+      minSize: 120,
+      maxSize: 900,
+      axis: "y",
+      invert: true,
+    });
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -51,9 +71,31 @@ export function GlobalTerminalPanel() {
 
   return (
     <div
-      className="flex flex-col border-t border-line"
-      style={{ height: "300px" }}
+      ref={paneRef}
+      className="relative flex shrink-0 flex-col border-t border-line"
+      style={{ height }}
     >
+      {/* Drag handle along the top edge. Taller than the 1px border it sits
+          on (-top-1 .. h-2) because a hairline is a poor drag target; it
+          overlaps the bottom of the main area by a pixel, which nothing
+          there needs. */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize the terminal panel"
+        tabIndex={0}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          startDrag();
+        }}
+        onKeyDown={onHandleKeyDown}
+        className={cn(
+          "absolute -top-1 left-0 z-10 h-2 w-full cursor-row-resize",
+          "hover:bg-pegasus-400/40 focus:bg-pegasus-400/60 focus:outline-none",
+          dragging && "bg-pegasus-400/60"
+        )}
+      />
+
       {/* Toolbar */}
       <div className="flex items-center justify-between bg-gray-800 px-3 py-1">
         <div className="flex items-center gap-2">
