@@ -491,6 +491,22 @@ export interface ProjectParams {
     env_vars?: string[];
   };
   plan: { params: WorkflowParam[] };
+  /** Sites this project can plan against, from its sites.yml, a hosted site
+      catalog and the deployment's defaults; "local" first. Absent on a
+      backend that predates it — fall back to the fixed local/condorpool pair. */
+  sites?: {
+    default: string;
+    sites: ExecutionSite[];
+  };
+}
+
+export interface ExecutionSite {
+  name: string;
+  /** "condor", "slurm", "batch" (another scheduler), or null if unknown. */
+  style: string | null;
+  /** Where the site came from: "project" (its sites.yml), "hosted",
+      "deployment" or "default". */
+  source: string;
 }
 
 export async function deleteWorkflowProject(projectId: string) {

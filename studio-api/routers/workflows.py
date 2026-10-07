@@ -20,6 +20,10 @@ from models import (
     WorkflowProjectRunResponse,
     WorkflowRunResponse,
 )
+from services.execution_sites import (
+    apply_generator_site_defaults,
+    execution_sites,
+)
 from services.generator_introspect import PLAN_PARAMS, introspect_generator
 from services.procutil import communicate_or_kill
 from services.workflow_monitor import (
@@ -260,11 +264,25 @@ async def get_project_params(project_id: str) -> dict:
     generator: dict = {"params": [], "mutex_required": []}
     if proj["has_generator"]:
         generator = await introspect_generator(proj["project_dir"])
+        generator = {
+            **generator,
+            "params": apply_generator_site_defaults(generator.get("params", [])),
+        }
+
+    # The sites this project can actually plan against, so "Where it runs"
+    # offers `compute` on a Slurm/hosted-catalog install instead of a
+    # `condorpool` nothing defines there.
+    sites = execution_sites(proj["project_dir"])
+    plan_params = [
+        {**p, "default": sites["default"]} if p["dest"] == "site" else p
+        for p in PLAN_PARAMS
+    ]
 
     return {
         "project_id": project_id,
         "generator": generator,
-        "plan": {"params": PLAN_PARAMS},
+        "plan": {"params": plan_params},
+        "sites": sites,
     }
 
 

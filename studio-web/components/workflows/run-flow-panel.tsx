@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
-import { EXECUTION_SITES } from "@/lib/vocabulary";
+import { siteChoices } from "@/lib/vocabulary";
 import { GlossaryTerm } from "@/components/ui/glossary-term";
 import { AppLink } from "@/components/layout/app-link";
 import { cn } from "@/lib/utils";
@@ -104,10 +104,18 @@ export function RunFlowPanel({
   const siteParams = useMemo(
     () =>
       allGenParams.filter((p) =>
-        /^(exec(ution)?[_-]?site|site)$/i.test(p.dest.replace(/-/g, "_"))
+        /^(exec(ution)?[_-]?site([_-]?name)?|site)$/i.test(
+          p.dest.replace(/-/g, "_")
+        )
       ),
     [allGenParams]
   );
+
+  // The sites this project can plan against (its sites.yml, a hosted catalog,
+  // the deployment's default) — not a fixed local/condorpool pair, which
+  // offers a site nothing defines on a Slurm or hosted-catalog install.
+  const defaultSite = params?.sites?.default ?? "condorpool";
+  const sites = useMemo(() => siteChoices(params?.sites?.sites), [params]);
 
   const genParams = useMemo(
     () => allGenParams.filter((p) => !siteParams.includes(p)),
@@ -212,7 +220,7 @@ export function RunFlowPanel({
   // case where the generator's default differs from the radio's.
   useEffect(() => {
     if (!siteParams.length) return;
-    const current = String(values["site"] ?? "condorpool");
+    const current = String(values["site"] ?? defaultSite);
     for (const p of siteParams) {
       if (String(values[p.dest] ?? "") !== current) onChange(p.dest, current);
     }
@@ -227,9 +235,9 @@ export function RunFlowPanel({
   // buries the two or three lines that are the point.
   const summary = useMemo(() => {
     const rows: { label: string; value: string }[] = [];
-    const site = String(values["site"] ?? "condorpool");
+    const site = String(values["site"] ?? defaultSite);
     const siteLabel =
-      EXECUTION_SITES.find((s) => s.value === site)?.label ?? site;
+      sites.find((s) => s.value === site)?.label ?? site;
     rows.push({ label: "Where it runs", value: siteLabel });
 
     for (const p of primaryParams) {
@@ -245,7 +253,7 @@ export function RunFlowPanel({
       rows.push({ label: paramLabel(p), value: current });
     }
     return rows;
-  }, [primaryParams, values]);
+  }, [primaryParams, values, sites, defaultSite]);
 
   // ── attach to the server-side flow ──────────────────────────────────────
 
@@ -353,7 +361,7 @@ export function RunFlowPanel({
     try {
       const snapshot = await api.startRunFlow(projectId, {
         args: buildArgs(allGenParams, values),
-        site: String(values["site"] ?? "condorpool"),
+        site: String(values["site"] ?? defaultSite),
         output_site: String(values["output_site"] ?? "local"),
       });
       setFlow(snapshot);
@@ -483,9 +491,9 @@ export function RunFlowPanel({
             <GlossaryTerm term="Where it runs" />
           </legend>
           <div className="mt-2 space-y-2">
-            {EXECUTION_SITES.map((site) => {
+            {sites.map((site) => {
               const selected =
-                String(values["site"] ?? "condorpool") === site.value;
+                String(values["site"] ?? defaultSite) === site.value;
               return (
                 <label
                   key={site.value}
