@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { useToolStore } from "@/lib/stores/tool-store";
 import { useTools, useStartTool } from "@/lib/hooks/use-tools";
@@ -8,6 +8,9 @@ import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { usePaneSize } from "@/lib/hooks/use-pane-size";
 import { cn } from "@/lib/utils";
 import { TerminalTabs } from "@/components/terminal/terminal-tabs";
+
+/** The height the panel opens at and that the reset control returns to. */
+const DEFAULT_HEIGHT = 300;
 
 export function GlobalTerminalPanel() {
   const terminalOpen = usePanelStore((s) => s.terminalOpen);
@@ -29,15 +32,39 @@ export function GlobalTerminalPanel() {
   // so the shell sees the new rows without anything further here.
   // `invert` because the panel hangs from the bottom of the viewport: the
   // handle is on its top edge and dragging *up* makes it taller.
-  const { size: height, dragging, startDrag, onHandleKeyDown, paneRef } =
+  // The ceiling follows the window rather than being a number: a fixed max
+  // either stops short of full height on a big monitor or lets the panel
+  // push the status bar off a small one. The limit is the column the panel
+  // sits in minus the status bar below it, measured from the DOM so a
+  // change to either bar's height cannot silently break it; before the
+  // panel has mounted, fall back to the window less the bars' known sizes.
+  const [maxHeight, setMaxHeight] = useState(() =>
+    typeof window === "undefined" ? 900 : Math.max(120, window.innerHeight - 72)
+  );
+  const { size: height, dragging, startDrag, reset, onHandleKeyDown, paneRef } =
     usePaneSize({
       storageKey: "terminal-pane",
-      defaultSize: 300,
+      defaultSize: DEFAULT_HEIGHT,
       minSize: 120,
-      maxSize: 900,
+      maxSize: maxHeight,
       axis: "y",
       invert: true,
     });
+  useLayoutEffect(() => {
+    if (!terminalOpen) return;
+    const measure = () => {
+      const pane = paneRef.current;
+      const column = pane?.parentElement;
+      const statusBar = pane?.nextElementSibling as HTMLElement | null;
+      const available = column
+        ? column.clientHeight - (statusBar?.offsetHeight ?? 0)
+        : window.innerHeight - 72;
+      setMaxHeight(Math.max(120, available));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [terminalOpen, paneRef]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -88,6 +115,7 @@ export function GlobalTerminalPanel() {
           e.preventDefault();
           startDrag();
         }}
+        onDoubleClick={reset}
         onKeyDown={onHandleKeyDown}
         className={cn(
           "absolute -top-1 left-0 z-10 h-2 w-full cursor-row-resize",
@@ -156,26 +184,56 @@ export function GlobalTerminalPanel() {
           </div>
         </div>
 
-        <button
-          onClick={() => setTerminalOpen(false)}
-          className="text-fgsubtle hover:text-white"
-          aria-label="Close terminal panel"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        <div className="flex items-center gap-2">
+          {/* Reset to the default height. Sits beside the close control
+              because that is where the eye goes for "undo what I did to
+              this panel"; disabled rather than hidden at the default so it
+              does not pop in and out as the handle crosses 300px. */}
+          <button
+            onClick={reset}
+            disabled={height === DEFAULT_HEIGHT}
+            className="text-fgsubtle hover:text-white disabled:cursor-default disabled:opacity-30 disabled:hover:text-fgsubtle"
+            aria-label="Reset terminal panel height"
+            title="Reset height"
           >
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+              <polyline points="3 3 3 8 8 8" />
+            </svg>
+          </button>
+
+          <button
+            onClick={() => setTerminalOpen(false)}
+            className="text-fgsubtle hover:text-white"
+            aria-label="Close terminal panel"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Terminal content */}
