@@ -390,3 +390,29 @@ def test_start_run_flow_404s_on_unknown_project(client):
 def test_run_flow_events_404s_when_nothing_is_running(client):
     res = client.get("/api/workflows/projects/nope/run-flow/events")
     assert res.status_code == 404
+
+
+def test_plan_uses_the_shared_submit_base(tmp_path, monkeypatch):
+    """The GUI plans into the same base the scaffold skill teaches (`--dir
+    submit`), so both launchers share one run-number sequence instead of two
+    trees with colliding run0002s."""
+    from services.workflow_submitter import SUBMIT_BASE
+
+    seen: list[list[str]] = []
+
+    async def fake_plan_capture(flow, argv, *, project_dir, mode=None):
+        seen.append(list(argv))
+        return 1, "stubbed planner"
+
+    monkeypatch.setattr(rf, "_plan_capture", fake_plan_capture)
+    project_dir = _project(
+        tmp_path,
+        "with open('workflow.yml', 'w') as fh:\n"
+        "    fh.write('pegasus: \"5.0\"\\njobs: []\\n')\n",
+    )
+    _drive(project_dir)
+
+    assert seen, "the planner was never invoked"
+    argv = seen[0]
+    assert argv[:3] == ["pegasus-plan", "--dir", SUBMIT_BASE]
+    assert SUBMIT_BASE == "submit"
