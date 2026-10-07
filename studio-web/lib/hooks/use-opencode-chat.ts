@@ -420,6 +420,16 @@ export function useOpenCodeChat() {
           case "session.idle": {
             if (forThisSession(p.sessionID)) {
               dispatch({ kind: "busy", busy: false });
+              // An idle session is waiting on nothing, so any card still
+              // showing is stale: its request was resolved some other way —
+              // a sibling answered "always" with a pattern that covered it,
+              // Stop aborted the turn, the engine restarted — and the
+              // `permission.replied` for it never reached us. Re-read the
+              // lists rather than clearing blindly, so a request raised a
+              // moment later is not lost with them.
+              if (pendingRef.current > 0 && sessionRef.current) {
+                void syncPending(sessionRef.current, controller.signal);
+              }
             }
             break;
           }
@@ -597,6 +607,31 @@ export function useOpenCodeChat() {
   // clicked twice while the request settles — and puts it back if the request
   // failed, because the engine is still blocked on that answer and a card the
   // user can no longer see is a turn that never resumes.
+  // How many cards are up, readable from the event handler (which closes over
+  // refs, not state) so an idle session can tell whether there is anything
+  // stale to reconcile.
+  const pendingRef = useRef(0);
+  pendingRef.current = state.permissions.length + state.questions.length;
+
+  // Why a failed reply does not always bring the card back.
+  //
+  // It used to, unconditionally: a card whose reply failed was re-added so
+  // the user could try again. For a transient failure that is right. For
+  // "Permission request not found" it is a trap — the engine has already
+  // resolved that request (a sibling card answered "always" with a pattern
+  // that covered it, Stop aborted the turn, the engine restarted), so every
+  // retry fails the same way and the card can never be dismissed. Seen on
+  // the first day of early-user testing with three bash cards stacked up.
+  // A request the engine no longer holds is done, whatever the user clicked;
+  // the card stays gone, and the lists are re-read so any other card in the
+  // same state goes with it.
+  const requestGone = (e: unknown) => /not found/i.test((e as Error).message ?? "");
+  const resync = () => {
+    if (sessionRef.current) {
+      void syncPending(sessionRef.current, new AbortController().signal);
+    }
+  };
+
   const answerPermission = useCallback(
     async (requestID: string, reply: PermissionReply) => {
       const request = state.permissions.find((p) => p.id === requestID);
@@ -604,6 +639,10 @@ export function useOpenCodeChat() {
       try {
         await oc.replyPermission(requestID, reply);
       } catch (e) {
+        if (requestGone(e)) {
+          resync();
+          return;
+        }
         dispatch({ kind: "error", error: (e as Error).message });
         if (request) dispatch({ kind: "permission", request });
       }
@@ -618,6 +657,10 @@ export function useOpenCodeChat() {
       try {
         await oc.replyQuestion(requestID, answers);
       } catch (e) {
+        if (requestGone(e)) {
+          resync();
+          return;
+        }
         dispatch({ kind: "error", error: (e as Error).message });
         if (request) dispatch({ kind: "question", request });
       }
@@ -632,6 +675,10 @@ export function useOpenCodeChat() {
       try {
         await oc.rejectQuestion(requestID);
       } catch (e) {
+        if (requestGone(e)) {
+          resync();
+          return;
+        }
         dispatch({ kind: "error", error: (e as Error).message });
         if (request) dispatch({ kind: "question", request });
       }
