@@ -342,7 +342,12 @@ export async function getToolStatus(id: string) {
 
 export interface WorkflowRun {
   run_id: string;
-  run_name: string; // submit-dir name (e.g. "run0001") for display
+  // Submit-dir name for display ("run0001"). Prefixed with the submit base
+  // ("submit/run0002") when the project holds runs from more than one base,
+  // so two runs with the same number cannot read alike.
+  run_name: string;
+  submit_base?: string;
+  planned_at?: number;
   name: string;
   run_dir: string;
   status: string;
@@ -409,7 +414,12 @@ export async function submitWorkflow(
 
 export interface WorkflowProjectRun {
   run_id: string;
-  run_name: string; // submit-dir name (e.g. "run0001") for display
+  // Submit-dir name for display ("run0001"). Prefixed with the submit base
+  // ("submit/run0002") when the project holds runs from more than one base,
+  // so two runs with the same number cannot read alike.
+  run_name: string;
+  submit_base?: string;
+  planned_at?: number;
   name: string;
   run_dir: string;
   status: string;

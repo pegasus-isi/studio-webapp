@@ -467,3 +467,91 @@ def test_jupyter_path_is_empty_for_home_itself(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(home))
 
     assert jupyter_path(str(home)) == ""
+
+
+# --- runs from more than one submit base --------------------------------------
+
+
+def _planned_run(project, rel, uuid, ts):
+    """A run dir in Pegasus's <base>/<user>/pegasus/<wf>/runNNNN layout."""
+    run_dir = os.path.join(project, rel)
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "braindump.yml"), "w") as f:
+        f.write(f"pegasus_wf_name: eeg-0\nwf_uuid: {uuid}\ntimestamp: \"{ts}\"\n")
+    return run_dir
+
+
+def test_submit_base_reads_the_pegasus_layout():
+    from services.workflow_scanner import submit_base
+
+    p = "/h/workflows/eeg"
+    assert submit_base(p, f"{p}/u/pegasus/eeg/run0001") == ""
+    assert submit_base(p, f"{p}/submit/u/pegasus/eeg/run0002") == "submit"
+    assert submit_base(p, f"{p}/runs/2026/u/pegasus/eeg/run0002") == "runs/2026"
+    # Too short to carry the layout: a hand-made fixture, treated as the root.
+    assert submit_base(p, f"{p}/run0001") == ""
+
+
+def test_project_runs_from_two_bases_are_labelled_and_ordered_by_plan_time(
+    tmp_path, monkeypatch
+):
+    """The GUI used to plan from the project root and the assistant from
+    `--dir submit`, so a project held two run0002s that listed identically and
+    interleaved by name. With two bases present, the non-root run carries its
+    base and the list is newest-planned first."""
+    import services.workflow_scanner as scanner
+
+    monkeypatch.setattr(scanner, "get_run_status", lambda rd: "succeeded")
+    ws = tmp_path / "workflows"
+    project = ws / "eeg"
+    project.mkdir(parents=True)
+    (project / "workflow_generator.py").write_text("")
+
+    _planned_run(str(project), "u/pegasus/eeg/run0001", "a", "20261007T152400+0000")
+    _planned_run(str(project), "submit/u/pegasus/eeg/run0002", "b", "20261007T154700+0000")
+    _planned_run(str(project), "u/pegasus/eeg/run0003", "c", "20261007T160000+0000")
+    # A same-numbered run in the other base: the collision this exists for.
+    _planned_run(str(project), "submit/u/pegasus/eeg/run0003", "d", "20261007T161000+0000")
+
+    projects = scanner.discover_projects(str(ws))
+    runs = [p for p in projects if p["project_id"] == "eeg"][0]["submitted_runs"]
+
+    assert [r["run_name"] for r in runs] == [
+        "submit/run0003", "run0003", "submit/run0002", "run0001",
+    ]
+    assert [r["submit_base"] for r in runs] == ["submit", "", "submit", ""]
+
+
+def test_project_runs_from_one_base_keep_short_names(tmp_path, monkeypatch):
+    import services.workflow_scanner as scanner
+
+    monkeypatch.setattr(scanner, "get_run_status", lambda rd: "succeeded")
+    ws = tmp_path / "workflows"
+    project = ws / "eeg"
+    project.mkdir(parents=True)
+    (project / "workflow_generator.py").write_text("")
+    _planned_run(str(project), "submit/u/pegasus/eeg/run0001", "a", "20261007T152400+0000")
+    _planned_run(str(project), "submit/u/pegasus/eeg/run0002", "b", "20261007T154700+0000")
+
+    projects = scanner.discover_projects(str(ws))
+    runs = [p for p in projects if p["project_id"] == "eeg"][0]["submitted_runs"]
+    assert [r["run_name"] for r in runs] == ["run0002", "run0001"]
+
+
+def test_project_runs_order_falls_back_to_mtime_without_a_timestamp(tmp_path, monkeypatch):
+    import services.workflow_scanner as scanner
+
+    monkeypatch.setattr(scanner, "get_run_status", lambda rd: "succeeded")
+    ws = tmp_path / "workflows"
+    project = ws / "eeg"
+    project.mkdir(parents=True)
+    (project / "workflow_generator.py").write_text("")
+    older = _planned_run(str(project), "submit/u/pegasus/eeg/run0009", "a", "")
+    newer = _planned_run(str(project), "submit/u/pegasus/eeg/run0001", "b", "")
+    os.utime(os.path.join(older, "braindump.yml"), (1_700_000_000, 1_700_000_000))
+    os.utime(os.path.join(newer, "braindump.yml"), (1_800_000_000, 1_800_000_000))
+
+    projects = scanner.discover_projects(str(ws))
+    runs = [p for p in projects if p["project_id"] == "eeg"][0]["submitted_runs"]
+    # run0001 was planned later than run0009 (a re-created base), so it leads.
+    assert [r["run_name"] for r in runs] == ["run0001", "run0009"]

@@ -9,6 +9,7 @@ import asyncio
 import glob
 import os
 import re
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -210,6 +211,63 @@ def discover_runs(
     return runs
 
 
+def submit_base(project_dir: str, run_dir: str) -> str:
+    """The submit base a run was planned into, relative to its project.
+
+    Pegasus lays a run out as ``<base>/<user>/pegasus/<wf-name>/runNNNN``,
+    where ``<base>`` is pegasus-plan's ``--dir`` (the cwd when omitted). So the
+    base is the run path relative to the project with those four trailing
+    components removed: ``""`` for a run planned from the project root,
+    ``"submit"`` for ``--dir submit``. A path too short to carry the layout
+    (a hand-made fixture) reads as the root.
+    """
+    rel = os.path.relpath(run_dir, project_dir)
+    parts = [c for c in rel.split(os.sep) if c and c != "."]
+    if len(parts) <= 4:
+        return ""
+    return "/".join(parts[:-4])
+
+
+def _planned_at(bd: dict[str, Any], braindump_path: str) -> float:
+    """When a run was planned, as an epoch — the braindump's own timestamp
+    (``20261007T154757+0000``), else the file's mtime."""
+    ts = bd.get("timestamp")
+    if ts:
+        for fmt in ("%Y%m%dT%H%M%S%z", "%Y-%m-%dT%H:%M:%S%z"):
+            try:
+                return datetime.strptime(str(ts), fmt).timestamp()
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(str(ts)).timestamp()
+        except ValueError:
+            pass
+    try:
+        return os.path.getmtime(braindump_path)
+    except OSError:
+        return 0.0
+
+
+def label_runs(project_dir: str, runs: list[dict[str, Any]]) -> None:
+    """Name each run so two from different submit bases cannot read alike.
+
+    Runs are shown by their directory's basename, ``run0002``. A project that
+    was planned from the GUI (project root) and from a terminal (``--dir
+    submit``) holds two run0002s, and nothing in the list told them apart.
+    When more than one base is present, a run outside the root is labelled
+    with its base, ``submit/run0002``; a project with one base keeps the short
+    names. Also orders newest-planned first: with two bases, name order
+    interleaves them wrongly.
+    """
+    for r in runs:
+        r["submit_base"] = submit_base(project_dir, r["run_dir"])
+    if len({r["submit_base"] for r in runs}) > 1:
+        for r in runs:
+            if r["submit_base"]:
+                r["run_name"] = f'{r["submit_base"]}/{os.path.basename(r["run_dir"])}'
+    runs.sort(key=lambda r: (r.get("planned_at", 0.0), r.get("run_name", "")), reverse=True)
+
+
 def discover_projects(
     workspace: str | None = None,
     extra_excludes: tuple | list = (),
@@ -312,12 +370,13 @@ def _scan_projects_dir(
                     "name": bd.get("pegasus_wf_name", os.path.basename(run_dir)),
                     "run_dir": run_dir,
                     "status": run_status,
+                    "planned_at": _planned_at(bd, bd_path),
                 })
             except Exception as exc:
                 log.warning("project_run_parse_failed", path=bd_path, error=str(exc))
 
-        # Newest run first (run0011 before run0001).
-        submitted_runs.sort(key=lambda r: r.get("run_name", ""), reverse=True)
+        # Newest-planned first, and bases told apart when there are two.
+        label_runs(project_dir, submitted_runs)
 
         # Derive overall project status
         if submitted_runs:
