@@ -53,6 +53,7 @@ const STARTERS = [
 
 interface ModelChoice {
   providerID: string;
+  providerName: string;
   modelID: string;
   label: string;
 }
@@ -75,6 +76,39 @@ export function OpenCodeChat() {
   // the page once the first fetch had failed.
   const [catalogAttempt, setCatalogAttempt] = useState(0);
 
+  // What "Configured default" resolves to: the provider and model activated in
+  // Settings → AI providers, which the propagator writes into opencode.json as
+  // the engine's `model`. Shown on the option itself, because a picker that
+  // says only "Configured default" leaves the user guessing which model is
+  // answering — the question "what is the configured default?" came up on
+  // the first day of early-user testing.
+  const [configured, setConfigured] = useState<api.LLMConfig | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getLLMConfig()
+      .then((cfg) => {
+        if (!cancelled) setConfigured(cfg);
+      })
+      .catch(() => {
+        if (!cancelled) setConfigured(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogAttempt]);
+
+  const defaultLabel = useMemo(() => {
+    if (!configured) return "Configured default";
+    const providerName =
+      models?.find((m) => m.providerID === configured.provider)?.providerName ??
+      configured.provider;
+    // No model saved means the provider's own default answers; name the
+    // provider so at least that much is visible.
+    const model = configured.model?.split("/").pop() || "provider default";
+    return `Configured default (${providerName} / ${model})`;
+  }, [configured, models]);
+
   // Model list from the engine's own provider catalog, so the picker offers
   // exactly what the generated config declared — no second source of truth
   // about which models exist.
@@ -88,6 +122,7 @@ export function OpenCodeChat() {
           for (const [modelID, model] of Object.entries(provider.models ?? {})) {
             choices.push({
               providerID: provider.id,
+              providerName: provider.name || provider.id,
               modelID,
               label: `${provider.name || provider.id} / ${model?.name || modelID}`,
             });
@@ -496,8 +531,11 @@ export function OpenCodeChat() {
               className="max-w-[18rem] rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
             >
               {/* Empty means "whatever the generated config says", which is the
-                  provider the user activated in Settings. */}
-              <option value="">Configured default</option>
+                  provider the user activated in Settings — named here so the
+                  user can see it without opening Settings. */}
+              <option value="" title="Set in Settings → AI providers">
+                {defaultLabel}
+              </option>
               {(models ?? []).map((m) => (
                 <option
                   key={`${m.providerID}/${m.modelID}`}
