@@ -17,7 +17,11 @@ import structlog
 
 from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
-from knowledge.common import build_knowledge_appendix, ensure_context_file
+from knowledge.common import (
+    build_knowledge_appendix,
+    ensure_context_file,
+    model_limits_by_bare_id,
+)
 from llm.providers import PROVIDERS, provider_type
 
 log = structlog.get_logger()
@@ -32,6 +36,16 @@ _OPENAI_COMPATIBLE = {"gateway", "custom", "ollama", "openai"}
 # arbitrary gateway endpoints. Conservative defaults: a context window small
 # enough to be safe everywhere, zero cost (the common case here is an internal
 # gateway), no reasoning/attachment claims.
+def _crush_limits(lim: dict[str, int] | None) -> dict[str, int]:
+    """Map a ``{"context", "output"}`` limit onto Crush's field names."""
+    out: dict[str, int] = {}
+    if lim and "context" in lim:
+        out["context_window"] = lim["context"]
+    if lim and "output" in lim:
+        out["default_max_tokens"] = lim["output"]
+    return out
+
+
 _MODEL_DEFAULTS = {
     "context_window": 128_000,
     "default_max_tokens": 8_192,
@@ -131,12 +145,18 @@ class CrushAdapter(KnowledgeAdapter):
             ]
             if p_model and p_model not in model_ids:
                 model_ids.insert(0, p_model)
+            limits = model_limits_by_bare_id(prov)
             entry: dict[str, Any] = {
                 "name": prov.get("name") or p_preset.get("name", pid),
                 "type": "openai-compat",
                 "base_url": p_base,
+                # A reported context window / output cap (propagator,
+                # ``model_limits``) overrides the placeholder defaults, which
+                # are only there because Crush requires the fields; the real
+                # window is what its summarizer compacts against.
                 "models": [
-                    {"id": m, "name": m, **_MODEL_DEFAULTS} for m in model_ids
+                    {"id": m, "name": m, **_MODEL_DEFAULTS, **_crush_limits(limits.get(m))}
+                    for m in model_ids
                 ],
             }
             if p_key:

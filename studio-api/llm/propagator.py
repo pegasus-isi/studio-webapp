@@ -9,7 +9,7 @@ import structlog
 
 from knowledge.adapters import get_adapter
 from knowledge.common import config_root, prune_legacy_workspace_copies
-from llm.providers import PROVIDER_DEFAULTS, fetch_models, provider_type
+from llm.providers import PROVIDER_DEFAULTS, fetch_model_catalog, provider_type
 from workspace import legacy_workspace_root, workspace_root
 
 if TYPE_CHECKING:
@@ -26,13 +26,23 @@ MODEL_FETCH_TIMEOUT = 6.0
 
 
 async def _attach_model_lists(providers: list[dict[str, Any]]) -> None:
-    """Fetch each provider's live /models list and attach it as ``models``.
+    """Fetch each provider's live /models list and attach it as ``models``,
+    with whatever per-model limits the listing reports as ``model_limits``.
 
     opencode cannot discover models for OpenAI-compatible providers — its
     picker lists exactly what the generated config declares — so declaring
     only default_model left at most one selectable model per endpoint (#207).
     Any failure (endpoint down, auth, timeout) simply leaves ``models`` unset
     and the adapters fall back to the stored default_model.
+
+    ``model_limits`` maps a model id to ``{"context": n, "output": n}`` (either
+    key may be missing) for the models whose entry carried a limit. The tools
+    need it: a model declared without a context window is one the tool never
+    compacts a session for, and without an output cap it asks for its own
+    default — OpenCode's is 32000 — which, added to a prompt that has grown to
+    fill the window, is rejected by the backend on every turn from then on,
+    including the compaction call itself. Models the server says nothing
+    about get no entry, not a guess.
     """
 
     async def one(prov: dict[str, Any]) -> None:
@@ -46,14 +56,17 @@ async def _attach_model_lists(providers: list[dict[str, Any]]) -> None:
         if not base_url:
             return
         try:
-            models, err = await asyncio.wait_for(
-                fetch_models(base_url, prov.get("api_key") or ""),
+            entries, err = await asyncio.wait_for(
+                fetch_model_catalog(base_url, prov.get("api_key") or ""),
                 timeout=MODEL_FETCH_TIMEOUT,
             )
         except Exception as e:
-            models, err = [], str(e)
-        if models:
-            prov["models"] = models
+            entries, err = [], str(e)
+        if entries:
+            prov["models"] = [e["id"] for e in entries]
+            limits = {e["id"]: e["limits"] for e in entries if e.get("limits")}
+            if limits:
+                prov["model_limits"] = limits
         else:
             log.info(
                 "llm_model_list_unavailable",

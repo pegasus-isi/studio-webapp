@@ -280,6 +280,44 @@ LEGACY_WORKSPACE_PARENTS = (
 )
 
 
+def model_limits_by_bare_id(prov: dict[str, Any]) -> dict[str, dict[str, int]]:
+    """A provider's ``model_limits`` keyed the way the adapters name models.
+
+    The propagator keys limits by the id the listing reported, which may be
+    namespaced (``qwen/qwen3.8-27b`` on OpenRouter-style gateways), while
+    every adapter declares the bare id (``rsplit("/", 1)[-1]``) so the
+    stored default_model and the listing agree. Looked up by the bare id, a
+    namespaced entry would silently lose its limits — exactly the model that
+    needed them. Both spellings are keyed; a bare id that was reported
+    directly wins over one derived from a namespaced id. Only positive
+    integer ``context`` / ``output`` values survive.
+    """
+    raw = prov.get("model_limits") or {}
+    out: dict[str, dict[str, int]] = {}
+
+    def clean(lim: Any) -> dict[str, int]:
+        if not isinstance(lim, dict):
+            return {}
+        return {
+            k: v for k, v in lim.items()
+            if k in ("context", "output")
+            and isinstance(v, int) and not isinstance(v, bool) and v > 0
+        }
+
+    for mid, lim in raw.items():
+        cleaned = clean(lim)
+        if not cleaned:
+            continue
+        bare = str(mid).rsplit("/", 1)[-1]
+        if bare != mid:
+            out.setdefault(bare, cleaned)
+    for mid, lim in raw.items():
+        cleaned = clean(lim)
+        if cleaned:
+            out[str(mid)] = cleaned
+    return out
+
+
 def config_root() -> str:
     """Where generated tool config belongs: the user's ``$HOME``.
 

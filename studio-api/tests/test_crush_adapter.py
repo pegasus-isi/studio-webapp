@@ -158,3 +158,36 @@ def test_crush_is_registered(tmp_path):
     assert entry["binary"] == "crush"
     assert entry["knowledge_adapter"] == "crush"
     assert "@charmland/crush" in entry["install_command"]
+
+
+def test_reported_model_limits_override_placeholders(tmp_path, monkeypatch):
+    """Crush requires context_window/default_max_tokens on every model, so
+    unknown models get placeholders — but a limit the endpoint reported must
+    replace them, since that is what the summarizer compacts against."""
+    home = _update(
+        tmp_path,
+        monkeypatch,
+        {
+            "provider": "custom-gw",
+            "model": "big",
+            "api_key": "k",
+            "base_url": "https://gw.example/v1",
+            "all_providers": [
+                {
+                    "provider_id": "custom-gw",
+                    "name": "Gateway",
+                    "api_key": "k",
+                    "base_url": "https://gw.example/v1",
+                    "default_model": "big",
+                    "models": ["big", "unsized"],
+                    "model_limits": {"big": {"context": 262144, "output": 32768}},
+                },
+            ],
+        },
+    )
+    cfg = json.loads((home / ".config" / "crush" / "crush.json").read_text())
+    by_id = {m["id"]: m for m in cfg["providers"]["custom-gw"]["models"]}
+    assert by_id["big"]["context_window"] == 262144
+    assert by_id["big"]["default_max_tokens"] == 32768
+    assert by_id["unsized"]["context_window"] == 128_000
+    assert by_id["unsized"]["default_max_tokens"] == 8_192
