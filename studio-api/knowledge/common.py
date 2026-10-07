@@ -776,10 +776,12 @@ def record_generated_file(path: str) -> None:
 def remove_if_unmodified(path: str, looks_ours: Callable[[str], bool]) -> bool:
     """Remove a generated config only if it is still exactly what Studio wrote.
 
-    With a manifest record: byte-identical means ours, remove it; anything
-    else means the user edited it since, and it stays with a warning in the
-    log. The record is dropped either way — the file is gone, or it is the
-    user's now.
+    With a manifest record: byte-identical means ours, remove it and drop
+    the record; anything else means the user edited it since, and it stays
+    with a warning in the log. The record stays with it: dropping it would
+    leave the next uninstall with no evidence but the content fingerprint,
+    which an edited copy still passes — and the file that survived the
+    first uninstall would go on the second.
 
     Without a record (a config written before the manifest existed) the only
     evidence is the content, so this falls back to the ``looks_ours``
@@ -788,14 +790,14 @@ def remove_if_unmodified(path: str, looks_ours: Callable[[str], bool]) -> bool:
     """
     key = os.path.abspath(path)
     data = _read_manifest()
-    recorded = data.pop(key, None)
+    recorded = data.get(key)
     if os.path.islink(path) or not os.path.isfile(path):
         if recorded is not None:
+            del data[key]
             _write_manifest(data)
         return False
     if recorded is None:
         return remove_file_if(path, looks_ours)
-    _write_manifest(data)
     if _sha256(path) != recorded:
         log.warning("generated_file_kept_user_modified", path=path)
         return False
@@ -803,6 +805,8 @@ def remove_if_unmodified(path: str, looks_ours: Callable[[str], bool]) -> bool:
         os.remove(path)
     except OSError:
         return False
+    del data[key]
+    _write_manifest(data)
     log.info("generated_file_removed", path=path)
     return True
 

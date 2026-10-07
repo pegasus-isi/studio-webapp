@@ -333,6 +333,13 @@ def test_uninstall_keeps_a_generated_config_the_user_edited(home, name, rel):
     assert path.is_file(), "an edited config must survive uninstall"
     assert "my_change" in path.read_text()
 
+    # And survive the next one: the record must stay with the file, or the
+    # second uninstall falls back to the fingerprint an edited copy still
+    # passes, and deletes what the first one spared.
+    adapter.uninstall(str(home))
+    assert path.is_file(), "an edited config must survive a repeat uninstall"
+    assert "my_change" in path.read_text()
+
 
 @pytest.mark.parametrize(
     "name, rel",
