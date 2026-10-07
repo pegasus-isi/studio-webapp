@@ -220,6 +220,8 @@ to bypass the proxy if the server is directly browser-reachable.
 | `STUDIO_BUILD_FAKEROOT` | _(unset)_ | Force `apptainer build --fakeroot --ignore-fakeroot-command` on (`1`) or off (`0`); unset follows the process euid |
 | `PEGASUS_BOT_SERVER_URL` | `http://server.ai-bot:8000` | Upstream PegasusAI Bot server the in-pod proxy (`/api/pegasus-bot`) forwards to |
 | `PEGASUS_BOT_CLIENT_URL` | `<prefix>/api/pegasus-bot` | Server URL injected into the extension; defaults to the same-origin proxy path. Override to point the browser at a directly-reachable server |
+| `STUDIO_EXEC_SITE` | _(unset)_ | Execution site the Run form preselects and always offers (e.g. `compute` on a Slurm cluster). Unset: the project's `sites.yml` / hosted catalog decide, else `condorpool`. See [Where it runs](#where-it-runs) |
+| `STUDIO_SITE_STYLE` / `STUDIO_SITE_QUEUE` / `STUDIO_SITE_PROJECT` | _(unset)_ | Prefill a generator's `--site-style`, `--queue` and `--project` (portable-sites generators), e.g. `slurm`, the partition and the allocation on a Slurm-only install |
 | `STUDIO_ENABLE_PEGASUS_BOT` | `1` | Inject the PegasusAI Bot config (server + env user) into JupyterLab (`0` leaves the bundled extension inert / manual) |
 
 ### Workflow discovery
@@ -257,6 +259,26 @@ User additions extend the deployment defaults; they never replace them, so
 misconfiguration can't empty the Workflows page. Project-detection rules
 (generator filenames, the `workflows/` directory) are Pegasus/PegasusHub
 conventions and are deliberately not configurable.
+
+### Where it runs
+
+The Run form's "Where it runs" choices are the sites the project can actually
+plan against, not a fixed pair: "This machine" (`local`), plus every site in
+the project's `sites.yml`, the sites of a hosted site catalog named in
+`~/.pegasusrc` (`pegasus.catalog.site.repo.file`; hosted catalogs call theirs
+`compute`), and `STUDIO_EXEC_SITE`. A condor pool shows as "Shared cluster", a
+Slurm or other batch site as "HPC cluster". Without a hosted catalog the
+default HTCondor `condorpool` is always offered, because generators built on
+the pegasus-ai `custom_sites.py` template create it when nothing else defines
+one.
+
+Those generators state only cores, memory and runtime, and take the site's
+scheduler settings as options (`--site-style`, `--queue`, `--project`, ...).
+On a Slurm-only install (e.g. Open OnDemand), set `STUDIO_EXEC_SITE=compute`,
+`STUDIO_SITE_STYLE=slurm`, `STUDIO_SITE_QUEUE=<partition>` and
+`STUDIO_SITE_PROJECT=<account>` in the deployment environment, or point
+`~/.pegasusrc` at the cluster's hosted catalog: users then get a working Run
+form with no site setup. Generators without those options are unaffected.
 
 ### HTCondor connection
 

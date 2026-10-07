@@ -146,7 +146,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     setValues((prev) => ({ ...prev, [dest]: v }));
 
   const planOpts = () => ({
-    site: String(values["site"] ?? "condorpool"),
+    site: String(values["site"] ?? params?.sites?.default ?? "condorpool"),
     output_site: String(values["output_site"] ?? "local"),
   });
 
