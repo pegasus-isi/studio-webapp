@@ -300,6 +300,72 @@ def test_crush_keeps_a_user_crush_json(home):
     assert (gdir / "AGENTS.md").read_text() == "my own notes\n"
 
 
+GATEWAY_CFG = {"provider": "gateway", "model": "m", "base_url": "http://gw/v1"}
+
+
+@pytest.mark.parametrize(
+    "name, rel",
+    [
+        ("opencode", ".config/opencode/opencode.json"),
+        ("crush", ".config/crush/crush.json"),
+        ("codex_cli", ".codex/config.toml"),
+    ],
+)
+def test_uninstall_keeps_a_generated_config_the_user_edited(home, name, rel):
+    """A fingerprint cannot tell "Studio wrote this" from "Studio wrote this
+    and the user then added their own provider to it". The write is recorded
+    by content hash, and uninstall removes the file only while it still
+    matches — edited means it is the user's now."""
+    adapter = _adapters()[name]()
+    adapter.install(str(home), GATEWAY_CFG)
+    path = home / rel
+    assert path.is_file()
+
+    if path.suffix == ".json":
+        data = _json(path)
+        data["my_change"] = True
+        path.write_text(json.dumps(data, indent=2))
+    else:
+        path.write_text(path.read_text() + "\n# my_change\n")
+
+    adapter.uninstall(str(home))
+
+    assert path.is_file(), "an edited config must survive uninstall"
+    assert "my_change" in path.read_text()
+
+
+@pytest.mark.parametrize(
+    "name, rel",
+    [
+        ("opencode", ".config/opencode/opencode.json"),
+        ("crush", ".config/crush/crush.json"),
+        ("codex_cli", ".codex/config.toml"),
+    ],
+)
+def test_uninstall_removes_a_generated_config_left_as_written(home, name, rel):
+    adapter = _adapters()[name]()
+    adapter.install(str(home), GATEWAY_CFG)
+    assert (home / rel).is_file()
+    adapter.uninstall(str(home))
+    assert not (home / rel).exists()
+    # The manifest leaves with the last record.
+    assert not (home / ".studio").exists()
+
+
+def test_a_config_from_before_the_manifest_still_goes_by_fingerprint(home):
+    """An install older than the manifest has no record; the content
+    fingerprint is the only evidence left, and it still applies."""
+    from knowledge.common import _generated_manifest_path
+    from knowledge.opencode import OpenCodeAdapter
+
+    adapter = OpenCodeAdapter()
+    adapter.install(str(home), GATEWAY_CFG)
+    os.remove(_generated_manifest_path())  # pretend the write predates it
+
+    adapter.uninstall(str(home))
+    assert not (home / ".config" / "opencode" / "opencode.json").exists()
+
+
 @pytest.mark.parametrize(
     "name", ["claude_code", "codex_cli", "antigravity", "opencode", "crush"]
 )

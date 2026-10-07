@@ -6,6 +6,7 @@ any tool's context file (CLAUDE.md, AGENTS.md, context.md, etc.).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -694,6 +695,109 @@ def remove_file_if(path: str, looks_ours: Callable[[str], bool]) -> bool:
             log.info("file_kept_not_generated", path=path)
             return False
     except Exception:
+        return False
+    try:
+        os.remove(path)
+    except OSError:
+        return False
+    log.info("generated_file_removed", path=path)
+    return True
+
+
+# ---- generated-file manifest ----------------------------------------------
+#
+# A fingerprint ("this JSON names the Studio MCP server") tells a file Studio
+# wrote apart from one the user wrote from scratch. It cannot tell a file
+# Studio wrote apart from one Studio wrote and the user then edited — a
+# provider added by hand to opencode.json, a profile tuned in config.toml —
+# and deleting that on uninstall throws away the user's work just as surely
+# as deleting ~/.claude did. So every whole-file config write is recorded
+# here with a hash of its content, and uninstall removes the file only while
+# it still matches. Edited means it is the user's now, and it stays.
+
+
+def _generated_manifest_path() -> str:
+    home = os.environ.get("HOME", "")
+    base = os.path.join(home, ".studio") if home else "/tmp/studio-state"
+    return os.path.join(base, "generated-files.json")
+
+
+def _read_manifest() -> dict[str, str]:
+    try:
+        with open(_generated_manifest_path()) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_manifest(data: dict[str, str]) -> None:
+    path = _generated_manifest_path()
+    if not data:
+        # Nothing left to remember: leave no trace, so an uninstall of the
+        # last tool returns a pristine home.
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        rmdir_if_empty(os.path.dirname(path))
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+    except OSError as e:
+        log.warning("generated_manifest_write_failed", path=path, error=str(e))
+
+
+def _sha256(path: str) -> str | None:
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def record_generated_file(path: str) -> None:
+    """Remember the content Studio just wrote to ``path``.
+
+    Call after every whole-file config write (opencode.json, crush.json,
+    config.toml). ``remove_if_unmodified`` then knows whether the file is
+    still Studio's or has become the user's.
+    """
+    digest = _sha256(path)
+    if digest is None:
+        return
+    data = _read_manifest()
+    data[os.path.abspath(path)] = digest
+    _write_manifest(data)
+
+
+def remove_if_unmodified(path: str, looks_ours: Callable[[str], bool]) -> bool:
+    """Remove a generated config only if it is still exactly what Studio wrote.
+
+    With a manifest record: byte-identical means ours, remove it; anything
+    else means the user edited it since, and it stays with a warning in the
+    log. The record is dropped either way — the file is gone, or it is the
+    user's now.
+
+    Without a record (a config written before the manifest existed) the only
+    evidence is the content, so this falls back to the ``looks_ours``
+    fingerprint — the best that can be done for an install that predates
+    this, and the reason every write now records.
+    """
+    key = os.path.abspath(path)
+    data = _read_manifest()
+    recorded = data.pop(key, None)
+    if os.path.islink(path) or not os.path.isfile(path):
+        if recorded is not None:
+            _write_manifest(data)
+        return False
+    if recorded is None:
+        return remove_file_if(path, looks_ours)
+    _write_manifest(data)
+    if _sha256(path) != recorded:
+        log.warning("generated_file_kept_user_modified", path=path)
         return False
     try:
         os.remove(path)

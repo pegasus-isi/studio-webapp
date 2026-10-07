@@ -21,7 +21,9 @@ from knowledge.common import (
     build_knowledge_appendix,
     ensure_context_file,
     link_skills_to_dir,
+    record_generated_file,
     remove_file_if,
+    remove_if_unmodified,
     remove_generated_context_file,
     rmdir_if_empty,
     unlink_if_links_into,
@@ -319,6 +321,7 @@ class CodexCLIAdapter(KnowledgeAdapter):
         config_path = os.path.join(codex_dir, "config.toml")
         with open(config_path, "w") as f:
             f.write(config_toml)
+        record_generated_file(config_path)
 
         log.info(
             "codex_config_written",
@@ -359,7 +362,7 @@ class CodexCLIAdapter(KnowledgeAdapter):
 
         home = os.environ.get("HOME", "")
         if home:
-            remove_file_if(
+            remove_if_unmodified(
                 os.path.join(home, ".codex", "config.toml"),
                 lambda text: _CONFIG_MARKER in text,
             )

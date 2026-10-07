@@ -21,7 +21,8 @@ from knowledge.common import (
     build_knowledge_appendix,
     ensure_context_file,
     model_limits_by_bare_id,
-    remove_file_if,
+    record_generated_file,
+    remove_if_unmodified,
     remove_generated_context_file,
     rmdir_if_empty,
 )
@@ -218,6 +219,7 @@ class CrushAdapter(KnowledgeAdapter):
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=2)
                 f.write("\n")
+            record_generated_file(config_path)
             log.info(
                 "crush_config_written",
                 path=config_path,
@@ -249,6 +251,6 @@ class CrushAdapter(KnowledgeAdapter):
         remove_generated_context_file(os.path.join(workspace, "AGENTS.md"))
         global_dir = _global_config_dir()
         remove_generated_context_file(os.path.join(global_dir, "AGENTS.md"))
-        remove_file_if(os.path.join(global_dir, "crush.json"), _looks_like_our_config)
+        remove_if_unmodified(os.path.join(global_dir, "crush.json"), _looks_like_our_config)
         rmdir_if_empty(global_dir)
         log.info("crush_uninstalled", workspace=workspace)

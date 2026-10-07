@@ -18,7 +18,9 @@ from knowledge.common import (
     model_limits_by_bare_id,
     build_knowledge_appendix,
     ensure_context_file,
+    record_generated_file,
     remove_file_if,
+    remove_if_unmodified,
     remove_generated_context_file,
     rmdir_if_empty,
     unlink_if_links_into,
@@ -469,6 +471,9 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 except (OSError, ValueError):
                     unchanged = False
                 if unchanged:
+                    # Still ours; make sure that is on record (an install
+                    # that predates the manifest gets one on first restart).
+                    record_generated_file(path)
                     log.info("opencode_config_unchanged", path=path)
                     continue
                 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -481,6 +486,7 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 with open(tmp, "w") as f:
                     f.write(blob)
                 os.replace(tmp, path)
+                record_generated_file(path)
                 self.config_changed = True
                 log.info("opencode_config_written", path=path)
             except OSError as e:
@@ -491,13 +497,13 @@ class OpenCodeAdapter(KnowledgeAdapter):
         remove_generated_context_file(os.path.join(workspace, "AGENTS.md"))
         # Workspaces seeded before the workspace copy was dropped still have
         # one; at $HOME a file by that name is the user's unless it is ours.
-        remove_file_if(os.path.join(workspace, "opencode.json"), _looks_like_our_config)
+        remove_if_unmodified(os.path.join(workspace, "opencode.json"), _looks_like_our_config)
         # <workspace>/.opencode is not handled here: it was only ever written
         # under ~/work, which installer.uninstall() prunes by exact name.
 
         gdir = _global_config_dir()
         remove_generated_context_file(os.path.join(gdir, "AGENTS.md"))
-        remove_file_if(os.path.join(gdir, "opencode.json"), _looks_like_our_config)
+        remove_if_unmodified(os.path.join(gdir, "opencode.json"), _looks_like_our_config)
 
         # Only the links we made. A hand-written agent beside them stays —
         # the same rule _link_agents_into_global() applies on every refresh.
