@@ -82,6 +82,48 @@ code in chat and report that files were created: the user is watching a file
 browser, and an empty directory is a failure regardless of how good the code in
 the transcript was. After writing, run `ls -R` and show the result.
 
+## Python packages: never into this container's Python
+
+Do not `pip install` into this container's interpreter, neither the system
+site nor the user site (`pip install --user`, which pip falls back to here).
+Three reasons, each enough on its own:
+
+- `$HOME` is NFS and outlives the pod. Packages installed into `~/.local`
+  persist across every restart and accumulate; nothing cleans them.
+- The user site shadows the image. `/usr/bin/python3` puts `~/.local/lib/
+  python3.13/site-packages` ahead of the image's packages, so a different
+  numpy, pydantic or fastapi installed "to test a step" breaks JupyterLab and
+  Studio's own tooling on the next restart, with the cause in a directory
+  nobody looks in.
+- It tests the wrong environment. Jobs run inside the workflow's Apptainer
+  image, not in this pod. A step that passes against the pod's packages says
+  nothing about the container, and a container-versus-host mismatch is the
+  usual reason a run fails after a clean local check.
+
+**To check a step, run it inside the built image**, which is the runtime it
+will actually get:
+
+```bash
+apptainer exec Apptainer/<Name>_Container.sif python3 bin/<step>.py --help
+apptainer exec Apptainer/<Name>_Container.sif python3 bin/<step>.py <args on a small input>
+```
+
+Build the image first (the Build Image button, or `apptainer build
+--ignore-fakeroot-command`, see "Container base images"). Before the image
+exists, `python3 -m py_compile bin/<step>.py` catches syntax errors without
+importing anything.
+
+If an isolated environment is unavoidable, make it inside the project and keep
+it out of the deliverables:
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate && pip install <packages>
+```
+
+`.venv/` goes in `.gitignore`. It is this pod's Python 3.13 with whatever you
+installed, not the container, so it is a convenience for editing, never the
+evidence that a step works.
+
 ## Finishing a workflow
 
 What a complete workflow contains is defined by the `pegasus-scaffold` skill,
