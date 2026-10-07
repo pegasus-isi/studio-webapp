@@ -110,11 +110,13 @@ export const TERMS = {
  * name HTCondor concepts rather than answering the user's actual question:
  * "is this going to run here, or somewhere bigger?"
  */
-export const EXECUTION_SITES: ReadonlyArray<{
+export interface SiteChoice {
   readonly value: string;
   readonly label: string;
   readonly hint: string;
-}> = [
+}
+
+export const EXECUTION_SITES: ReadonlyArray<SiteChoice> = [
   {
     value: "local",
     label: "This machine",
@@ -126,6 +128,50 @@ export const EXECUTION_SITES: ReadonlyArray<{
     hint: "Best for a full analysis. Sends your steps out to many machines, which may mean waiting for a turn.",
   },
 ];
+
+const BATCH_CLUSTER: Omit<SiteChoice, "value"> = {
+  label: "HPC cluster",
+  hint: "Best for a full analysis on this cluster. Submits your steps to its batch scheduler, which may mean waiting in its queue.",
+};
+
+/**
+ * "Where it runs" choices for the sites a project can actually plan against
+ * (from the backend). Keeps the plain-language labels: a condor pool is the
+ * "Shared cluster", a Slurm or other batch site the "HPC cluster" — the
+ * scheduler's name is the answer to a question the user did not ask. A site
+ * whose kind is unknown but came from a hosted catalog is a batch cluster
+ * (that is all hosted catalogs describe). When two sites would share a label
+ * the site name is appended, so the choice is never ambiguous.
+ */
+export function siteChoices(
+  sites: ReadonlyArray<{ name: string; style: string | null; source: string }> | undefined
+): ReadonlyArray<SiteChoice> {
+  if (!sites || sites.length === 0) return EXECUTION_SITES;
+  const base = sites.map((s): SiteChoice => {
+    const known = EXECUTION_SITES.find((e) => e.value === s.name);
+    if (s.name === "local" && known) return known;
+    const batch =
+      s.style === "slurm" ||
+      s.style === "batch" ||
+      (s.style === null && s.source === "hosted");
+    if (batch) return { value: s.name, ...BATCH_CLUSTER };
+    if (s.style === "condor" || known) {
+      return { value: s.name, label: "Shared cluster", hint: EXECUTION_SITES[1].hint };
+    }
+    return {
+      value: s.name,
+      label: s.name,
+      hint: "A site from this project's site catalog.",
+    };
+  });
+  const counts = new Map<string, number>();
+  for (const c of base) counts.set(c.label, (counts.get(c.label) ?? 0) + 1);
+  return base.map((c) =>
+    (counts.get(c.label) ?? 0) > 1 && c.label !== c.value
+      ? { ...c, label: `${c.label} (${c.value})` }
+      : c
+  );
+}
 
 /**
  * Status labels.
