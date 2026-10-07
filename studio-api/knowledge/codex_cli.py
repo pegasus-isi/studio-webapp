@@ -18,6 +18,7 @@ import structlog
 from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import (
+    model_limits_by_bare_id,
     build_knowledge_appendix,
     ensure_context_file,
     link_skills_to_dir,
@@ -95,6 +96,15 @@ def _build_config_toml(
         lines.append(f'model_provider = "{pid}"')
         lines.append(f'model = "{_toml_escape(p_model)}"')
         lines.append('model_reasoning_effort = "medium"')
+        # Codex sizes its compaction and output request from these; for a
+        # model it does not know, it falls back to its own guesses. Written
+        # only when the endpoint reported the value (propagator,
+        # ``model_limits``) — a profile is one model, so only that model's.
+        lim = model_limits_by_bare_id(prov).get(str(p_model)) or {}
+        if "context" in lim:
+            lines.append(f"model_context_window = {lim['context']}")
+        if "output" in lim:
+            lines.append(f"model_max_output_tokens = {lim['output']}")
         lines.append("")
 
     # MCP server sections

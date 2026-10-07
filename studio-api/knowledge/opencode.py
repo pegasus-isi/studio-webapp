@@ -16,6 +16,7 @@ import structlog
 from knowledge import layout
 from knowledge.adapters import KnowledgeAdapter
 from knowledge.common import (
+    model_limits_by_bare_id,
     build_knowledge_appendix,
     ensure_context_file,
 )
@@ -325,11 +326,26 @@ class OpenCodeAdapter(KnowledgeAdapter):
             ]
             if p_model and p_model not in model_ids:
                 model_ids.insert(0, p_model)
+            # Declare each model's context window and output cap when the
+            # endpoint reported them (propagator, ``model_limits``). opencode
+            # compacts a session only against a declared ``limit.context``,
+            # and with no ``limit.output`` it asks for 32000 output tokens on
+            # every request; once the prompt has grown to within 32000 of the
+            # real window the backend rejects every turn, the compaction call
+            # included, and the session is stuck. No limit reported means no
+            # ``limit`` key — opencode's own defaults beat a made-up number.
+            limits = model_limits_by_bare_id(prov)
+            models_cfg: dict[str, Any] = {}
+            for m in model_ids:
+                entry: dict[str, Any] = {"name": m}
+                if limits.get(m):
+                    entry["limit"] = limits[m]
+                models_cfg[m] = entry
             providers_cfg[pid] = {
                 "npm": p_preset.get("npm", "@ai-sdk/openai-compatible"),
                 "name": prov.get("name") or p_preset.get("name", pid),
                 "options": _provider_options(p_type, p_key, p_base),
-                "models": {m: {"name": m} for m in model_ids},
+                "models": models_cfg,
             }
 
         # Studio's "Confirm shell commands" setting, expressed as OpenCode's own

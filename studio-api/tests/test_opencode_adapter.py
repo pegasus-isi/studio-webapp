@@ -370,3 +370,53 @@ def test_the_mcp_url_follows_the_api_port(tmp_path, monkeypatch):
         (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
     )
     assert cfg["mcp"]["pegasus"]["url"] == "http://127.0.0.1:9090/api/mcp"
+
+
+def test_reported_model_limits_are_declared(tmp_path, monkeypatch):
+    """A model whose endpoint reported a context window / output cap gets a
+    ``limit`` block; one it did not gets none. Without ``limit.context``
+    opencode never compacts the session, and without ``limit.output`` it asks
+    for 32000 output tokens per request — once the prompt has grown to within
+    that of the real window, the backend rejects every turn, the compaction
+    call included."""
+    from knowledge.opencode import OpenCodeAdapter
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    ws = tmp_path / "work"
+    ws.mkdir()
+
+    OpenCodeAdapter().update_llm_config(
+        str(ws),
+        {
+            "provider": "custom-gw",
+            "model": "qwen-3.8-27b",
+            "api_key": "k",
+            "base_url": "https://gw.example/v1",
+            "all_providers": [
+                {
+                    "provider_id": "custom-gw",
+                    "name": "Gateway",
+                    "api_key": "k",
+                    "base_url": "https://gw.example/v1",
+                    "default_model": "qwen-3.8-27b",
+                    "models": ["qwen-3.8-27b", "unsized", "ctx-only"],
+                    "model_limits": {
+                        "qwen-3.8-27b": {"context": 262144, "output": 32768},
+                        "ctx-only": {"context": 128000, "output": 0},
+                    },
+                },
+            ],
+        },
+    )
+
+    cfg = json.loads(
+        (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
+    )
+    models = cfg["provider"]["custom-gw"]["models"]
+    assert models["qwen-3.8-27b"] == {
+        "name": "qwen-3.8-27b",
+        "limit": {"context": 262144, "output": 32768},
+    }
+    assert models["ctx-only"] == {"name": "ctx-only", "limit": {"context": 128000}}
+    assert models["unsized"] == {"name": "unsized"}

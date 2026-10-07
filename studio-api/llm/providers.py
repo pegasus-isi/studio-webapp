@@ -167,10 +167,71 @@ def _resolve_api_key(pid: str, env_vars: dict[str, str] | None = None) -> str:
     return ""
 
 
-async def fetch_models(base_url: str, api_key: str) -> tuple[list[str], str | None]:
-    """Fetch available model IDs from an OpenAI-compatible /models endpoint.
+# Field names under which OpenAI-compatible servers report a model's context
+# window and output cap on a /models entry. There is no standard: the OpenAI
+# spec carries neither, and every proxy that adds them picks its own name.
+# Ordered by how specific the name is, so a server that reports two of them
+# (LiteLLM reports max_input_tokens next to a generic max_tokens) is read the
+# way it means. Absent fields mean "the server does not say", never a default:
+# a wrong number is worse than none, because the tools that consume these
+# compact or cap a session against it.
+_CONTEXT_FIELDS = (
+    "max_input_tokens",     # LiteLLM, Anthropic
+    "context_window",       # Groq
+    "context_length",       # OpenRouter, Together
+    "max_context_length",   # Mistral
+    "max_model_len",        # vLLM
+)
+_OUTPUT_FIELDS = (
+    "max_output_tokens",    # LiteLLM
+    "max_completion_tokens",  # Groq (OpenRouter nests it under top_provider)
+    "max_tokens",           # Anthropic's name for the output cap
+)
 
-    Returns (model_ids, error_message).
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def model_limits(entry: dict[str, Any]) -> dict[str, int]:
+    """Read the context window and output cap off one /models entry.
+
+    Returns ``{"context": n}`` / ``{"output": n}`` for whichever the server
+    reports, empty when it reports neither. Only the fields in
+    ``_CONTEXT_FIELDS`` / ``_OUTPUT_FIELDS`` count; anything else on the entry
+    is ignored, and a null, zero, or non-integer value reads as absent.
+    """
+    limits: dict[str, int] = {}
+    for field in _CONTEXT_FIELDS:
+        n = _positive_int(entry.get(field))
+        if n:
+            limits["context"] = n
+            break
+    for field in _OUTPUT_FIELDS:
+        n = _positive_int(entry.get(field))
+        if n:
+            limits["output"] = n
+            break
+    if "output" not in limits:
+        # OpenRouter: {"top_provider": {"max_completion_tokens": n}}
+        top = entry.get("top_provider")
+        if isinstance(top, dict):
+            n = _positive_int(top.get("max_completion_tokens"))
+            if n:
+                limits["output"] = n
+    return limits
+
+
+async def fetch_model_catalog(
+    base_url: str, api_key: str
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch an OpenAI-compatible /models listing as ``[{"id", "limits"}]``.
+
+    ``limits`` is whatever ``model_limits`` could read off each entry; see
+    there for why nothing is assumed when a server reports nothing. Sorted by
+    id. Returns (entries, error_message).
     """
     if not base_url:
         return [], "No base URL configured."
@@ -185,13 +246,27 @@ async def fetch_models(base_url: str, api_key: str) -> tuple[list[str], str | No
             resp = await client.get(f"{base}/models", headers=headers)
             resp.raise_for_status()
             data = resp.json()
-            model_ids = sorted(
-                m.get("id", "") for m in data.get("data", []) if m.get("id")
+            entries = sorted(
+                (
+                    {"id": m["id"], "limits": model_limits(m)}
+                    for m in data.get("data", [])
+                    if isinstance(m, dict) and m.get("id")
+                ),
+                key=lambda e: e["id"],
             )
-            if model_ids:
-                return model_ids, None
+            if entries:
+                return entries, None
             return [], "Endpoint returned no models."
     except httpx.HTTPStatusError as e:
         return [], f"HTTP {e.response.status_code}: {e.response.reason_phrase}"
     except Exception as e:
         return [], f"Failed to fetch models: {e}"
+
+
+async def fetch_models(base_url: str, api_key: str) -> tuple[list[str], str | None]:
+    """Fetch available model IDs from an OpenAI-compatible /models endpoint.
+
+    Returns (model_ids, error_message).
+    """
+    entries, err = await fetch_model_catalog(base_url, api_key)
+    return [e["id"] for e in entries], err

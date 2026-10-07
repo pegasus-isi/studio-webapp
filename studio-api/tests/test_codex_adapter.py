@@ -114,3 +114,44 @@ def test_profile_model_falls_back_to_active_model(tmp_path, monkeypatch):
 
     profile = toml.split("[profiles.custom-draft]", 1)[1].split("[", 1)[0]
     assert 'model = "default"' in profile
+
+
+def test_profile_carries_reported_limits_for_its_model(tmp_path, monkeypatch):
+    """A profile is one model; when the endpoint reported that model's
+    limits they are written on the profile, and nothing is written for a
+    model the endpoint said nothing about."""
+    toml = _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "provider": "custom-gw",
+            "model": "big",
+            "api_key": "k",
+            "base_url": "https://gw.example/v1",
+            "all_providers": [
+                {
+                    "provider_id": "custom-gw",
+                    "name": "Gateway",
+                    "api_key": "k",
+                    "base_url": "https://gw.example/v1",
+                    "default_model": "big",
+                    "models": ["big", "unsized"],
+                    "model_limits": {"big": {"context": 262144, "output": 32768}},
+                },
+                {
+                    "provider_id": "custom-other",
+                    "name": "Other",
+                    "api_key": "k2",
+                    "base_url": "https://other.example/v1",
+                    "default_model": "unsized",
+                    "models": ["unsized"],
+                },
+            ],
+        },
+    )
+    gw = toml.split("[profiles.custom-gw]", 1)[1].split("\n\n", 1)[0]
+    assert "model_context_window = 262144" in gw
+    assert "model_max_output_tokens = 32768" in gw
+    other = toml.split("[profiles.custom-other]", 1)[1].split("\n\n", 1)[0]
+    assert "model_context_window" not in other
+    assert "model_max_output_tokens" not in other
