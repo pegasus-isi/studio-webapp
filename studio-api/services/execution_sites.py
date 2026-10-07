@@ -144,16 +144,22 @@ def execution_sites(
     if deployment and deployment != "local":
         deployment_style = (env.get("STUDIO_SITE_STYLE") or "").strip() or None
         offer(deployment, deployment_style, "deployment")
-    if not hosted:
-        # The portable generators add this site when nothing else defines one.
+    if not sites:
+        # Nothing defines an execution site: the portable generators add this
+        # one. Not offered otherwise — on a Slurm-only project it would
+        # preselect a pool that does not exist there.
         offer(DEFAULT_CONDOR_SITE, "condor", "default")
 
     if deployment:
         default = deployment
-    elif hosted:
-        default = HOSTED_SITE if HOSTED_SITE in sites else next(iter(sites), "local")
-    else:
+    elif hosted and HOSTED_SITE in sites:
+        default = HOSTED_SITE
+    elif DEFAULT_CONDOR_SITE in sites:
+        # Studio's historical default, when the project (or fallback) has it.
         default = DEFAULT_CONDOR_SITE
+    else:
+        # The project's own site, e.g. a Slurm `compute` in its sites.yml.
+        default = next(iter(sites), "local")
 
     return {
         "default": default,
