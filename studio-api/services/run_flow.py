@@ -913,7 +913,7 @@ async def _run_plan(
     output_site: str,
     plan_mode: str | None = None,
 ) -> bool:
-    from services.workflow_submitter import _find_workflow_file
+    from services.workflow_submitter import SUBMIT_BASE, _find_workflow_file
 
     flow._begin("plan")
     wf_file = _find_workflow_file(project_dir)
@@ -921,7 +921,10 @@ async def _run_plan(
         flow._fail("plan", "No workflow YAML file found in the project.")
         return False
 
-    argv = ["pegasus-plan", "-s", site, "-o", output_site, wf_file]
+    # --dir is relative to the project directory, which is the cwd both for a
+    # local plan and for one wrapped onto the submit host (remote_exec cd's
+    # there first). See SUBMIT_BASE for why the GUI and the assistant share it.
+    argv = ["pegasus-plan", "--dir", SUBMIT_BASE, "-s", site, "-o", output_site, wf_file]
     code, output = await _plan_capture(
         flow, argv, project_dir=project_dir, mode=plan_mode
     )

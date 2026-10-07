@@ -54,6 +54,7 @@ async def submit_workflow(
 
     cmd = [
         "pegasus-plan",
+        "--dir", SUBMIT_BASE,
         "--submit",
         "-s", site,
         "-o", output_site,
@@ -416,6 +417,19 @@ def _find_workflow_file(workflow_dir: str) -> str | None:
 
 
 _RUN_DIR_RE = re.compile(r"(/[^\s\"']+/run\d{4})\b")
+
+
+# Where pegasus-plan puts run directories, relative to the project directory.
+#
+# Pegasus numbers runs per submit base (<base>/<user>/pegasus/<wf>/runNNNN),
+# and each base keeps its own counter. The GUI used to plan with no --dir, so
+# its base was the project root, while the scaffold skill tells the assistant
+# to plan with `--dir submit`. A project that had been run both ways ended up
+# with two run0002s in two trees, interleaved in the list by name and told
+# apart by nothing. One base for both launchers means one sequence; the skill's
+# choice wins because it also keeps the <user>/pegasus/... tree out of the
+# project root, and because it is the portable convention outside Studio.
+SUBMIT_BASE = "submit"
 
 
 def _extract_run_dir(output: str) -> str | None:
