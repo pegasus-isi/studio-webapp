@@ -75,6 +75,7 @@ USER_FILES = {
     ".antigravity/user.json": '{"k": 1}',
     ".config/opencode/agent/my-own.md": "mine\n",
     ".config/opencode/themes/t.json": "{}",
+    ".config/crush/themes/t.json": "{}",
 }
 
 
@@ -93,7 +94,10 @@ def _seed_user_state(home):
 def _assert_user_state_intact(home):
     for rel, content in USER_FILES.items():
         assert (home / rel).read_text() == content, rel
-    for d in (".claude", ".codex", ".agents", ".antigravity", ".config/opencode"):
+    for d in (
+        ".claude", ".codex", ".agents", ".antigravity", ".config/opencode",
+        ".config/crush",
+    ):
         assert (home / d).is_dir() and not (home / d).is_symlink(), d
 
 
@@ -249,6 +253,7 @@ def _adapters():
     from knowledge.antigravity import AntigravityAdapter
     from knowledge.claude_code import ClaudeCodeAdapter
     from knowledge.codex_cli import CodexCLIAdapter
+    from knowledge.crush import CrushAdapter
     from knowledge.opencode import OpenCodeAdapter
 
     return {
@@ -256,11 +261,47 @@ def _adapters():
         "codex_cli": CodexCLIAdapter,
         "antigravity": AntigravityAdapter,
         "opencode": OpenCodeAdapter,
+        "crush": CrushAdapter,
     }
 
 
+def test_crush_uninstall_keeps_user_state(home):
+    """Crush postdates the August fix and had kept the unconditional delete:
+    ~/.config/crush/crush.json went whether Studio wrote it or the user did."""
+    from knowledge.crush import CrushAdapter
+
+    _seed_user_state(home)
+    adapter = CrushAdapter()
+    adapter.install(str(home), {"provider": "gateway", "model": "m"})
+    gdir = home / ".config" / "crush"
+    assert (gdir / "crush.json").is_file()
+    assert (gdir / "AGENTS.md").is_file()
+
+    adapter.uninstall(str(home))
+
+    _assert_user_state_intact(home)
+    assert not (home / "AGENTS.md").exists()
+    assert not (gdir / "AGENTS.md").exists()
+    assert not (gdir / "crush.json").exists()
+    assert (gdir / "themes" / "t.json").read_text() == "{}"
+
+
+def test_crush_keeps_a_user_crush_json(home):
+    from knowledge.crush import CrushAdapter
+
+    gdir = home / ".config" / "crush"
+    gdir.mkdir(parents=True)
+    (gdir / "crush.json").write_text(json.dumps({"providers": {"mine": {}}}))
+    (gdir / "AGENTS.md").write_text("my own notes\n")
+
+    CrushAdapter().uninstall(str(home))
+
+    assert _json(gdir / "crush.json") == {"providers": {"mine": {}}}
+    assert (gdir / "AGENTS.md").read_text() == "my own notes\n"
+
+
 @pytest.mark.parametrize(
-    "name", ["claude_code", "codex_cli", "antigravity", "opencode"]
+    "name", ["claude_code", "codex_cli", "antigravity", "opencode", "crush"]
 )
 def test_uninstall_on_a_pristine_home_leaves_nothing_behind(home, name):
     adapter = _adapters()[name]()
@@ -276,7 +317,7 @@ def test_uninstall_on_a_pristine_home_leaves_nothing_behind(home, name):
 
 
 @pytest.mark.parametrize(
-    "name", ["claude_code", "codex_cli", "antigravity", "opencode"]
+    "name", ["claude_code", "codex_cli", "antigravity", "opencode", "crush"]
 )
 def test_uninstall_is_idempotent(home, name):
     adapter = _adapters()[name]()
@@ -316,6 +357,7 @@ def test_no_adapter_or_installer_calls_rmtree():
         os.path.join("knowledge", "codex_cli.py"),
         os.path.join("knowledge", "antigravity.py"),
         os.path.join("knowledge", "opencode.py"),
+        os.path.join("knowledge", "crush.py"),
         os.path.join("services", "installer.py"),
     ):
         with open(os.path.join(api_dir, rel)) as f:
