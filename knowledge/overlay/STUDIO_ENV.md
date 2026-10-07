@@ -178,11 +178,37 @@ summary — those need OCR, which is not installed.
 ## Container base images
 
 This container runs **Debian 13 (trixie)** with glibc 2.41 and Python 3.13, and
-workflow containers are built here, unprivileged, with Apptainer.
+workflow containers are built here, unprivileged, with Apptainer. The submit
+host the jobs run through is the same release.
 
-**Prefer a base image matching it** — `debian:trixie`, or a `python:3.13`-era
-slim image. A base older than the host is the usual source of build failures
-that look like nothing to do with the definition:
+**Use a base of the same release, with the suite named: `python:3.13-slim-trixie`
+or `debian:trixie-slim`.** Not `python:3.13-slim` or `debian:stable-slim`: the
+release behind an unsuffixed tag moves, and when it does the image silently
+stops matching this host. Install `curl` in `%post` even if nothing else needs
+it.
+
+This is a run-time requirement first. Pegasus stages this host's worker package
+(`x86_64_deb_13`) into every job, and pegasus-lite inside the container checks
+it against the container's OS. In a Debian 12 container that check fails, the
+download of a matching package needs `curl` or `wget`, a slim base has neither,
+and the job exits 71 before the user's command runs. Every job then sits held
+with `Transfer output files failure ... No such file or directory`, which reads
+as a staging problem. The real failure is in the job's `.err` under the run
+directory's `00/00/`:
+
+```
+Warning: worker package pegasus-worker-6.0.0.dev0-x86_64_deb_13.tar.gz does not seem to match the system x86_64_deb_12
+ERROR: Unable to find curl/wget
+PegasusLite: exitcode 71
+```
+
+The fix is to rebuild on trixie and replan as a new run; the held jobs carry the
+old image. The log's suggestion of `pegasus.transfer.worker.package.strict =
+false` is not a fix here: it forces this host's glibc 2.41 binaries into a
+container whose libc cannot load them.
+
+The same mismatch also breaks the *build*, in a way that looks like nothing to
+do with the definition:
 
 ```
 /bin/sh: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found
