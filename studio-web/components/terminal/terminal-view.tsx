@@ -126,9 +126,19 @@ export function TerminalView({ tabId, toolId }: Props) {
         }
       });
 
+      // Coalesce to one fit per frame. Now that the panel is drag-resizable
+      // the observer fires on every pointer move, and each fit that changes
+      // the grid sends a resize the server turns into a SIGWINCH — a storm of
+      // those makes a full-screen program (vim, htop) flicker as it redraws.
+      let fitFrame: number | undefined;
       observer = new ResizeObserver(() => {
-        fitAddon.fit();
-        sendResize();
+        if (fitFrame !== undefined) return;
+        fitFrame = window.requestAnimationFrame(() => {
+          fitFrame = undefined;
+          if (disposed) return;
+          fitAddon.fit();
+          sendResize();
+        });
       });
       observer.observe(containerRef.current!);
 
