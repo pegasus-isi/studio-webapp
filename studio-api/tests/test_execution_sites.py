@@ -62,6 +62,20 @@ def test_project_sites_are_offered_with_their_style(tmp_path):
     assert result["default"] == "condorpool"
 
 
+def test_slurm_only_project_defaults_to_its_own_site(tmp_path):
+    # No hosted catalog, no deployment setting: the project's sites.yml is
+    # the only source, so condorpool must be neither offered nor preselected.
+    _catalog(
+        tmp_path / "sites.yml",
+        [{"name": "local"}, {"name": "compute", "profiles": SLURM}],
+    )
+    result = es.execution_sites(
+        str(tmp_path), environ={}, pegasusrc=_rc(tmp_path)
+    )
+    assert _names(result) == ["local", "compute"]
+    assert result["default"] == "compute"
+
+
 def test_hosted_catalog_before_first_plan_offers_compute_not_condorpool(tmp_path):
     # No local copy of the hosted file yet: hosted catalogs call their
     # site "compute", and condorpool would plan against nothing.
