@@ -134,6 +134,17 @@ export function usePaneSize({
     });
   }, [persist, size]);
 
+  /**
+   * Back to the default size. A pane dragged somewhere silly (or clamped by
+   * a smaller window) needs a one-click way home that is not "find 300px by
+   * eye".
+   */
+  const reset = useCallback(() => {
+    setSize(defaultSize);
+    setCollapsed(false);
+    persist({ size: defaultSize, collapsed: false });
+  }, [defaultSize, persist]);
+
   /** Keyboard resizing, so the pane isn't mouse-only. */
   const onHandleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -164,6 +175,7 @@ export function usePaneSize({
     toggleCollapsed,
     dragging,
     startDrag: () => setDragging(true),
+    reset,
     onHandleKeyDown,
     paneRef,
   };
