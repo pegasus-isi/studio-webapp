@@ -19,6 +19,7 @@ import { announceEngineChange } from "@/lib/chat-engine-channel";
 import { ToolCard } from "@/components/tools/tool-card";
 import {
   CollectionNotice,
+  ContentSharingExplainer,
   FeedbackPromptsToggle,
   ProfileForm,
 } from "@/components/onboarding/feedback-consent";
@@ -879,13 +880,8 @@ function TelemetrySection() {
           <p className="mt-1 text-xs leading-relaxed text-fgmuted">
             {collecting ? (
               <>
-                Studio always records how much the chat is used — number of
-                turns, tokens, how long tools took, which model answered. That
-                never includes what you wrote. Turn this on to also send the
-                text of your messages and the replies, which is what makes it
-                possible to see why a particular answer went wrong. You can
-                turn it off again at any time; the chat engine restarts when
-                you do.
+                <ContentSharingExplainer /> You can turn it off again at any
+                time; the chat engine restarts when you do.
               </>
             ) : (
               <>
