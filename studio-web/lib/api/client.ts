@@ -478,6 +478,9 @@ export interface WorkflowParam {
   label?: string;
   /** Plumbing rather than science — belongs under "More options". */
   advanced?: boolean;
+  /** List-valued (`nargs="+"` etc.): split the text into one token per value
+      after a single flag. */
+  multiple?: boolean;
 }
 
 export interface ProjectParams {

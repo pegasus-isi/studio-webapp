@@ -22,7 +22,7 @@ Usage:
 
 Output (stdout, last JSON line):
     {"params": [{dest, flag, flags, help, default, required, is_flag,
-                 choices}], "mutex_required": [[dest, ...], ...]}
+                 choices, multiple}], "mutex_required": [[dest, ...], ...]}
 """
 
 from __future__ import annotations
@@ -171,6 +171,21 @@ def _schema_from_parser(parser: argparse.ArgumentParser) -> dict:
         default = act.default
         if default is argparse.SUPPRESS:
             default = None
+        # List-valued options (`nargs="+"`, `nargs=3`) take one argv token per
+        # value. The form is a single text field, and
+        # a list default reached it as JSON `[1, 7, 30]`, which the frontend's
+        # String() turned into "1,7,30" and passed as ONE token, so argparse
+        # rejected `--aftershock-time-windows 1,7,30` with "invalid int value"
+        # (earthquake-workflow). The schema now says which options are lists,
+        # and the default is shown the way it would be typed on a command line.
+        # `action="append"` is deliberately left alone: each of its values is a
+        # whole string (`--site-profile 'condor:requirements=(A == "x")'`), so
+        # splitting on spaces or commas would break the values it exists for.
+        multiple = act.nargs in ("+", "*") or (
+            isinstance(act.nargs, int) and act.nargs > 1
+        )
+        if multiple and isinstance(default, (list, tuple)):
+            default = " ".join(str(d) for d in default)
         params.append({
             "dest": act.dest,
             # prefer the long (--foo) form for display/CLI building
@@ -186,6 +201,9 @@ def _schema_from_parser(parser: argparse.ArgumentParser) -> dict:
             "type": _infer_type(act, is_flag),
             "label": _label_for(act),
             "advanced": _is_advanced(act.dest, bool(act.required)),
+            # Space- or comma-separated values, sent as separate tokens after
+            # one flag (`--x 1 7 30`).
+            "multiple": multiple,
         })
     return {"params": params, "mutex_required": mutex_required}
 
