@@ -38,7 +38,14 @@ export function buildArgs(
       if (v === true) args.push(p.flag);
     } else {
       const s = (v ?? "").toString().trim();
-      if (s !== "") args.push(p.flag, s);
+      if (s === "") continue;
+      if (p.multiple) {
+        // argparse wants one token per value. Commas are accepted as well as
+        // spaces because "1,7,30" is what people type into a single field.
+        args.push(p.flag, ...s.split(/[\s,]+/).filter(Boolean));
+      } else {
+        args.push(p.flag, s);
+      }
     }
   }
   return args;

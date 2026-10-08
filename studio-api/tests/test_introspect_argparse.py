@@ -195,3 +195,32 @@ def test_plumbing_is_marked_advanced_but_required_params_never_are(tmp_path):
     # Required beats the plumbing name every time: a form that hides something
     # you must fill in is worse than one that shows too much.
     assert params["output_file"]["advanced"] is False
+
+
+def test_list_options_are_marked_and_defaults_read_as_typed(tmp_path):
+    """A list default must not reach the form as JSON: the frontend String()-ed
+    `[1, 7, 30]` into "1,7,30" and passed it as one token, which argparse
+    rejected as an invalid int (earthquake-workflow's
+    --aftershock-time-windows)."""
+    gen = tmp_path / "workflow_generator.py"
+    gen.write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--windows', type=int, nargs='+', default=[1, 7, 30])\n"
+        "p.add_argument('--pair', nargs=2, default=['a', 'b'])\n"
+        "p.add_argument('--opt', nargs='*')\n"
+        "p.add_argument('--tag', action='append', default=['x'])\n"
+        "p.add_argument('--name', default='n')\n"
+        "p.parse_args()\n"
+    )
+    by = {p["dest"]: p for p in _run(str(gen))["params"]}
+
+    assert by["windows"]["multiple"] is True
+    assert by["windows"]["default"] == "1 7 30"
+    assert by["pair"]["multiple"] is True and by["pair"]["default"] == "a b"
+    assert by["opt"]["multiple"] is True and by["opt"]["default"] is None
+    # append values are whole strings (site profiles hold ClassAd expressions
+    # with spaces), so they are never marked for splitting.
+    assert by["tag"]["multiple"] is False
+    assert by["name"]["multiple"] is False
+    assert by["name"]["default"] == "n"
