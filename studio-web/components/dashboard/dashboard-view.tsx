@@ -30,6 +30,7 @@ import { FeedbackPromptCard } from "@/components/feedback/feedback-prompt-card";
 import { askAboutFailedRun } from "@/lib/feedback/feedback";
 import {
   CollectionNotice,
+  ContentSharingChoice,
   ProfileForm,
 } from "@/components/onboarding/feedback-consent";
 import {
@@ -307,12 +308,19 @@ const TOUR: TourStep[] = [
     title: "Start here",
     body: "Pick whichever of these is closest to what you want. It opens the assistant with the question already written, and you can edit it before sending.",
   },
-  // The closing two have no anchor: what Studio records, and who is using it,
-  // are not things on the page. The notice comes before the questions so
-  // nobody is asked about themselves before being told what is kept.
+  // The closing three have no anchor: what Studio records, whether chat text
+  // may be shared, and who is using it are not things on the page. The notice
+  // comes first so nobody is asked anything before being told what is kept.
   {
     title: "What we collect",
     render: () => <CollectionNotice where="tour" />,
+  },
+  {
+    title: "Share your chat text?",
+    width: 340,
+    // Its own buttons, so Next cannot step past the question without an answer.
+    ownControls: true,
+    render: ({ next }) => <ContentSharingChoice onDone={next} />,
   },
   {
     title: "Tell us a little about you",

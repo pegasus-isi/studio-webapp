@@ -39,8 +39,10 @@ export function CollectionNotice({
         Studio you use.
       </p>
       <p>
-        We do not read your chat messages unless you turn on content sharing{" "}
-        {there}. You can switch off feedback prompts {there} at any time.
+        {where === "tour"
+          ? "We do not read your chat messages unless you choose to share them, which the next step asks. "
+          : "We do not read your chat messages unless you turn on content sharing below. "}
+        You can switch off feedback prompts {there} at any time.
       </p>
     </div>
   );
@@ -293,6 +295,130 @@ export function ProfileForm({
         </button>
       </div>
     </form>
+  );
+}
+
+/**
+ * What sharing chat text means. One component for the tour step and the
+ * Settings switch, for the same reason as `CollectionNotice`: a consent asked
+ * in one wording and revisited in another is not the consent that was given.
+ */
+export function ContentSharingExplainer() {
+  return (
+    <>
+      Studio always records how much the chat is used — number of turns,
+      tokens, how long tools took, which model answered. That never includes
+      what you wrote. Sharing chat text also sends the text of your messages
+      and the replies, which is what makes it possible to see why a particular
+      answer went wrong.
+    </>
+  );
+}
+
+/**
+ * The tour's chat-text consent step: an explicit choice instead of a pointer
+ * at a switch in Settings, which almost nobody went looking for.
+ *
+ * Still opt-in. Neither button is preselected or styled as the default, and
+ * leaving the tour without choosing (Escape) writes nothing, so the stored
+ * value stays at its "off" default. Either answer is written, though, not just
+ * "share": a re-run of the tour by someone who opted in earlier must be able
+ * to opt back out from the same place.
+ *
+ * Without a collector nothing is exported whatever is chosen, so the step
+ * says that and offers only Continue rather than asking a question that has
+ * no effect.
+ */
+export function ContentSharingChoice({ onDone }: { onDone: () => void }) {
+  const [consent, setConsent] = useState<api.TelemetryConsent | null>(null);
+  const [saving, setSaving] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getTelemetryConsent()
+      .then(setConsent)
+      // Unknown reads as "no collector": the step then asks nothing, which is
+      // the safe direction — it can never record a consent it could not show.
+      .catch(() =>
+        setConsent({ content_capture: false, collector_configured: false })
+      );
+  }, []);
+
+  const choose = async (share: boolean) => {
+    if (saving !== null) return;
+    setSaving(share);
+    setError(null);
+    try {
+      await api.updateTelemetryConsent(share);
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  if (consent === null) {
+    return <p className="text-xs text-fgsubtle">Loading…</p>;
+  }
+
+  const choiceClass =
+    "flex-1 rounded-lg border border-line px-2.5 py-1.5 text-xs font-semibold text-fg hover:border-pegasus-300 hover:bg-pegasus-50/40 disabled:opacity-50 dark:hover:bg-pegasus-400/5";
+
+  if (!consent.collector_configured) {
+    return (
+      <div className="space-y-3">
+        <p className="text-xs leading-relaxed text-fgmuted">
+          This Studio has no telemetry collector configured, so nothing is sent
+          anywhere, not usage counts and not chat text.
+        </p>
+        <div className="flex">
+          <button
+            type="button"
+            onClick={onDone}
+            className="ml-auto rounded-lg bg-pegasus-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-pegasus-700"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs leading-relaxed text-fgmuted">
+        <ContentSharingExplainer /> You can change this in Settings at any
+        time.
+      </p>
+      {consent.content_capture && (
+        <p className="text-[11px] text-fgsubtle">You are sharing chat text now.</p>
+      )}
+      {error && (
+        <p className="text-xs text-red-700 dark:text-rose-400">
+          Couldn&apos;t save: {error}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          disabled={saving !== null}
+          onClick={() => choose(false)}
+          className={choiceClass}
+        >
+          {saving === false ? "Saving…" : "Keep it private"}
+        </button>
+        <button
+          type="button"
+          disabled={saving !== null}
+          onClick={() => choose(true)}
+          className={choiceClass}
+        >
+          {saving === true ? "Saving…" : "Share chat text"}
+        </button>
+      </div>
+    </div>
   );
 }
 
