@@ -255,3 +255,23 @@ def test_outputs_endpoint_404s_for_an_unknown_run(client):
 def test_output_file_endpoint_404s_for_an_unknown_run(client):
     res = client.get("/api/workflows/no-such-run/outputs/file?path=a.txt")
     assert res.status_code == 404
+
+
+def test_hidden_directories_are_not_listed(tmp_path):
+    """Opening a result in JupyterLab writes a checkpoint copy under
+    `.ipynb_checkpoints/`; it showed up as a second result of the run
+    (earthquake-workflow: california_catalog-checkpoint.csv)."""
+    (tmp_path / "california_catalog.csv").write_text("a,b\n")
+    ckpt = tmp_path / ".ipynb_checkpoints"
+    ckpt.mkdir()
+    (ckpt / "california_catalog-checkpoint.csv").write_text("a,b\n")
+    nested = tmp_path / "plots" / ".hidden"
+    nested.mkdir(parents=True)
+    (nested / "x.png").write_bytes(b"")
+    (tmp_path / "plots" / "map.png").write_bytes(b"")
+
+    files, _ = ro.collect(str(tmp_path))
+    assert sorted(f["path"] for f in files) == [
+        "california_catalog.csv",
+        os.path.join("plots", "map.png"),
+    ]
