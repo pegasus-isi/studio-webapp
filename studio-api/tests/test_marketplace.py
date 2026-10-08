@@ -58,8 +58,8 @@ def test_catalog_merges_registry_and_curated_deduped(client, monkeypatch):
 
 
 def test_catalog_leads_with_featured_examples(client, monkeypatch):
-    """The catalog opens with the gentle-onramp trio, in order, ahead of the
-    other curated/registry entries."""
+    """The catalog opens with quickstart and then the portable-site examples,
+    in order, ahead of the other curated/registry entries."""
     async def fake_registry():
         return [
             mkt._normalize(
@@ -76,9 +76,9 @@ def test_catalog_leads_with_featured_examples(client, monkeypatch):
     _reset()
 
     ids = [w["id"] for w in client.get("/api/marketplace").json()["workflows"]]
-    assert ids[:3] == ["quickstart", "soilmoisture", "variant-calling-pegasus"]
+    assert ids[:4] == ["quickstart", "earthquake", "airquality", "crophealth"]
     # Non-featured entries still follow (alphabetical within their group).
-    assert ids[3:6] == ["airquality", "crophealth", "earthquake"]
+    assert ids[4:] == ["soilmoisture", "variant-calling-pegasus", "orcasound"]
 
 
 def test_registry_failure_falls_back_to_curated(client, monkeypatch):
