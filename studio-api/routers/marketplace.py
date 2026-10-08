@@ -87,11 +87,16 @@ _CURATED: list[dict[str, str]] = [
     },
 ]
 
-# Ids pinned to the front of the catalog, in this order, so newcomers meet the
-# gentlest examples first: a Hello-World tutorial, then a simple single-API
-# science workflow, then a real multi-step bioinformatics pipeline. Everything
-# else follows in the default order (Pegasus-ISI first, then alphabetical).
-_FEATURED_ORDER = ("quickstart", "soilmoisture", "variant-calling-pegasus")
+# Ids pinned to the front of the catalog, in this order: the Hello-World
+# tutorial, then the examples that follow the portable execution-site pattern
+# (custom_sites.py + --site-style/--queue/--project), so they plan against
+# whatever site this install defines (condorpool, Slurm `compute`, a hosted
+# catalog) instead of assuming condorpool. Within those, least setup first:
+# earthquake needs no credentials, airquality needs OPENAQ_API_KEY, crophealth
+# needs Kaggle credentials and trains a CNN. Everything else follows in the
+# default order (Pegasus-ISI first, then alphabetical); move a repo up here
+# once it adopts the pattern.
+_FEATURED_ORDER = ("quickstart", "earthquake", "airquality", "crophealth")
 
 _cache: dict[str, Any] = {"ts": 0.0, "data": None}
 _lock = asyncio.Lock()
