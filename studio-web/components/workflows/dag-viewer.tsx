@@ -562,6 +562,49 @@ function slugify(title: string): string {
   return s || "workflow-dag";
 }
 
+/* ─── Full-screen dialog size ─── */
+
+// The dialog opened at a fixed 85vh × 72rem, which suited neither a laptop nor
+// a big monitor, and a wide DAG is exactly when you want more room. Its size
+// is now draggable from the corner and remembered per browser, like the
+// inline pane's height.
+const MODAL_SIZE_KEY = "dag-modal-size";
+const MODAL_MIN_W = 480;
+const MODAL_MIN_H = 320;
+const MODAL_KEY_STEP = 40;
+
+type ModalSize = { w: number; h: number };
+
+// Storage can throw (private mode, blocked site data); a size we cannot read
+// or keep just means the default size, never a broken dialog.
+function readModalSize(): ModalSize | null {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(MODAL_SIZE_KEY) ?? "null");
+    if (v && typeof v.w === "number" && typeof v.h === "number") return v;
+  } catch {
+    /* default size */
+  }
+  return null;
+}
+
+function writeModalSize(size: ModalSize | null) {
+  try {
+    if (size) window.localStorage.setItem(MODAL_SIZE_KEY, JSON.stringify(size));
+    else window.localStorage.removeItem(MODAL_SIZE_KEY);
+  } catch {
+    /* not remembered, still applied */
+  }
+}
+
+// Only a floor here: the ceiling is `max-width/max-height: 100%` on the dialog,
+// so a size saved on a big monitor still fits when the window shrinks.
+function clampModalSize(w: number, h: number): ModalSize {
+  return {
+    w: Math.round(Math.max(MODAL_MIN_W, w)),
+    h: Math.round(Math.max(MODAL_MIN_H, h)),
+  };
+}
+
 /** Interactive workflow DAG (React Flow + dagre): zoom/pan, status-colored
  *  nodes, live-polling while the run is active. */
 export function DagViewer({
@@ -641,6 +684,73 @@ export function DagViewer({
     };
   }, [fetchGraph, live]);
 
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [modalSize, setModalSize] = useState<ModalSize | null>(null);
+  useEffect(() => {
+    if (!inline) setModalSize(readModalSize());
+  }, [inline]);
+
+  // The dialog is centred, so growing it by d moves each edge by d/2. Doubling
+  // the pointer delta keeps the grip under the cursor instead of lagging it.
+  const startResize = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const box = shellRef.current?.getBoundingClientRect();
+    if (!box) return;
+    const sx = e.clientX;
+    const sy = e.clientY;
+    let last: ModalSize = { w: box.width, h: box.height };
+    const move = (ev: PointerEvent) => {
+      last = clampModalSize(
+        box.width + 2 * (ev.clientX - sx),
+        box.height + 2 * (ev.clientY - sy)
+      );
+      setModalSize(last);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      writeModalSize(last);
+    };
+    document.body.style.cursor = "nwse-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }, []);
+
+  const resetSize = useCallback(() => {
+    setModalSize(null);
+    writeModalSize(null);
+  }, []);
+
+  const onGripKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const box = shellRef.current?.getBoundingClientRect();
+    if (!box) return;
+    const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[
+      e.key as "ArrowRight"
+    ];
+    if (e.key === "Home") {
+      e.preventDefault();
+      resetSize();
+      return;
+    }
+    if (!step) return;
+    e.preventDefault();
+    const next = clampModalSize(
+      box.width + step[0] * MODAL_KEY_STEP,
+      box.height + step[1] * MODAL_KEY_STEP
+    );
+    setModalSize(next);
+    writeModalSize(next);
+  }, [resetSize]);
+
+  // Close on a backdrop click only when the press also started on the
+  // backdrop: a resize that ends with the pointer outside the dialog produces
+  // a click on the backdrop too, and that must not dismiss it.
+  const pressedBackdrop = useRef(false);
+
   useEffect(() => {
     // Escape dismisses a dialog. Inline there is nothing to dismiss, and
     // stealing the key from the page would be a surprise.
@@ -716,10 +826,18 @@ export function DagViewer({
 
   const shell = (
       <div
+        ref={shellRef}
         className={
           inline
             ? "flex h-full min-h-0 w-full flex-col bg-surface"
-            : "flex h-[85vh] w-full max-w-6xl flex-col rounded-lg bg-surface shadow-xl"
+            : modalSize
+              ? "relative flex max-h-full max-w-full flex-col rounded-lg bg-surface shadow-xl"
+              : "relative flex h-[85vh] max-h-full w-full max-w-6xl flex-col rounded-lg bg-surface shadow-xl"
+        }
+        style={
+          !inline && modalSize
+            ? { width: modalSize.w, height: modalSize.h }
+            : undefined
         }
         onClick={(e) => e.stopPropagation()}
       >
@@ -877,7 +995,11 @@ export function DagViewer({
         </div>
 
         {/* Legend */}
-        <div className="flex flex-wrap items-center gap-3 border-t border-line px-4 py-2 text-xs text-fgmuted">
+        <div
+          className={`flex flex-wrap items-center gap-3 border-t border-line py-2 pl-4 text-xs text-fgmuted ${
+            inline ? "pr-4" : "pr-7"
+          }`}
+        >
           {Object.entries(STATUS_STYLE)
             .filter(([k]) => k !== "queued")
             .map(([k, s]) => (
@@ -914,6 +1036,30 @@ export function DagViewer({
             </span>
           )}
         </div>
+
+        {!inline && (
+          // Corner grip. A pointer handler rather than CSS `resize`, because
+          // the native grip on a centred box lags the cursor by half.
+          <div
+            role="separator"
+            aria-label="Resize the graph window"
+            title="Drag to resize · double-click to reset"
+            tabIndex={0}
+            onPointerDown={startResize}
+            onDoubleClick={resetSize}
+            onKeyDown={onGripKeyDown}
+            className="absolute bottom-0 right-0 z-10 flex h-5 w-5 cursor-nwse-resize items-end justify-end rounded-br-lg p-1 text-fgsubtle hover:text-pegasus-600 focus:text-pegasus-600 focus:outline-none"
+          >
+            <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
+              <path
+                d="M9 1 1 9M9 5 5 9"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </div>
+        )}
       </div>
   );
 
@@ -922,7 +1068,12 @@ export function DagViewer({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
-      onClick={onClose}
+      onPointerDown={(e) => {
+        pressedBackdrop.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (pressedBackdrop.current && e.target === e.currentTarget) onClose?.();
+      }}
     >
       {shell}
     </div>
