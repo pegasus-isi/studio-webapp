@@ -203,8 +203,13 @@ def collect(output_dir: str) -> tuple[list[dict[str, Any]], bool]:
     truncated = False
 
     for dirpath, dirnames, filenames in os.walk(output_dir):
-        # Don't descend into Pegasus bookkeeping.
-        dirnames[:] = [d for d in dirnames if d not in _NOISE_NAMES]
+        # Don't descend into Pegasus bookkeeping, or into hidden directories:
+        # hidden files were already skipped, but opening a result in
+        # JupyterLab writes `.ipynb_checkpoints/<name>-checkpoint.<ext>` beside
+        # it, and that copy was listed as a second result of the run.
+        dirnames[:] = [
+            d for d in dirnames if d not in _NOISE_NAMES and not d.startswith(".")
+        ]
         for filename in filenames:
             if filename in _NOISE_NAMES or filename.startswith("."):
                 continue
