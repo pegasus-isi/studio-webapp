@@ -555,3 +555,31 @@ def test_project_runs_order_falls_back_to_mtime_without_a_timestamp(tmp_path, mo
     runs = [p for p in projects if p["project_id"] == "eeg"][0]["submitted_runs"]
     # run0001 was planned later than run0009 (a re-created base), so it leads.
     assert [r["run_name"] for r in runs] == ["run0001", "run0009"]
+
+
+# --- project status follows the newest submitted run ---
+
+
+def test_project_status_is_the_newest_submitted_run():
+    """An old failure must not keep a project red once a newer run succeeded
+    (streamflow: run0002 failed, the re-run succeeded, the badge stayed
+    "failed" on Analyses and the home page)."""
+    from services.workflow_scanner import project_status
+
+    # Runs arrive newest-planned first, as label_runs sorts them.
+    assert project_status([
+        {"status": "succeeded"},
+        {"status": "failed"},
+        {"status": "planned"},
+    ]) == "succeeded"
+    # ...and the other way round: a newer failure is the news.
+    assert project_status([{"status": "failed"}, {"status": "succeeded"}]) == "failed"
+    # A planned-but-unsubmitted newest run says nothing about the outcome.
+    assert project_status([
+        {"status": "planned"},
+        {"status": "failed"},
+    ]) == "failed"
+    # Anything in flight wins, wherever it sits.
+    assert project_status([{"status": "succeeded"}, {"status": "running"}]) == "running"
+    # Nothing ever submitted.
+    assert project_status([{"status": "planned"}, {"status": "planning"}]) == "planned"
