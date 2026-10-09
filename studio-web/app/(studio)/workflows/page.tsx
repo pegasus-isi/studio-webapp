@@ -15,14 +15,20 @@ export default function WorkflowsPage() {
   const selectedRunId = useWorkflowStore((s) => s.selectedRunId);
   const selectedProjectId = useWorkflowStore((s) => s.selectedProjectId);
   const selectWorkflow = useWorkflowStore((s) => s.selectWorkflow);
+  const selectProject = useWorkflowStore((s) => s.selectProject);
 
   // Deep-link support: `/workflows?run=<id>` (e.g. from a notification) opens
-  // that run on arrival. Read from the URL once on mount so later manual
-  // selections aren't overridden.
+  // that run on arrival, and `/workflows?project=<id>` (the ⌘K palette, a
+  // Marketplace card's "Open") opens that project. Nothing read `project`
+  // before, so those links landed on the page with nothing selected. Read
+  // from the URL once on mount so later manual selections aren't overridden.
   useEffect(() => {
-    const run = new URLSearchParams(window.location.search).get("run");
+    const q = new URLSearchParams(window.location.search);
+    const run = q.get("run");
+    const project = q.get("project");
     if (run) selectWorkflow(run);
-  }, [selectWorkflow]);
+    else if (project) selectProject(project);
+  }, [selectWorkflow, selectProject]);
 
   const isLoading = runsLoading || projectsLoading;
   const projects = projectsData?.projects ?? [];
