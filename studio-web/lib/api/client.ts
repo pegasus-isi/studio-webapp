@@ -740,6 +740,69 @@ export function runOutputFileUrl(
   );
 }
 
+// --- A job's files (the graph's job panel) ---
+
+/** Where a job's file can be opened: a staged-out result, the run's scratch
+ *  directory (gone once cleanup runs), or a local input in the project. */
+export type FileLocation = "result" | "scratch" | "project";
+
+export interface JobFile {
+  lfn: string;
+  name: string;
+  link: "input" | "output";
+  stage_out: boolean;
+  kind: OutputFile["kind"];
+  /** Null when the file exists nowhere Studio can read (not produced yet,
+   *  cleaned up, or a remote input). It is still listed. */
+  location: FileLocation | null;
+  path: string | null;
+  size: number | null;
+  previewable: boolean;
+}
+
+export interface JobFiles {
+  job_id: string;
+  /** False for Pegasus's own jobs (stage-in, cleanup…), which use no files of
+   *  the workflow's own. */
+  job_found: boolean;
+  files: JobFile[];
+}
+
+export async function getRunJobFiles(runId: string, jobId: string) {
+  return request<JobFiles>(
+    `/workflows/${encodeURIComponent(runId)}/jobs/${encodeURIComponent(jobId)}/files`
+  );
+}
+
+export async function getProjectJobFiles(projectId: string, jobId: string) {
+  return request<JobFiles>(
+    `/workflows/projects/${encodeURIComponent(projectId)}/jobs/${encodeURIComponent(jobId)}/files`
+  );
+}
+
+export function runFileContentUrl(
+  runId: string,
+  location: FileLocation,
+  path: string,
+  download = false
+): string {
+  const query = new URLSearchParams({ location, path });
+  if (download) query.set("download", "1");
+  return apiUrl(`workflows/${encodeURIComponent(runId)}/files/content?${query}`);
+}
+
+export function projectFileContentUrl(
+  projectId: string,
+  path: string,
+  download = false
+): string {
+  const query = new URLSearchParams({ path });
+  if (download) query.set("download", "1");
+  return apiUrl(
+    `workflows/projects/${encodeURIComponent(projectId)}/files/content?${query}`
+  );
+}
+
 // --- Runtime failure diagnosis (#241, Phase 5) ---
 
 export interface DiagnosisCard {

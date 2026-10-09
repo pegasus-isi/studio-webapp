@@ -7,6 +7,7 @@ import glob
 import json
 import os
 import re
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query
@@ -1038,7 +1039,8 @@ async def get_run_output_file(
         raise HTTPException(status_code=404, detail="File not found")
 
     size = os.path.getsize(resolved)
-    if not download and size > run_outputs.PREVIEW_MAX_BYTES:
+    limit = run_outputs.preview_limit(run_outputs.classify(os.path.basename(resolved)))
+    if not download and size > limit:
         # Refuse to inline a file big enough to hang the tab; the client should
         # be offering a download for these anyway (`previewable` says so).
         raise HTTPException(
@@ -1051,6 +1053,120 @@ async def get_run_output_file(
         filename=os.path.basename(resolved) if download else None,
         content_disposition_type="attachment" if download else "inline",
     )
+
+
+# ── Files a job reads and writes (the graph's job panel) ──
+
+_FileLocation = Literal["result", "scratch", "project"]
+
+
+def _serve_file(base: str | None, path: str, download: bool):
+    """One file under `base`, inline or as an attachment.
+
+    Shared by the job panel's run and project variants. `path` is
+    caller-supplied, so it is confined to `base` exactly as the Results tab's
+    outputs are, and the same preview size ceiling applies.
+    """
+    from fastapi.responses import FileResponse
+
+    from services import run_outputs
+
+    if not base:
+        raise HTTPException(status_code=404, detail="That location isn't available for this run")
+    try:
+        resolved = run_outputs.safe_output_path(base, path)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied") from None
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail="File not found")
+    limit = run_outputs.preview_limit(run_outputs.classify(os.path.basename(resolved)))
+    if not download and os.path.getsize(resolved) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail="File is too large to preview — download it instead",
+        )
+    return FileResponse(
+        resolved,
+        filename=os.path.basename(resolved) if download else None,
+        content_disposition_type="attachment" if download else "inline",
+    )
+
+
+async def _run_bases(run_dir: str, output_site: str) -> dict[str, str]:
+    from services import job_files
+    from services.workflow_scanner import project_roots
+
+    loop = asyncio.get_event_loop()
+    # Reads catalogs and stats files on NFS; keep it off the event loop.
+    return await loop.run_in_executor(
+        None, lambda: job_files.bases_for_run(run_dir, project_roots(), output_site)
+    )
+
+
+@router.get("/{run_id}/jobs/{job_id}/files")
+async def run_job_files(run_id: str, job_id: str, output_site: str = Query("local")) -> dict:
+    """A job's inputs and outputs, and where each can be opened now."""
+    from services import job_files
+
+    run_dir = await _resolve_run_dir(run_id)
+    doc = job_files.workflow_doc(_find_run_workflow_file(run_dir))
+    uses = job_files.job_uses(doc, job_id)
+    if uses is None:
+        # Pegasus's own jobs (stage-in, cleanup, ...) are not in workflow.yml.
+        return {"run_id": run_id, "job_id": job_id, "job_found": False, "files": []}
+    bases = await _run_bases(run_dir, output_site)
+    loop = asyncio.get_event_loop()
+    files = await loop.run_in_executor(
+        None, lambda: job_files.describe(uses, bases, doc)
+    )
+    return {"run_id": run_id, "job_id": job_id, "job_found": True, "files": files}
+
+
+@router.get("/{run_id}/files/content")
+async def run_file_content(
+    run_id: str,
+    location: _FileLocation,
+    path: str = Query(..., description="Path relative to the location's directory"),
+    download: bool = Query(False),
+    output_site: str = Query("local"),
+):
+    run_dir = await _resolve_run_dir(run_id)
+    bases = await _run_bases(run_dir, output_site)
+    return _serve_file(bases.get(location), path, download)
+
+
+async def _project_or_404(project_id: str) -> dict:
+    projects = await discover_projects_async()
+    proj = next((p for p in projects if p["project_id"] == project_id), None)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    return proj
+
+
+@router.get("/projects/{project_id}/jobs/{job_id}/files")
+async def project_job_files(project_id: str, job_id: str) -> dict:
+    """Before any run: what a job will read and write. Only inputs that are
+    local files in the project exist yet, so only those can be previewed."""
+    from services import job_files
+
+    proj = await _project_or_404(project_id)
+    doc = job_files.workflow_doc(_project_workflow_file(proj["project_dir"]))
+    uses = job_files.job_uses(doc, job_id)
+    if uses is None:
+        return {"job_id": job_id, "job_found": False, "files": []}
+    bases = {"project": os.path.realpath(proj["project_dir"])}
+    files = job_files.describe(uses, bases, doc)
+    return {"job_id": job_id, "job_found": True, "files": files}
+
+
+@router.get("/projects/{project_id}/files/content")
+async def project_file_content(
+    project_id: str,
+    path: str = Query(...),
+    download: bool = Query(False),
+):
+    proj = await _project_or_404(project_id)
+    return _serve_file(os.path.realpath(proj["project_dir"]), path, download)
 
 
 @router.get("/{run_id}/events")

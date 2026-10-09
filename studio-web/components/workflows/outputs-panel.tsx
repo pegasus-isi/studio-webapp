@@ -17,28 +17,13 @@ import { useQuery } from "@tanstack/react-query";
 import type { OutputFile } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 import { appRelativePath } from "@/lib/urls";
-import { cn } from "@/lib/utils";
+import {
+  FilePreviewDialog,
+  FileTypeIcon,
+  formatBytes,
+} from "@/components/workflows/file-preview";
 
 const PAGE_SIZE = 100;
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
-}
-
-const KIND_ICON: Record<OutputFile["kind"], string> = {
-  image: "🖼",
-  table: "🔢",
-  text: "📄",
-  binary: "📦",
-};
 
 export function OutputsPanel({
   runId,
@@ -137,7 +122,7 @@ export function OutputsPanel({
             key={file.path}
             className="flex items-center gap-3 px-4 py-2.5 hover:bg-base"
           >
-            <span aria-hidden="true">{KIND_ICON[file.kind]}</span>
+            <FileTypeIcon name={file.name} kind={file.kind} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm text-fg" title={file.path}>
                 {file.name}
@@ -193,140 +178,16 @@ export function OutputsPanel({
       )}
 
       {preview && (
-        <PreviewDialog
-          runId={runId}
-          file={preview}
+        <FilePreviewDialog
+          target={{
+            name: preview.name,
+            path: preview.path,
+            kind: preview.kind,
+            url: api.runOutputFileUrl(runId, preview.path),
+            downloadUrl: api.runOutputFileUrl(runId, preview.path, true),
+          }}
           onClose={() => setPreview(null)}
         />
-      )}
-    </div>
-  );
-}
-
-function PreviewDialog({
-  runId,
-  file,
-  onClose,
-}: {
-  runId: string;
-  file: OutputFile;
-  onClose: () => void;
-}) {
-  const url = api.runOutputFileUrl(runId, file.path);
-  const { data: text, isLoading } = useQuery({
-    queryKey: ["run-output-preview", runId, file.path],
-    // Images render from the URL directly; only text and tables need fetching.
-    enabled: file.kind === "text" || file.kind === "table",
-    queryFn: async () => {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Couldn't read the file (${res.status})`);
-      return res.text();
-    },
-  });
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Preview of ${file.name}`}
-      onClick={onClose}
-    >
-      <div
-        className="flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-line bg-surface"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <span className="min-w-0 truncate text-sm font-medium text-fg">
-            {file.path}
-          </span>
-          <span className="flex shrink-0 items-center gap-2">
-            <a
-              href={api.runOutputFileUrl(runId, file.path, true)}
-              download={file.name}
-              className="rounded border border-line px-2 py-0.5 text-xs text-fgmuted hover:text-fg"
-            >
-              Download
-            </a>
-            <button
-              onClick={onClose}
-              aria-label="Close preview"
-              className="rounded px-2 py-0.5 text-sm text-fgmuted hover:bg-base hover:text-fg"
-            >
-              ✕
-            </button>
-          </span>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-auto p-4">
-          {file.kind === "image" ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={url}
-              alt={file.name}
-              className="mx-auto max-h-[70vh] max-w-full object-contain"
-            />
-          ) : isLoading ? (
-            <p className="text-sm text-fgmuted">Loading…</p>
-          ) : file.kind === "table" ? (
-            <TablePreview text={text ?? ""} />
-          ) : (
-            <pre className="whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-xs text-fg">
-              {text}
-            </pre>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * First rows of a CSV/TSV as a table.
- *
- * Deliberately naive: split on the delimiter, no quoted-field handling. A
- * scientist glancing at a result file is served by seeing columns; anyone who
- * needs the parse to be exactly right needs the file itself, which is one
- * click away. Row cap keeps a million-line CSV from freezing the tab.
- */
-function TablePreview({ text }: { text: string }) {
-  const MAX_ROWS = 200;
-  const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
-  if (lines.length === 0) return <p className="text-sm text-fgmuted">Empty file.</p>;
-
-  const delimiter = lines[0].includes("\t") ? "\t" : ",";
-  const rows = lines.slice(0, MAX_ROWS).map((l) => l.split(delimiter));
-  const [header, ...body] = rows;
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-xs">
-        <thead>
-          <tr className="border-b border-line">
-            {header.map((cell, i) => (
-              <th key={i} className="whitespace-nowrap px-2 py-1 font-medium text-fgmuted">
-                {cell}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-line">
-          {body.map((row, i) => (
-            <tr key={i}>
-              {row.map((cell, j) => (
-                <td key={j} className={cn("whitespace-nowrap px-2 py-1 text-fg")}>
-                  {cell}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {lines.length > MAX_ROWS && (
-        <p className="mt-2 text-xs text-fgsubtle">
-          Showing the first {MAX_ROWS} of {lines.length} rows — download the file
-          for the rest.
-        </p>
       )}
     </div>
   );

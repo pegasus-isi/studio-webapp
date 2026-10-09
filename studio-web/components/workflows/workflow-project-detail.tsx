@@ -14,6 +14,8 @@ import {
   useRenameWorkflowProject,
 } from "@/lib/hooks/use-workflows";
 import type { WorkflowProjectRun } from "@/lib/api/client";
+import * as api from "@/lib/api/client";
+import type { JobFilesSource } from "@/components/workflows/job-files-panel";
 import { AppLink } from "@/components/layout/app-link";
 import { DagViewer } from "@/components/workflows/dag-viewer";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
@@ -802,6 +804,33 @@ function GraphPane({
     maxSize: 1200,
     axis: "y",
   });
+  // Click a job to see its files. Per run, every location a file can be in
+  // (results, scratch, project); before any run, only project inputs exist.
+  const filesRunId = run?.run_id;
+  const runStatus = run?.status;
+  const jobFiles = useMemo<JobFilesSource>(
+    () =>
+      filesRunId
+        ? {
+            key: `run:${filesRunId}`,
+            list: (jobId) => api.getRunJobFiles(filesRunId, jobId),
+            url: (f, download = false) =>
+              f.location && f.path
+                ? api.runFileContentUrl(filesRunId, f.location, f.path, download)
+                : null,
+            live: runStatus === "running" || runStatus === "planning",
+          }
+        : {
+            key: `project:${projectId}`,
+            list: (jobId) => api.getProjectJobFiles(projectId, jobId),
+            url: (f, download = false) =>
+              f.location === "project" && f.path
+                ? api.projectFileContentUrl(projectId, f.path, download)
+                : null,
+            live: false,
+          },
+    [filesRunId, runStatus, projectId]
+  );
   // Full screen for "I need the whole picture": the same viewer already has a
   // modal mode, so this is a prop rather than a second implementation.
   const [full, setFull] = useState(false);
@@ -881,6 +910,7 @@ function GraphPane({
               live={!!run}
               inline
               headerExtra={picker}
+              jobFiles={jobFiles}
             />
           </div>
 
@@ -913,6 +943,7 @@ function GraphPane({
           live={!!run}
           headerExtra={picker}
           onClose={() => setFull(false)}
+          jobFiles={jobFiles}
         />
       )}
     </div>
