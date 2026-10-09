@@ -2,9 +2,13 @@
 into the workspace.
 
 Nothing is baked into the image. The catalog is the **live PegasusHub registry**
-(``pegasushub/workflow-registry`` → ``data/workflows.json``) merged with a
-curated set of Pegasus-ISI repos, deduped by repository URL and cached. "Add"
-performs a shallow ``git clone`` of the selected repo into
+(``pegasushub/workflow-registry`` → ``data/workflows.json``) merged with every
+public repo in the Pegasus-ISI GitHub org that carries the
+``pegasus-studio-example`` topic,
+deduped by repository URL and cached. Listing a workflow is a repo setting, not
+a Studio release: add the topic on GitHub (``gh repo edit
+pegasus-isi/<repo> --add-topic pegasus-studio-example``) and it appears on the next refresh.
+"Add" performs a shallow ``git clone`` of the selected repo into
 ``<workspace>/workflows/<id>`` so it shows up on the Workflows page.
 """
 
@@ -37,55 +41,27 @@ _CLONE_TIMEOUT = float(os.environ.get("STUDIO_MARKETPLACE_CLONE_TIMEOUT", "180")
 # reach the network, and available to an operator behind a strict egress policy.
 _ENRICH = os.environ.get("STUDIO_MARKETPLACE_ENRICH", "1") not in ("0", "false", "")
 
+# Org and topic that mark a repo as a Studio example. Overridable so a site
+# running its own Studio can list its own org's workflows. The topic is
+# deliberately specific: a bare `studio` is what someone would add to describe
+# studio-webapp or studio-system, and either would then be offered as a
+# runnable example. The search is org-scoped, so other orgs' use of a topic
+# never matters; only an accidental tag inside the org would.
+_GITHUB_ORG = os.environ.get("STUDIO_MARKETPLACE_GITHUB_ORG", "pegasus-isi").strip()
+_GITHUB_TOPIC = os.environ.get(
+    "STUDIO_MARKETPLACE_TOPIC", "pegasus-studio-example"
+).strip()
+GITHUB_SEARCH_URL = os.environ.get(
+    "STUDIO_MARKETPLACE_GITHUB_SEARCH_URL",
+    "https://api.github.com/search/repositories",
+)
+
 WORKSPACE_ROOT = workspace_root()
 WORKFLOWS_DIR = workflows_dir(WORKSPACE_ROOT)
 
-# Curated Pegasus-ISI workflows to always surface, merged (and deduped by repo
-# URL) with the live registry. Descriptions from each repo's GitHub metadata.
-_CURATED: list[dict[str, str]] = [
-    {
-        "id": "quickstart",
-        "name": "quickstart-workflow",
-        "description": "A simple Hello World Pegasus workflow — the fastest way to see an end-to-end run.",
-        "topic": "tutorial",
-        "repo_url": "https://github.com/pegasus-isi/quickstart-workflow",
-    },
-    {
-        "id": "soilmoisture",
-        "name": "soilmoisture-workflow",
-        "description": "Analyzes soil-moisture data from the Agromonitoring API to answer “Should I water my crops?”",
-        "topic": "earth science",
-        "repo_url": "https://github.com/pegasus-isi/soilmoisture-workflow",
-    },
-    {
-        "id": "airquality",
-        "name": "airquality-workflow",
-        "description": "Processes air-quality sensor data from OpenAQ/Sage to detect anomalies and analyze pollutant trends.",
-        "topic": "earth science",
-        "repo_url": "https://github.com/pegasus-isi/airquality-workflow",
-    },
-    {
-        "id": "earthquake",
-        "name": "earthquake-workflow",
-        "description": "Analyzes earthquake data from the USGS Earthquake API — an AI-assisted scientific workflow example.",
-        "topic": "earth science",
-        "repo_url": "https://github.com/pegasus-isi/earthquake-workflow",
-    },
-    {
-        "id": "crophealth",
-        "name": "crophealth-workflow",
-        "description": "Crop-health disease detection Pegasus workflow.",
-        "topic": "machine learning",
-        "repo_url": "https://github.com/pegasus-isi/crophealth-workflow",
-    },
-    {
-        "id": "variant-calling-pegasus",
-        "name": "variant-calling-pegasus-workflow",
-        "description": "Automates a variant-calling workflow (Data Carpentry “Data Wrangling and Processing for Genomics”).",
-        "topic": "bioinformatics",
-        "repo_url": "https://github.com/pegasus-isi/variant-calling-pegasus-workflow",
-    },
-]
+# The label the catalog's source filter shows for org repos. Kept from when this
+# was a hand-maintained list, because clients filter on the exact string.
+_ORG_SOURCE = "Pegasus-ISI"
 
 # Ids pinned to the front of the catalog, in this order: the Hello-World
 # tutorial, then the examples that follow the portable execution-site pattern
@@ -104,7 +80,7 @@ _lock = asyncio.Lock()
 
 def _sort_key(entry: dict[str, Any]) -> tuple[int, bool, str]:
     """Catalog ordering: featured ids first (in _FEATURED_ORDER), then
-    Pegasus-ISI curated entries, then everything else alphabetically."""
+    Pegasus-ISI org entries, then everything else alphabetically."""
     try:
         featured = _FEATURED_ORDER.index(entry["id"])
     except ValueError:
@@ -197,7 +173,7 @@ def _normalize(entry: dict[str, Any], source: str) -> dict[str, Any] | None:
 
 
 async def _fetch_registry() -> list[dict[str, Any]]:
-    """Fetch the PegasusHub registry; return [] on any failure (curated still shows)."""
+    """Fetch the PegasusHub registry; return [] on any failure (org repos still show)."""
     try:
         async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
             resp = await client.get(REGISTRY_URL)
@@ -215,6 +191,86 @@ async def _fetch_registry() -> list[dict[str, Any]]:
         if norm:
             out.append(norm)
     return out
+
+
+def _id_from_org_repo(name: str) -> str:
+    """`earthquake-workflow` → `earthquake`.
+
+    The ids the hand-maintained list used, so a repo moved onto the topic keeps
+    its clone directory (`workflows/earthquake`), its place in
+    `_FEATURED_ORDER`, and the "already in your workspace" check for anyone who
+    added it before.
+    """
+    slug = re.sub(r"[^A-Za-z0-9_-]", "-", name)
+    return re.sub(r"-workflow$", "", slug, flags=re.IGNORECASE) or slug or "workflow"
+
+
+def _from_search(items: list[Any]) -> list[dict[str, Any]]:
+    """Catalog entries from a GitHub repository-search response's `items`."""
+    out: list[dict[str, Any]] = []
+    for repo in items:
+        if not isinstance(repo, dict) or repo.get("archived") or repo.get("private"):
+            continue
+        name = str(repo.get("name") or "")
+        topics = [
+            t for t in (repo.get("topics") or [])
+            if isinstance(t, str) and t.lower() != _GITHUB_TOPIC.lower()
+        ]
+        norm = _normalize(
+            {
+                "id": _id_from_org_repo(name),
+                "name": name,
+                "description": (repo.get("description") or "").strip(),
+                # The marker topic is how the repo got here, not a subject;
+                # as a filter chip it would match every org entry.
+                "topic": ", ".join(topics),
+                "repo_url": repo.get("html_url") or "",
+                "license": ((repo.get("license") or {}).get("name") or ""),
+            },
+            _ORG_SOURCE,
+        )
+        if norm:
+            out.append(norm)
+    return out
+
+
+# The last successful topic search, reused when GitHub is unreachable or
+# rate-limits us. Unauthenticated search allows 10 requests a minute per IP;
+# a failed refresh must not empty the org half of the catalog for an hour.
+_last_topic_repos: list[dict[str, Any]] = []
+
+
+async def _fetch_topic_repos() -> list[dict[str, Any]]:
+    """Public repos in `_GITHUB_ORG` tagged `_GITHUB_TOPIC`."""
+    global _last_topic_repos
+    if not _GITHUB_ORG or not _GITHUB_TOPIC:
+        return []
+    params = {
+        "q": f"org:{_GITHUB_ORG} topic:{_GITHUB_TOPIC}",
+        "per_page": "100",
+        "sort": "updated",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
+            resp = await client.get(
+                GITHUB_SEARCH_URL,
+                params=params,
+                headers={"Accept": "application/vnd.github+json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, ValueError) as e:
+        log.warning(
+            "marketplace_topic_search_failed",
+            error=str(e),
+            reusing=len(_last_topic_repos),
+        )
+        return list(_last_topic_repos)
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return list(_last_topic_repos)
+    _last_topic_repos = _from_search(items)
+    return list(_last_topic_repos)
 
 
 def _enrich_enabled() -> bool:
@@ -288,22 +344,23 @@ async def _enrich_descriptions(entries: list[dict[str, Any]]) -> None:
 
 
 async def _catalog(force: bool = False) -> list[dict[str, Any]]:
-    """Merged, deduped catalog (registry + curated), cached for _CACHE_TTL."""
+    """Merged, deduped catalog (org topic repos + registry), cached."""
     async with _lock:
         age = time.monotonic() - _cache["ts"]
         if not force and _cache["data"] is not None and age < _CACHE_TTL:
             return _cache["data"]
 
-        registry = await _fetch_registry()
-        curated = [n for e in _CURATED if (n := _normalize(e, "Pegasus-ISI"))]
+        registry, tagged = await asyncio.gather(
+            _fetch_registry(), _fetch_topic_repos()
+        )
 
         merged: dict[str, dict[str, Any]] = {}
-        # Curated first so our ids/descriptions win; registry fills the rest.
+        # Org repos first so our ids/descriptions win; registry fills the rest.
         # Skip an entry whose repo OR id is already taken. The id check matters
         # (BE-9): two distinct-repo entries sharing an id used to silently
         # overwrite the first's id slot, dropping it from the catalog even
-        # though its repo key survived. An explicit skip keeps the curated one.
-        for entry in curated + registry:
+        # though its repo key survived. An explicit skip keeps the org one.
+        for entry in tagged + registry:
             key = _norm_repo(entry["repo_url"])
             eid = entry["id"]
             if not key or key in merged or eid in merged:
@@ -321,7 +378,7 @@ async def _catalog(force: bool = False) -> list[dict[str, Any]]:
 
 @router.get("")
 async def list_workflows() -> dict[str, Any]:
-    """Browse the merged PegasusHub + Pegasus-ISI catalog."""
+    """Browse the merged PegasusHub + Pegasus-ISI (marker topic) catalog."""
     catalog = await _catalog()
     return {"workflows": catalog, "count": len(catalog)}
 
