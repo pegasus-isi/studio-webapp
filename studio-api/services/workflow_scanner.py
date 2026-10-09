@@ -248,6 +248,31 @@ def _planned_at(bd: dict[str, Any], braindump_path: str) -> float:
         return 0.0
 
 
+#: Run states that say nothing about how the workflow last went: planned but
+#: never submitted, or a status read that failed.
+_NOT_AN_OUTCOME = frozenset({"planned", "planning", "unknown", "", None})
+
+
+def project_status(runs: list[dict[str, Any]]) -> str:
+    """A project's status from its runs, which arrive newest-planned first.
+
+    Any run in flight wins. Otherwise it is the newest *submitted* run's
+    outcome. This used to be "failed if any run ever failed", so a project
+    whose latest run succeeded stayed red on Analyses and on the home page for
+    as long as one old failure sat in its submit tree (streamflow: run0002
+    failed, the re-run after the fix succeeded, the badge never cleared). A
+    planned-but-unsubmitted run is skipped: it says nothing about how the
+    workflow last went.
+    """
+    statuses = [r.get("status") for r in runs]
+    if "running" in statuses:
+        return "running"
+    for status in statuses:
+        if status not in _NOT_AN_OUTCOME:
+            return str(status)
+    return "planned"
+
+
 def label_runs(project_dir: str, runs: list[dict[str, Any]]) -> None:
     """Name each run so two from different submit bases cannot read alike.
 
@@ -380,15 +405,7 @@ def _scan_projects_dir(
 
         # Derive overall project status
         if submitted_runs:
-            run_statuses = [r["status"] for r in submitted_runs]
-            if "running" in run_statuses:
-                status = "running"
-            elif "failed" in run_statuses:
-                status = "failed"
-            elif all(s == "succeeded" for s in run_statuses):
-                status = "succeeded"
-            else:
-                status = "planned"
+            status = project_status(submitted_runs)
         elif has_workflow_yml:
             status = "generated"
         else:

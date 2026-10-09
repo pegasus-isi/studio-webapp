@@ -202,6 +202,29 @@ function statusTone(run: RecentRun): "bad" | "run" | "ok" | "idle" {
  * One line keeps the page as calm as the prototype when there is nothing to
  * say, which is most of the time.
  */
+/**
+ * Failed runs that are still the latest word on their workflow.
+ *
+ * `runs` is newest first. A failure followed by a newer submitted run of the
+ * same workflow has been dealt with (re-run, fixed or not), so it is not news:
+ * flagging it kept "streamflow needs attention" on the home page after the
+ * re-run had succeeded. A newer run that was only planned, never submitted,
+ * does not supersede anything.
+ */
+function unresolvedFailures(runs: RecentRun[]): RecentRun[] {
+  const seen = new Set<string>();
+  const out: RecentRun[] = [];
+  for (const r of runs) {
+    if (r.status === "planned" || r.status === "planning" || r.status === "unknown") {
+      continue;
+    }
+    if (seen.has(r.name)) continue;
+    seen.add(r.name);
+    if (statusTone(r) === "bad") out.push(r);
+  }
+  return out;
+}
+
 function AttentionStrip({
   runs,
   onAsk,
@@ -209,7 +232,7 @@ function AttentionStrip({
   runs: RecentRun[];
   onAsk: (run: RecentRun, label: string, prompt: string) => void;
 }) {
-  const bad = runs.filter((r) => statusTone(r) === "bad");
+  const bad = unresolvedFailures(runs);
   const running = runs.filter((r) => statusTone(r) === "run");
   if (bad.length === 0 && running.length === 0) return null;
 
