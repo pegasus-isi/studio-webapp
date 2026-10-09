@@ -55,6 +55,16 @@ _TEXT_EXT = {
 # render it as text is a way to hang their session, not a feature.
 PREVIEW_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
 
+# Images are drawn by the browser from the URL, not read into the page as text,
+# so the text ceiling doesn't protect anything for them. Held at 2 MB it hid
+# every plot earthquake-workflow makes (2.8-3.1 MB PNGs) behind Download.
+IMAGE_PREVIEW_MAX_BYTES = 25 * 1024 * 1024  # 25 MB
+
+
+def preview_limit(kind: str) -> int:
+    """The largest file of this kind that may be shown inline."""
+    return IMAGE_PREVIEW_MAX_BYTES if kind == "image" else PREVIEW_MAX_BYTES
+
 # Hard ceiling on how many files we will even enumerate. A run that wrote
 # 200k files should degrade to "here are the first 5000" rather than blocking
 # the event loop walking the tree.
@@ -188,7 +198,7 @@ def _entry(full_path: str, relative: str) -> dict[str, Any] | None:
         "kind": kind,
         # Previewability is a property of the file, decided here rather than in
         # the UI, so the size ceiling can't drift between the two.
-        "previewable": kind != "binary" and stat.st_size <= PREVIEW_MAX_BYTES,
+        "previewable": kind != "binary" and stat.st_size <= preview_limit(kind),
     }
 
 
