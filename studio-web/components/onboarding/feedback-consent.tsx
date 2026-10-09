@@ -341,7 +341,11 @@ export function ContentSharingChoice({ onDone }: { onDone: () => void }) {
       // Unknown reads as "no collector": the step then asks nothing, which is
       // the safe direction — it can never record a consent it could not show.
       .catch(() =>
-        setConsent({ content_capture: false, collector_configured: false })
+        setConsent({
+          content_capture: false,
+          collector_configured: false,
+          decided: false,
+        })
       );
   }, []);
 

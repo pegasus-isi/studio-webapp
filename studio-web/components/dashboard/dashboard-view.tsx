@@ -20,6 +20,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { DashboardData } from "@/lib/api/client";
+import * as api from "@/lib/api/client";
 import { useDashboard } from "@/lib/hooks/use-dashboard";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { cn } from "@/lib/utils";
@@ -333,40 +334,82 @@ const WALKTHROUGH: TourStep[] = [
   },
 ];
 
-// First run (and "Take a tour") only. These three have no anchor: what Studio
-// records, whether chat text may be shared, and who is using it are not things
-// on the page. The notice comes first so nobody is asked anything before being
-// told what is kept. Not repeated on the per-login tour: asking the consent
-// and profile questions at every login is nagging, and both stay in Settings.
-const FIRST_RUN: TourStep[] = [
-  {
-    title: "What we collect",
-    render: () => <CollectionNotice where="tour" />,
-  },
-  {
-    title: "Share your chat text?",
-    width: 340,
-    // Its own buttons, so Next cannot step past the question without an answer.
-    ownControls: true,
-    render: ({ next }) => <ContentSharingChoice onDone={next} />,
-  },
-  {
-    title: "Tell us a little about you",
-    body: "Four optional questions, so we can tell whose experience is whose. Skip any or all; you can change them in Settings.",
-    width: 340,
-    ownControls: true,
-    render: ({ next }) => (
-      <ProfileForm
-        compact
-        saveLabel="Save and finish"
-        onDone={() => next()}
-        onSkip={next}
-      />
-    ),
-  },
-];
+// The questions. None has an anchor: what Studio records, whether chat text
+// may be shared, and who is using it are not things on the page. They run on
+// the first visit and from "Take a tour", and on every login tour until the
+// user has answered them (#454): someone who closed the first tour early was
+// otherwise never asked again. The notice always comes first, so nobody is
+// asked anything before being told what is kept.
+const COLLECT_STEP: TourStep = {
+  title: "What we collect",
+  render: () => <CollectionNotice where="tour" />,
+};
 
-const FULL_TOUR: TourStep[] = [...WALKTHROUGH, ...FIRST_RUN];
+const CONSENT_STEP: TourStep = {
+  title: "Share your chat text?",
+  width: 340,
+  // Its own buttons, so Next cannot step past the question without an answer.
+  ownControls: true,
+  render: ({ next }) => <ContentSharingChoice onDone={next} />,
+};
+
+// The form's own Skip is a deliberate "no thanks", so it is saved as an
+// answer with every field blank: that stamps `answered_at`, and the question
+// is not repeated at the next login. Leaving the tour (its Skip, Escape) is
+// not an answer, and the question comes back.
+const declineProfile = () =>
+  api
+    .updateUserProfile({
+      research_field: null,
+      role: null,
+      pegasus_experience: null,
+      coding_comfort: null,
+    })
+    .catch(() => undefined);
+
+const PROFILE_STEP: TourStep = {
+  title: "Tell us a little about you",
+  body: "Four optional questions, so we can tell whose experience is whose. Skip any or all; you can change them in Settings.",
+  width: 340,
+  ownControls: true,
+  render: ({ next }) => (
+    <ProfileForm
+      compact
+      saveLabel="Save and finish"
+      onDone={() => next()}
+      onSkip={() => {
+        void declineProfile();
+        next();
+      }}
+    />
+  ),
+};
+
+const FULL_TOUR: TourStep[] = [...WALKTHROUGH, COLLECT_STEP, CONSENT_STEP, PROFILE_STEP];
+
+/**
+ * The per-login tour: the walkthrough, plus whichever questions are still
+ * unanswered. A lookup that fails counts as unanswered; asking once more is
+ * cheaper than never asking. Without a collector there is no chat-text
+ * question to ask, so that step is left out rather than shown as a no-op.
+ */
+async function loginTour(): Promise<TourStep[]> {
+  const [consent, profile] = await Promise.allSettled([
+    api.getTelemetryConsent(),
+    api.getUserProfile(),
+  ]);
+  const consentPending =
+    consent.status === "rejected" ||
+    (consent.value.collector_configured && !consent.value.decided);
+  const profilePending =
+    profile.status === "rejected" || !profile.value.answered_at;
+  return [
+    ...WALKTHROUGH,
+    ...(consentPending || profilePending ? [COLLECT_STEP] : []),
+    ...(consentPending ? [CONSENT_STEP] : []),
+    ...(profilePending ? [PROFILE_STEP] : []),
+  ];
+}
 
 // "Once per login" is approximated as once per browser session: a session
 // cookie (no expiry) is shared across tabs, so a second Studio tab does not
@@ -399,9 +442,9 @@ export function DashboardView() {
   const { prefs, isLoading: prefsLoading } = useUIPreferences();
   const updatePrefs = useUpdateUIPreferences();
   const [tourOpen, setTourOpen] = useState(false);
-  // Which tour is open: the full one (first visit, "Take a tour") or the
-  // walkthrough alone (the automatic per-login repeat).
-  const [tourFull, setTourFull] = useState(true);
+  // The steps of the tour that is open: the full one (first visit, "Take a
+  // tour"), or the walkthrough plus whatever is still unanswered (per login).
+  const [tourSteps, setTourSteps] = useState<TourStep[]>(FULL_TOUR);
   const [glossary, setGlossary] = useState(false);
 
   // "Take a tour" in the account menu links here with ?tour=1, so the tour is
@@ -411,7 +454,7 @@ export function DashboardView() {
   const tourRequested = searchParams.get("tour") === "1";
   useEffect(() => {
     if (!tourRequested) return;
-    setTourFull(true);
+    setTourSteps(FULL_TOUR);
     setTourOpen(true);
   }, [tourRequested]);
 
@@ -427,13 +470,21 @@ export function DashboardView() {
     // Marked when it opens, not when it closes: navigating away mid-tour and
     // back to Home must not start it over.
     markTourSeen();
-    // A frame, so the rail and the composer are laid out before the tour
-    // measures them — a step whose anchor has no box gets skipped.
-    const t = requestAnimationFrame(() => {
-      setTourFull(firstVisit);
-      setTourOpen(true);
+    let cancelled = false;
+    let frame = 0;
+    void (firstVisit ? Promise.resolve(FULL_TOUR) : loginTour()).then((steps) => {
+      if (cancelled) return;
+      // A frame, so the rail and the composer are laid out before the tour
+      // measures them — a step whose anchor has no box gets skipped.
+      frame = requestAnimationFrame(() => {
+        setTourSteps(steps);
+        setTourOpen(true);
+      });
     });
-    return () => cancelAnimationFrame(t);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
   }, [firstVisit, loginRepeat, tourRequested]);
 
   const endTour = () => {
@@ -595,7 +646,7 @@ export function DashboardView() {
       </div>
 
       <GuidedTour
-        steps={tourFull ? FULL_TOUR : WALKTHROUGH}
+        steps={tourSteps}
         open={tourOpen}
         onClose={endTour}
         dontShowAgain={{

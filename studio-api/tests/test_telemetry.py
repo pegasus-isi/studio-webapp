@@ -240,3 +240,39 @@ def test_the_ui_can_tell_that_no_collector_is_configured(client, monkeypatch):
 
     monkeypatch.setenv("STUDIO_OTLP_ENDPOINT", "http://collector.monitoring:4318")
     assert client.get("/api/settings/telemetry").json()["collector_configured"] is True
+
+
+def test_the_choice_is_recorded_either_way(client):
+    """Off is also the default, so without a separate record "declined" and
+    "never asked" read the same and the tour could not tell whom to ask
+    (#454)."""
+    assert client.get("/api/settings/telemetry").json()["decided"] is False
+
+    saved = client.put("/api/settings/telemetry", json={"content_capture": False})
+    assert saved.json()["decided"] is True
+    body = client.get("/api/settings/telemetry").json()
+    assert body["decided"] is True and body["content_capture"] is False
+
+    # Read-only: a client cannot un-decide by sending decided=false.
+    client.put(
+        "/api/settings/telemetry", json={"content_capture": True, "decided": False}
+    )
+    assert client.get("/api/settings/telemetry").json()["decided"] is True
+
+
+def test_an_existing_opt_in_counts_as_decided():
+    """Users who opted in before the decision was recorded are not re-asked."""
+    import asyncio
+
+    from services import telemetry
+
+    class Db:
+        def __init__(self, values):
+            self.values = values
+
+        async def get_setting(self, key, default=None):
+            return self.values.get(key, default)
+
+    assert asyncio.run(telemetry.decided(Db({"telemetry_content_capture": "1"}))) is True
+    assert asyncio.run(telemetry.decided(Db({"telemetry_content_capture": "0"}))) is False
+    assert asyncio.run(telemetry.decided(Db({}))) is False

@@ -1241,6 +1241,9 @@ export type TelemetryConsent = {
   /** False when this deployment has no collector, so nothing is exported
    *  either way — the FABRIC VM and plain `docker run` are like this. */
   collector_configured: boolean;
+  /** Read-only: whether the user has chosen either way. "Off" is also the
+   *  default, so this is what tells "declined" from "never asked". */
+  decided: boolean;
 };
 
 export async function getTelemetryConsent() {

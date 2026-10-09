@@ -313,8 +313,8 @@ class UIPreferences(BaseModel):
     # Open the guided tour on every login (once per browser session), not just
     # the first visit. On by default: people asked for the tour to come back,
     # and the tour itself carries a "Don't show me this again" checkbox that
-    # turns this off. Repeat tours skip the consent and profile questions,
-    # which are first-run only.
+    # turns this off. Repeat tours include the consent and profile questions
+    # only while they are unanswered (#454).
     tour_on_login: bool = True
     # Which agent engine the chat panel talks to (#367, defaulted in #403).
     #
@@ -387,6 +387,9 @@ class TelemetryConsent(BaseModel):
     # Without one nothing is exported whatever the flag says, and a control
     # that implies otherwise would be a lie about where the data goes.
     collector_configured: bool = False
+    # Read-only too: whether the user has made the choice at all, so the tour
+    # keeps asking until they have (#454). Ignored on PUT; saving is deciding.
+    decided: bool = False
 
 
 @router.get("/telemetry", response_model=TelemetryConsent)
@@ -397,6 +400,7 @@ async def get_telemetry_consent() -> TelemetryConsent:
     return TelemetryConsent(
         content_capture=await telemetry.content_capture(db),
         collector_configured=telemetry.collector_configured(),
+        decided=await telemetry.decided(db),
     )
 
 
@@ -430,6 +434,7 @@ async def update_telemetry_consent(req: TelemetryConsent) -> TelemetryConsent:
     return TelemetryConsent(
         content_capture=req.content_capture,
         collector_configured=telemetry.collector_configured(),
+        decided=True,
     )
 
 

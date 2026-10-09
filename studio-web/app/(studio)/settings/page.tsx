@@ -847,7 +847,11 @@ function TelemetrySection() {
       // Unknown state reads as "off": the control must never imply content is
       // being withheld when it is, nor invite consent it cannot record.
       .catch(() =>
-        setConsent({ content_capture: false, collector_configured: false })
+        setConsent({
+          content_capture: false,
+          collector_configured: false,
+          decided: false,
+        })
       );
   }, []);
 
@@ -1712,10 +1716,12 @@ function WelcomePageSection() {
 
   return (
     <div className="rounded-lg border border-line bg-surface p-4">
-      <h2 className="text-sm font-semibold text-fg">Welcome page</h2>
+      <h2 className="text-sm font-semibold text-fg">Welcome page &amp; tour</h2>
       <p className="mt-1 text-xs text-fgmuted">
-        Studio opens on a welcome page that introduces the product. Skip it to
-        land on Home directly. The page stays available at{" "}
+        Studio opens on a welcome page that introduces the product, and Home
+        runs a short guided tour each time you log in. Turn either off here;
+        &ldquo;Take a tour&rdquo; in the account menu always runs the tour. The
+        welcome page stays available at{" "}
         <a
           href={appRelativePath("/welcome")}
           className="font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
