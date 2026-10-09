@@ -31,6 +31,9 @@ export interface JobFilesSource {
   /** Distinguishes cached listings (a run id, a project id). */
   key: string;
   list: (jobId: string) => Promise<JobFiles>;
+  /** Files picked by name: a file node, or a group of them, clicked in the
+   *  graph with "Show files" on (#458). */
+  files: (lfns: string[]) => Promise<JobFiles>;
   url: (file: JobFile, download?: boolean) => string | null;
   /** Poll while the run is going: files appear as jobs finish. */
   live: boolean;
@@ -270,5 +273,80 @@ function FileGroup({
         </ul>
       )}
     </section>
+  );
+}
+
+
+/**
+ * A file node (or a group of them) clicked in the graph. Same rows as a job's
+ * file list, so a file looks and opens the same from either entry point.
+ */
+export function FileNodePanel({
+  title,
+  lfns,
+  source,
+  onClose,
+}: {
+  title: string;
+  lfns: string[];
+  source: JobFilesSource;
+  onClose: () => void;
+}) {
+  const [preview, setPreview] = useState<PreviewTarget | null>(null);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["file-info", source.key, ...lfns],
+    queryFn: () => source.files(lfns),
+    refetchInterval: source.live ? 10_000 : false,
+  });
+
+  const open = (f: JobFile) => {
+    const url = source.url(f);
+    const downloadUrl = source.url(f, true);
+    if (!url || !downloadUrl) return;
+    setPreview({ name: f.name, path: f.lfn, kind: f.kind, url, downloadUrl });
+  };
+
+  return (
+    <aside
+      aria-label="Selected files"
+      className="absolute inset-y-0 right-0 z-20 flex w-80 max-w-full flex-col border-l border-line bg-surface shadow-xl"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-start gap-2 border-b border-line px-3 py-2.5">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-fg" title={title}>
+            {title}
+          </p>
+          <p className="truncate text-xs text-fgsubtle">
+            {lfns.length === 1 ? lfns[0] : `${lfns.length} files`}
+          </p>
+        </div>
+        <button
+          onClick={onClose}
+          aria-label="Close files panel"
+          className="shrink-0 rounded p-1 text-fgmuted hover:bg-base hover:text-fg"
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto p-3">
+        {isLoading ? (
+          <p className="text-sm text-fgmuted">Loading…</p>
+        ) : error ? (
+          <p className="text-sm text-red-600 dark:text-rose-400">
+            Couldn&apos;t look the file up: {(error as Error).message}
+          </p>
+        ) : (
+          <FileGroup
+            title={lfns.length === 1 ? "File" : "Files"}
+            files={data?.files ?? []}
+            source={source}
+            onPreview={open}
+            live={source.live}
+          />
+        )}
+      </div>
+      {preview && <FilePreviewDialog target={preview} onClose={() => setPreview(null)} />}
+    </aside>
   );
 }

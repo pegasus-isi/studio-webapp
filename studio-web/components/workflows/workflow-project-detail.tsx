@@ -814,6 +814,7 @@ function GraphPane({
         ? {
             key: `run:${filesRunId}`,
             list: (jobId) => api.getRunJobFiles(filesRunId, jobId),
+            files: (lfns) => api.getRunFilesInfo(filesRunId, lfns),
             url: (f, download = false) =>
               f.location && f.path
                 ? api.runFileContentUrl(filesRunId, f.location, f.path, download)
@@ -823,6 +824,7 @@ function GraphPane({
         : {
             key: `project:${projectId}`,
             list: (jobId) => api.getProjectJobFiles(projectId, jobId),
+            files: (lfns) => api.getProjectFilesInfo(projectId, lfns),
             url: (f, download = false) =>
               f.location === "project" && f.path
                 ? api.projectFileContentUrl(projectId, f.path, download)
