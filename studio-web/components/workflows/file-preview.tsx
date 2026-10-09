@@ -13,14 +13,24 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  ArrowDown,
+  ArrowUp,
   FileArchive,
   FileImage,
   FileJson,
   FileSpreadsheet,
   FileText,
+  FileType2,
+  Search,
 } from "lucide-react";
 import type { OutputFile } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
+import {
+  compareCells,
+  detectDelimiter,
+  numericColumns,
+  parseCsv,
+} from "@/lib/preview/csv";
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -52,6 +62,8 @@ export function FileTypeIcon({
     ? [FileJson, "text-amber-600 dark:text-amber-400"]
     : kind === "image"
       ? [FileImage, "text-violet-600 dark:text-violet-400"]
+      : kind === "pdf"
+        ? [FileType2, "text-rose-600 dark:text-rose-400"]
       : kind === "table"
         ? [FileSpreadsheet, "text-emerald-600 dark:text-emerald-400"]
         : kind === "text"
@@ -68,6 +80,10 @@ export interface PreviewTarget {
   kind: OutputFile["kind"];
   url: string;
   downloadUrl: string;
+  /** Bytes, for the "showing the first part" note. */
+  size?: number;
+  /** Too big to show whole: fetch and show only its start (#460). */
+  partial?: boolean;
 }
 
 interface Renderer {
@@ -92,11 +108,35 @@ const RENDERERS: Renderer[] = [
       />
     ),
   },
-  // Before plain text: .json is classified as text server-side.
-  { matches: isJson, needsText: true, render: (_t, text) => <JsonPreview text={text} /> },
-  { matches: (t) => t.kind === "table", needsText: true, render: (_t, text) => <TablePreview text={text} /> },
+  {
+    // The browser's own viewer: paging, zoom, search, print, for nothing.
+    matches: (t) => t.kind === "pdf",
+    needsText: false,
+    render: (t) => (
+      <iframe
+        src={t.url}
+        title={t.name}
+        className="h-[75vh] w-full rounded border border-line bg-white"
+      />
+    ),
+  },
+  // Before plain text: .json is classified as text server-side. A partial
+  // JSON file is cut mid-structure and cannot parse, so it shows as text.
+  {
+    matches: (t) => isJson(t) && !t.partial,
+    needsText: true,
+    render: (_t, text) => <JsonPreview text={text} />,
+  },
+  {
+    matches: (t) => t.kind === "table",
+    needsText: true,
+    render: (t, text) => <TablePreview text={text} name={t.name} />,
+  },
   { matches: (t) => t.kind === "text", needsText: true, render: (_t, text) => <TextPreview text={text} /> },
 ];
+
+/** What the server sends for a partial preview (run_outputs.PREVIEW_MAX_BYTES). */
+const PARTIAL_BYTES = 2 * 1024 * 1024;
 
 export function FilePreviewDialog({
   target,
@@ -106,11 +146,14 @@ export function FilePreviewDialog({
   onClose: () => void;
 }) {
   const renderer = RENDERERS.find((r) => r.matches(target));
+  const fetchUrl = target.partial
+    ? `${target.url}${target.url.includes("?") ? "&" : "?"}head=1`
+    : target.url;
   const { data: text, isLoading, error } = useQuery({
-    queryKey: ["file-preview", target.url],
+    queryKey: ["file-preview", fetchUrl],
     enabled: !!renderer?.needsText,
     queryFn: async () => {
-      const res = await fetch(target.url);
+      const res = await fetch(fetchUrl);
       if (!res.ok) throw new Error(`Couldn't read the file (${res.status})`);
       return res.text();
     },
@@ -150,6 +193,13 @@ export function FilePreviewDialog({
           </span>
         </div>
 
+        {target.partial && (
+          <p className="border-b border-line bg-amber-50 px-4 py-1.5 text-xs text-amber-800 dark:bg-amber-400/10 dark:text-amber-300">
+            Showing the first {formatBytes(PARTIAL_BYTES)}
+            {target.size ? ` of ${formatBytes(target.size)}` : ""}. Download the
+            file for the rest.
+          </p>
+        )}
         <div className="min-h-0 flex-1 overflow-auto p-4">
           {!renderer ? (
             <p className="text-sm text-fgmuted">
@@ -178,51 +228,123 @@ function TextPreview({ text }: { text: string }) {
   );
 }
 
-/**
- * First rows of a CSV/TSV as a table.
- *
- * Deliberately naive: split on the delimiter, no quoted-field handling. A
- * scientist glancing at a result file is served by seeing columns; anyone who
- * needs the parse to be exactly right needs the file itself, which is one
- * click away. Row cap keeps a million-line CSV from freezing the tab.
- */
-function TablePreview({ text }: { text: string }) {
-  const MAX_ROWS = 200;
-  const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
-  if (lines.length === 0) return <p className="text-sm text-fgmuted">Empty file.</p>;
+/** Rows drawn at once. Sorting and filtering see every parsed row; only the
+ *  drawing is capped, which is what keeps a long table responsive. */
+const TABLE_DRAW = 1000;
 
-  const delimiter = lines[0].includes("\t") ? "\t" : ",";
-  const rows = lines.slice(0, MAX_ROWS).map((l) => l.split(delimiter));
-  const [header, ...body] = rows;
+/**
+ * A CSV/TSV as a sortable, filterable table (#460).
+ *
+ * Parsed properly (quoted fields, see lib/preview/csv) — the old preview split
+ * on commas and shifted every column after the first quoted one. Click a
+ * header to sort (numbers as numbers), type to filter rows.
+ */
+function TablePreview({ text, name }: { text: string; name: string }) {
+  const parsed = useMemo(() => {
+    const delimiter = detectDelimiter(text, name);
+    const { rows, truncated } = parseCsv(text, delimiter);
+    const [header = [], ...body] = rows;
+    return { header, body, truncated, numeric: numericColumns(body) };
+  }, [text, name]);
+  const [sort, setSort] = useState<{ col: number; desc: boolean } | null>(null);
+  const [filter, setFilter] = useState("");
+
+  const shown = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    let rows = parsed.body.map((cells, i) => ({ cells, line: i + 1 }));
+    if (needle) {
+      rows = rows.filter((r) => r.cells.some((c) => c.toLowerCase().includes(needle)));
+    }
+    if (sort) {
+      const numeric = parsed.numeric[sort.col] ?? false;
+      rows = [...rows].sort((a, b) => {
+        const order = compareCells(a.cells[sort.col] ?? "", b.cells[sort.col] ?? "", numeric);
+        return sort.desc ? -order : order;
+      });
+    }
+    return rows;
+  }, [parsed, filter, sort]);
+
+  if (parsed.header.length === 0) {
+    return <p className="text-sm text-fgmuted">Empty file.</p>;
+  }
+
+  const toggleSort = (col: number) =>
+    setSort((s) =>
+      s?.col !== col ? { col, desc: false } : s.desc ? null : { col, desc: true }
+    );
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-xs">
-        <thead>
-          <tr className="border-b border-line">
-            {header.map((cell, i) => (
-              <th key={i} className="whitespace-nowrap px-2 py-1 font-medium text-fgmuted">
-                {cell}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-line">
-          {body.map((row, i) => (
-            <tr key={i}>
-              {row.map((cell, j) => (
-                <td key={j} className={cn("whitespace-nowrap px-2 py-1 text-fg")}>
-                  {cell}
-                </td>
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-1.5 rounded-md border border-line px-2 py-1 focus-within:border-pegasus-400">
+          <Search size={14} aria-hidden="true" className="text-fgsubtle" />
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter rows"
+            aria-label="Filter rows"
+            className="w-48 bg-transparent text-xs text-fg outline-none placeholder:text-fgsubtle"
+          />
+        </label>
+        <span className="text-xs text-fgsubtle">
+          {filter ? `${shown.length.toLocaleString()} of ` : ""}
+          {parsed.body.length.toLocaleString()} rows · {parsed.header.length} columns
+          {parsed.truncated ? " (the rest not loaded)" : ""}
+        </span>
+      </div>
+      <div className="max-h-[65vh] overflow-auto rounded border border-line">
+        <table className="w-full text-left text-xs">
+          <thead className="sticky top-0 z-10 bg-surface shadow-[0_1px_0_var(--c-line,#e5e7eb)]">
+            <tr>
+              <th className="w-10 px-2 py-1.5 text-right font-normal text-fgsubtle">#</th>
+              {parsed.header.map((cell, i) => (
+                <th
+                  key={i}
+                  aria-sort={
+                    sort?.col === i ? (sort.desc ? "descending" : "ascending") : "none"
+                  }
+                  className={cn("whitespace-nowrap px-2 py-1.5 font-medium text-fgmuted", parsed.numeric[i] && "text-right")}
+                >
+                  <button
+                    onClick={() => toggleSort(i)}
+                    className="inline-flex items-center gap-1 hover:text-fg"
+                    title="Sort by this column"
+                  >
+                    {cell || `column ${i + 1}`}
+                    {sort?.col === i &&
+                      (sort.desc ? <ArrowDown size={12} /> : <ArrowUp size={12} />)}
+                  </button>
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {lines.length > MAX_ROWS && (
-        <p className="mt-2 text-xs text-fgsubtle">
-          Showing the first {MAX_ROWS} of {lines.length} rows — download the file
-          for the rest.
+          </thead>
+          <tbody className="divide-y divide-line">
+            {shown.slice(0, TABLE_DRAW).map((r) => (
+              <tr key={r.line} className="hover:bg-base">
+                <td className="px-2 py-1 text-right text-fgsubtle">{r.line}</td>
+                {parsed.header.map((_, j) => (
+                  <td
+                    key={j}
+                    title={r.cells[j]}
+                    className={cn(
+                      "max-w-[22rem] truncate whitespace-nowrap px-2 py-1 text-fg",
+                      parsed.numeric[j] && "text-right tabular-nums"
+                    )}
+                  >
+                    {r.cells[j] ?? ""}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {shown.length > TABLE_DRAW && (
+        <p className="text-xs text-fgsubtle">
+          Drawing the first {TABLE_DRAW.toLocaleString()} of{" "}
+          {shown.length.toLocaleString()} rows. Sort or filter to see others, or
+          download the file.
         </p>
       )}
     </div>

@@ -160,7 +160,9 @@ def test_listing_classifies_and_flags_previewability(tmp_path):
     assert by_name["model.bin"]["previewable"] is False
     # Right kind, too big — a gigabyte of text must not be offered as a preview.
     assert by_name["huge.txt"]["kind"] == "text"
-    assert by_name["huge.txt"]["previewable"] is False
+    # Over the limit, text is previewed in part (its start), not refused (#460).
+    assert by_name["huge.txt"]["previewable"] is True
+    assert by_name["huge.txt"]["partial"] is True
 
 
 def test_listing_paginates(tmp_path):
@@ -275,3 +277,55 @@ def test_hidden_directories_are_not_listed(tmp_path):
         "california_catalog.csv",
         os.path.join("plots", "map.png"),
     ]
+
+
+# --- partial previews and PDFs (#460) ---
+
+
+def test_large_text_is_previewable_in_part_and_pdf_is_a_kind(tmp_path):
+    big = ro.PREVIEW_MAX_BYTES + 10
+    (tmp_path / "catalog.csv").write_text("a,b\n" + "1,2\n" * (big // 4))
+    (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4\n" + b"\0" * 1000)
+    (tmp_path / "blob.bin").write_bytes(b"\0" * big)
+
+    csv = ro._entry(str(tmp_path / "catalog.csv"), "catalog.csv")
+    assert (csv["previewable"], csv["partial"]) == (True, True)
+    pdf = ro._entry(str(tmp_path / "report.pdf"), "report.pdf")
+    assert pdf["kind"] == "pdf" and (pdf["previewable"], pdf["partial"]) == (True, False)
+    blob = ro._entry(str(tmp_path / "blob.bin"), "blob.bin")
+    assert (blob["previewable"], blob["partial"]) == (False, False)
+
+
+def test_read_head_never_ends_on_half_a_row(tmp_path):
+    p = tmp_path / "t.csv"
+    p.write_text("h1,h2\n" + "".join(f"{i},{i * 2}\n" for i in range(100_000)))
+    head = ro.read_head(str(p), 1000)
+    assert len(head) <= 1000
+    assert head.endswith(b"\n")
+    assert all(len(line.split(b",")) == 2 for line in head.splitlines())
+
+
+def test_head_preview_endpoint(client, monkeypatch, tmp_path):
+    import routers.workflows as wf
+
+    out = tmp_path / "out"
+    out.mkdir()
+    big = out / "catalog.csv"
+    big.write_text("a,b\n" + "1,2\n" * (ro.PREVIEW_MAX_BYTES // 4 + 100))
+
+    async def _resolve(run_id):
+        return str(tmp_path)
+
+    monkeypatch.setattr(wf, "_resolve_run_dir", _resolve)
+    monkeypatch.setattr(ro, "resolve_output_dir", lambda *a, **k: (str(out), "catalog"))
+
+    whole = client.get("/api/workflows/r1/outputs/file", params={"path": "catalog.csv"})
+    assert whole.status_code == 413
+    head = client.get(
+        "/api/workflows/r1/outputs/file", params={"path": "catalog.csv", "head": "1"}
+    )
+    assert head.status_code == 200
+    assert head.headers["x-preview-partial"] == "1"
+    assert int(head.headers["x-file-size"]) == big.stat().st_size
+    assert len(head.content) <= ro.PREVIEW_MAX_BYTES and head.text.startswith("a,b\n")
+    assert head.headers["content-type"].startswith("text/plain")

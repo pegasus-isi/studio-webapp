@@ -693,9 +693,11 @@ export interface OutputFile {
   name: string;
   size: number;
   modified: string;
-  kind: "image" | "table" | "text" | "binary";
+  kind: "image" | "table" | "text" | "pdf" | "binary";
   /** Decided server-side, so the size threshold can't drift between the two. */
   previewable: boolean;
+  /** Too big to show whole: the preview shows its start (#460). */
+  partial?: boolean;
 }
 
 export interface RunOutputs {
@@ -761,6 +763,7 @@ export interface JobFile {
   path: string | null;
   size: number | null;
   previewable: boolean;
+  partial?: boolean;
 }
 
 export interface JobFiles {

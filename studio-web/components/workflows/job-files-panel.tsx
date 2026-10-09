@@ -173,7 +173,15 @@ function JobFileList({ job, source }: { job: PanelJob; source: JobFilesSource })
     const url = source.url(f);
     const downloadUrl = source.url(f, true);
     if (!url || !downloadUrl) return;
-    setPreview({ name: f.name, path: f.lfn, kind: f.kind, url, downloadUrl });
+    setPreview({
+      name: f.name,
+      path: f.lfn,
+      kind: f.kind,
+      size: f.size ?? undefined,
+      partial: f.partial,
+      url,
+      downloadUrl,
+    });
   };
 
   return (
@@ -303,7 +311,15 @@ export function FileNodePanel({
     const url = source.url(f);
     const downloadUrl = source.url(f, true);
     if (!url || !downloadUrl) return;
-    setPreview({ name: f.name, path: f.lfn, kind: f.kind, url, downloadUrl });
+    setPreview({
+      name: f.name,
+      path: f.lfn,
+      kind: f.kind,
+      size: f.size ?? undefined,
+      partial: f.partial,
+      url,
+      downloadUrl,
+    });
   };
 
   return (
