@@ -18,14 +18,27 @@
  * scroll position and usually the user.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/utils";
 
 export interface TourStep {
   /** Value of the `data-tour` attribute to spotlight. */
   anchor: string;
   title: string;
-  body: string;
+  body?: string;
+  /** Custom content below the body. `next` advances (or closes on the last
+   *  step), for steps that finish themselves. */
+  render?: (ctx: { next: () => void }) => ReactNode;
+  /** The step's own content supplies its buttons; hide Skip/Back/Next. */
+  ownControls?: boolean;
+  /** Card width in px (defaults to 340); forms need more room. */
+  width?: number;
 }
 
 interface Rect {
@@ -36,7 +49,8 @@ interface Rect {
 }
 
 const PAD = 6;
-const CARD_W = 300;
+// Sized for 14px body text; 300 was set for 12px and wrapped every sentence.
+const CARD_W = 340;
 const GAP = 12;
 
 function rectOf(anchor: string): Rect | null {
@@ -53,10 +67,14 @@ export function GuidedTour({
   steps,
   open,
   onClose,
+  dontShowAgain,
 }: {
   steps: TourStep[];
   open: boolean;
   onClose: () => void;
+  /** A "Don't show me this again" checkbox on every card, for a tour that
+   *  otherwise comes back on each login. Omit it and no checkbox is shown. */
+  dontShowAgain?: { checked: boolean; onChange: (checked: boolean) => void };
 }) {
   const [i, setI] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);
@@ -194,47 +212,72 @@ export function GuidedTour({
         style={cardStyle}
         className="absolute rounded-xl border border-line bg-surface p-4 shadow-2xl"
       >
-        <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-fgsubtle">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.13em] text-fgsubtle">
           {i + 1} of {live.length}
         </p>
-        <h2 className="mt-1.5 text-sm font-semibold text-fg">{step.title}</h2>
-        <p className="mt-1.5 text-xs leading-relaxed text-fgmuted">
-          {step.body}
-        </p>
+        <h2
+          id="guided-tour-title"
+          className="mt-1.5 text-base font-semibold text-fg"
+        >
+          {step.title}
+        </h2>
+        {step.body && (
+          <p className="mt-1.5 text-sm leading-relaxed text-fgmuted">
+            {step.body}
+          </p>
+        )}
+        {step.render && <div className="mt-2.5">{step.render({ next })}</div>}
 
-        <div className="mt-3.5 flex items-center gap-2">
-          <div className="flex gap-1" aria-hidden="true">
-            {live.map((s, n) => (
-              <span
-                key={s.anchor}
-                className={cn(
-                  "h-1.5 w-1.5 rounded-full",
-                  n === i ? "bg-pegasus-600" : "bg-line"
-                )}
-              />
-            ))}
-          </div>
-          <button
-            onClick={close}
-            className="ml-auto rounded-lg px-2 py-1 text-xs font-medium text-fgmuted hover:text-fg"
-          >
-            Skip
-          </button>
-          {i > 0 && (
+        {!step.ownControls && (
+          <div className="mt-3.5 flex items-center gap-2">
+            <div className="flex gap-1" aria-hidden="true">
+              {live.map((s, n) => (
+                <span
+                  key={s.anchor ?? `step-${n}`}
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full",
+                    n === i ? "bg-pegasus-600" : "bg-line"
+                  )}
+                />
+              ))}
+            </div>
             <button
-              onClick={() => setI(i - 1)}
-              className="rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-fgmuted hover:text-fg"
+              onClick={close}
+              className="ml-auto rounded-lg px-2 py-1 text-sm font-medium text-fgmuted hover:text-fg"
             >
-              Back
+              Skip
             </button>
-          )}
-          <button
-            onClick={next}
-            className="rounded-lg bg-pegasus-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-pegasus-700"
-          >
-            {i + 1 >= live.length ? "Done" : "Next"}
-          </button>
-        </div>
+            {i > 0 && (
+              <button
+                onClick={() => setI(i - 1)}
+                className="rounded-lg border border-line px-3 py-1 text-sm font-medium text-fgmuted hover:text-fg"
+              >
+                Back
+              </button>
+            )}
+            <button
+              onClick={next}
+              className="rounded-lg bg-pegasus-600 px-3 py-1 text-sm font-semibold text-white hover:bg-pegasus-700"
+            >
+              {i + 1 >= live.length ? "Done" : "Next"}
+            </button>
+          </div>
+        )}
+
+        {/* On every card, not only the last: most people leave a tour early,
+            and Escape or Skip on step two must not mean "see it again
+            tomorrow". Saved the moment it is ticked. */}
+        {dontShowAgain && (
+          <label className="mt-3 flex cursor-pointer items-center gap-2 border-t border-line pt-2.5 text-xs text-fgsubtle hover:text-fgmuted">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-pegasus-600"
+              checked={dontShowAgain.checked}
+              onChange={(e) => dontShowAgain.onChange(e.target.checked)}
+            />
+            Don&apos;t show me this tour again
+          </label>
+        )}
       </div>
     </div>
   );

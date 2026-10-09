@@ -124,15 +124,15 @@ export default function WelcomePage() {
             Open Studio
             <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
           </a>
-          <p className="text-[11px] text-fgsubtle/50">Free · No setup · Ready in seconds</p>
+          <p className="text-sm font-medium text-fgmuted">Free · No setup · Ready in seconds</p>
           {/* Saved server-side the moment it is ticked, so it holds even if
               the user leaves through the browser rather than the button. The
               app root reads it and sends them to Home instead; Settings →
               Pegasus Options turns it back off. */}
-          <label className="mt-3 flex cursor-pointer items-center gap-2 text-[12px] text-fgsubtle/70 transition-colors hover:text-fgmuted">
+          <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-fgsubtle transition-colors hover:text-fgmuted">
             <input
               type="checkbox"
-              className="accent-accent"
+              className="h-4 w-4 accent-accent"
               checked={prefs.skip_welcome}
               disabled={updatePrefs.isPending}
               onChange={(e) =>
@@ -143,15 +143,19 @@ export default function WelcomePage() {
           </label>
         </div>
 
-        {/* Scroll arrow */}
+        {/* Scroll arrow. In the accent colour and on a pill rather than a
+            faint grey caption: it is the way into everything below the fold,
+            and at 40% grey people read it as decoration and never scrolled. */}
         <button
           onClick={() => detailsRef.current?.scrollIntoView({ behavior: "smooth" })}
-          className="absolute bottom-8 flex flex-col items-center gap-1.5 text-fgsubtle/40 transition-colors hover:text-fgsubtle/70"
+          className="absolute bottom-8 flex flex-col items-center gap-1 text-pegasus-700 transition-colors hover:text-pegasus-800 dark:text-pegasus-300 dark:hover:text-pegasus-200"
           style={anim(0.4)}
           aria-label="Scroll to learn more"
         >
-          <span className="text-[10px] font-medium uppercase tracking-widest">Learn more</span>
-          <ChevronDown size={18} className="animate-bounce" />
+          <span className="rounded-full border border-pegasus-200 bg-pegasus-50 px-4 py-1.5 text-xs font-semibold uppercase tracking-widest transition-colors hover:bg-pegasus-100 dark:border-pegasus-400/30 dark:bg-pegasus-400/10 dark:hover:bg-pegasus-400/20">
+            Learn more
+          </span>
+          <ChevronDown size={20} className="animate-bounce" />
         </button>
       </section>
 

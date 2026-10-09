@@ -310,7 +310,13 @@ class UIPreferences(BaseModel):
     # returning user may never want to see again, and the Next server reads
     # this flag when deciding where the app root redirects.
     skip_welcome: bool = False
-    # Which agent engine the chat panel talks to (#367).
+    # Open the guided tour on every login (once per browser session), not just
+    # the first visit. On by default: people asked for the tour to come back,
+    # and the tour itself carries a "Don't show me this again" checkbox that
+    # turns this off. Repeat tours skip the consent and profile questions,
+    # which are first-run only.
+    tour_on_login: bool = True
+    # Which agent engine the chat panel talks to (#367, defaulted in #403).
     #
     # "opencode" makes the panel a client of the supervised `opencode serve`
     # process, which brings context compaction, cross-session memory,

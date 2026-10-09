@@ -286,7 +286,7 @@ function AttentionStrip({
  * skips any anchor that isn't on screen — Resources and Terminal sit behind
  * the Advanced disclosure for most users, so their steps simply don't run.
  */
-const TOUR: TourStep[] = [
+const WALKTHROUGH: TourStep[] = [
   {
     anchor: "nav-analyses",
     title: "Analyses",
@@ -324,12 +324,42 @@ const TOUR: TourStep[] = [
   },
 ];
 
+const FULL_TOUR: TourStep[] = WALKTHROUGH;
+
+// "Once per login" is approximated as once per browser session: a session
+// cookie (no expiry) is shared across tabs, so a second Studio tab does not
+// restart the tour, and the browser clears it on quit. Scoped to the app's
+// base path, because under JupyterHub every user's server shares the host.
+const TOUR_SEEN_COOKIE = "studio_tour_seen";
+
+function tourSeenThisSession(): boolean {
+  try {
+    return document.cookie
+      .split(";")
+      .some((c) => c.trim().startsWith(`${TOUR_SEEN_COOKIE}=`));
+  } catch {
+    return false;
+  }
+}
+
+function markTourSeen() {
+  try {
+    const path = new URL(document.baseURI).pathname || "/";
+    document.cookie = `${TOUR_SEEN_COOKIE}=1; path=${path}; SameSite=Lax`;
+  } catch {
+    /* a cookie we cannot set only means the tour may show again */
+  }
+}
+
 export function DashboardView() {
   const { data } = useDashboard();
   const openChatWith = usePanelStore((s) => s.openChatWith);
   const { prefs, isLoading: prefsLoading } = useUIPreferences();
   const updatePrefs = useUpdateUIPreferences();
   const [tourOpen, setTourOpen] = useState(false);
+  // Which tour is open: the full one (first visit, "Take a tour") or the
+  // walkthrough alone (the automatic per-login repeat).
+  const [tourFull, setTourFull] = useState(true);
   const [glossary, setGlossary] = useState(false);
 
   // "Take a tour" in the account menu links here with ?tour=1, so the tour is
@@ -338,23 +368,35 @@ export function DashboardView() {
   const searchParams = useSearchParams();
   const tourRequested = searchParams.get("tour") === "1";
   useEffect(() => {
-    if (tourRequested) setTourOpen(true);
+    if (!tourRequested) return;
+    setTourFull(true);
+    setTourOpen(true);
   }, [tourRequested]);
 
-  // First visit runs the tour on its own. `welcome_dismissed` is the same
-  // preference the old welcome card used, so anyone who already dismissed that
-  // is not re-onboarded by the replacement.
+  // The tour opens on its own on the first visit (`welcome_dismissed` is the
+  // same preference the old welcome card used, so anyone who dismissed that is
+  // not re-onboarded) and then once per login while `tour_on_login` is on.
   const firstVisit = !prefsLoading && !prefs.welcome_dismissed;
+  const loginRepeat =
+    !prefsLoading && prefs.welcome_dismissed && prefs.tour_on_login;
   useEffect(() => {
-    if (!firstVisit) return;
+    if (tourRequested || (!firstVisit && !loginRepeat)) return;
+    if (!firstVisit && tourSeenThisSession()) return;
+    // Marked when it opens, not when it closes: navigating away mid-tour and
+    // back to Home must not start it over.
+    markTourSeen();
     // A frame, so the rail and the composer are laid out before the tour
     // measures them — a step whose anchor has no box gets skipped.
-    const t = requestAnimationFrame(() => setTourOpen(true));
+    const t = requestAnimationFrame(() => {
+      setTourFull(firstVisit);
+      setTourOpen(true);
+    });
     return () => cancelAnimationFrame(t);
-  }, [firstVisit]);
+  }, [firstVisit, loginRepeat, tourRequested]);
 
   const endTour = () => {
     setTourOpen(false);
+    markTourSeen();
     if (!prefs.welcome_dismissed) {
       updatePrefs.mutate({ welcome_dismissed: true });
     }
@@ -500,7 +542,15 @@ export function DashboardView() {
         </div>
       </div>
 
-      <GuidedTour steps={TOUR} open={tourOpen} onClose={endTour} />
+      <GuidedTour
+        steps={tourFull ? FULL_TOUR : WALKTHROUGH}
+        open={tourOpen}
+        onClose={endTour}
+        dontShowAgain={{
+          checked: !prefs.tour_on_login,
+          onChange: (off) => updatePrefs.mutate({ tour_on_login: !off }),
+        }}
+      />
     </div>
   );
 }

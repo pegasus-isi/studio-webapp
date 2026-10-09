@@ -35,10 +35,22 @@ const FALLBACK: api.UIPreferences = {
   // Only read by the checkbox on the welcome page and in Settings; the
   // redirect itself is decided server-side from the stored value.
   skip_welcome: false,
+<<<<<<< HEAD
   // Matches the server default (#367). The builtin loop is what every existing
   // conversation was written against, so a slow or failed preference fetch
   // must not silently swap the chat engine underneath someone mid-sentence.
   chat_engine: "builtin",
+=======
+  // Off until the fetch lands, so a slow request never pops a tour at someone
+  // who turned it off; the server default is on.
+  tour_on_login: false,
+  // Matches the server default (#367, flipped in #403). It has to, for the
+  // same reason as `simple_run` above: this is what renders between mount and
+  // the fetch landing, and `chat-engine.tsx` mounts an engine off it — the
+  // builtin one fetches history and can reattach to a running turn, so a
+  // mismatch here would start work on the wrong engine and then swap it.
+  chat_engine: "opencode",
+>>>>>>> 5194f0f (feat(onboarding): readable welcome CTAs, larger tour text, tour on every login)
 };
 
 export function useUIPreferences() {

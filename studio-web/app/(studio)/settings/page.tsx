@@ -1682,6 +1682,17 @@ function WelcomePageSection() {
         />
         Skip the welcome page and open Home directly
       </label>
+      <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-fg">
+        <input
+          type="checkbox"
+          checked={prefs.tour_on_login}
+          disabled={update.isPending}
+          onChange={(e) =>
+            update.mutate({ tour_on_login: e.target.checked })
+          }
+        />
+        Show the guided tour each time I log in
+      </label>
       {update.isError && (
         <p className="mt-2 text-xs text-red-600 dark:text-rose-400">
           Couldn&apos;t save: {(update.error as Error).message}

@@ -660,6 +660,8 @@ export interface UIPreferences {
   nav_advanced_open: boolean;
   /** Skip the landing page at `/` and open Home directly (#370). */
   skip_welcome: boolean;
+  /** Open the guided tour on every login (once per browser session). */
+  tour_on_login: boolean;
   /**
    * Which agent engine the chat panel talks to (#367). "opencode" makes the
    * panel a client of the `opencode serve` process in this pod, which brings
