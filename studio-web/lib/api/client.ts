@@ -783,6 +783,24 @@ export async function getProjectJobFiles(projectId: string, jobId: string) {
   );
 }
 
+function lfnQuery(lfns: string[]): string {
+  const q = new URLSearchParams();
+  for (const l of lfns) q.append("lfn", l);
+  return q.toString();
+}
+
+export async function getRunFilesInfo(runId: string, lfns: string[]) {
+  return request<JobFiles>(
+    `/workflows/${encodeURIComponent(runId)}/files/info?${lfnQuery(lfns)}`
+  );
+}
+
+export async function getProjectFilesInfo(projectId: string, lfns: string[]) {
+  return request<JobFiles>(
+    `/workflows/projects/${encodeURIComponent(projectId)}/files/info?${lfnQuery(lfns)}`
+  );
+}
+
 export function runFileContentUrl(
   runId: string,
   location: FileLocation,
