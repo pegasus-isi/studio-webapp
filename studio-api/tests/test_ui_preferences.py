@@ -22,6 +22,8 @@ def test_simple_run_is_on_by_default(client):
         "welcome_dismissed": False,
         "nav_advanced_open": False,
         "skip_welcome": False,
+        # The tour returns on every login until the user opts out.
+        "tour_on_login": True,
         # OpenCode became the default in #403, once the trial in a real pod
         # showed it working. Asserted so flipping it is an edit to this line,
         # not a side effect.
@@ -36,6 +38,7 @@ def test_preferences_round_trip(client):
         "welcome_dismissed": True,
         "nav_advanced_open": True,
         "skip_welcome": True,
+        "tour_on_login": False,
         # The non-default engine, so the round trip proves a stored value is
         # served back rather than coincidentally matching the default.
         "chat_engine": "builtin",
@@ -68,6 +71,7 @@ def test_unknown_keys_in_stored_settings_are_ignored(client, monkeypatch):
         "welcome_dismissed": False,
         "nav_advanced_open": False,
         "skip_welcome": False,
+        "tour_on_login": True,
         "chat_engine": "opencode",
     }
 
@@ -90,6 +94,7 @@ def test_corrupt_stored_settings_fall_back_to_defaults(client, monkeypatch):
         "welcome_dismissed": False,
         "nav_advanced_open": False,
         "skip_welcome": False,
+        "tour_on_login": True,
         "chat_engine": "opencode",
     }
 
