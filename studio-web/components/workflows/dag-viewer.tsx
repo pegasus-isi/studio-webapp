@@ -10,6 +10,10 @@ import {
 } from "@xyflow/react";
 import { Download } from "lucide-react";
 import dagre from "@dagrejs/dagre";
+import {
+  JobFilesPanel,
+  type JobFilesSource,
+} from "@/components/workflows/job-files-panel";
 import "@xyflow/react/dist/style.css";
 
 interface GraphNode {
@@ -39,6 +43,8 @@ interface Props {
   /** Extra controls for the header — the run picker, when inline. */
   headerExtra?: React.ReactNode;
   onClose?: () => void;
+  /** Click a job to see the files it reads and writes. Omit to disable. */
+  jobFiles?: JobFilesSource;
 }
 
 // UML-state-machine-style palette (after mjstealey/workflow-visualizer)
@@ -614,6 +620,7 @@ export function DagViewer({
   inline = false,
   headerExtra,
   onClose,
+  jobFiles,
 }: Props) {
   const [data, setData] = useState<GraphData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -774,6 +781,24 @@ export function DagViewer({
   const display = useMemo(
     () => (data ? (groupFanout ? clusterGraph(data) : passthroughGraph(data)) : null),
     [data, groupFanout]
+  );
+
+  // The node whose files are open. Kept as an id and resolved against the
+  // current picture, so a live re-poll updates its statuses in place and a
+  // regrouping that removes it simply closes the panel.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = useMemo(
+    () => (selectedId ? display?.nodes.find((n) => n.id === selectedId) : undefined),
+    [display, selectedId]
+  );
+  const selectedJobs = useMemo(
+    () =>
+      (selected?.members ?? []).map((m) => ({
+        id: m.id,
+        label: m.label,
+        status: m.status,
+      })),
+    [selected]
   );
 
   const flow = useMemo<
@@ -964,6 +989,7 @@ export function DagViewer({
                 </div>
               )}
               <ReactFlow
+                className={jobFiles ? "[&_.react-flow__node]:cursor-pointer" : undefined}
                 nodes={flow.nodes}
                 edges={flow.edges}
                 fitView
@@ -984,10 +1010,20 @@ export function DagViewer({
                 // surface, so wheel-zoom is what you want there.
                 preventScrolling={!inline}
                 proOptions={{ hideAttribution: true }}
+                onNodeClick={jobFiles ? (_e, node) => setSelectedId(node.id) : undefined}
+                onPaneClick={jobFiles ? () => setSelectedId(null) : undefined}
               >
                 <Background gap={16} />
                 <Controls showInteractive={false} />
               </ReactFlow>
+              {jobFiles && selected && (
+                <JobFilesPanel
+                  title={selected.label}
+                  jobs={selectedJobs}
+                  source={jobFiles}
+                  onClose={() => setSelectedId(null)}
+                />
+              )}
             </>
           ) : (
             <p className="p-6 text-sm text-fgsubtle">Loading DAG…</p>
@@ -1000,6 +1036,9 @@ export function DagViewer({
             inline ? "pr-4" : "pr-7"
           }`}
         >
+          {jobFiles && (
+            <span className="font-medium text-fg">Click a step to see its files ·</span>
+          )}
           {Object.entries(STATUS_STYLE)
             .filter(([k]) => k !== "queued")
             .map(([k, s]) => (
