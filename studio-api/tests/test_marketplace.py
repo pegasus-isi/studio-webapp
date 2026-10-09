@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
+import pytest
+
 import routers.marketplace as mkt
+
+# The real search, captured before the autouse fixture replaces it.
+_real_fetch_topic_repos = mkt._fetch_topic_repos
 
 
 def _reset():
@@ -12,7 +18,45 @@ def _reset():
     mkt._cache["ts"] = 0.0
 
 
-def test_catalog_merges_registry_and_curated_deduped(client, monkeypatch):
+def _search_item(name: str, *, topics=("pegasus-studio-example",), description="", **extra):
+    """One repo as GitHub's repository-search API returns it."""
+    return {
+        "name": name,
+        "html_url": f"https://github.com/pegasus-isi/{name}",
+        "description": description,
+        "topics": list(topics),
+        "archived": False,
+        "private": False,
+        "license": {"name": "Apache License 2.0"},
+        **extra,
+    }
+
+
+# What the org listed under the marker topic when the hand-maintained list
+# was replaced; the tests below were written against these six.
+_TAGGED = [
+    _search_item("quickstart-workflow", topics=("pegasus-studio-example", "tutorial")),
+    _search_item("soilmoisture-workflow", topics=("pegasus-studio-example", "earth-science")),
+    _search_item("airquality-workflow", topics=("pegasus-studio-example", "earth-science")),
+    _search_item("earthquake-workflow", topics=("pegasus-studio-example", "earth-science")),
+    _search_item("crophealth-workflow", topics=("pegasus-studio-example", "machine-learning")),
+    _search_item(
+        "variant-calling-pegasus-workflow", topics=("pegasus-studio-example", "bioinformatics")
+    ),
+]
+
+
+@pytest.fixture(autouse=True)
+def _org_repos(monkeypatch):
+    """Never reach GitHub search from tests; serve the six tagged repos."""
+    async def fake_topic_repos():
+        return mkt._from_search(_TAGGED)
+
+    monkeypatch.setattr(mkt, "_fetch_topic_repos", fake_topic_repos)
+    monkeypatch.setattr(mkt, "_last_topic_repos", [])
+
+
+def test_catalog_merges_registry_and_org_repos_deduped(client, monkeypatch):
     # _fetch_registry returns already-normalized entries (repo_url, source, …).
     async def fake_registry():
         return [
@@ -20,7 +64,7 @@ def test_catalog_merges_registry_and_curated_deduped(client, monkeypatch):
                 {
                     "id": "variant-calling",
                     "name": "variant-calling",
-                    # Duplicate of a curated repo (different case + .git) -> deduped.
+                    # Duplicate of an org repo (different case + .git) -> deduped.
                     "repo_url": "https://GitHub.com/pegasus-isi/variant-calling-pegasus-workflow.git",
                     "topic": "bioinformatics",
                 },
@@ -43,10 +87,10 @@ def test_catalog_merges_registry_and_curated_deduped(client, monkeypatch):
     body = client.get("/api/marketplace").json()
     wfs = {w["id"]: w for w in body["workflows"]}
 
-    # All 6 curated + 1 unique registry = 7; the dup collapses onto curated.
+    # All 6 org repos + 1 unique registry = 7; the dup collapses onto the org one.
     assert body["count"] == 7
     assert "orcasound" in wfs and wfs["orcasound"]["source"] == "PegasusHub"
-    # variant-calling appears once, as the curated Pegasus-ISI entry.
+    # variant-calling appears once, as the Pegasus-ISI org entry.
     vc = [w for w in body["workflows"] if "variant-calling" in w["repo_url"].lower()]
     assert len(vc) == 1
     assert vc[0]["source"] == "Pegasus-ISI"
@@ -59,7 +103,7 @@ def test_catalog_merges_registry_and_curated_deduped(client, monkeypatch):
 
 def test_catalog_leads_with_featured_examples(client, monkeypatch):
     """The catalog opens with quickstart and then the portable-site examples,
-    in order, ahead of the other curated/registry entries."""
+    in order, ahead of the other org/registry entries."""
     async def fake_registry():
         return [
             mkt._normalize(
@@ -81,7 +125,7 @@ def test_catalog_leads_with_featured_examples(client, monkeypatch):
     assert ids[4:] == ["soilmoisture", "variant-calling-pegasus", "orcasound"]
 
 
-def test_registry_failure_falls_back_to_curated(client, monkeypatch):
+def test_registry_failure_still_lists_org_repos(client, monkeypatch):
     async def empty_registry():
         return []
 
@@ -89,7 +133,7 @@ def test_registry_failure_falls_back_to_curated(client, monkeypatch):
     _reset()
 
     body = client.get("/api/marketplace").json()
-    assert body["count"] == len(mkt._CURATED)
+    assert body["count"] == len(_TAGGED)
     assert all(w["source"] == "Pegasus-ISI" for w in body["workflows"])
 
 
@@ -376,3 +420,105 @@ def test_add_uses_separator_and_protocol_pin(client, monkeypatch, tmp_path):
     # Everything after "--" is positional: <url> <dir>.
     assert args[sep + 1].startswith("https://")
     assert captured["env"].get("GIT_ALLOW_PROTOCOL") == "http:https"
+
+
+# --- org repos come from the marker GitHub topic ---
+
+
+def test_search_items_become_catalog_entries():
+    entries = mkt._from_search([
+        _search_item(
+            "earthquake-workflow",
+            topics=("pegasus-studio-example", "earth-science", "seismology"),
+            description="USGS earthquake analysis",
+        ),
+    ])
+    assert len(entries) == 1
+    e = entries[0]
+    # The id the hand-maintained list used, so existing clones and the
+    # featured order are unaffected by the move to topics.
+    assert e["id"] == "earthquake"
+    assert e["name"] == "earthquake-workflow"
+    assert e["source"] == "Pegasus-ISI"
+    assert e["description"] == "USGS earthquake analysis"
+    assert e["repo_url"] == "https://github.com/pegasus-isi/earthquake-workflow"
+    assert e["license"] == "Apache License 2.0"
+    # The marker topic is not a subject: as a chip it would match everything.
+    assert e["topics"] == ["earth science", "seismology"]
+
+
+def test_archived_private_and_unsafe_repos_are_skipped():
+    entries = mkt._from_search([
+        _search_item("old-workflow", archived=True),
+        _search_item("secret-workflow", private=True),
+        _search_item("evil-workflow", html_url="ext::sh -c touch% /tmp/pwned"),
+        _search_item("kept-workflow"),
+        "not a dict",
+    ])
+    assert [e["id"] for e in entries] == ["kept"]
+
+
+class _FakeResponse:
+    def __init__(self, payload=None, error: Exception | None = None):
+        self._payload = payload
+        self._error = error
+
+    def raise_for_status(self):
+        if self._error:
+            raise self._error
+
+    def json(self):
+        return self._payload
+
+
+def _fake_client(monkeypatch, response, seen=None):
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, params=None, headers=None):
+            if seen is not None:
+                seen.append(params)
+            return response
+
+    monkeypatch.setattr(mkt.httpx, "AsyncClient", FakeClient)
+
+
+def test_topic_search_queries_the_org_and_topic(monkeypatch):
+    seen: list = []
+    _fake_client(
+        monkeypatch,
+        _FakeResponse({"items": [_search_item("quickstart-workflow")]}),
+        seen,
+    )
+    entries = asyncio.run(_real_fetch_topic_repos())
+    assert [e["id"] for e in entries] == ["quickstart"]
+    assert seen[0]["q"] == "org:pegasus-isi topic:pegasus-studio-example"
+
+
+def test_topic_search_failure_reuses_the_last_good_list(monkeypatch):
+    """A rate limit must not empty the org half of the catalog for an hour."""
+    _fake_client(
+        monkeypatch,
+        _FakeResponse({"items": [_search_item("quickstart-workflow")]}),
+    )
+    assert [e["id"] for e in asyncio.run(_real_fetch_topic_repos())] == ["quickstart"]
+
+    request = httpx.Request("GET", mkt.GITHUB_SEARCH_URL)
+    _fake_client(
+        monkeypatch,
+        _FakeResponse(
+            error=httpx.HTTPStatusError(
+                "rate limited",
+                request=request,
+                response=httpx.Response(403, request=request),
+            )
+        ),
+    )
+    assert [e["id"] for e in asyncio.run(_real_fetch_topic_repos())] == ["quickstart"]
