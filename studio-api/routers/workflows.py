@@ -248,6 +248,53 @@ async def delete_project(project_id: str) -> dict:
     return {"project_id": project_id, **result}
 
 
+class RenameProjectRequest(BaseModel):
+    name: str
+
+
+@router.post("/projects/{project_id}/rename")
+async def rename_project(project_id: str, req: RenameProjectRequest) -> dict:
+    """Rename a project's folder. See ``services/project_rename`` for the
+    guards and what a move cannot fix."""
+    from main import db
+    from services import project_rename
+    from services.run_flow import manager as run_flows
+    from services.workflow_scanner import project_roots
+
+    projects = await discover_projects_async()
+    proj = next((p for p in projects if p["project_id"] == project_id), None)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    if run_flows.active(project_id):
+        raise HTTPException(
+            status_code=409,
+            detail="A run is being prepared for this workflow. Wait for it, then rename.",
+        )
+
+    try:
+        moved = project_rename.rename_project_dir(proj, req.name, project_roots())
+    except project_rename.RenameError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail) from None
+
+    # The folder has moved; a failure from here on must not report the rename
+    # as failed, or the user retries a move that already happened.
+    records = 0
+    for old in moved["old_paths"]:
+        try:
+            records += await db.move_run_dirs(old, moved["new_dir"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("project_rename_records_failed", error=str(e))
+
+    new_id = os.path.basename(moved["new_dir"])
+    return {
+        "status": "renamed",
+        "project_id": new_id,
+        "project_dir": moved["new_dir"],
+        "catalogs_updated": moved["catalogs_updated"],
+        "records_updated": records,
+    }
+
+
 @router.get("/projects/{project_id}/params")
 async def get_project_params(project_id: str) -> dict:
     """Discover the configurable parameters for a project's actions.

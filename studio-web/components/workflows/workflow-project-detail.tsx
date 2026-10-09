@@ -11,6 +11,7 @@ import {
   useAnalyzeWorkflow,
   useDeleteWorkflow,
   useDeleteWorkflowProject,
+  useRenameWorkflowProject,
 } from "@/lib/hooks/use-workflows";
 import type { WorkflowProjectRun } from "@/lib/api/client";
 import { AppLink } from "@/components/layout/app-link";
@@ -28,6 +29,7 @@ import {
 import { useActionToast } from "@/lib/hooks/use-action-toast";
 import { useUIPreferences, useUpdateUIPreferences } from "@/lib/hooks/use-ui-prefs";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { RenameProjectDialog } from "@/components/workflows/rename-project-dialog";
 import { apiUrl } from "@/lib/urls";
 import { usePaneSize } from "@/lib/hooks/use-pane-size";
 import { cn, statusColor } from "@/lib/utils";
@@ -72,6 +74,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
   const submit = useSubmitWorkflowProject();
   const deleteRun = useDeleteWorkflow();
   const deleteProject = useDeleteWorkflowProject();
+  const renameProject = useRenameWorkflowProject();
   const selectProject = useWorkflowStore((s) => s.selectProject);
   const runAction = useActionToast();
   // Phase 1 rollout flag (#241). Off by default, so this page is byte-for-byte
@@ -97,6 +100,8 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     label: string;
   } | null>(null);
   const [confirmDeleteProject, setConfirmDeleteProject] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [values, setValues] = useState<ParamValues>({});
   const [dag, setDag] = useState<{
     url: string;
@@ -141,6 +146,12 @@ export function WorkflowProjectDetail({ projectId }: Props) {
       </div>
     );
   }
+
+  // A run still holding the folder's paths blocks a rename (the server
+  // refuses too); disabling the button says so before the dialog opens.
+  const projectBusy = project.runs.some(
+    (r) => r.status === "running" || r.status === "planning"
+  );
 
   const setValue = (dest: string, v: string | boolean) =>
     setValues((prev) => ({ ...prev, [dest]: v }));
@@ -268,6 +279,18 @@ export function WorkflowProjectDetail({ projectId }: Props) {
     // Clear the selection: the project it pointed at no longer exists, and
     // leaving it selected renders "Project not found".
     if (result) selectProject(null);
+  };
+
+  const handleRenameProject = async (name: string) => {
+    setRenameError(null);
+    try {
+      const res = await renameProject.mutateAsync({ projectId, name });
+      setRenaming(false);
+      // The old id no longer exists; follow the folder to its new name.
+      selectProject(res.project_id);
+    } catch (e) {
+      setRenameError((e as Error).message);
+    }
   };
 
   const handleDeleteRun = async () => {
@@ -478,6 +501,21 @@ export function WorkflowProjectDetail({ projectId }: Props) {
               </AppLink>
             )}
             <button
+              onClick={() => {
+                setRenameError(null);
+                setRenaming(true);
+              }}
+              disabled={projectBusy}
+              title={
+                projectBusy
+                  ? "Can't rename while a run is in progress"
+                  : "Rename this workflow's folder"
+              }
+              className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:text-pegasus-300"
+            >
+              Rename
+            </button>
+            <button
               onClick={() => setConfirmDeleteProject(true)}
               title="Delete this workflow and everything in it"
               className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-fgmuted hover:border-red-400 hover:text-red-600 dark:hover:text-red-400"
@@ -672,6 +710,16 @@ export function WorkflowProjectDetail({ projectId }: Props) {
           title={dag.title}
           live={dag.live}
           onClose={() => setDag(null)}
+        />
+      )}
+
+      {renaming && (
+        <RenameProjectDialog
+          currentName={projectId}
+          busy={renameProject.isPending}
+          error={renameError}
+          onRename={handleRenameProject}
+          onCancel={() => setRenaming(false)}
         />
       )}
 

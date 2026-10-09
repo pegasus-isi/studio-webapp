@@ -697,6 +697,33 @@ class Database:
         )
         await self.db.commit()
 
+    async def move_run_dirs(self, old_dir: str, new_dir: str) -> int:
+        """Re-point every stored run path under `old_dir` to `new_dir`.
+
+        Used when a project folder is renamed: run history and feedback
+        episodes are keyed by run_dir, and rows left on the old path would show
+        as vanished runs while the scanner lists the same runs again under the
+        new one. Prefix-matched with substr rather than LIKE, because a path may
+        contain `_` or `%`. Returns the number of rows changed.
+        """
+        old = old_dir.rstrip("/")
+        new = new_dir.rstrip("/")
+        n = len(old)
+        changed = 0
+        for table, column in (
+            ("workflow_runs", "run_dir"),
+            ("feedback_episodes", "run_dir"),
+            ("feedback_episodes", "rerun_dir"),
+        ):
+            cursor = await self.db.execute(
+                f"UPDATE {table} SET {column} = ? || substr({column}, ?) "
+                f"WHERE {column} = ? OR substr({column}, 1, ?) = ?",
+                (new, n + 1, old, n + 1, old + "/"),
+            )
+            changed += cursor.rowcount or 0
+        await self.db.commit()
+        return changed
+
     async def list_workflow_runs(self) -> list[dict[str, Any]]:
         results = []
         async with self.db.execute(
