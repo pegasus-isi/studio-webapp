@@ -44,6 +44,7 @@ _NOISE_NAMES = {
 
 # Extensions we can show inline, grouped by how the UI should render them.
 _IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"}
+_PDF_EXT = {".pdf"}
 _TABLE_EXT = {".csv", ".tsv"}
 _TEXT_EXT = {
     ".txt", ".log", ".md", ".json", ".yml", ".yaml", ".xml", ".html",
@@ -62,8 +63,32 @@ IMAGE_PREVIEW_MAX_BYTES = 25 * 1024 * 1024  # 25 MB
 
 
 def preview_limit(kind: str) -> int:
-    """The largest file of this kind that may be shown inline."""
-    return IMAGE_PREVIEW_MAX_BYTES if kind == "image" else PREVIEW_MAX_BYTES
+    """The largest file of this kind that may be shown inline. PDFs, like
+    images, are rendered by the browser from the URL, not read into the page."""
+    return IMAGE_PREVIEW_MAX_BYTES if kind in ("image", "pdf") else PREVIEW_MAX_BYTES
+
+
+#: Kinds that can be previewed in part: the start of a long table or log is
+#: as useful as the whole for a glance, and costs the page only the limit.
+_PARTIAL_KINDS = frozenset({"text", "table"})
+
+
+def can_preview(kind: str, size: int) -> tuple[bool, bool]:
+    """(previewable, partial) for a file of this kind and size."""
+    if kind == "binary":
+        return False, False
+    if size <= preview_limit(kind):
+        return True, False
+    return (True, True) if kind in _PARTIAL_KINDS else (False, False)
+
+
+def read_head(path: str, limit: int = PREVIEW_MAX_BYTES) -> bytes:
+    """The first `limit` bytes of a file, cut back to the last line break so
+    a table never ends on half a row (nor text on half a UTF-8 character)."""
+    with open(path, "rb") as fh:
+        data = fh.read(limit)
+    cut = data.rfind(b"\n")
+    return data[: cut + 1] if cut > 0 else data
 
 # Hard ceiling on how many files we will even enumerate. A run that wrote
 # 200k files should degrade to "here are the first 5000" rather than blocking
@@ -76,6 +101,8 @@ def classify(name: str) -> str:
     ext = os.path.splitext(name)[1].lower()
     if ext in _IMAGE_EXT:
         return "image"
+    if ext in _PDF_EXT:
+        return "pdf"
     if ext in _TABLE_EXT:
         return "table"
     if ext in _TEXT_EXT:
@@ -198,7 +225,9 @@ def _entry(full_path: str, relative: str) -> dict[str, Any] | None:
         "kind": kind,
         # Previewability is a property of the file, decided here rather than in
         # the UI, so the size ceiling can't drift between the two.
-        "previewable": kind != "binary" and stat.st_size <= preview_limit(kind),
+        "previewable": can_preview(kind, stat.st_size)[0],
+        # Over the limit but worth a look: the preview shows the start (#460).
+        "partial": can_preview(kind, stat.st_size)[1],
     }
 
 

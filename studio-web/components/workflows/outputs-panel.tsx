@@ -183,6 +183,8 @@ export function OutputsPanel({
             name: preview.name,
             path: preview.path,
             kind: preview.kind,
+            size: preview.size,
+            partial: preview.partial,
             url: api.runOutputFileUrl(runId, preview.path),
             downloadUrl: api.runOutputFileUrl(runId, preview.path, true),
           }}

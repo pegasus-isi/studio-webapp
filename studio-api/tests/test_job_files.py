@@ -167,4 +167,7 @@ def test_images_get_a_larger_preview_ceiling_than_text(tmp_path):
     (tmp_path / "plot.png").write_bytes(b"\0" * big)
     (tmp_path / "data.json").write_text("x" * big)
     assert run_outputs._entry(str(tmp_path / "plot.png"), "plot.png")["previewable"] is True
-    assert run_outputs._entry(str(tmp_path / "data.json"), "data.json")["previewable"] is False
+    # Same size as text: over its limit, so shown only in part (#460).
+    data = run_outputs._entry(str(tmp_path / "data.json"), "data.json")
+    assert data["partial"] is True
+    assert run_outputs._entry(str(tmp_path / "plot.png"), "plot.png")["partial"] is False
