@@ -33,6 +33,10 @@ import structlog
 log = structlog.get_logger()
 
 _SETTING_KEY = "telemetry_content_capture"
+# When the user last made the choice, in either direction. Separate from the
+# flag because "off" is also the default: without it, "declined" and "never
+# asked" read the same, and the tour could not tell whom to ask (#454).
+_DECIDED_KEY = "telemetry_content_capture_decided_at"
 
 
 async def content_capture(db: Any) -> bool:
@@ -46,8 +50,28 @@ async def content_capture(db: Any) -> bool:
 
 
 async def set_content_capture(db: Any, value: bool) -> None:
+    from datetime import datetime, timezone
+
     await db.set_setting(_SETTING_KEY, "1" if value else "0")
+    await db.set_setting(_DECIDED_KEY, datetime.now(timezone.utc).isoformat())
     log.info("telemetry_consent_updated", content_capture=value)
+
+
+async def decided(db: Any) -> bool:
+    """Whether the user has made the chat-text choice, either way.
+
+    Anyone already opted in decided before this was recorded. A failed lookup
+    reads as "not decided": the cost is asking once more, never assuming a
+    consent that was not given.
+    """
+    try:
+        if await db.get_setting(_DECIDED_KEY, None):
+            return True
+        raw = await db.get_setting(_SETTING_KEY, "0")
+    except Exception as e:
+        log.warning("telemetry_decided_lookup_failed", error=str(e))
+        return False
+    return str(raw).lower() in ("1", "true", "yes", "on")
 
 
 def collector_configured() -> bool:
