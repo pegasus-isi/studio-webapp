@@ -1594,7 +1594,7 @@ function WorkflowDiscoverySection() {
         </button>
         {saved && (
           <span className="text-xs text-emerald-600 dark:text-emerald-400">
-            Saved — the Workflows page uses this on its next refresh.
+            Saved — Analyses uses this on its next refresh.
           </span>
         )}
       </div>

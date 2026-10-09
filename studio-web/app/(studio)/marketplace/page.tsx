@@ -129,7 +129,7 @@ export default function MarketplacePage() {
         <p className="text-sm text-fgmuted">
           Three ready-made Pegasus workflows to start from. Add one to clone
           it into your workspace, then Generate, Plan, and Run it from the
-          Workflows page.
+          Analyses page.
         </p>
       </div>
 
