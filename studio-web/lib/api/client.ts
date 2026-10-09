@@ -509,6 +509,19 @@ export interface ExecutionSite {
   source: string;
 }
 
+export async function renameWorkflowProject(projectId: string, name: string) {
+  return request<{
+    status: string;
+    project_id: string;
+    project_dir: string;
+    catalogs_updated: string[];
+    records_updated: number;
+  }>(`/workflows/projects/${encodeURIComponent(projectId)}/rename`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
 export async function deleteWorkflowProject(projectId: string) {
   return request<{ project_id: string; status: string }>(
     `/workflows/projects/${encodeURIComponent(projectId)}`,

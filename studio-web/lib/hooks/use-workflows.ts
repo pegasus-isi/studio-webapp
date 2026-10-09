@@ -126,6 +126,19 @@ export function useSubmitWorkflowProject() {
   });
 }
 
+export function useRenameWorkflowProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ projectId, name }: { projectId: string; name: string }) =>
+      api.renameWorkflowProject(projectId, name),
+    onSuccess: () => {
+      // Every run path under the project changed with it.
+      qc.invalidateQueries({ queryKey: ["workflow-projects"] });
+      qc.invalidateQueries({ queryKey: ["workflows"] });
+    },
+  });
+}
+
 export function useDeleteWorkflowProject() {
   const qc = useQueryClient();
   return useMutation({
