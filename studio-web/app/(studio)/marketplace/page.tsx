@@ -141,7 +141,9 @@ export default function MarketplacePage() {
   return (
     <div className="h-full overflow-auto">
       <div className="border-b border-line bg-surface px-6 py-4">
-        <h1 className="text-lg font-semibold text-fg">Marketplace</h1>
+        {/* "Examples", as the rail, ⌘K and the tour call it; the route and
+            the API keep their old "marketplace" name. */}
+        <h1 className="text-lg font-semibold text-fg">Examples</h1>
         <p className="text-sm text-fgmuted">
           Ready-made Pegasus workflows from{" "}
           <a
@@ -152,7 +154,7 @@ export default function MarketplacePage() {
           >
             PegasusHub
           </a>{" "}
-          and Pegasus-ISI. Add one to clone it into your workspace, then
+          and Pegasus-ISI. Add one to copy it into your workspace, then
           open it in Analyses to run it.
         </p>
       </div>
