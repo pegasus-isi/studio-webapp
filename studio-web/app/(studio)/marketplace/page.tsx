@@ -6,6 +6,7 @@ import type { MarketplaceWorkflow } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 import { appRelativePath } from "@/lib/urls";
 import { AppLink } from "@/components/layout/app-link";
+import { useWorkflowProjects } from "@/lib/hooks/use-workflows";
 
 /** Tags for a workflow, tolerating an older API that only sends `topic`. */
 function topicsOf(w: MarketplaceWorkflow): string[] {
@@ -48,12 +49,32 @@ export default function MarketplacePage() {
     queryFn: () => api.getMarketplace(),
   });
   const [added, setAdded] = useState<Record<string, boolean>>({});
+  const [addError, setAddError] = useState<Record<string, string>>({});
   const [topic, setTopic] = useState<string>("all");
+
+  // Projects already in the workspace, by folder name — the same name "Add"
+  // clones into. Without this the card offered "Add to workspace" for a
+  // workflow you already had, and the 409 that came back was printed below
+  // the whole grid, off-screen, so the click looked like it did nothing.
+  const { data: projectData } = useWorkflowProjects();
+  const inWorkspace = useMemo(
+    () => new Set((projectData?.projects ?? []).map((p) => p.project_id)),
+    [projectData]
+  );
 
   const add = useMutation({
     mutationFn: (id: string) => api.addMarketplaceWorkflow(id),
+    onMutate: (id) => {
+      setAddError(({ [id]: _cleared, ...rest }) => rest);
+    },
     onSuccess: (res) => {
       setAdded((a) => ({ ...a, [res.project_id]: true }));
+      qc.invalidateQueries({ queryKey: ["workflow-projects"] });
+    },
+    onError: (e, id) => {
+      setAddError((m) => ({ ...m, [id]: (e as Error).message }));
+      // A 409 means the folder appeared since the list was fetched (another
+      // tab, a terminal clone); refetch so the card switches to "Open".
       qc.invalidateQueries({ queryKey: ["workflow-projects"] });
     },
   });
@@ -263,17 +284,13 @@ export default function MarketplacePage() {
                 key={w.id}
                 w={w}
                 added={!!added[w.id]}
+                existing={inWorkspace.has(w.id)}
+                error={addError[w.id]}
                 pending={add.isPending && add.variables === w.id}
                 onAdd={() => add.mutate(w.id)}
               />
             ))}
           </div>
-        )}
-
-        {add.isError && (
-          <p className="mt-3 text-sm text-red-600 dark:text-rose-400">
-            Couldn&apos;t add workflow: {(add.error as Error).message}
-          </p>
         )}
       </div>
     </div>
@@ -283,14 +300,21 @@ export default function MarketplacePage() {
 function WorkflowCard({
   w,
   added,
+  existing,
+  error,
   pending,
   onAdd,
 }: {
   w: MarketplaceWorkflow;
   added: boolean;
+  /** A folder of this name is already in the workspace. */
+  existing: boolean;
+  /** Why the last Add of this card failed, shown on the card itself. */
+  error?: string;
   pending: boolean;
   onAdd: () => void;
 }) {
+  const openHref = `/workflows?project=${encodeURIComponent(w.id)}`;
   // No thumbnail. The registry's `image` is a rendering of the workflow's DAG,
   // which at 128px tall is an unreadable smudge that says only "this is a
   // graph" — true of every entry — while taking the space the description
@@ -331,16 +355,16 @@ function WorkflowCard({
           <div className="flex-1" />
         )}
         <div className="mt-3 flex items-center gap-3">
-          {added ? (
+          {added || existing ? (
             <>
               <span className="text-xs font-medium text-green-600 dark:text-emerald-400">
-                ✓ Added
+                {added ? "✓ Added" : "✓ In your workspace"}
               </span>
               <AppLink
-                href="/workflows"
+                href={openHref}
                 className="text-xs font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
               >
-                Open in Workflows →
+                Open →
               </AppLink>
             </>
           ) : (
@@ -361,6 +385,11 @@ function WorkflowCard({
             View on GitHub ↗
           </a>
         </div>
+        {error && !existing && (
+          <p role="alert" className="mt-2 text-xs text-red-600 dark:text-rose-400">
+            Couldn&apos;t add: {error}
+          </p>
+        )}
       </div>
     </div>
   );
