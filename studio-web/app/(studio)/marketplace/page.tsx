@@ -153,7 +153,7 @@ export default function MarketplacePage() {
             PegasusHub
           </a>{" "}
           and Pegasus-ISI. Add one to clone it into your workspace, then
-          Generate, Plan, and Run it from the Workflows page.
+          open it in Analyses to run it.
         </p>
       </div>
 
