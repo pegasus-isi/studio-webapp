@@ -740,9 +740,75 @@ def _project_workflow_file(project_dir: str) -> str | None:
     return None
 
 
-def _parse_workflow_graph(wf_path: str) -> dict:
+_DIGITS_RE = re.compile(r"\d+")
+
+
+def _file_family(name: str) -> str:
+    """What a file has in common with its siblings: digit runs normalised, so
+    `gauge_01646500_daily.csv` and `gauge_06934500_daily.csv` group as
+    `gauge_#_daily.csv` the way their producing steps group."""
+    return _DIGITS_RE.sub("#", name)
+
+
+def _add_file_nodes(doc: dict, nodes: list[dict], edges: list[dict]) -> list[dict]:
+    """File nodes and their edges, for the graph's "Show files" view (#458).
+
+    A file links from the job that writes it to each job that reads it. A
+    job-to-job dependency is dropped where a file now carries it, so the same
+    relationship isn't drawn twice; dependencies with no file behind them are
+    kept. Returns the edges to use.
+    """
+    from services.run_outputs import classify
+
+    producer: dict[str, tuple[str, bool]] = {}
+    consumers: dict[str, list[str]] = {}
+    order: list[str] = []
+    for j in doc.get("jobs") or []:
+        jid = str(j.get("id") or "")
+        if not jid:
+            continue
+        for use in j.get("uses") or []:
+            if not isinstance(use, dict) or not use.get("lfn"):
+                continue
+            lfn = str(use["lfn"])
+            if lfn not in producer and lfn not in consumers:
+                order.append(lfn)
+            if str(use.get("type") or "input").lower() == "input":
+                consumers.setdefault(lfn, []).append(jid)
+            else:
+                producer.setdefault(lfn, (jid, bool(use.get("stageOut", True))))
+
+    carried: set[tuple[str, str]] = set()
+    file_edges: list[dict] = []
+    for lfn in order:
+        fid = f"file:{lfn}"
+        name = os.path.basename(lfn) or lfn
+        made_by = producer.get(lfn)
+        nodes.append({
+            "id": fid,
+            "label": name,
+            "transformation": _file_family(name),
+            "status": "file",
+            "pegasus": False,
+            "file": True,
+            "lfn": lfn,
+            "kind": classify(name),
+            "result": bool(made_by and made_by[1]),
+        })
+        if made_by:
+            file_edges.append({"source": made_by[0], "target": fid})
+        for c in consumers.get(lfn, []):
+            file_edges.append({"source": fid, "target": c})
+            if made_by:
+                carried.add((made_by[0], c))
+    kept = [e for e in edges if (e["source"], e["target"]) not in carried]
+    return kept + file_edges
+
+
+def _parse_workflow_graph(wf_path: str, include_files: bool = False) -> dict:
     """Abstract workflow YAML -> {name, nodes, edges} for the client-side
-    DAG visualizer (React Flow). Node ids are the abstract job ids."""
+    DAG visualizer (React Flow). Node ids are the abstract job ids; with
+    `include_files`, files are nodes too (ids `file:<lfn>`)."""
     import yaml
 
     try:
@@ -770,6 +836,8 @@ def _parse_workflow_graph(wf_path: str) -> dict:
         parent = str(dep.get("id") or "")
         for child in dep.get("children") or []:
             edges.append({"source": parent, "target": str(child)})
+    if include_files:
+        edges = _add_file_nodes(doc, nodes, edges)
     return {
         "name": doc.get("name") or os.path.basename(os.path.dirname(wf_path)),
         "nodes": nodes,
@@ -854,7 +922,7 @@ def _find_run_workflow_file(run_dir: str) -> str | None:
 
 
 @router.get("/projects/{project_id}/graph.json")
-async def project_graph_json(project_id: str) -> dict:
+async def project_graph_json(project_id: str, files: bool = False) -> dict:
     """Workflow structure for the interactive DAG viewer (no run statuses)."""
     projects = await discover_projects_async()
     proj = next((p for p in projects if p["project_id"] == project_id), None)
@@ -865,11 +933,13 @@ async def project_graph_json(project_id: str) -> dict:
         raise HTTPException(
             status_code=404, detail="No workflow file yet — run Generate first"
         )
-    return _parse_workflow_graph(wf)
+    return _parse_workflow_graph(wf, include_files=files)
 
 
 @router.get("/{run_id}/graph.json")
-async def run_graph_json(run_id: str, include_pegasus: bool = False) -> dict:
+async def run_graph_json(
+    run_id: str, include_pegasus: bool = False, files: bool = False
+) -> dict:
     """Workflow structure with live job statuses joined from the run's
     workflow-events.jsonl (exec job ids look like <transform>_<abstract-id>).
 
@@ -891,7 +961,9 @@ async def run_graph_json(run_id: str, include_pegasus: bool = False) -> dict:
             raise HTTPException(
                 status_code=404, detail="No workflow file for this run"
             )
-        graph = _parse_workflow_graph(wf)
+        # Files exist only in the abstract workflow; the executable DAG view
+        # above has none to show.
+        graph = _parse_workflow_graph(wf, include_files=files)
 
     jobs = await get_workflow_jobs(run["run_dir"])
     by_node: dict[str, dict] = {n["id"]: n for n in graph["nodes"]}
@@ -917,6 +989,9 @@ def _derive_workflow_status(nodes: list[dict]) -> str | None:
     """Roll per-node statuses up into a workflow status for the DAG viewer.
     Active (any node still in flight) wins over failed wins over succeeded;
     None when nothing has started or the graph is empty."""
+    # File nodes have no run state; counting them would keep a finished run
+    # from ever reading "succeeded".
+    nodes = [n for n in nodes if not n.get("file")]
     statuses = {str(n.get("status") or "unsubmitted") for n in nodes}
     if not nodes:
         return None
@@ -1122,6 +1197,44 @@ async def run_job_files(run_id: str, job_id: str, output_site: str = Query("loca
     return {"run_id": run_id, "job_id": job_id, "job_found": True, "files": files}
 
 
+def _file_uses(doc: dict, lfns: list[str]) -> list[dict]:
+    """`describe()` input for files picked by name: an output if some job
+    writes it (with that job's stageOut), otherwise an input."""
+    made: dict[str, bool] = {}
+    for j in doc.get("jobs") or []:
+        for use in j.get("uses") or []:
+            if (
+                isinstance(use, dict)
+                and use.get("lfn") in lfns
+                and str(use.get("type") or "input").lower() != "input"
+            ):
+                made.setdefault(str(use["lfn"]), bool(use.get("stageOut", True)))
+    return [
+        {"lfn": lfn, "link": "output" if lfn in made else "input",
+         "stage_out": made.get(lfn, False)}
+        for lfn in dict.fromkeys(lfns)
+    ]
+
+
+@router.get("/{run_id}/files/info")
+async def run_files_info(
+    run_id: str,
+    lfn: list[str] = Query(..., max_length=500),
+    output_site: str = Query("local"),
+) -> dict:
+    """Where the given files are and whether they can be opened: a file node,
+    or a group of them, clicked in the graph (#458)."""
+    from services import job_files
+
+    run_dir = await _resolve_run_dir(run_id)
+    doc = job_files.workflow_doc(_find_run_workflow_file(run_dir))
+    bases = await _run_bases(run_dir, output_site)
+    uses = _file_uses(doc, lfn)
+    loop = asyncio.get_event_loop()
+    files = await loop.run_in_executor(None, lambda: job_files.describe(uses, bases, doc))
+    return {"run_id": run_id, "job_found": True, "files": files}
+
+
 @router.get("/{run_id}/files/content")
 async def run_file_content(
     run_id: str,
@@ -1157,6 +1270,19 @@ async def project_job_files(project_id: str, job_id: str) -> dict:
     bases = {"project": os.path.realpath(proj["project_dir"])}
     files = job_files.describe(uses, bases, doc)
     return {"job_id": job_id, "job_found": True, "files": files}
+
+
+@router.get("/projects/{project_id}/files/info")
+async def project_files_info(
+    project_id: str, lfn: list[str] = Query(..., max_length=500)
+) -> dict:
+    from services import job_files
+
+    proj = await _project_or_404(project_id)
+    doc = job_files.workflow_doc(_project_workflow_file(proj["project_dir"]))
+    bases = {"project": os.path.realpath(proj["project_dir"])}
+    files = job_files.describe(_file_uses(doc, lfn), bases, doc)
+    return {"job_found": True, "files": files}
 
 
 @router.get("/projects/{project_id}/files/content")

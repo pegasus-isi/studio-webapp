@@ -11,9 +11,11 @@ import {
 import { Download } from "lucide-react";
 import dagre from "@dagrejs/dagre";
 import {
+  FileNodePanel,
   JobFilesPanel,
   type JobFilesSource,
 } from "@/components/workflows/job-files-panel";
+import { cn } from "@/lib/utils";
 import "@xyflow/react/dist/style.css";
 
 interface GraphNode {
@@ -23,6 +25,13 @@ interface GraphNode {
   status: string;
   exec_job_id?: string;
   pegasus?: boolean; // Pegasus auxiliary job (stage-in/out, create-dir, cleanup…)
+  // File nodes ("Show files", #458): `transformation` holds the file's family
+  // (digits normalised) so siblings group like the steps that made them.
+  file?: boolean;
+  lfn?: string;
+  kind?: "image" | "table" | "text" | "binary";
+  /** Staged out to the run's results. */
+  result?: boolean;
 }
 
 interface GraphData {
@@ -57,6 +66,13 @@ const STATUS_STYLE: Record<string, { bg: string; border: string; fg: string }> =
   failed: { bg: "#fee2e2", border: "#ef4444", fg: "#7f1d1d" },
   held: { bg: "#ffedd5", border: "#f97316", fg: "#7c2d12" },
 };
+
+// File nodes are not steps and have no run state: a pill in neutral grey, or
+// green-tinted when the file is one of the run's results.
+const FILE_STYLE = { bg: "#ffffff", border: "#94a3b8", fg: "#334155" };
+const RESULT_STYLE = { bg: "#ecfdf5", border: "#10b981", fg: "#065f46" };
+const FILE_H = 34;
+const FILE_GROUP_H = 46;
 
 // Field separator for the composite map keys below. It has to be a character
 // no job id or transformation name can contain, and it is written as an escape
@@ -110,6 +126,9 @@ interface DisplayNode {
   members: GraphNode[];
   statusCounts: Map<string, number>;
   pegasus: boolean;
+  file: boolean;
+  /** Any member is a staged-out result. */
+  result: boolean;
 }
 
 /**
@@ -148,16 +167,18 @@ function clusterGraph(data: GraphData): {
   }
 
   let assign = new Map(data.nodes.map((n) => [n.id, n.id]));
-  // Six passes is far more than any real DAG needs; the loop exits as soon as
-  // an iteration changes nothing.
-  for (let pass = 0; pass < 6; pass++) {
+  // Twelve passes is far more than any real DAG needs (files double the
+  // length of each chain); the loop exits as soon as an iteration changes
+  // nothing.
+  for (let pass = 0; pass < 12; pass++) {
     const buckets = new Map<string, string[]>();
     for (const n of data.nodes) {
       const family = n.transformation || n.label;
       const ps = Array.from(
         new Set((parents.get(n.id) ?? []).map((p) => assign.get(p) ?? p))
       ).sort();
-      const key = `${n.pegasus ? `aux${SEP}` : ""}${family}${SEP}${ps.join(",")}`;
+      const kind = n.file ? `file${SEP}` : n.pegasus ? `aux${SEP}` : "";
+      const key = `${kind}${family}${SEP}${ps.join(",")}`;
       const bucket = buckets.get(key);
       if (bucket) bucket.push(n.id);
       else buckets.set(key, [n.id]);
@@ -205,6 +226,8 @@ function clusterGraph(data: GraphData): {
       members,
       statusCounts,
       pegasus: !!members[0]?.pegasus,
+      file: !!members[0]?.file,
+      result: members.some((m) => !!m.result),
     });
   }
 
@@ -237,6 +260,8 @@ function passthroughGraph(data: GraphData): {
       members: [n],
       statusCounts: new Map([[n.status, 1]]),
       pegasus: !!n.pegasus,
+      file: !!n.file,
+      result: !!n.result,
     })),
     edges: data.edges,
   };
@@ -277,6 +302,11 @@ interface Picture {
   edges: PictureEdge[];
 }
 
+function nodeHeight(n: DisplayNode): number {
+  if (n.file) return n.members.length > 1 ? FILE_GROUP_H : FILE_H;
+  return n.members.length > 1 ? GROUP_H : NODE_H;
+}
+
 function layout(display: {
   nodes: DisplayNode[];
   edges: { source: string; target: string }[];
@@ -287,7 +317,7 @@ function layout(display: {
   for (const n of display.nodes) {
     g.setNode(n.id, {
       width: NODE_W,
-      height: n.members.length > 1 ? GROUP_H : NODE_H,
+      height: nodeHeight(n),
     });
   }
   for (const e of display.edges) {
@@ -298,22 +328,32 @@ function layout(display: {
   const picture: Picture = { nodes: new Map(), edges: [] };
 
   const nodes: Node[] = display.nodes.map((n) => {
-    const h = n.members.length > 1 ? GROUP_H : NODE_H;
+    const h = nodeHeight(n);
     // dagre returns undefined for an id it never laid out (malformed graph
     // data) — fall back to origin rather than crashing the whole modal.
     const pos = g.node(n.id) ?? { x: NODE_W / 2, y: h / 2 };
-    const s = STATUS_STYLE[n.status] ?? STATUS_STYLE.unsubmitted;
+    const s = n.file
+      ? n.result
+        ? RESULT_STYLE
+        : FILE_STYLE
+      : (STATUS_STYLE[n.status] ?? STATUS_STYLE.unsubmitted);
     const aux = n.pegasus;
     const count = n.members.length;
     const single = n.members.length === 1 ? n.members[0] : undefined;
 
-    const label =
-      count > 1
+    const label = n.file
+      ? count > 1
+        ? `${n.label} ×${count}`
+        : (single?.label ?? n.label)
+      : count > 1
         ? `${aux ? "⚙ " : ""}${n.label} ×${count}\n${breakdown(n.statusCounts)}`
         : `${aux ? "⚙ " : ""}${single?.label ?? n.label}\n${single?.id ?? n.id}`;
 
-    const title =
-      count > 1
+    const title = n.file
+      ? count > 1
+        ? `${count} files like ${n.label}${n.result ? " · results" : ""}`
+        : `${single?.lfn ?? n.label}${n.result ? " · result" : ""}`
+      : count > 1
         ? `${n.label} — ${count} tasks · ${breakdown(n.statusCounts)}`
         : `${single?.exec_job_id ?? n.id} — ${n.status}${aux ? " (Pegasus)" : ""}`;
 
@@ -345,9 +385,12 @@ function layout(display: {
         // apart from the user's compute jobs. A collapsed group gets a heavier
         // border so it reads as "many" before you read the ×N.
         border: `${count > 1 ? 3 : 2}px ${aux ? "dashed" : "solid"} ${s.border}`,
-        borderRadius: 8,
+        // Files are pills so they never read as steps, even in grey.
+        borderRadius: n.file ? 999 : 8,
         color: s.fg,
-        fontSize: 11,
+        fontSize: n.file ? 10.5 : 11,
+        overflow: n.file ? ("hidden" as const) : undefined,
+        textOverflow: n.file ? "ellipsis" : undefined,
         opacity: aux ? 0.8 : 1,
         whiteSpace: "pre" as const,
         animation:
@@ -357,7 +400,22 @@ function layout(display: {
     } as Node & { title: string };
   });
 
-  const statusById = new Map(display.nodes.map((n) => [n.id, n.status]));
+  // A file has no run state of its own. For edge colouring it counts as done
+  // once it exists: its producer succeeded, or nothing produces it (an input).
+  const producerOf = new Map<string, string>();
+  const fileIds = new Set(display.nodes.filter((n) => n.file).map((n) => n.id));
+  for (const e of display.edges) {
+    if (fileIds.has(e.target)) producerOf.set(e.target, e.source);
+  }
+  const rawStatus = new Map(display.nodes.map((n) => [n.id, n.status]));
+  const statusById = new Map(
+    display.nodes.map((n) => {
+      if (!n.file) return [n.id, n.status] as const;
+      const producer = producerOf.get(n.id);
+      const made = !producer || rawStatus.get(producer) === "succeeded";
+      return [n.id, made ? "succeeded" : "unsubmitted"] as const;
+    })
+  );
   const edges: Edge[] = display.edges.map((e, i) => {
     const tgt = statusById.get(e.target) ?? "unsubmitted";
     const done = statusById.get(e.source) === "succeeded";
@@ -627,6 +685,10 @@ export function DagViewer({
   // Pegasus auxiliary jobs (stage-in/out, create-dir, cleanup, register) only
   // exist in a run's executable DAG, so the toggle is offered for run graphs.
   const [showPegasus, setShowPegasus] = useState(false);
+  // Files as nodes (#458). Off by default: files outnumber steps two or three
+  // to one. Only the steps view has them; the Pegasus-jobs view is the
+  // executable DAG, which describes no files.
+  const [showFiles, setShowFiles] = useState(false);
   // Grouping on by default: the unclustered view is unreadable for any real
   // scatter, so it is the escape hatch rather than the starting point.
   const [groupFanout, setGroupFanout] = useState(true);
@@ -635,9 +697,11 @@ export function DagViewer({
   const saveRef = useRef<HTMLDivElement | null>(null);
 
   const effectiveUrl = useMemo(() => {
-    if (!showPegasus) return graphUrl;
-    return graphUrl + (graphUrl.includes("?") ? "&" : "?") + "include_pegasus=true";
-  }, [graphUrl, showPegasus]);
+    const sep = graphUrl.includes("?") ? "&" : "?";
+    if (showPegasus) return `${graphUrl}${sep}include_pegasus=true`;
+    if (showFiles) return `${graphUrl}${sep}files=true`;
+    return graphUrl;
+  }, [graphUrl, showPegasus, showFiles]);
 
   const fetchGraph = useCallback(() => {
     return fetch(effectiveUrl)
@@ -841,8 +905,9 @@ export function DagViewer({
     [picture, title]
   );
 
-  const taskCount = data?.nodes.length ?? 0;
-  const drawnCount = display?.nodes.length ?? 0;
+  // Steps only: files have their own grouping and are not "tasks".
+  const taskCount = data?.nodes.filter((n) => !n.file).length ?? 0;
+  const drawnCount = display?.nodes.filter((n) => !n.file).length ?? 0;
   // Only worth offering the toggle when grouping is actually doing something.
   const collapses = taskCount > drawnCount || (!groupFanout && taskCount > 0);
   // With grouping off on a big graph, fitView still cannot reach a readable
@@ -883,6 +948,26 @@ export function DagViewer({
           </h3>
           <div className="flex items-center gap-3">
             {headerExtra}
+            <label
+              className={cn(
+                "flex select-none items-center gap-1.5 text-xs text-fgmuted",
+                showPegasus ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+              )}
+              title={
+                showPegasus
+                  ? "Files are described only in the steps view; turn off Pegasus jobs"
+                  : "Draw the files each step reads and writes"
+              }
+            >
+              <input
+                type="checkbox"
+                checked={showFiles && !showPegasus}
+                disabled={showPegasus}
+                onChange={(e) => setShowFiles(e.target.checked)}
+                className="h-3.5 w-3.5 accent-pegasus-600"
+              />
+              Show files
+            </label>
             {collapses && (
               <label
                 className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-fgmuted"
@@ -1016,7 +1101,15 @@ export function DagViewer({
                 <Background gap={16} />
                 <Controls showInteractive={false} />
               </ReactFlow>
-              {jobFiles && selected && (
+              {jobFiles && selected?.file && (
+                <FileNodePanel
+                  title={selected.members.length > 1 ? `${selected.label} ×${selected.members.length}` : selected.label}
+                  lfns={selected.members.map((m) => m.lfn ?? m.label)}
+                  source={jobFiles}
+                  onClose={() => setSelectedId(null)}
+                />
+              )}
+              {jobFiles && selected && !selected.file && (
                 <JobFilesPanel
                   title={selected.label}
                   jobs={selectedJobs}
@@ -1037,7 +1130,29 @@ export function DagViewer({
           }`}
         >
           {jobFiles && (
-            <span className="font-medium text-fg">Click a step to see its files ·</span>
+            <span className="font-medium text-fg">
+              {showFiles && !showPegasus
+                ? "Click a step or a file to open it ·"
+                : "Click a step to see its files ·"}
+            </span>
+          )}
+          {showFiles && !showPegasus && (
+            <>
+              <span className="flex items-center gap-1">
+                <span
+                  className="inline-block h-3 w-5 rounded-full"
+                  style={{ background: FILE_STYLE.bg, border: `1.5px solid ${FILE_STYLE.border}` }}
+                />
+                file
+              </span>
+              <span className="flex items-center gap-1">
+                <span
+                  className="inline-block h-3 w-5 rounded-full"
+                  style={{ background: RESULT_STYLE.bg, border: `1.5px solid ${RESULT_STYLE.border}` }}
+                />
+                result
+              </span>
+            </>
           )}
           {Object.entries(STATUS_STYLE)
             .filter(([k]) => k !== "queued")
