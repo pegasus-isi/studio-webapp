@@ -244,6 +244,7 @@ def describe(
             "path": None,
             "size": None,
             "previewable": False,
+            "partial": False,
         }
         hit = _locate(use["lfn"], order, bases, replicas)
         if hit:
@@ -255,6 +256,7 @@ def describe(
                     path=relative,
                     size=entry["size"],
                     previewable=entry["previewable"],
+                    partial=entry["partial"],
                 )
         files.append(item)
     return files

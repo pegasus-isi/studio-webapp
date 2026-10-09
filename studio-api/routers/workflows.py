@@ -1098,6 +1098,7 @@ async def get_run_output_file(
     run_id: str,
     path: str = Query(..., description="Path relative to the output directory"),
     download: bool = Query(False),
+    head: bool = Query(False, description="Serve the start of a file too large to preview"),
     output_site: str = Query("local"),
 ):
     """Serve one output file, inline for preview or as an attachment.
@@ -1124,15 +1125,11 @@ async def get_run_output_file(
     if not os.path.isfile(resolved):
         raise HTTPException(status_code=404, detail="File not found")
 
-    size = os.path.getsize(resolved)
-    limit = run_outputs.preview_limit(run_outputs.classify(os.path.basename(resolved)))
-    if not download and size > limit:
-        # Refuse to inline a file big enough to hang the tab; the client should
-        # be offering a download for these anyway (`previewable` says so).
-        raise HTTPException(
-            status_code=413,
-            detail="File is too large to preview — download it instead",
-        )
+    # Refuse to inline a file big enough to hang the tab, unless the caller
+    # asked for just its start (a partial preview, #460).
+    partial = _too_large_or_head(resolved, download, head)
+    if partial is not None:
+        return partial
 
     return FileResponse(
         resolved,
@@ -1146,7 +1143,34 @@ async def get_run_output_file(
 _FileLocation = Literal["result", "scratch", "project"]
 
 
-def _serve_file(base: str | None, path: str, download: bool):
+def _too_large_or_head(resolved: str, download: bool, head: bool):
+    """None to serve the whole file, a head-of-file Response for a partial
+    preview, or raise 413 for a file too big to show and not cuttable."""
+    from fastapi.responses import Response
+
+    from services import run_outputs
+
+    if download:
+        return None
+    kind = run_outputs.classify(os.path.basename(resolved))
+    size = os.path.getsize(resolved)
+    if size <= run_outputs.preview_limit(kind):
+        return None
+    if head and run_outputs.can_preview(kind, size)[1]:
+        # The start of a long table or log (#460). Plain text whatever the
+        # extension, so a cut .json or .html is shown, never interpreted.
+        return Response(
+            content=run_outputs.read_head(resolved),
+            media_type="text/plain; charset=utf-8",
+            headers={"X-Preview-Partial": "1", "X-File-Size": str(size)},
+        )
+    raise HTTPException(
+        status_code=413,
+        detail="File is too large to preview — download it instead",
+    )
+
+
+def _serve_file(base: str | None, path: str, download: bool, head: bool = False):
     """One file under `base`, inline or as an attachment.
 
     Shared by the job panel's run and project variants. `path` is
@@ -1165,12 +1189,9 @@ def _serve_file(base: str | None, path: str, download: bool):
         raise HTTPException(status_code=403, detail="Access denied") from None
     if not os.path.isfile(resolved):
         raise HTTPException(status_code=404, detail="File not found")
-    limit = run_outputs.preview_limit(run_outputs.classify(os.path.basename(resolved)))
-    if not download and os.path.getsize(resolved) > limit:
-        raise HTTPException(
-            status_code=413,
-            detail="File is too large to preview — download it instead",
-        )
+    partial = _too_large_or_head(resolved, download, head)
+    if partial is not None:
+        return partial
     return FileResponse(
         resolved,
         filename=os.path.basename(resolved) if download else None,
@@ -1252,11 +1273,12 @@ async def run_file_content(
     location: _FileLocation,
     path: str = Query(..., description="Path relative to the location's directory"),
     download: bool = Query(False),
+    head: bool = Query(False, description="Serve the start of a file too large to preview"),
     output_site: str = Query("local"),
 ):
     run_dir = await _resolve_run_dir(run_id)
     bases = await _run_bases(run_dir, output_site)
-    return _serve_file(bases.get(location), path, download)
+    return _serve_file(bases.get(location), path, download, head)
 
 
 async def _project_or_404(project_id: str) -> dict:
@@ -1301,9 +1323,10 @@ async def project_file_content(
     project_id: str,
     path: str = Query(...),
     download: bool = Query(False),
+    head: bool = Query(False),
 ):
     proj = await _project_or_404(project_id)
-    return _serve_file(os.path.realpath(proj["project_dir"]), path, download)
+    return _serve_file(os.path.realpath(proj["project_dir"]), path, download, head)
 
 
 @router.get("/{run_id}/events")
