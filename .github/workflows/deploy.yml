@@ -18,6 +18,17 @@ permissions:
   contents: read
   packages: write
 
+# One run per ref, newest wins. Without this, merges a minute apart start
+# independent runs and whichever *finishes* last tags :main — on 2026-10-09
+# four merges raced and the build of an older commit landed last, so :main
+# shipped without the two most recent PRs while every run reported success.
+# Cancelling the in-progress run for the same ref means the last commit is the
+# one that publishes. Keyed on the ref, so main, develop, each tag and each PR
+# have their own lane and never cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Backend tests, frontend type check, frontend unit tests. Mirrors the local
   # pre-PR gates in CLAUDE.md: pytest needs no Pegasus/Condor/keys; on the
