@@ -36,7 +36,7 @@ npm run build
 
 ```sh
 # Backend (from repo root; assumes the studio-api venv is active with deps installed)
-(cd studio-api && pytest -q)                          # ~700 tests; no Pegasus/Condor/keys needed
+(cd studio-api && pytest -q)                          # ~930 tests; no Pegasus/Condor/keys needed
 
 # Frontend (needs `npm ci` first so node_modules/.bin/tsc exists)
 (cd studio-web && npm ci && node_modules/.bin/tsc --noEmit)   # strict mode
@@ -45,7 +45,10 @@ npm run build
 
 - `.github/workflows/deploy.yml` runs all three gates (pytest, tsc, vitest) as a
   `test` job that gates build/push, and builds without pushing on
-  `pull_request` (added in PR #57). Run them locally anyway before pushing to
+  `pull_request` (added in PR #57). One run per ref: a newer push cancels the
+  in-progress run (`concurrency`, #439), so the newest commit is the one that
+  publishes `:main`. Before that, merges a minute apart raced and an older
+  build could land last. Run them locally anyway before pushing to
   avoid a red PR.
 - On the frontend `npm run lint` is still not a gate (eslint isn't installed).
   `npm test` is: vitest over `lib/**/*.test.ts`, node environment, no DOM —
@@ -80,9 +83,9 @@ writable by the injected uid, so **never bake a rendered config into the image**
 `render_template()` too; `tests/test_port_rendering.py` fails if the two drift.
 
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
-  migrations in `db.py`), structlog JSON logging. 18 routers in `routers/`, 28 services
+  migrations in `db.py`), structlog JSON logging. 20 routers in `routers/`, 33 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
-  notifications, terminal/PTY sessions, telemetry consent). `mcp.py` serves the
+  notifications, terminal/PTY sessions, telemetry consent, job files, project rename). `mcp.py` serves the
   Pegasus tools to the OpenCode engine. Workflow runs are
   discovered by globbing `**/braindump.yml` under `$HOME` (`STUDIO_SCAN_DIR`),
   plus user-added scan roots/excludes from Settings → Pegasus Options
@@ -246,7 +249,7 @@ writable by the injected uid, so **never bake a rendered config into the image**
 
 - `SPEC.md` — design spec + V2 direction (refreshed to current code in PR #138).
 - `README.md`, `studio-web/README.md`, `studio-api/README.md` — current
-  (rewritten in PRs #134 / #138); prefer them and the code.
+  (rewritten in PRs #134 / #138, refreshed 2026-10-10 for the Examples catalog, graph files and previews, tour/consent and CI concurrency); prefer them and the code.
 - `docs/UX-NON-SPECIALIST-DESIGN.md` — the redesign that made Studio usable
   without Pegasus literacy (tracker issue #241). **All seven phases shipped**;
   Appendix B is the status table and the Rollout section records one deviation:

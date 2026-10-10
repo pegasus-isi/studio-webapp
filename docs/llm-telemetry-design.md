@@ -58,8 +58,16 @@ lands, this is the first thing to turn back on, and it is one flag in
 ## 3. Consent
 
 `services/telemetry.py` owns a single settings row and `GET`/`PUT
-/api/settings/telemetry` expose it. Settings → Chat has the control, worded
-around the distinction in §2 rather than around the word "telemetry".
+/api/settings/telemetry` expose it. Settings → Chat (and Feedback & privacy)
+has the control, worded around the distinction in §2 rather than around the
+word "telemetry". The guided tour also asks it directly (#430): two
+equal-weight buttons, nothing preselected, and leaving the tour writes
+nothing.
+
+Because "off" is also the default, the choice itself is recorded separately
+(`telemetry_content_capture_decided_at`, returned read-only as `decided`), so
+the per-login tour keeps asking until the user has chosen either way (#454).
+An existing opt-in counts as decided; a failed lookup as undecided.
 
 Three properties, each deliberate:
 

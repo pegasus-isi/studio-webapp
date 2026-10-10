@@ -167,12 +167,13 @@ Primary routes:
 
 | Route | Nav label | Purpose |
 |-------|-----------|---------|
-| `/` | Home | Dashboard: workflow summary, recent runs, resources, quick actions |
-| `/workflows` | Workflows | Workflow projects, runs, actions, and details |
-| `/marketplace` | Marketplace | Browse workflows sourced live from GitHub (PegasusHub registry + curated Pegasus-ISI); "Add" git-clones one into the workspace |
+| `/` | Home | Welcome, four ways in, an opener gallery, an attention strip for runs that need it, and the guided tour (every login until opted out) |
+| `/workflows` | Analyses | Workflow projects, runs, actions and details; the graph (click a step for its files; optional file nodes); Results with previews; rename/delete |
+| `/data` | Data | Upload input files into the workspace |
+| `/marketplace` | Examples | Browse workflows sourced live from GitHub: repos in the configured orgs tagged `pegasus-studio-example`, enriched from the PegasusHub registry; "Add" git-clones one into the workspace |
 | `/provisioning` | Resources | Pool inventory, workflow demand, pressure findings, OSPool capacity (read-only) |
 | `/notebooks` | Notebooks | Opens JupyterLab at `/jupyter/lab` |
-| `/settings` | Settings | LLM providers, chat engine + shell-command approval, Tools (install + launch AI tools / bash terminal), container registry |
+| `/settings` | Settings | Notifications; Pegasus Options (Simplified Run, welcome page & tour, scan roots, container registry); Chat (engine, shell-command approval, chat-text sharing); Feedback & privacy; LLM providers and Tools under Advanced |
 
 A chrome-less `/chat` page renders the same chat for embedding into JupyterLab
 (iframe, origin-checked postMessage handshake).
@@ -197,13 +198,17 @@ Router groups:
 | `files` | Workspace file operations |
 | `terminal` | Browser bash PTY |
 | `ai_terminal` | AI tool PTYs |
-| `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate |
-| `chat` | PegasusAI SSE chat — the builtin agent loop (direct provider calls with tool use; Anthropic, OpenAI-compatible and Responses API). Per-turn shell-command approval. OpenCode was removed as a chat engine in #299 and remains only as a launchable terminal tool |
+| `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate; outputs and a job's files with previews; project rename |
+| `chat` | The builtin agent loop (direct provider calls with tool use; Anthropic, OpenAI-compatible and Responses API), still selectable per user. Per-turn shell-command approval |
+| `opencode` | Verbatim proxy of `/api/opencode/*`, SSE included, to the loopback `opencode serve` that backs the chat panel — the default engine since #403 (`chat_engine` UI preference) |
+| `mcp` | The Pegasus tools served to the OpenCode engine at `/api/mcp` (stateless Streamable HTTP), read from `services/chat_tools.py` |
+| `feedback` | 👍/👎 on chat replies (`message_feedback`; no message text) |
+| `episodes` | "Did the AI help?" failure episodes: nudges, help cards, answers, give-ups |
 | `jupyter` | Status only (JupyterLab is always-on; the `/notebooks` page frames it) |
 | `dashboard` | Aggregate landing-page data (projects, runs, resources, versions) |
 | `provisioning` | HTCondor pool inventory + queue demand + pressure + OSPool capacity (read-only) |
 | `notifications` | Notification feed + prefs; SSE stream for live toasts |
-| `marketplace` | GitHub-sourced workflow catalog; "Add" git-clones into the workspace |
+| `marketplace` | The Examples catalog: topic-tagged GitHub repos enriched from the PegasusHub registry; "Add" git-clones into the workspace |
 | `pegasus_bot` | Same-origin proxy to the cluster-internal PegasusAI Bot server (search/feedback) |
 
 JupyterLab runs always-on under supervisord; the API does not start or stop it,
@@ -375,13 +380,18 @@ Common endpoints:
 | `GET` | `/api/workflows/projects/{id}/run-flow/events` | SSE: full replay of the flow, then live |
 | `DELETE` | `/api/workflows/projects/{id}` | **Destructive**: delete a workflow, its runs (cancelled first) and its files |
 | `GET/PUT` | `/api/settings/registry` | Container registry + credentials for Build |
-| `GET/PUT` | `/api/settings/ui` | Per-user interface preferences (Simplified Run, disclosure state, welcome) |
+| `GET/PUT` | `/api/settings/ui` | Per-user interface preferences (Simplified Run, disclosure state, welcome, `tour_on_login`, chat engine) |
+| `GET/PUT` | `/api/settings/telemetry` | Chat-text sharing consent, with a read-only `decided` |
+| `POST` | `/api/workflows/projects/{id}/rename` | Move a project's folder (refused while a run is in progress) |
 | `GET` | `/api/workflows/{run_id}/jobs` | Job status |
 | `GET` | `/api/workflows/{run_id}/events` | Workflow event stream |
 | `POST` | `/api/workflows/{run_id}/analyze` | Run diagnostics |
 | `GET` | `/api/workflows/{run_id}/estimate` | Remaining-time estimate (historical mean; shown only when confidence allows) |
 | `GET` | `/api/workflows/{run_id}/outputs` | Files a run produced (paginated) |
-| `GET` | `/api/workflows/{run_id}/outputs/file` | Preview or download one output file |
+| `GET` | `/api/workflows/{run_id}/outputs/file` | Preview or download one output file; `?head=1` for the start of a large text/table |
+| `GET` | `/api/workflows/{run_id}/graph.json` | DAG with live statuses; `?include_pegasus=true` (executable DAG) or `?files=true` (file nodes) |
+| `GET` | `/api/workflows/{run_id}/jobs/{job}/files` | A job's inputs and outputs, located (result / scratch / project) |
+| `GET` | `/api/workflows/{run_id}/files/info` `/files/content` | Describe files by name; serve one from its location |
 | `GET` | `/api/workflows/{run_id}/diagnosis` | Plain-language failure cards (cause, action, technical detail) |
 | `DELETE` | `/api/workflows/{run_id}` | **Destructive**: cancel if running, then remove the run's submit directory from disk |
 | `GET` | `/api/dashboard` | Aggregate landing-page snapshot |

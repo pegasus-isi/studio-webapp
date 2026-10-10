@@ -13,7 +13,7 @@ studio-api/
 ├── security.py             # CORS allowlist, cross-origin write gate,
 │                          #   WebSocket origin guard, proxy-secret middleware
 ├── logging_config.py       # structlog JSON processor chain
-├── routers/                # 18 routers (see API Endpoints below)
+├── routers/                # 20 routers (see API Endpoints below)
 ├── llm/
 │   ├── providers.py        # Provider registry, key-requirement + model discovery
 │   └── propagator.py       # Push the active LLM config to installed tools
@@ -26,10 +26,11 @@ studio-api/
 ├── services/               # workflow scan/submit/monitor, condor pool, image
 │                           # builder, notifications, terminals,
 │                           # chat_permissions, procutil, run_flow, run_outputs,
-│                           # run_diagnosis, chat_turn, onboarding_metrics, …
+│                           # run_diagnosis, chat_turn, onboarding_metrics,
+│                           # job_files, project_rename, telemetry, …
 ├── init_db.py              # CLI: initialize / migrate the SQLite schema
 ├── propagate_llm.py        # CLI: propagate the saved LLM config to installed tools
-└── tests/                  # ~700 tests; no Pegasus/Condor/keys needed
+└── tests/                  # ~930 tests; no Pegasus/Condor/keys needed
 ```
 
 The SQLite DB (`~/.studio/studio.db`; an existing one is moved out of `~/work/.studio` on first start) has **8 tables**: `app_settings`,
@@ -74,10 +75,11 @@ All tests use temporary SQLite DBs and need no Pegasus, HTCondor, or LLM keys.
 
 ## API Endpoints
 
-18 routers are registered under `/api` (WebSockets under `/ws`): `health`,
+20 routers are registered under `/api` (WebSockets under `/ws`): `health`,
 `settings`, `llm`, `knowledge`, `tools`, `files`, `jupyter`, `terminal`,
-`ai_terminal`, `workflows`, `chat`, `opencode`, `mcp`, `notifications`,
-`dashboard`, `provisioning`, `pegasus_bot`, `marketplace`. Highlights (see
+`ai_terminal`, `workflows`, `chat`, `feedback`, `opencode`, `mcp`,
+`notifications`, `episodes`, `dashboard`, `provisioning`, `pegasus_bot`,
+`marketplace`. Highlights (see
 `/docs` for the full list):
 
 Two are not browser-facing. `opencode` proxies `/api/opencode/*` verbatim to the
@@ -110,7 +112,8 @@ does not need them:
 | GET | `/api/health`, `/api/health/detailed` | liveness + DB/Pegasus/HTCondor |
 | GET/PUT | `/api/settings` | LLM-config accessor (shares the validated `llm` save path) |
 | GET/PUT | `/api/settings/workflow-scan` | user-added run-scan roots/excludes, merged with the env defaults (#306) |
-| GET/PUT | `/api/settings/telemetry` | whether this user's traces may carry chat text. Its own row, not a `UIPreferences` field, because that PUT replaces the bag wholesale and its GET substitutes defaults for invalid values — both wrong for a consent flag. Saving propagates, since the engine reads plugin options once at startup |
+| GET/PUT | `/api/settings/ui` | interface preferences (Simplified Run, disclosures, `welcome_dismissed`, `skip_welcome`, `tour_on_login`, `chat_engine`). The PUT replaces the whole object; the client merges before sending |
+| GET/PUT | `/api/settings/telemetry` | whether this user's traces may carry chat text, plus a read-only `decided` (the choice was made either way: "off" is also the default, so the tour keeps asking until it is, #454). Its own row, not a `UIPreferences` field, because that PUT replaces the bag wholesale and its GET substitutes defaults for invalid values — both wrong for a consent flag. Saving propagates, since the engine reads plugin options once at startup |
 | GET/PUT | `/api/settings/profile` | the optional four-question profile (research field, role, Pegasus/HTCondor experience, coding comfort 1–5) for the feedback program, stored in the `user_profile` setting with a server-stamped `answered_at`. Its own row for the same reasons as telemetry consent; the free-text field is never logged |
 | GET/PUT | `/api/llm/config` | active provider/model; **keys are write-only** — GETs return `has_api_key`, never the value |
 | GET/PUT | `/api/llm/provider-configs` | saved providers (also write-only keys) |
@@ -122,14 +125,19 @@ does not need them:
 | Method | Path | Notes |
 |--------|------|-------|
 | GET | `/api/workflows` | discover + list runs |
-| GET | `/api/workflows/{id}` `/jobs` `/events` `/estimate` `/graph.json` | detail, jobs, SSE events, ETA, DAG |
-| GET | `/api/workflows/{id}/outputs` `/outputs/file` | files a run produced (paginated); preview or download one |
+| GET | `/api/workflows/{id}` `/jobs` `/events` `/estimate` | detail, jobs, SSE events, ETA |
+| GET | `/api/workflows/{id}/graph.json` | DAG; `?include_pegasus=true` for the executable DAG, `?files=true` adds file nodes (`file:<lfn>`, grouping family, `result` flag) to the abstract one (#458) |
+| GET | `/api/workflows/{id}/outputs` `/outputs/file` | files a run produced (paginated); preview or download one. `?head=1` serves the first 2 MB of a text/table file too large to preview whole (#460) |
+| GET | `/api/workflows/{id}/jobs/{job}/files` | a job's inputs and outputs from `workflow.yml`, each located as `result` / `scratch` / `project` (or none) with size and previewability (#440) |
+| GET | `/api/workflows/{id}/files/info?lfn=…` `/files/content?location=&path=` | describe files by name (a clicked file node); serve one, confined to its location's directory, with `download` / `head` |
 | GET | `/api/workflows/{id}/diagnosis` | plain-language failure cards — cause, action, technical detail |
 | POST | `/api/workflows/{id}/analyze` | pegasus-analyzer |
 | DELETE | `/api/workflows/{id}` | **destructive** — cancels if running, then removes the run's submit directory from disk |
 | GET/POST | `/api/workflows/projects…` | project list, params, generate, plan, run, build image (SSE) |
 | POST/GET | `/api/workflows/projects/{id}/run-flow` `/run-flow/events` | the one-button Run: start a background flow; snapshot it; SSE replay-then-live |
 | DELETE | `/api/workflows/projects/{id}` | **destructive** — deletes a workflow, its runs (cancelled first) and its files |
+| POST | `/api/workflows/projects/{id}/rename` | moves the project's folder; refused while a run is planning/running; re-points run records and root Pegasus catalogs (#450) |
+| GET | `/api/workflows/projects/{id}/jobs/{job}/files` `/files/info` `/files/content` | the job-files endpoints for a project before any run (only local inputs exist) |
 
 ### Chat, Tools, Files, Terminals
 
