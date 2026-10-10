@@ -56,30 +56,38 @@ def _org_repos(monkeypatch):
     monkeypatch.setattr(mkt, "_last_topic_repos", [])
 
 
-def test_catalog_merges_registry_and_org_repos_deduped(client, monkeypatch):
-    # _fetch_registry returns already-normalized entries (repo_url, source, …).
+def _registry():
+    """The registry as `_fetch_registry` returns it: one entry duplicating a
+    tagged repo (different case and .git), one repo nobody tagged."""
+    return [
+        mkt._normalize(
+            {
+                "id": "variant-calling",
+                "name": "variant-calling",
+                "repo_url": "https://GitHub.com/pegasus-isi/variant-calling-pegasus-workflow.git",
+                "topic": "bioinformatics",
+                "image": "https://example.org/vc.png",
+                "pegasus_version": ">= 5.0.2",
+            },
+            "PegasusHub",
+        ),
+        mkt._normalize(
+            {
+                "id": "orcasound",
+                "name": "orcasound-workflow",
+                "github_repo": "https://github.com/pegasus-isi/orcasound-workflow",
+                "topic": "machine learning",
+            },
+            "PegasusHub",
+        ),
+    ]
+
+
+def test_registry_entries_are_listed_only_when_tagged(client, monkeypatch):
+    """One rule for all of Examples (#462): the topic. The registry no longer
+    adds untagged repos; it enriches the tagged ones it knows."""
     async def fake_registry():
-        return [
-            mkt._normalize(
-                {
-                    "id": "variant-calling",
-                    "name": "variant-calling",
-                    # Duplicate of an org repo (different case + .git) -> deduped.
-                    "repo_url": "https://GitHub.com/pegasus-isi/variant-calling-pegasus-workflow.git",
-                    "topic": "bioinformatics",
-                },
-                "PegasusHub",
-            ),
-            mkt._normalize(
-                {
-                    "id": "orcasound",
-                    "name": "orcasound-workflow",
-                    "github_repo": "https://github.com/pegasus-isi/orcasound-workflow",
-                    "topic": "machine learning",
-                },
-                "PegasusHub",
-            ),
-        ]
+        return _registry()
 
     monkeypatch.setattr(mkt, "_fetch_registry", fake_registry)
     _reset()
@@ -87,42 +95,62 @@ def test_catalog_merges_registry_and_org_repos_deduped(client, monkeypatch):
     body = client.get("/api/marketplace").json()
     wfs = {w["id"]: w for w in body["workflows"]}
 
-    # All 6 org repos + 1 unique registry = 7; the dup collapses onto the org one.
-    assert body["count"] == 7
-    assert "orcasound" in wfs and wfs["orcasound"]["source"] == "PegasusHub"
-    # variant-calling appears once, as the Pegasus-ISI org entry.
-    vc = [w for w in body["workflows"] if "variant-calling" in w["repo_url"].lower()]
-    assert len(vc) == 1
-    assert vc[0]["source"] == "Pegasus-ISI"
-    # The specific repos the user asked for are all present.
-    ids = set(wfs)
-    for expected in ("soilmoisture", "crophealth", "earthquake", "airquality",
-                     "quickstart", "variant-calling-pegasus"):
-        assert expected in ids
+    # The six tagged repos only: orcasound is in the registry but untagged.
+    assert body["count"] == len(_TAGGED)
+    assert "orcasound" not in wfs
+    # The tagged repo the registry knows keeps the registry's id (so an
+    # earlier clone is still recognised), label and metadata...
+    vc = wfs["variant-calling"]
+    assert vc["source"] == "PegasusHub"
+    assert vc["image"] == "https://example.org/vc.png"
+    assert vc["pegasus_version"] == ">= 5.0.2"
+    # ...but the repo's own topics win over the registry's free text.
+    assert vc["topics"] == ["bioinformatics"]
+    assert len([w for w in body["workflows"] if "variant-calling" in w["repo_url"].lower()]) == 1
+    for expected in ("soilmoisture", "crophealth", "earthquake", "airquality", "quickstart"):
+        assert wfs[expected]["source"] == "Pegasus-ISI"
+
+
+def test_untagged_registry_escape_hatch(client, monkeypatch):
+    async def fake_registry():
+        return _registry()
+
+    monkeypatch.setattr(mkt, "_fetch_registry", fake_registry)
+    monkeypatch.setenv("STUDIO_MARKETPLACE_UNTAGGED_REGISTRY", "1")
+    _reset()
+
+    wfs = {w["id"]: w for w in client.get("/api/marketplace").json()["workflows"]}
+    assert wfs["orcasound"]["source"] == "PegasusHub"
+    assert "variant-calling" in wfs and "variant-calling-pegasus" not in wfs
+
+
+def test_registry_can_be_turned_off(client, monkeypatch):
+    monkeypatch.setattr(mkt, "REGISTRY_URL", "")
+    _reset()
+    assert asyncio.run(mkt._fetch_registry()) == []
+
+
+def test_search_covers_every_configured_org(monkeypatch):
+    monkeypatch.setenv("STUDIO_MARKETPLACE_GITHUB_ORGS", "pegasus-isi, my-lab ,")
+    seen: list = []
+    _fake_client(monkeypatch, _FakeResponse({"items": []}), seen)
+    asyncio.run(_real_fetch_topic_repos())
+    assert seen[0]["q"] == "org:pegasus-isi org:my-lab topic:pegasus-studio-example"
 
 
 def test_catalog_leads_with_featured_examples(client, monkeypatch):
     """The catalog opens with quickstart and then the portable-site examples,
-    in order, ahead of the other org/registry entries."""
+    in order, ahead of the other entries."""
     async def fake_registry():
-        return [
-            mkt._normalize(
-                {
-                    "id": "orcasound",
-                    "name": "orcasound-workflow",
-                    "github_repo": "https://github.com/pegasus-isi/orcasound-workflow",
-                },
-                "PegasusHub",
-            ),
-        ]
+        return _registry()
 
     monkeypatch.setattr(mkt, "_fetch_registry", fake_registry)
     _reset()
 
     ids = [w["id"] for w in client.get("/api/marketplace").json()["workflows"]]
     assert ids[:4] == ["quickstart", "earthquake", "airquality", "crophealth"]
-    # Non-featured entries still follow (alphabetical within their group).
-    assert ids[4:] == ["soilmoisture", "variant-calling-pegasus", "orcasound"]
+    # Then Pegasus-ISI entries, then PegasusHub-labelled ones.
+    assert ids[4:] == ["soilmoisture", "variant-calling"]
 
 
 def test_registry_failure_still_lists_org_repos(client, monkeypatch):
