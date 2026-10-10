@@ -207,8 +207,10 @@ writable by the injected uid, so **never bake a rendered config into the image**
   `knowledge/layout.py`; nothing should resolve it independently — `chat.py`
   keeping its own `KNOWLEDGE_ROOT` after the knowledge base moved is how the
   chat lost its context, personas and skills at once (#179).
-  The Marketplace is sourced live from GitHub (PegasusHub registry +
-  curated Pegasus-ISI list), nothing baked in. "Add" git-clones into `~/workflows`.
+  The Examples page (route/API `marketplace`) lists, live from GitHub, every
+  public repo in `STUDIO_MARKETPLACE_GITHUB_ORGS` with the `pegasus-studio-example`
+  topic; the PegasusHub registry only enriches tagged repos (#462). Nothing baked in.
+  "Add" git-clones into `~/workflows`.
 - Deliberate exclusions: JupyterLab ships **without** `jupyter-ai` and without
   RTC/collaboration extensions (they break behind the proxy) — don't re-add. The ep/
   spawner running `privileged`/Apptainer nesting is intentional.

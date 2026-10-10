@@ -1,13 +1,16 @@
 """Workflow Marketplace — browse Pegasus workflows from GitHub and clone one
 into the workspace.
 
-Nothing is baked into the image. The catalog is the **live PegasusHub registry**
-(``pegasushub/workflow-registry`` → ``data/workflows.json``) merged with every
-public repo in the Pegasus-ISI GitHub org that carries the
-``pegasus-studio-example`` topic,
-deduped by repository URL and cached. Listing a workflow is a repo setting, not
-a Studio release: add the topic on GitHub (``gh repo edit
-pegasus-isi/<repo> --add-topic pegasus-studio-example``) and it appears on the next refresh.
+Nothing is baked into the image, and one rule decides what is listed (#462):
+a public repo in the configured GitHub orgs (``STUDIO_MARKETPLACE_GITHUB_ORGS``,
+default ``pegasus-isi``) that carries the ``pegasus-studio-example`` topic.
+Listing a workflow is a repo setting, not a Studio release: ``gh repo edit
+pegasus-isi/<repo> --add-topic pegasus-studio-example`` and it appears on the
+next refresh. The **PegasusHub registry** (``pegasushub/workflow-registry`` →
+``data/workflows.json``) no longer adds entries of its own; it enriches the
+tagged repos it knows (id, image, Pegasus version, license, source label).
+``STUDIO_MARKETPLACE_UNTAGGED_REGISTRY=1`` brings back listing every registry
+entry. The catalog is deduped by repository URL and cached.
 "Add" performs a shallow ``git clone`` of the selected repo into
 ``<workspace>/workflows/<id>`` so it shows up on the Workflows page.
 """
@@ -29,7 +32,9 @@ log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/marketplace", tags=["marketplace"])
 
-# PegasusHub's official machine-readable registry (community catalog).
+# PegasusHub's official machine-readable registry (community catalog). Since
+# #462 it no longer adds entries of its own: it enriches the tagged repos it
+# knows. An empty value turns it off.
 REGISTRY_URL = os.environ.get(
     "STUDIO_MARKETPLACE_REGISTRY_URL",
     "https://raw.githubusercontent.com/pegasushub/workflow-registry/main/data/workflows.json",
@@ -47,7 +52,22 @@ _ENRICH = os.environ.get("STUDIO_MARKETPLACE_ENRICH", "1") not in ("0", "false",
 # studio-webapp or studio-system, and either would then be offered as a
 # runnable example. The search is org-scoped, so other orgs' use of a topic
 # never matters; only an accidental tag inside the org would.
-_GITHUB_ORG = os.environ.get("STUDIO_MARKETPLACE_GITHUB_ORG", "pegasus-isi").strip()
+def _orgs() -> list[str]:
+    """Orgs searched for tagged repos: STUDIO_MARKETPLACE_GITHUB_ORGS
+    (comma-separated), else the single-org STUDIO_MARKETPLACE_GITHUB_ORG it
+    replaced, else pegasus-isi. Read at call time so a test can set it."""
+    raw = os.environ.get("STUDIO_MARKETPLACE_GITHUB_ORGS") or os.environ.get(
+        "STUDIO_MARKETPLACE_GITHUB_ORG", "pegasus-isi"
+    )
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+def _untagged_registry() -> bool:
+    """Escape hatch: list every registry entry, tagged or not (the behaviour
+    before #462)."""
+    return os.environ.get("STUDIO_MARKETPLACE_UNTAGGED_REGISTRY", "0") not in (
+        "0", "false", "",
+    )
 _GITHUB_TOPIC = os.environ.get(
     "STUDIO_MARKETPLACE_TOPIC", "pegasus-studio-example"
 ).strip()
@@ -174,6 +194,8 @@ def _normalize(entry: dict[str, Any], source: str) -> dict[str, Any] | None:
 
 async def _fetch_registry() -> list[dict[str, Any]]:
     """Fetch the PegasusHub registry; return [] on any failure (org repos still show)."""
+    if not REGISTRY_URL:
+        return []
     try:
         async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
             resp = await client.get(REGISTRY_URL)
@@ -241,12 +263,16 @@ _last_topic_repos: list[dict[str, Any]] = []
 
 
 async def _fetch_topic_repos() -> list[dict[str, Any]]:
-    """Public repos in `_GITHUB_ORG` tagged `_GITHUB_TOPIC`."""
+    """Public repos in the configured orgs tagged `_GITHUB_TOPIC`."""
     global _last_topic_repos
-    if not _GITHUB_ORG or not _GITHUB_TOPIC:
+    orgs = _orgs()
+    if not orgs or not _GITHUB_TOPIC:
         return []
+    # Several org: qualifiers in one query are OR'd by GitHub search, so a
+    # second org costs no extra request against the 10/min unauthenticated
+    # budget.
     params = {
-        "q": f"org:{_GITHUB_ORG} topic:{_GITHUB_TOPIC}",
+        "q": " ".join(f"org:{o}" for o in orgs) + f" topic:{_GITHUB_TOPIC}",
         "per_page": "100",
         "sort": "updated",
     }
@@ -343,8 +369,48 @@ async def _enrich_descriptions(entries: list[dict[str, Any]]) -> None:
         log.warning("marketplace_description_enrich_failed", error=str(e))
 
 
+def _merge(
+    tagged: list[dict[str, Any]],
+    registry: list[dict[str, Any]],
+    *,
+    include_untagged: bool = False,
+) -> list[dict[str, Any]]:
+    """One rule for the whole catalog (#462): a repo is listed iff it carries
+    the marker topic. The registry no longer contributes entries of its own;
+    for a tagged repo it knows, it supplies what the search does not:
+
+    * its **id**, so a workflow added from the registry before this change is
+      still recognised as in the workspace (registry ids such as `1000genomes`
+      differ from the repo-derived `1000genome`);
+    * its **image**, **Pegasus version** and **license**, when present;
+    * the **PegasusHub** source label, so that filter keeps meaning "listed in
+      the community registry".
+
+    The tagged repo's own description and topics win: the repo owner keeps
+    them current, the registry's free-text copies drift.
+    """
+    by_repo = {_norm_repo(r["repo_url"]): r for r in registry}
+    out: list[dict[str, Any]] = []
+    for t in tagged:
+        reg = by_repo.get(_norm_repo(t["repo_url"]))
+        if reg:
+            t = {
+                **t,
+                "id": reg["id"],
+                "source": reg["source"],
+                "image": t.get("image") or reg.get("image", ""),
+                "pegasus_version": t.get("pegasus_version") or reg.get("pegasus_version", ""),
+                "license": t.get("license") or reg.get("license", ""),
+                "description": t.get("description") or reg.get("description", ""),
+            }
+        out.append(t)
+    if include_untagged:
+        out += registry  # duplicates of tagged repos are skipped downstream
+    return out
+
+
 async def _catalog(force: bool = False) -> list[dict[str, Any]]:
-    """Merged, deduped catalog (org topic repos + registry), cached."""
+    """Tagged repos, enriched from the registry, deduped and cached."""
     async with _lock:
         age = time.monotonic() - _cache["ts"]
         if not force and _cache["data"] is not None and age < _CACHE_TTL:
@@ -353,14 +419,14 @@ async def _catalog(force: bool = False) -> list[dict[str, Any]]:
         registry, tagged = await asyncio.gather(
             _fetch_registry(), _fetch_topic_repos()
         )
+        entries = _merge(tagged, registry, include_untagged=_untagged_registry())
 
         merged: dict[str, dict[str, Any]] = {}
-        # Org repos first so our ids/descriptions win; registry fills the rest.
         # Skip an entry whose repo OR id is already taken. The id check matters
         # (BE-9): two distinct-repo entries sharing an id used to silently
         # overwrite the first's id slot, dropping it from the catalog even
-        # though its repo key survived. An explicit skip keeps the org one.
-        for entry in tagged + registry:
+        # though its repo key survived. An explicit skip keeps the first.
+        for entry in entries:
             key = _norm_repo(entry["repo_url"])
             eid = entry["id"]
             if not key or key in merged or eid in merged:
