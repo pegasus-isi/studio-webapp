@@ -50,12 +50,12 @@ All app routes live under `app/(studio)/` and share the studio chrome (left nav
 | Route | Rail label | Description |
 |-------|-----------|-------------|
 | `/` | Home | Welcome, four ways in, an opener gallery that hands a prompt to the assistant, an attention strip for failed/running runs, and the guided tour |
-| `/workflows` | Analyses | Project list (resizable/collapsible), a workflow picker in the header, the collapsible "Set up your run" form, an always-visible graph pane with a run picker, Results + Steps tabs, failure cards |
+| `/workflows` | Analyses | Project list (resizable/collapsible), a workflow picker in the header, the collapsible "Set up your run" form, an always-visible graph pane with a run picker (full screen is resizable), Results + Steps tabs, failure cards, Rename/Delete. `?project=` / `?run=` select on arrival |
 | `/data` | Data | Drag-and-drop upload into the workspace, with copy-path and delete |
-| `/marketplace` | Examples | Browse & "Add" (git-clone) workflows sourced live from GitHub (PegasusHub + curated Pegasus-ISI), with search, subject chips, source filter and sort |
+| `/marketplace` | Examples | Browse & "Add" (git-clone) workflows sourced live from GitHub (repos tagged `pegasus-studio-example`, enriched from the PegasusHub registry), with search, subject chips, source filter and sort; cards already in the workspace show "In your workspace · Open" |
 | `/notebooks` | Notebooks | JupyterLab framed in Studio (served at `/jupyter/`), with "Open in new tab" and Reload; `?path=` opens a folder |
 | `/provisioning` | Resources | A plain-language capacity verdict, with HTCondor pool + OSPool (OSG) panels under Details |
-| `/settings` | Settings | Notifications, Pegasus options (incl. Simplified Run), with LLM providers and AI tools under Advanced |
+| `/settings` | Settings | Notifications, Pegasus Options (Simplified Run, welcome page & tour, scan roots), Chat, Feedback & privacy; LLM providers and AI tools under Advanced |
 
 The Advanced grouping follows the **Simplified Run** preference
 (`GET/PUT /api/settings/ui`). Turning it off flattens the rail and opens the
@@ -96,7 +96,18 @@ studio's slide-in panel.
   elements by `data-tour` anchor, cutting the scrim into four panes so the
   highlighted control stays clickable. Steps whose anchor is not on screen are
   skipped, which is what lets one step list work across interface states. It
-  does not navigate. Restartable from **Take a tour** in the account menu.
+  does not navigate. `dashboard-view.tsx` opens it once per browser session
+  (a session cookie) while the `tour_on_login` preference is on; per-login
+  tours add the consent and profile steps only while they are unanswered. Every
+  card carries "Don't show me this tour again"; **Take a tour** in the account
+  menu always runs the full tour.
+- **Workflow graph and files**: `components/workflows/dag-viewer.tsx` (React
+  Flow + dagre) groups repeated steps, and with **Show files** draws file nodes
+  grouped the same way. A click opens `job-files-panel.tsx` (a step's inputs and
+  outputs, or a file node). Previews go through `file-preview.tsx`, a renderer
+  registry shared with the Results tab: image, PDF, JSON tree, CSV/TSV table
+  (parsing in `lib/preview/csv.ts`, unit-tested), text, with partial previews
+  of large text.
 - **Styling**: Tailwind 3 with a custom cornflower Pegasus palette
   (`app/globals.css` semantic tokens + the `pegasus-*` scale in
   `tailwind.config.ts`); light/dark theme-aware. Filled actions live at

@@ -24,7 +24,8 @@ This is the location the `pegasus-scaffold`, `pegasus-wrapper` and
 laid out and say that the environment names the place; this is where it is
 named. Where the two could seem to differ, this section wins.
 
-Nowhere else. The Workflows tab lists the immediate children of
+Nowhere else. The **Analyses** page (what the UI calls it; the route is
+`/workflows`) lists the immediate children of
 `$HOME/workflows/` and nothing deeper or elsewhere, so a project written to
 `$HOME/<name>/` or any other path **does not appear in the UI at all** — no
 Generate, Plan, Run or Build buttons for it, even though the files are on disk
@@ -36,7 +37,7 @@ under `$HOME`": one directory is scanned.
 Your file tools take a path **relative to `$HOME`**, and they do **not** expand
 `~` or `$HOME`. Pass `workflows/<name>/workflow_generator.py`, not
 `~/workflows/…` or `$HOME/workflows/…` — those create a directory literally
-named `~` or `$HOME` under the workspace, which the Workflows tab never looks
+named `~` or `$HOME` under the workspace, which the Analyses page never looks
 in. A real absolute path works too: expand `$HOME` yourself rather than guessing
 the home directory's name.
 

@@ -120,18 +120,21 @@ icon rail**. Every rail cell carries a short label under its glyph.
 | View (rail label) | Route | Purpose |
 |------------------|-------|---------|
 | Home | `/` | Welcome, four ways in, a gallery of openers that hand a prompt to the assistant, and a strip naming anything that needs attention |
-| Analyses | `/workflows` | Discover projects and runs; set up and run a workflow (collapsible), watch the graph, read results, diagnose failures |
+| Analyses | `/workflows` | Discover projects and runs; set up and run a workflow (collapsible), watch the graph, read results, diagnose failures. Click a step in the graph to see the files it reads and writes (with previews); **Show files** draws them as nodes. **Rename** moves a project's folder (refused while a run is in progress) |
 | Data | `/data` | Drag-and-drop your own input files into the workspace; copy a path to paste into a run |
-| Examples | `/marketplace` | Browse workflows sourced live from GitHub: every public repo in the configured orgs with the `pegasus-studio-example` topic, so listing one is `gh repo edit pegasus-isi/<repo> --add-topic pegasus-studio-example`. The PegasusHub registry only enriches tagged repos it knows (id, image, Pegasus version, "PegasusHub" label). Configured by `STUDIO_MARKETPLACE_GITHUB_ORGS` (default `pegasus-isi`), `STUDIO_MARKETPLACE_TOPIC`, `STUDIO_MARKETPLACE_REGISTRY_URL` (empty disables) and `STUDIO_MARKETPLACE_UNTAGGED_REGISTRY=1` (list every registry entry, the pre-#462 behaviour), filter by subject/source, and "Add" (git-clone) one into the workspace |
+| Examples | `/marketplace` | Browse workflows sourced live from GitHub: every public repo in the configured orgs with the `pegasus-studio-example` topic, so listing one is `gh repo edit pegasus-isi/<repo> --add-topic pegasus-studio-example`. The PegasusHub registry only enriches tagged repos it knows (id, image, Pegasus version, "PegasusHub" label). Configured by `STUDIO_MARKETPLACE_GITHUB_ORGS` (default `pegasus-isi`), `STUDIO_MARKETPLACE_TOPIC`, `STUDIO_MARKETPLACE_REGISTRY_URL` (empty disables) and `STUDIO_MARKETPLACE_UNTAGGED_REGISTRY=1` (list every registry entry, the pre-#462 behaviour), filter by subject/source, and "Add" (git-clone) one into the workspace. A workflow already in the workspace shows **In your workspace · Open** |
 | Notebooks | `/notebooks` | JupyterLab, framed in Studio, with "Open in new tab" and Reload. `?path=` opens a specific folder |
 | Resources | `/provisioning` | Whether there is capacity to run now, with HTCondor pool inventory, workflow demand, pressure findings and an OSPool (OSG) panel under Details |
-| Settings | `/settings` | Notifications, Pegasus options (incl. the Simplified Run toggle), with LLM providers and **Tools** under Advanced |
-| PegasusAI Chat | (resizable slide-in panel + `/chat`) | Built-in SSE chat with file, shell, and Pegasus tool use; per-turn approval before shell commands run |
+| Settings | `/settings` | Notifications, Pegasus Options (Simplified Run, welcome page & tour, scan roots), Chat (engine, command approval, chat-text sharing), Feedback & privacy; LLM providers and **Tools** under Advanced |
+| PegasusAI Chat | (resizable slide-in panel + `/chat`) | The assistant, on the OpenCode engine by default (the builtin loop stays selectable), with Pegasus tools over MCP; per-turn approval before shell commands run |
 | Terminal | (panel) | Browser PTY connected to the workspace |
 
 **Onboarding** is a guided tour that spotlights real elements rather than a
-card describing them. It runs itself on a first visit and is restartable any
-time from **Take a tour** in the account menu.
+card describing them. It runs on every login (once per browser session) until
+the user ticks **Don't show me this tour again** or turns it off in Settings,
+and is restartable any time from **Take a tour** in the account menu. After the
+walkthrough it says what Studio records and asks, until answered, whether chat
+text may be shared (opt-in, off by default) and four optional profile questions.
 
 **Running a workflow.** One **Run** button prepares and starts the workflow —
 generating it, building the software environment only if it is stale, planning
@@ -146,8 +149,10 @@ numbers and file pickers inferred where the definition allows it. Anything that
 cannot be inferred stays a plain text field, and `argparse` remains the
 validator.
 
-When a run finishes, its output files are on the **Results** tab, with preview
-for images, CSV and text. When one fails, the failure is reported as a cause
+When a run finishes, its output files are on the **Results** tab, with previews
+for images and PDFs (up to 25 MB), CSV/TSV as a sortable, filterable table, JSON
+as a collapsible tree, and text. Text and tables over 2 MB preview their first
+2 MB. When one fails, the failure is reported as a cause
 and a suggested action, with the raw log kept underneath and an "Explain this
 failure" button that hands it to the assistant.
 
@@ -256,7 +261,7 @@ Workflow discovery** (stored in the workspace DB, `GET/PUT
   large data directory. Merged with the builtin list.
 
 User additions extend the deployment defaults; they never replace them, so
-misconfiguration can't empty the Workflows page. Project-detection rules
+misconfiguration can't empty the Analyses page. Project-detection rules
 (generator filenames, the `workflows/` directory) are Pegasus/PegasusHub
 conventions and are deliberately not configurable.
 
@@ -329,7 +334,7 @@ npm run dev
 Tests / gates (CI runs neither — run before every PR):
 
 ```bash
-cd studio-api && pytest -q                       # ~700 tests
+cd studio-api && pytest -q                       # ~930 tests
 cd studio-web && node_modules/.bin/tsc --noEmit   # NOT `npm test`/`npm run lint` — those don't work
 ```
 
