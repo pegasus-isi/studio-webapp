@@ -114,6 +114,22 @@ FIELD_LABELS = {
     "RESOURCE_SCRATCH_DIR": "Scratch directory on the cluster",
 }
 
+# ── Site overrides (#478) ──
+#
+# Properties.add_site_profile() writes these, and pegasus-plan applies them
+# over whatever site catalog is active. They live in ~/.pegasusrc beside the
+# catalog choice, survive catalog refreshes, and — unlike a user-level
+# pegasus.catalog.site.file — do not replace a project's own sites.yml.
+OVERRIDE_PREFIX = "pegasus.catalog.site.sites."
+NAMESPACES = ("condor", "pegasus", "env", "dagman", "globus", "selector")
+_OVERRIDE_KEY = re.compile(
+    r"^pegasus\.catalog\.site\.sites\.([A-Za-z0-9_-]+)\.profiles\."
+    r"(" + "|".join(NAMESPACES) + r")\.(\+?[A-Za-z0-9_.-]+)$"
+)
+_SAFE_SITE = re.compile(r"^[A-Za-z0-9_-]+$")
+# HTCondor ClassAd attributes may start with "+" (+ProjectName).
+_SAFE_PROFILE_KEY = re.compile(r"^\+?[A-Za-z0-9_.-]+$")
+
 _SAFE_CATALOG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.ya?ml$")
 _SAFE_VAR = re.compile(r"^RESOURCE_[A-Z0-9_]+$")
 
@@ -147,6 +163,7 @@ def read_config(path: Path | None = None) -> dict[str, Any]:
     catalog: str | None = None
     base: str | None = None
     env: dict[str, str] = {}
+    overrides: list[dict[str, str]] = []
     try:
         lines = path.read_text().splitlines()
     except OSError:
@@ -160,6 +177,13 @@ def read_config(path: Path | None = None) -> dict[str, Any]:
             catalog = value or None
         elif key == REPO_BASE_KEY:
             base = value or None
+        elif key.startswith(OVERRIDE_PREFIX):
+            m = _OVERRIDE_KEY.match(key)
+            if m:
+                overrides.append({
+                    "site": m.group(1), "namespace": m.group(2),
+                    "key": m.group(3), "value": value,
+                })
         elif key.startswith(_ENV_PREFIX) and _SAFE_VAR.match(key[len(_ENV_PREFIX):]):
             env[key[len(_ENV_PREFIX):]] = value
     studio_pool = catalog == STUDIO_CATALOG and (base or "").startswith("file://")
@@ -167,6 +191,7 @@ def read_config(path: Path | None = None) -> dict[str, Any]:
         "catalog": None if studio_pool else catalog,
         "env": env,
         "studio_pool": studio_pool,
+        "overrides": overrides,
     }
 
 
@@ -175,16 +200,52 @@ def _clean(value: str) -> str:
     return " ".join(str(value).split())
 
 
+def validate_overrides(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Normalised override rows, or ValueError naming the first bad one.
+
+    Empty rows (no key) are dropped; a later row for the same site, namespace
+    and key wins, as it would in the file.
+    """
+    out: dict[tuple[str, str, str], dict[str, str]] = {}
+    for row in rows or []:
+        site = str(row.get("site") or "").strip()
+        ns = str(row.get("namespace") or "").strip().lower()
+        key = str(row.get("key") or "").strip()
+        value = _clean(row.get("value") or "")
+        if not key:
+            continue
+        if not _SAFE_SITE.match(site):
+            raise ValueError(f"Not a site name: {site!r}")
+        if ns not in NAMESPACES:
+            raise ValueError(f"Not a profile namespace: {ns!r} (use one of {', '.join(NAMESPACES)})")
+        if not _SAFE_PROFILE_KEY.match(key):
+            raise ValueError(f"Not a profile key: {key!r}")
+        if not value:
+            raise ValueError(f"{site} / {ns} / {key} has no value")
+        out[(site, ns, key)] = {"site": site, "namespace": ns, "key": key, "value": value}
+    return list(out.values())
+
+
+def override_property(row: dict[str, str]) -> str:
+    return f"{OVERRIDE_PREFIX}{row['site']}.profiles.{row['namespace']}.{row['key']}"
+
+
 def write_config(
-    catalog: str | None, env: dict[str, str], path: Path | None = None
+    catalog: str | None,
+    env: dict[str, str],
+    path: Path | None = None,
+    overrides: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Set the catalog and allocation in ~/.pegasusrc; keep every other line.
 
     `catalog=None` removes the catalog (Studio's own pool); an empty env value
-    removes that variable. Written atomically, 0600: an allocation is not a
-    secret, but it is nobody else's business either.
+    removes that variable. `overrides`, when given, replaces every site
+    override in the file (Studio manages them all once the editor is used);
+    None leaves them as they are. Written atomically, 0600: an allocation is
+    not a secret, but it is nobody else's business either.
     """
     path = path or pegasusrc_path()
+    rows = validate_overrides(overrides) if overrides is not None else None
     if catalog is not None and not _SAFE_CATALOG.match(catalog):
         raise ValueError(f"Not a site catalog file name: {catalog!r}")
     for var in env:
@@ -207,6 +268,9 @@ def write_config(
     owned = {REPO_FILE_KEY, REPO_BASE_KEY, REPO_INTERVAL_KEY} | {
         f"{_ENV_PREFIX}{v}" for v in env
     }
+    if rows is not None:
+        for row in rows:
+            wanted[override_property(row)] = row["value"]
 
     try:
         lines = path.read_text().splitlines()
@@ -215,6 +279,8 @@ def write_config(
     out: list[str] = []
     for line in lines:
         kv = _split(line)
+        if kv and rows is not None and kv[0].startswith(OVERRIDE_PREFIX):
+            owned.add(kv[0])  # every override is Studio's once rows are given
         if kv and kv[0] in owned:
             if kv[0] in wanted:
                 out.append(f"{kv[0]} = {wanted.pop(kv[0])}")
@@ -312,6 +378,77 @@ async def list_catalogs(ref: str | None) -> list[dict[str, Any]]:
         return hit[1] if hit else []
     _cache[key] = (time.monotonic(), catalogs)
     return catalogs
+
+
+# ── The effective site ────────────────────────────────────────────────────
+
+
+def studio_catalog_text() -> str | None:
+    """Studio's own catalog, from the shared copy or the image."""
+    for root in (studio_repo_dir(), studio_repo_image_dir()):
+        for f in sorted(Path(root).glob(f"*/conf/{STUDIO_CATALOG}")):
+            try:
+                return f.read_text()
+            except OSError:
+                continue
+    return None
+
+
+async def catalog_text(name: str, ref: str | None) -> str | None:
+    """A published catalog's YAML, cached like the listing."""
+    if not _SAFE_CATALOG.match(name):
+        return None
+    key = f"text:{ref}:{name}"
+    hit = _cache.get(key)
+    if hit and time.monotonic() - hit[0] < _CACHE_TTL:
+        return hit[1]
+    try:
+        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
+            for r in ([ref, "main"] if ref else ["main"]):
+                try:
+                    raw = await _get(
+                        client,
+                        f"https://raw.githubusercontent.com/{_CATALOG_REPO}/{r}/conf/{name}",
+                    )
+                except httpx.HTTPStatusError:
+                    continue
+                _cache[key] = (time.monotonic(), raw.text)
+                return raw.text
+    except httpx.HTTPError as e:
+        log.info("site_catalog_text_failed", name=name, error=str(e))
+    return hit[1] if hit else None
+
+
+def effective_site(
+    text: str | None, site: str, overrides: list[dict[str, str]]
+) -> str | None:
+    """The catalog's entry for `site` with the overrides applied, as YAML.
+
+    What pegasus-plan will see for that site, so a user can check an
+    override before running anything. ${RESOURCE_*} placeholders are shown as
+    written; Pegasus fills them from the allocation at plan time.
+    """
+    import copy
+
+    import yaml
+
+    entry: dict[str, Any] = {"name": site}
+    try:
+        doc = yaml.safe_load(text) if text else None
+    except yaml.YAMLError:
+        doc = None
+    for s in (doc or {}).get("sites") or []:
+        if isinstance(s, dict) and s.get("name") == site:
+            entry = copy.deepcopy(s)
+            break
+    profiles = entry.setdefault("profiles", {}) or {}
+    entry["profiles"] = profiles
+    for row in overrides:
+        if row["site"] == site:
+            profiles.setdefault(row["namespace"], {})[row["key"]] = row["value"]
+    if not profiles:
+        entry.pop("profiles")
+    return yaml.safe_dump(entry, sort_keys=False, default_flow_style=False)
 
 
 # ── Slurm accounts ────────────────────────────────────────────────────────

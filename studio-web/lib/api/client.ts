@@ -1287,6 +1287,23 @@ export interface ComputeSite {
   /** The user's Slurm accounts, where sacctmgr exists; else empty. */
   slurm_accounts: string[];
   field_labels: Record<string, string>;
+  /** Site overrides in ~/.pegasusrc for the active catalog (#478). */
+  overrides: SiteOverride[];
+  /** Per catalog slot ("studio", "none", or a catalog file name). */
+  saved_overrides: Record<string, SiteOverride[]>;
+  override_namespaces: string[];
+  /** YAML of the execution site with overrides applied. */
+  effective_site: string | null;
+  studio_pool_available: boolean;
+}
+
+/** A profile set on a site over the active catalog:
+ *  pegasus.catalog.site.sites.<site>.profiles.<namespace>.<key> = <value> */
+export interface SiteOverride {
+  site: string;
+  namespace: string;
+  key: string;
+  value: string;
 }
 
 export async function getComputeSite() {
@@ -1295,11 +1312,12 @@ export async function getComputeSite() {
 
 export async function updateComputeSite(
   catalog: string | null,
-  env: Record<string, string>
+  env: Record<string, string>,
+  overrides?: SiteOverride[]
 ) {
   return request<ComputeSite>("/settings/compute-site", {
     method: "PUT",
-    body: JSON.stringify({ catalog, env }),
+    body: JSON.stringify({ catalog, env, overrides }),
   });
 }
 
