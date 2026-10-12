@@ -8,8 +8,8 @@ From: rockylinux:9
 # Same product as ../Dockerfile (nginx+supervisord fronting studio-api,
 # studio-web, and JupyterLab, plus HTCondor, Pegasus WMS, and Apptainer for
 # running workflow job containers) — packaged for Open OnDemand instead of
-# K8s/KubeSpawner. This is the container image; the OOD batch-connect app
-# that launches it is the rest of ood-app/ (see README.md there).
+# K8s/KubeSpawner. This is the container image only; the OOD batch-connect app
+# that launches it is github.com/pegasus-isi/bc_pegasus_ai_studio.
 #
 # Build (from the repo root — %files sources below are resolved relative to
 # the current working directory, not this .def file's location):
@@ -415,6 +415,6 @@ echo "[test] studio-el9.sif basic sanity checks passed"
             --env STUDIO_HOME="$HOME/pegasus-studio" ood-app/studio-el9.sif
 
     Nginx listens on :8888 (STUDIO_PORT), same as the Docker image. There is
-    no built-in auth: the OOD batch-connect app in ood-app/ fronts the
+    no built-in auth: the OOD batch-connect app (pegasus-isi/bc_pegasus_ai_studio) fronts the
     session per-user, the same role KubeSpawner plays for the K8s
     deployment.

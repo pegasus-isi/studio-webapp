@@ -18,7 +18,8 @@ set -euo pipefail
 # and the first launch would overwrite their own Codex/Claude/Pegasus setup.
 #
 # So an OOD session gives Studio a directory of its own and makes *that* the
-# home. ood-app/template/script.sh.erb does it properly, with Apptainer's
+# home. The batch-connect app (github.com/pegasus-isi/bc_pegasus_ai_studio)
+# does it properly, with Apptainer's
 # --home, which also rewrites the passwd entry. This is the fallback for a
 # launch that only set STUDIO_HOME: env-reading tools follow the export, but
 # anything that looks the home up in passwd (ssh, HTCondor's token directory)
