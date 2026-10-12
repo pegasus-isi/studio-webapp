@@ -406,13 +406,15 @@ async def _compute_site_view() -> dict:
     # Keep a hand-set catalog visible even if it is not (or no longer)
     # published for this Pegasus series, so saving the form never silently
     # drops it.
+    catalogs = [c for c in catalogs if c["name"] != site_config.STUDIO_CATALOG]
     if current["catalog"] and not any(c["name"] == current["catalog"] for c in catalogs):
         catalogs = [{"name": current["catalog"], "label": current["catalog"], "needs": []}] + catalogs
     return {
         **current,
-        # Every hosted catalog names its execution site "compute"; without one,
-        # Pegasus' built-in HTCondor pool is where jobs go.
-        "site": "compute" if current["catalog"] else "condorpool",
+        # Every hosted catalog names its execution site "compute", and so does
+        # Studio's own pool (#474). Only with no catalog at all is it Pegasus'
+        # built-in "condorpool".
+        "site": "compute" if current["catalog"] or current["studio_pool"] else "condorpool",
         "pegasus_version": version,
         "pegasus_series": ref,
         "catalogs": catalogs,

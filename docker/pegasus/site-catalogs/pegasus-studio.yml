@@ -1,0 +1,39 @@
+# Studio's own HTCondor pool, as a "hosted" site catalog (#474).
+#
+# Workflows follow the pegasus-gromacs template: they run on a site named
+# "compute", which each install's hosted catalog defines (ACCESS, Unity,
+# Anvil … in github.com/pegasushub/pegasus-site-catalogs). This file defines
+# it for Studio's pool, so the template default, the notebooks and the README
+# commands all work here unchanged.
+#
+# Installed at /opt/studio/site-catalogs/<MAJOR.MINOR>/conf/ and named in
+# ~/.pegasusrc as pegasus.catalog.site.repo.file with a file:// repo base, so
+# pegasus-plan treats it exactly like a published catalog: a project's own
+# sites.yml is merged over it, and the planner leaves a copy in the project.
+# Pegasus adds its own "local" site; --output-dir sets where results go.
+x-pegasus:
+  createdBy: pegasus-ai-studio
+pegasus: "5.0"
+sites:
+- name: compute
+  directories: []
+  profiles:
+    condor:
+      universe: vanilla
+    env:
+      LANG: C
+      PYTHONUNBUFFERED: "1"
+    pegasus:
+      style: condor
+# Same pool under the name earlier Studio workflows were generated for, so
+# their transformation catalogs (bound to "condorpool") still plan.
+- name: condorpool
+  directories: []
+  profiles:
+    condor:
+      universe: vanilla
+    env:
+      LANG: C
+      PYTHONUNBUFFERED: "1"
+    pegasus:
+      style: condor

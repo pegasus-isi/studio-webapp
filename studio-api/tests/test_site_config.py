@@ -25,6 +25,7 @@ def test_write_keeps_other_properties_and_round_trips(tmp_path):
     assert got == {
         "catalog": "unity.yml",
         "env": {"RESOURCE_USERNAME": "kt", "RESOURCE_PROJECT": "pi_lab"},
+        "studio_pool": False,
     }
     text = rc.read_text()
     assert "# my notes" in text and "pegasus.mode = development" in text
@@ -32,11 +33,12 @@ def test_write_keeps_other_properties_and_round_trips(tmp_path):
     assert stat.S_IMODE(os.stat(rc).st_mode) == 0o600
 
 
-def test_clearing_the_catalog_and_a_variable(tmp_path):
+def test_clearing_the_catalog_and_a_variable(tmp_path, monkeypatch):
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(tmp_path / "absent"))
     rc = tmp_path / ".pegasusrc"
     sc.write_config("unity.yml", {"RESOURCE_PROJECT": "pi_lab"}, rc)
     got = sc.write_config(None, {"RESOURCE_PROJECT": ""}, rc)
-    assert got == {"catalog": None, "env": {}}
+    assert got == {"catalog": None, "env": {}, "studio_pool": False}
 
 
 @pytest.mark.parametrize(
@@ -109,3 +111,86 @@ def test_endpoint_reads_writes_and_offers_compute(client, monkeypatch, tmp_path)
 def test_slurm_accounts_empty_without_sacctmgr(monkeypatch):
     monkeypatch.setattr(sc.shutil, "which", lambda name: None)
     assert asyncio.run(sc.slurm_accounts()) == []
+
+
+# ── Studio's own pool as a hosted-style catalog (#474) ──
+
+
+def _studio_repo(tmp_path, monkeypatch):
+    repo = tmp_path / "site-catalogs"
+    (repo / "6.0" / "conf").mkdir(parents=True)
+    (repo / "6.0" / "conf" / "pegasus-studio.yml").write_text("sites: []\n")
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(repo))
+    return repo
+
+
+def test_no_cluster_means_studio_pool_and_back(tmp_path, monkeypatch):
+    repo = _studio_repo(tmp_path, monkeypatch)
+    rc = tmp_path / ".pegasusrc"
+
+    got = sc.write_config(None, {}, rc)
+    assert got == {"catalog": None, "env": {}, "studio_pool": True}
+    text = rc.read_text()
+    assert f"pegasus.catalog.site.repo = file://{repo}" in text
+    assert "pegasus.catalog.site.repo.file = pegasus-studio.yml" in text
+    assert "pegasus.catalog.site.repo.interval = 0" in text
+
+    # A published cluster drops the local base, so Pegasus fetches from GitHub.
+    got = sc.write_config("unity.yml", {}, rc)
+    assert got["catalog"] == "unity.yml" and got["studio_pool"] is False
+    assert "pegasus.catalog.site.repo =" not in rc.read_text()
+    assert "repo.interval" not in rc.read_text()
+
+    assert sc.write_config(None, {}, rc)["studio_pool"] is True
+
+
+def test_without_the_image_catalog_no_cluster_clears_everything(tmp_path, monkeypatch):
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(tmp_path / "absent"))
+    rc = tmp_path / ".pegasusrc"
+    sc.write_config("unity.yml", {}, rc)
+    assert sc.write_config(None, {}, rc) == {"catalog": None, "env": {}, "studio_pool": False}
+
+
+def test_studio_pool_reports_compute_and_where_it_runs_follows(client, monkeypatch, tmp_path):
+    _studio_repo(tmp_path, monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    async def catalogs(ref):
+        return [{"name": "pegasus-studio.yml", "label": "x", "needs": []},
+                {"name": "unity.yml", "label": "Unity", "needs": []}]
+
+    async def accounts():
+        return []
+
+    async def version(cmd):
+        return "6.0.0dev"
+
+    monkeypatch.setattr(sc, "list_catalogs", catalogs)
+    monkeypatch.setattr(sc, "slurm_accounts", accounts)
+    monkeypatch.setattr("routers.health._run_version_cmd", version)
+
+    body = client.put("/api/settings/compute-site", json={"catalog": None, "env": {}}).json()
+    assert body["studio_pool"] is True and body["site"] == "compute" and body["catalog"] is None
+    # Studio's own catalog is not offered as a published cluster.
+    assert [c["name"] for c in body["catalogs"]] == ["unity.yml"]
+
+    from services.execution_sites import execution_sites, site_problem
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    assert execution_sites(str(proj), environ={})["default"] == "compute"
+    assert site_problem(str(proj), "compute", environ={}) is None
+
+
+def test_the_shipped_catalog_defines_compute_and_condorpool():
+    import pathlib
+
+    import yaml
+
+    shipped = pathlib.Path(__file__).resolve().parents[2] / "docker" / "pegasus" / "site-catalogs" / "pegasus-studio.yml"
+    doc = yaml.safe_load(shipped.read_text())
+    sites = {s["name"]: s for s in doc["sites"]}
+    assert set(sites) == {"compute", "condorpool"}
+    for s in sites.values():
+        assert s["profiles"]["pegasus"]["style"] == "condor"
+        assert s["profiles"]["condor"]["universe"] == "vanilla"
