@@ -1297,7 +1297,9 @@ export interface ComputeSite {
   catalog: string | null;
   /** RESOURCE_* → value, as written in ~/.pegasusrc. */
   env: Record<string, string>;
-  /** "compute" with a catalog, else "condorpool". */
+  /** True when ~/.pegasusrc points at Studio's own pool (#474). */
+  studio_pool: boolean;
+  /** "compute" with a catalog or Studio's own pool, else "condorpool". */
   site: string;
   pegasus_version: string | null;
   pegasus_series: string | null;

@@ -189,6 +189,9 @@ dnf install -y pegasus
 pegasus-version
 install -Dm644 /opt/build/docker/pegasus/pegasus.properties \
     /etc/pegasus/pegasus.properties
+# Studio's own pool as a hosted-style site catalog (#474); see the Dockerfile.
+install -Dm644 /opt/build/docker/pegasus/site-catalogs/pegasus-studio.yml \
+    "/opt/studio/site-catalogs/$(pegasus-version | cut -d. -f1,2)/conf/pegasus-studio.yml"
 
 # Pin Pegasus's CLI tools to python3.12, the interpreter this image's
 # pip/Jupyter stack uses throughout (see the python3.12 packages note

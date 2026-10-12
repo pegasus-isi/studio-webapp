@@ -407,17 +407,31 @@ if ! grep -qs '^pegasus\.agent\.url' "${PEGASUS_CONF}"; then
     echo "[studio] Wrote pegasus.agent.url to ${PEGASUS_CONF}"
 fi
 
-# Hosted site catalog (#468). An admin can name one for every user of an
-# install (an OOD site.env on a Slurm cluster: STUDIO_SITE_CATALOG=unity.yml);
-# it is written to ~/.pegasusrc only when the user has not chosen one, so a
-# choice made on the Resources page is never overwritten.
-if [ -n "${STUDIO_SITE_CATALOG:-}" ]; then
-    PEGASUSRC="${HOME:-/tmp}/.pegasusrc"
-    if ! grep -qs '^pegasus\.catalog\.site\.repo\.file' "${PEGASUSRC}"; then
+# Site catalog (#468, #474). Written to ~/.pegasusrc only when the user has
+# not chosen one (no repo.file there yet), so a choice made on the Resources
+# page is never overwritten:
+#   - an admin-named published catalog for every user of an install (an OOD
+#     site.env on a Slurm cluster: STUDIO_SITE_CATALOG=unity.yml), fetched
+#     from github.com/pegasushub/pegasus-site-catalogs;
+#   - otherwise Studio's own pool, shipped in the image as a hosted-style
+#     catalog defining "compute", so the workflow template's default site
+#     plans here. A file:// repo base and interval 0: no download, always the
+#     image's current file. A project's own sites.yml is still merged over it.
+PEGASUSRC="${HOME:-/tmp}/.pegasusrc"
+STUDIO_SITE_REPO="/opt/studio/site-catalogs"
+if ! grep -qs '^pegasus\.catalog\.site\.repo\.file' "${PEGASUSRC}"; then
+    if [ -n "${STUDIO_SITE_CATALOG:-}" ]; then
         echo "pegasus.catalog.site.repo.file = ${STUDIO_SITE_CATALOG}" >> "${PEGASUSRC}"
-        chmod 600 "${PEGASUSRC}" 2>/dev/null || true
         echo "[studio] Wrote hosted site catalog ${STUDIO_SITE_CATALOG} to ${PEGASUSRC}"
+    elif ls "${STUDIO_SITE_REPO}"/*/conf/pegasus-studio.yml >/dev/null 2>&1; then
+        {
+            echo "pegasus.catalog.site.repo = file://${STUDIO_SITE_REPO}"
+            echo "pegasus.catalog.site.repo.file = pegasus-studio.yml"
+            echo "pegasus.catalog.site.repo.interval = 0"
+        } >> "${PEGASUSRC}"
+        echo "[studio] Pointed ${PEGASUSRC} at Studio's own pool (site \"compute\")"
     fi
+    chmod 600 "${PEGASUSRC}" 2>/dev/null || true
 fi
 
 # ---- OpenCode server password ----
