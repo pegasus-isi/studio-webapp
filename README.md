@@ -227,9 +227,9 @@ to bypass the proxy if the server is directly browser-reachable.
 | `STUDIO_BUILD_FAKEROOT` | _(unset)_ | Force `apptainer build --fakeroot --ignore-fakeroot-command` on (`1`) or off (`0`); unset follows the process euid |
 | `PEGASUS_BOT_SERVER_URL` | `http://server.ai-bot:8000` | Upstream PegasusAI Bot server the in-pod proxy (`/api/pegasus-bot`) forwards to |
 | `PEGASUS_BOT_CLIENT_URL` | `<prefix>/api/pegasus-bot` | Server URL injected into the extension; defaults to the same-origin proxy path. Override to point the browser at a directly-reachable server |
-| `STUDIO_SITE_CATALOG` | _(unset)_ | Hosted site catalog (e.g. `unity.yml`) written to each user's `~/.pegasusrc` at startup when they have not chosen one, so a cluster install needs no per-user setup beyond the allocation. Users can change it on Resources |
+| `STUDIO_SITE_CATALOG` | _(unset)_ | Published site catalog (e.g. `unity.yml`) written to each user's `~/.pegasusrc` at startup when they have not chosen one, so a cluster install needs no per-user setup beyond the allocation. Unset: Studio's own pool (`pegasus-studio.yml`, site `compute`). Users can change it on Resources |
 | `STUDIO_EXEC_SITE` | _(unset)_ | Execution site the Run form preselects and always offers (e.g. `compute` on a Slurm cluster). Unset: the project's `sites.yml` / hosted catalog decide, else `condorpool`. See [Where it runs](#where-it-runs) |
-| `STUDIO_SITE_STYLE` / `STUDIO_SITE_QUEUE` / `STUDIO_SITE_PROJECT` | _(unset)_ | Prefill a generator's `--site-style`, `--queue` and `--project` (portable-sites generators), e.g. `slurm`, the partition and the allocation on a Slurm-only install |
+| `STUDIO_SITE_STYLE` / `STUDIO_SITE_QUEUE` / `STUDIO_SITE_PROJECT` | _(unset)_ | **Legacy.** Prefill `--site-style`, `--queue` and `--project` for generators that still have them (the retired portable-sites template). Template generators take scheduler details from the site catalog instead: use `STUDIO_SITE_CATALOG` or Resources |
 | `STUDIO_ENABLE_PEGASUS_BOT` | `1` | Inject the PegasusAI Bot config (server + env user) into JupyterLab (`0` leaves the bundled extension inert / manual) |
 
 ### Workflow discovery
@@ -270,23 +270,29 @@ conventions and are deliberately not configurable.
 
 ### Where it runs
 
-The Run form's "Where it runs" choices are the sites the project can actually
-plan against, not a fixed pair: "This machine" (`local`), plus every site in
-the project's `sites.yml`, the sites of a hosted site catalog named in
-`~/.pegasusrc` (`pegasus.catalog.site.repo.file`; hosted catalogs call theirs
-`compute`), and `STUDIO_EXEC_SITE`. A condor pool shows as "Shared cluster", a
-Slurm or other batch site as "HPC cluster". When none of those defines an
-execution site, the default HTCondor `condorpool` is offered, because
-generators built on the pegasus-ai `custom_sites.py` template create it in
-that case; otherwise the project's own site is preselected.
+Workflows follow the pegasus-gromacs template: they never define where they
+run, and plan on a site named **`compute`** that a site catalog defines. A
+catalog is named in `~/.pegasusrc` (`pegasus.catalog.site.repo.file`):
 
-Those generators state only cores, memory and runtime, and take the site's
-scheduler settings as options (`--site-style`, `--queue`, `--project`, ...).
-On a Slurm-only install (e.g. Open OnDemand), set `STUDIO_EXEC_SITE=compute`,
-`STUDIO_SITE_STYLE=slurm`, `STUDIO_SITE_QUEUE=<partition>` and
-`STUDIO_SITE_PROJECT=<account>` in the deployment environment, or point
-`~/.pegasusrc` at the cluster's hosted catalog: users then get a working Run
-form with no site setup. Generators without those options are unaffected.
+- **Studio's own pool** (the default). The image ships
+  `/opt/studio/site-catalogs/<MAJOR.MINOR>/conf/pegasus-studio.yml`, defining
+  `compute` (and `condorpool`, for workflows generated before the template) as
+  Studio's HTCondor pool, and the entrypoint points `~/.pegasusrc` at it with a
+  `file://` repo base when no catalog is chosen (#474). The template default,
+  the notebooks and every README's `pegasus-plan -s compute` work unchanged.
+- **A cluster the user has an allocation on**, chosen on **Resources** ("Where
+  your workflows run"): a catalog published in pegasushub/pegasus-site-catalogs
+  plus the `RESOURCE_*` allocation fields it uses (#468), or set for everyone
+  with `STUDIO_SITE_CATALOG`. These also call their site `compute`.
+
+Either way the catalog is "hosted": a project's own `sites.yml` is merged over
+it, never replaced. The Run form offers the sites the project can plan against
+— `local`, its `sites.yml`, the catalog's sites, `STUDIO_EXEC_SITE` — and Run
+passes the chosen one as the generator's `-e/--execution-site-name` (the
+template binds transformations to it, so it must equal the plan's `-s`),
+plans with `--output-dir <project>/output`, and refuses a site nothing defines
+before starting (#466). Only with no catalog at all is Pegasus's built-in
+`condorpool` the default.
 
 ### HTCondor connection
 

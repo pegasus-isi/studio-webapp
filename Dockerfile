@@ -259,6 +259,15 @@ RUN curl -fsSL https://download.pegasus.isi.edu/pegasus/gpg.txt \
 # else ends up on PATH. Unversioned: naming a minor version here is how it
 # would rot on a suite bump.
 ENV PEGASUS_PYTHON=/usr/bin/python3
+# Studio's own pool as a hosted-style site catalog (#474): defines "compute",
+# the site the workflow template plans on. pegasus-plan looks for it under
+# <repo base>/<MAJOR.MINOR>/conf/, so the directory is named after the Pegasus
+# just installed; the entrypoint points ~/.pegasusrc at it.
+COPY docker/pegasus/site-catalogs/pegasus-studio.yml /tmp/pegasus-studio.yml
+RUN series="$(pegasus-version | cut -d. -f1,2)" && \
+    install -Dm644 /tmp/pegasus-studio.yml \
+        "/opt/studio/site-catalogs/${series}/conf/pegasus-studio.yml" && \
+    rm /tmp/pegasus-studio.yml
 
 # ---- Apptainer (Singularity) container runtime ----
 # Pegasus workflows run jobs in Singularity containers (e.g. container_type

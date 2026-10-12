@@ -70,7 +70,7 @@ export function ComputeSiteCard() {
 
   const current = data?.catalog
     ? `${data.catalogs.find((c) => c.name === data.catalog)?.label ?? data.catalog} (site “compute”)`
-    : "Studio’s own pool (site “condorpool”)";
+    : `Studio’s own pool (site “${data?.site ?? "compute"}”)`;
 
   return (
     <section className="rounded-xl border border-line bg-surface p-4">
@@ -181,7 +181,9 @@ export function ComputeSiteCard() {
             )}
             {saved && !dirty && (
               <span className="text-xs text-emerald-700 dark:text-emerald-400">
-                Saved. {catalog ? "Analyses now offer “compute” under Where it runs." : "Analyses run on Studio’s own pool."}
+                Saved. {catalog
+                  ? "Analyses now run on “compute” at this cluster."
+                  : "Analyses run on Studio’s own pool."}
               </span>
             )}
             {save.isError && (

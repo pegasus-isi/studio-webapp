@@ -32,6 +32,23 @@ import structlog
 log = structlog.get_logger()
 
 REPO_FILE_KEY = "pegasus.catalog.site.repo.file"
+#: Base URL of the catalog repository (default: the pegasushub GitHub repo)
+#: and how often the planner re-fetches its copy. Both are set only for
+#: Studio's own pool, which is served from the image (#474).
+REPO_BASE_KEY = "pegasus.catalog.site.repo"
+REPO_INTERVAL_KEY = "pegasus.catalog.site.repo.interval"
+STUDIO_CATALOG = "pegasus-studio.yml"
+
+
+def studio_repo_dir() -> str:
+    """Where the image installs Studio's own catalog (<series>/conf/...)."""
+    return os.environ.get("STUDIO_SITE_REPO", "/opt/studio/site-catalogs")
+
+
+def studio_pool_available() -> bool:
+    """Whether this image ships Studio's own catalog (defining "compute")."""
+    root = Path(studio_repo_dir())
+    return any(root.glob(f"*/conf/{STUDIO_CATALOG}"))
 _ENV_PREFIX = "env."
 #: Allocation variables a catalog may reference. Anything else in a catalog's
 #: ${...} placeholders is ignored: it is not ours to ask for.
@@ -87,9 +104,15 @@ def _split(line: str) -> tuple[str, str] | None:
 
 
 def read_config(path: Path | None = None) -> dict[str, Any]:
-    """{"catalog": name or None, "env": {RESOURCE_X: value}} from ~/.pegasusrc."""
+    """{"catalog", "env", "studio_pool"} from ~/.pegasusrc.
+
+    `catalog` is a published catalog's file name, or None. `studio_pool` is
+    True when ~/.pegasusrc points at Studio's own catalog in the image (#474):
+    that is "no cluster chosen", shown as Studio's own pool, not a catalog.
+    """
     path = path or pegasusrc_path()
     catalog: str | None = None
+    base: str | None = None
     env: dict[str, str] = {}
     try:
         lines = path.read_text().splitlines()
@@ -102,9 +125,16 @@ def read_config(path: Path | None = None) -> dict[str, Any]:
         key, value = kv
         if key == REPO_FILE_KEY:
             catalog = value or None
+        elif key == REPO_BASE_KEY:
+            base = value or None
         elif key.startswith(_ENV_PREFIX) and _SAFE_VAR.match(key[len(_ENV_PREFIX):]):
             env[key[len(_ENV_PREFIX):]] = value
-    return {"catalog": catalog, "env": env}
+    studio_pool = catalog == STUDIO_CATALOG and (base or "").startswith("file://")
+    return {
+        "catalog": None if studio_pool else catalog,
+        "env": env,
+        "studio_pool": studio_pool,
+    }
 
 
 def _clean(value: str) -> str:
@@ -130,11 +160,20 @@ def write_config(
 
     wanted: dict[str, str] = {}
     if catalog:
+        # A published catalog: no repo base, so pegasus-plan fetches it from
+        # the pegasushub repository rather than looking in the image.
         wanted[REPO_FILE_KEY] = catalog
+    elif studio_pool_available():
+        # "No cluster": Studio's own pool, which defines "compute" (#474).
+        wanted[REPO_BASE_KEY] = f"file://{studio_repo_dir()}"
+        wanted[REPO_FILE_KEY] = STUDIO_CATALOG
+        wanted[REPO_INTERVAL_KEY] = "0"
     for var, value in env.items():
         if _clean(value):
             wanted[f"{_ENV_PREFIX}{var}"] = _clean(value)
-    owned = {REPO_FILE_KEY} | {f"{_ENV_PREFIX}{v}" for v in env}
+    owned = {REPO_FILE_KEY, REPO_BASE_KEY, REPO_INTERVAL_KEY} | {
+        f"{_ENV_PREFIX}{v}" for v in env
+    }
 
     try:
         lines = path.read_text().splitlines()
