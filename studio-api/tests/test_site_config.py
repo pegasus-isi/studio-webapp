@@ -26,6 +26,7 @@ def test_write_keeps_other_properties_and_round_trips(tmp_path):
         "catalog": "unity.yml",
         "env": {"RESOURCE_USERNAME": "kt", "RESOURCE_PROJECT": "pi_lab"},
         "studio_pool": False,
+        "overrides": [],
     }
     text = rc.read_text()
     assert "# my notes" in text and "pegasus.mode = development" in text
@@ -38,7 +39,7 @@ def test_clearing_the_catalog_and_a_variable(tmp_path, monkeypatch):
     rc = tmp_path / ".pegasusrc"
     sc.write_config("unity.yml", {"RESOURCE_PROJECT": "pi_lab"}, rc)
     got = sc.write_config(None, {"RESOURCE_PROJECT": ""}, rc)
-    assert got == {"catalog": None, "env": {}, "studio_pool": False}
+    assert got == {"catalog": None, "env": {}, "studio_pool": False, "overrides": []}
 
 
 @pytest.mark.parametrize(
@@ -129,7 +130,7 @@ def test_no_cluster_means_studio_pool_and_back(tmp_path, monkeypatch):
     rc = tmp_path / ".pegasusrc"
 
     got = sc.write_config(None, {}, rc)
-    assert got == {"catalog": None, "env": {}, "studio_pool": True}
+    assert got == {"catalog": None, "env": {}, "studio_pool": True, "overrides": []}
     text = rc.read_text()
     assert f"pegasus.catalog.site.repo = file://{repo}" in text
     assert "pegasus.catalog.site.repo.file = pegasus-studio.yml" in text
@@ -148,7 +149,7 @@ def test_without_the_image_catalog_no_cluster_clears_everything(tmp_path, monkey
     monkeypatch.setenv("STUDIO_SITE_REPO", str(tmp_path / "absent"))
     rc = tmp_path / ".pegasusrc"
     sc.write_config("unity.yml", {}, rc)
-    assert sc.write_config(None, {}, rc) == {"catalog": None, "env": {}, "studio_pool": False}
+    assert sc.write_config(None, {}, rc) == {"catalog": None, "env": {}, "studio_pool": False, "overrides": []}
 
 
 def test_studio_pool_reports_compute_and_where_it_runs_follows(client, monkeypatch, tmp_path):
@@ -213,3 +214,152 @@ def test_studio_pool_points_at_the_shared_home_copy_not_the_image(tmp_path, monk
     text = rc.read_text()
     assert f"pegasus.catalog.site.repo = file://{home_copy}" in text
     assert str(image) not in text
+
+
+# ── Site overrides (#478) ──
+
+
+def test_overrides_round_trip_and_keep_other_lines(tmp_path, monkeypatch):
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(tmp_path / "absent"))
+    monkeypatch.setenv("STUDIO_SITE_REPO_IMAGE", str(tmp_path / "absent"))
+    rc = tmp_path / ".pegasusrc"
+    rc.write_text("pegasus.mode = development\n")
+    rows = [
+        {"site": "compute", "namespace": "condor", "key": "requirements", "value": "TestPool =!= True"},
+        {"site": "compute", "namespace": "condor", "key": "+ProjectName", "value": '"my_lab"'},
+        {"site": "local", "namespace": "pegasus", "key": "SSH_PRIVATE_KEY", "value": "/home/u/.ssh/nersc"},
+    ]
+    got = sc.write_config("unity.yml", {}, rc, overrides=rows)
+    assert sorted((o["site"], o["key"]) for o in got["overrides"]) == [
+        ("compute", "+ProjectName"), ("compute", "requirements"), ("local", "SSH_PRIVATE_KEY")]
+    text = rc.read_text()
+    assert "pegasus.catalog.site.sites.compute.profiles.condor.requirements = TestPool =!= True" in text
+    assert "pegasus.catalog.site.sites.compute.profiles.condor.+ProjectName = \"my_lab\"" in text
+    assert "pegasus.mode = development" in text
+
+    # A new set replaces the old one entirely; None leaves it alone.
+    got = sc.write_config("unity.yml", {}, rc, overrides=rows[:1])
+    assert [o["key"] for o in got["overrides"]] == ["requirements"]
+    got = sc.write_config("unity.yml", {}, rc, overrides=None)
+    assert [o["key"] for o in got["overrides"]] == ["requirements"]
+
+
+@pytest.mark.parametrize("row", [
+    {"site": "comp ute", "namespace": "condor", "key": "x", "value": "1"},
+    {"site": "compute", "namespace": "shell", "key": "x", "value": "1"},
+    {"site": "compute", "namespace": "condor", "key": "a b", "value": "1"},
+    {"site": "compute", "namespace": "condor", "key": "x", "value": "   "},
+])
+def test_bad_overrides_are_refused(row):
+    with pytest.raises(ValueError):
+        sc.validate_overrides([row])
+
+
+def test_override_values_stay_on_one_line(tmp_path, monkeypatch):
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(tmp_path / "absent"))
+    monkeypatch.setenv("STUDIO_SITE_REPO_IMAGE", str(tmp_path / "absent"))
+    rc = tmp_path / ".pegasusrc"
+    sc.write_config("unity.yml", {}, rc, overrides=[
+        {"site": "compute", "namespace": "env", "key": "X", "value": "a\npegasus.evil = 1"}])
+    assert all(not line.startswith("pegasus.evil") for line in rc.read_text().splitlines())
+
+
+def test_effective_site_applies_overrides():
+    import yaml
+
+    text = yaml.safe_dump({"sites": [{"name": "compute", "profiles": {
+        "condor": {"universe": "vanilla"}, "pegasus": {"style": "condor"}}}]})
+    out = yaml.safe_load(sc.effective_site(text, "compute", [
+        {"site": "compute", "namespace": "condor", "key": "requirements", "value": "TestPool =!= True"},
+        {"site": "compute", "namespace": "pegasus", "key": "style", "value": "glite"},
+        {"site": "local", "namespace": "env", "key": "X", "value": "1"},
+    ]))
+    assert out["profiles"]["condor"] == {"universe": "vanilla", "requirements": "TestPool =!= True"}
+    assert out["profiles"]["pegasus"]["style"] == "glite"  # override wins
+    # A site the catalog does not describe (Pegasus' own local) still shows.
+    assert yaml.safe_load(sc.effective_site(text, "local", [
+        {"site": "local", "namespace": "env", "key": "X", "value": "1"}]))["profiles"] == {"env": {"X": "1"}}
+
+
+def test_endpoint_keeps_overrides_per_catalog_and_imports_hand_added(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(tmp_path / "absent"))
+    monkeypatch.setenv("STUDIO_SITE_REPO_IMAGE", str(tmp_path / "absent"))
+    (tmp_path / ".pegasusrc").write_text(
+        "pegasus.catalog.site.repo.file = purdue-anvil.yml\n"
+        "pegasus.catalog.site.sites.compute.profiles.pegasus.queue = wholenode\n")
+
+    async def catalogs(ref):
+        return [{"name": "purdue-anvil.yml", "label": "Anvil", "needs": []},
+                {"name": "unity.yml", "label": "Unity", "needs": []}]
+
+    async def accounts():
+        return []
+
+    async def version(cmd):
+        return "6.0.0dev"
+
+    async def text(name, ref):
+        return "sites:\n- name: compute\n  profiles:\n    pegasus: {style: glite}\n"
+
+    monkeypatch.setattr(sc, "list_catalogs", catalogs)
+    monkeypatch.setattr(sc, "slurm_accounts", accounts)
+    monkeypatch.setattr(sc, "catalog_text", text)
+    monkeypatch.setattr("routers.health._run_version_cmd", version)
+
+    # The hand-added override is adopted for Anvil and shown in the effective site.
+    body = client.get("/api/settings/compute-site").json()
+    assert body["saved_overrides"]["purdue-anvil.yml"][0]["key"] == "queue"
+    assert "queue: wholenode" in body["effective_site"]
+
+    # Switching to Unity (older client: no overrides sent) does not carry it over…
+    body = client.put("/api/settings/compute-site", json={"catalog": "unity.yml", "env": {}}).json()
+    assert body["overrides"] == []
+    assert "wholenode" not in (tmp_path / ".pegasusrc").read_text()
+
+    # …and switching back restores Anvil's set.
+    body = client.put("/api/settings/compute-site", json={"catalog": "purdue-anvil.yml", "env": {}}).json()
+    assert [o["value"] for o in body["overrides"]] == ["wholenode"]
+
+    bad = client.put("/api/settings/compute-site", json={
+        "catalog": "unity.yml", "env": {},
+        "overrides": [{"site": "compute", "namespace": "shell", "key": "x", "value": "1"}]})
+    assert bad.status_code == 400
+
+
+def test_switching_cluster_stashes_settings_hand_added_after_last_get(client, monkeypatch, tmp_path):
+    """A slot already in the DB must not shadow lines added to the file later:
+    switching away and back keeps them (Codex review of #479)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(tmp_path / "absent"))
+    monkeypatch.setenv("STUDIO_SITE_REPO_IMAGE", str(tmp_path / "absent"))
+    rc = tmp_path / ".pegasusrc"
+    rc.write_text("pegasus.catalog.site.repo.file = purdue-anvil.yml\n")
+
+    async def catalogs(ref):
+        return [{"name": "purdue-anvil.yml", "label": "Anvil", "needs": []},
+                {"name": "unity.yml", "label": "Unity", "needs": []}]
+
+    async def none(*a):
+        return []
+
+    async def version(cmd):
+        return "6.0.0dev"
+
+    async def text(name, ref):
+        return None
+
+    monkeypatch.setattr(sc, "list_catalogs", catalogs)
+    monkeypatch.setattr(sc, "slurm_accounts", none)
+    monkeypatch.setattr(sc, "catalog_text", text)
+    monkeypatch.setattr("routers.health._run_version_cmd", version)
+
+    # Anvil gets an (empty) slot in the DB.
+    client.put("/api/settings/compute-site", json={"catalog": "purdue-anvil.yml", "env": {}, "overrides": []})
+    # The user then hand-adds a line, and switches cluster without reloading.
+    rc.write_text(rc.read_text() + "pegasus.catalog.site.sites.compute.profiles.pegasus.queue = wholenode\n")
+    client.put("/api/settings/compute-site", json={"catalog": "unity.yml", "env": {}, "overrides": []})
+    assert "wholenode" not in rc.read_text()
+
+    body = client.put("/api/settings/compute-site", json={"catalog": "purdue-anvil.yml", "env": {}}).json()
+    assert [o["value"] for o in body["overrides"]] == ["wholenode"]

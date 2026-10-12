@@ -402,13 +402,48 @@ class ComputeSiteRequest(BaseModel):
 
     catalog: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
+    # Site overrides for this catalog (#478): [{site, namespace, key, value}].
+    # None (an older client) keeps whatever is stored for the catalog.
+    overrides: list[dict[str, str]] | None = None
+
+
+# Overrides are kept per catalog: every catalog names its site "compute", so a
+# requirement tuned for one cluster would otherwise follow the user to the next.
+# Stored in the DB; only the active catalog's set is written to ~/.pegasusrc.
+_OVERRIDES_KEY = "site_overrides"
+
+
+def _overrides_slot(catalog: str | None, studio_pool: bool) -> str:
+    return catalog or ("studio" if studio_pool else "none")
+
+
+def _adopt_file_overrides(saved: dict, current: dict) -> bool:
+    """Copy the file's overrides into the active slot; True if it changed."""
+    slot = _overrides_slot(current["catalog"], current["studio_pool"])
+    if not current["overrides"] and slot not in saved:
+        return False
+    if saved.get(slot) == current["overrides"]:
+        return False
+    saved[slot] = current["overrides"]
+    return True
 
 
 async def _compute_site_view() -> dict:
     from routers.health import _run_version_cmd
     from services import site_config
 
+    from main import db
+
     current = site_config.read_config()
+    slot = _overrides_slot(current["catalog"], current["studio_pool"])
+    saved = await db.get_setting(_OVERRIDES_KEY, {}) or {}
+    if not isinstance(saved, dict):
+        saved = {}
+    # ~/.pegasusrc is the truth for the active catalog: overrides set there by
+    # hand (or before #478) are adopted, so switching cluster later stashes
+    # them instead of discarding them.
+    if _adopt_file_overrides(saved, current):
+        await db.set_setting(_OVERRIDES_KEY, saved)
     version = await _run_version_cmd("pegasus-version")
     ref = site_config.series(version)
     catalogs, accounts = await asyncio.gather(
@@ -431,7 +466,28 @@ async def _compute_site_view() -> dict:
         "catalogs": catalogs,
         "slurm_accounts": accounts,
         "field_labels": site_config.FIELD_LABELS,
+        # Per catalog slot ("studio", "none" or a catalog file name), so the
+        # editor shows the right set when the user switches cluster.
+        "saved_overrides": saved,
+        "studio_pool_available": site_config.studio_pool_available(),
+        "override_namespaces": list(site_config.NAMESPACES),
+        "effective_site": await _effective_site(current, ref),
     }
+
+
+async def _effective_site(current: dict, ref: str | None) -> str | None:
+    """YAML of the execution site as pegasus-plan will see it."""
+    from services import site_config
+
+    if current["catalog"]:
+        text = await site_config.catalog_text(current["catalog"], ref)
+        site = "compute"
+    elif current["studio_pool"]:
+        text, site = site_config.studio_catalog_text(), "compute"
+    else:
+        # No catalog: Pegasus' built-in pool, which no file describes.
+        text, site = None, "condorpool"
+    return site_config.effective_site(text, site, current["overrides"])
 
 
 @router.get("/compute-site")
@@ -445,14 +501,33 @@ async def get_compute_site() -> dict:
 async def update_compute_site(req: ComputeSiteRequest) -> dict:
     """Write the catalog and allocation to ~/.pegasusrc, keeping any other
     properties the user set there."""
+    from main import db
     from services import site_config
 
+    saved = await db.get_setting(_OVERRIDES_KEY, {}) or {}
+    if not isinstance(saved, dict):
+        saved = {}
+    current = site_config.read_config()
+    # Stash what the file holds for the outgoing cluster first, so settings
+    # hand-added since the last GET survive a switch away and back.
+    _adopt_file_overrides(saved, current)
+    studio_pool = not req.catalog and site_config.studio_pool_available()
+    slot = _overrides_slot(req.catalog or None, studio_pool)
     try:
-        site_config.write_config(req.catalog or None, req.env)
+        if req.overrides is not None:
+            rows = site_config.validate_overrides(req.overrides)
+            saved[slot] = rows
+        else:
+            # No rows sent (an older client): write that cluster's set — for
+            # the same cluster, the file's own, just adopted above; for another,
+            # its saved set, even an empty one, so settings don't follow.
+            rows = saved.get(slot, [])
+        site_config.write_config(req.catalog or None, req.env, overrides=rows)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Could not write ~/.pegasusrc: {e}") from None
+    await db.set_setting(_OVERRIDES_KEY, saved)
     return await _compute_site_view()
 
 
