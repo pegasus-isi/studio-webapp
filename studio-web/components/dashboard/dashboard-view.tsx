@@ -303,6 +303,11 @@ const WALKTHROUGH: TourStep[] = [
     body: "Ready-made analyses from the Pegasus community. Add one and it becomes yours to run and edit.",
   },
   {
+    anchor: "nav-resources",
+    title: "Resources",
+    body: "Where your analyses run and whether there is room. If you have an allocation on a cluster, choose it here once and every analysis can use it.",
+  },
+  {
     anchor: "nav-chat",
     title: "The assistant, anywhere",
     body: "It follows you around the app. Open it on any page to ask about whatever you are looking at.",

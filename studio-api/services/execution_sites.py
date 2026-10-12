@@ -265,8 +265,8 @@ def site_problem(
         f"Nothing defines an execution site named \u201c{site}\u201d for this "
         "workflow: there is no site catalog for it in the project, in its "
         "pegasus.properties, or in ~/.pegasusrc. Pick another place under "
-        "\u201cWhere it runs\u201d, or set up a hosted site catalog for your "
-        "cluster and allocation."
+        "\u201cWhere it runs\u201d, or choose your cluster and allocation on "
+        "the Resources page."
     )
 
 

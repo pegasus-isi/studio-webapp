@@ -54,8 +54,8 @@ All app routes live under `app/(studio)/` and share the studio chrome (left nav
 | `/data` | Data | Drag-and-drop upload into the workspace, with copy-path and delete |
 | `/marketplace` | Examples | Browse & "Add" (git-clone) workflows sourced live from GitHub (PegasusHub + curated Pegasus-ISI), with search, subject chips, source filter and sort |
 | `/notebooks` | Notebooks | JupyterLab framed in Studio (served at `/jupyter/`), with "Open in new tab" and Reload; `?path=` opens a folder |
-| `/provisioning` | Resources | A plain-language capacity verdict, with HTCondor pool + OSPool (OSG) panels under Details |
-| `/settings` | Settings | Notifications, Pegasus options (incl. Simplified Run), with LLM providers and AI tools under Advanced |
+| `/provisioning` | Resources | "Where your workflows run" (`components/resources/compute-site-card.tsx`: hosted catalog + allocation fields derived from the catalog, Slurm account dropdown), then a plain-language capacity verdict with HTCondor pool + OSPool (OSG) panels under Details. A main rail item since #468 |
+| `/settings` | Settings | Notifications, Pegasus Options (Simplified Run, welcome page & tour, scan roots), Chat, Feedback & privacy; LLM providers and AI tools under Advanced |
 
 The Advanced grouping follows the **Simplified Run** preference
 (`GET/PUT /api/settings/ui`). Turning it off flattens the rail and opens the

@@ -486,9 +486,17 @@ export function RunFlowPanel({
         )}
 
         <fieldset className="mt-5">
-          <legend className="text-xs font-medium uppercase tracking-wide text-fgsubtle">
+          <legend className="flex w-full items-center text-xs font-medium uppercase tracking-wide text-fgsubtle">
             Where it runs
             <GlossaryTerm term="Where it runs" />
+            {/* A cluster and allocation are chosen once, on Resources
+                (#468); the sites below follow from that choice. */}
+            <AppLink
+              href="/provisioning"
+              className="ml-auto text-[11px] font-medium normal-case tracking-normal text-pegasus-700 hover:underline dark:text-pegasus-300"
+            >
+              Set up a cluster…
+            </AppLink>
           </legend>
           <div className="mt-2 space-y-2">
             {sites.map((site) => {

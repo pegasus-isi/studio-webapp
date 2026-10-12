@@ -1263,6 +1263,79 @@ export async function updateTelemetryConsent(contentCapture: boolean) {
   });
 }
 
+// --- Where workflows run: hosted site catalog + allocation (#468) ---
+
+export interface SiteCatalogOption {
+  name: string;
+  label: string;
+  /** Allocation variables this catalog references (RESOURCE_*). */
+  needs: string[];
+}
+
+export interface ComputeSite {
+  /** Hosted catalog file in ~/.pegasusrc, or null for Studio's own pool. */
+  catalog: string | null;
+  /** RESOURCE_* → value, as written in ~/.pegasusrc. */
+  env: Record<string, string>;
+  /** "compute" with a catalog, else "condorpool". */
+  site: string;
+  pegasus_version: string | null;
+  pegasus_series: string | null;
+  catalogs: SiteCatalogOption[];
+  /** The user's Slurm accounts, where sacctmgr exists; else empty. */
+  slurm_accounts: string[];
+  field_labels: Record<string, string>;
+}
+
+export async function getComputeSite() {
+  return request<ComputeSite>("/settings/compute-site");
+}
+
+export async function updateComputeSite(
+  catalog: string | null,
+  env: Record<string, string>
+) {
+  return request<ComputeSite>("/settings/compute-site", {
+    method: "PUT",
+    body: JSON.stringify({ catalog, env }),
+  });
+}
+
+// --- User profile (early-user feedback program) ---
+
+export type ProfileRole =
+  | "graduate_student"
+  | "postdoc"
+  | "research_scientist"
+  | "faculty"
+  | "research_software_engineer"
+  | "other";
+
+export type PegasusExperience = "never" | "tried" | "regular";
+
+export type UserProfile = {
+  research_field: string | null;
+  role: ProfileRole | null;
+  pegasus_experience: PegasusExperience | null;
+  coding_comfort: number | null;
+  /** Server-stamped on save; null until the user has answered (or skipped
+   *  every question and saved) at least once. */
+  answered_at: string | null;
+};
+
+export async function getUserProfile() {
+  return request<UserProfile>("/settings/profile");
+}
+
+export async function updateUserProfile(
+  profile: Omit<UserProfile, "answered_at">
+) {
+  return request<UserProfile>("/settings/profile", {
+    method: "PUT",
+    body: JSON.stringify(profile),
+  });
+}
+
 // --- Jupyter ---
 
 export async function getJupyterStatus() {

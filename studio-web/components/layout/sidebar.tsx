@@ -128,6 +128,10 @@ const PRIMARY_NAV: NavItem[] = [
   // halves of one task (#241, Phase 2).
   { href: "/data", label: "Data", icon: "data", tour: "nav-data" },
   { href: "/marketplace", label: "Examples", icon: "examples", tour: "nav-examples" },
+  // Where your work runs and whether there is room: since #468 it also holds
+  // the cluster catalog and allocation, which a user has to be able to find,
+  // so it is no longer behind "More".
+  { href: "/provisioning", label: "Resources", icon: "compute", tour: "nav-resources" },
   // Notebooks is a Studio page that frames JupyterLab, not a link out of the
   // app: leaving Studio to open a notebook cost you the rail, the assistant
   // and your analyses. The page keeps an "Open in new tab" button for when
@@ -138,15 +142,6 @@ const PRIMARY_NAV: NavItem[] = [
     icon: "notebooks",
     tour: "nav-notebooks",
   },
-];
-
-/**
- * The machinery. Real, useful, and not what a first-time user should have to
- * step over to reach their analysis — so it is one click away rather than
- * absent.
- */
-const ADVANCED_NAV: NavItem[] = [
-  { href: "/provisioning", label: "Resources", icon: "compute" },
 ];
 
 export function Sidebar() {
@@ -163,8 +158,9 @@ export function Sidebar() {
   // it off is telling us they want the machinery in reach, and hiding half of
   // it behind a disclosure would be answering a different question.
   const simplified = prefs.simple_run;
-  const primary = simplified ? PRIMARY_NAV : [...PRIMARY_NAV, ...ADVANCED_NAV];
-  const advanced = simplified ? ADVANCED_NAV : [];
+  // Resources used to sit behind "More" with the terminal; it moved into the
+  // main list in #468, so only the terminal panel is still tucked away.
+  const primary = PRIMARY_NAV;
   // In a rail there is nowhere to put a <details> summary, so the disclosure
   // Phase 7 introduced becomes a "More" cell that expands the group in place.
   const advancedOpen = prefs.nav_advanced_open;
@@ -251,24 +247,18 @@ export function Sidebar() {
         {/* Advanced — one click away rather than absent. Only split out in the
             simplified interface; with it off the rail is flat, which is what a
             Pegasus-literate user asked for by turning it off. */}
-        {advanced.length > 0 && (
+        {simplified && !advancedOpen && (
           <>
             <div className="mx-auto my-1 h-px w-7 bg-line" />
-            {advancedOpen ? (
-              advanced.map(renderItem)
-            ) : (
-              <button
-                onClick={() =>
-                  updatePrefs.mutate({ nav_advanced_open: true })
-                }
-                title="More — resources and terminal"
-                aria-label="Show more destinations"
-                className={cellClass(false)}
-              >
-                <Glyph name="more" />
-                {cellLabel("More")}
-              </button>
-            )}
+            <button
+              onClick={() => updatePrefs.mutate({ nav_advanced_open: true })}
+              title="More — terminal"
+              aria-label="Show more destinations"
+              className={cellClass(false)}
+            >
+              <Glyph name="more" />
+              {cellLabel("More")}
+            </button>
           </>
         )}
 
