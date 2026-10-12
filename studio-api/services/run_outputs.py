@@ -45,9 +45,10 @@ _NOISE_NAMES = {
 # Extensions we can show inline, grouped by how the UI should render them.
 _IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"}
 _PDF_EXT = {".pdf"}
+_HTML_EXT = {".html", ".htm"}
 _TABLE_EXT = {".csv", ".tsv"}
 _TEXT_EXT = {
-    ".txt", ".log", ".md", ".json", ".yml", ".yaml", ".xml", ".html",
+    ".txt", ".log", ".md", ".json", ".yml", ".yaml", ".xml",
     ".py", ".sh", ".r", ".cfg", ".ini", ".toml", ".dat", ".out", ".err",
 }
 
@@ -65,12 +66,12 @@ IMAGE_PREVIEW_MAX_BYTES = 25 * 1024 * 1024  # 25 MB
 def preview_limit(kind: str) -> int:
     """The largest file of this kind that may be shown inline. PDFs, like
     images, are rendered by the browser from the URL, not read into the page."""
-    return IMAGE_PREVIEW_MAX_BYTES if kind in ("image", "pdf") else PREVIEW_MAX_BYTES
+    return IMAGE_PREVIEW_MAX_BYTES if kind in ("image", "pdf", "html") else PREVIEW_MAX_BYTES
 
 
 #: Kinds that can be previewed in part: the start of a long table or log is
 #: as useful as the whole for a glance, and costs the page only the limit.
-_PARTIAL_KINDS = frozenset({"text", "table"})
+_PARTIAL_KINDS = frozenset({"text", "table", "html"})
 
 
 def can_preview(kind: str, size: int) -> tuple[bool, bool]:
@@ -80,6 +81,27 @@ def can_preview(kind: str, size: int) -> tuple[bool, bool]:
     if size <= preview_limit(kind):
         return True, False
     return (True, True) if kind in _PARTIAL_KINDS else (False, False)
+
+
+#: Files a browser would run scripts from if opened as a page (#470).
+_ACTIVE_EXT = _HTML_EXT | {".svg", ".xhtml", ".xml"}
+
+
+def serve_headers(path: str) -> dict[str, str]:
+    """Extra response headers for serving a workflow file inline.
+
+    Workflow outputs are untrusted and served from Studio's own origin, where
+    the gateway cookie rides along on every request. An HTML or SVG output
+    opened as a page would otherwise run its scripts as Studio. The CSP
+    `sandbox` directive gives the document an opaque origin — scripts still
+    run, so interactive reports work, but they cannot read Studio's cookies or
+    responses, and their writes are refused as cross-origin. `nosniff` stops a
+    browser second-guessing the type into something executable.
+    """
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if os.path.splitext(path)[1].lower() in _ACTIVE_EXT:
+        headers["Content-Security-Policy"] = "sandbox allow-scripts"
+    return headers
 
 
 def read_head(path: str, limit: int = PREVIEW_MAX_BYTES) -> bytes:
@@ -103,6 +125,8 @@ def classify(name: str) -> str:
         return "image"
     if ext in _PDF_EXT:
         return "pdf"
+    if ext in _HTML_EXT:
+        return "html"
     if ext in _TABLE_EXT:
         return "table"
     if ext in _TEXT_EXT:
