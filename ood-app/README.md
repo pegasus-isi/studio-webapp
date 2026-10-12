@@ -4,10 +4,9 @@ An Apptainer/Singularity port of the same product as [`../Dockerfile`](../Docker
 (nginx + supervisord fronting studio-api, studio-web, and JupyterLab, plus
 HTCondor, Pegasus WMS, and Apptainer for running workflow job containers),
 packaged for [Open OnDemand](https://openondemand.org/) instead of
-K8s/KubeSpawner. [`studio-el9.def`](studio-el9.def) builds the container image;
-the rest of this directory is the OOD batch-connect app that launches it,
-a reference a site copies and adjusts (see
-[Installing the batch-connect app](#installing-the-batch-connect-app)).
+K8s/KubeSpawner. [`studio-el9.def`](studio-el9.def) builds the container image
+only; the OOD batch-connect app that launches it is
+[pegasus-isi/bc_pegasus_ai_studio](https://github.com/pegasus-isi/bc_pegasus_ai_studio).
 
 ## Why a separate `.def` instead of running the Docker image under Apptainer
 
@@ -37,17 +36,11 @@ for the Dockerfile's apt list.
   `/node/compute-1/20153`), not just KubeSpawner's `/user/<name>` shape —
   `../docker/nginx/prefix-proxy.conf.tmpl`.
 
-- The batch-connect app (#482), which gives Studio a **home directory of its
-  own** instead of the user's real one. See
+- Image-side support for a Studio **home directory of its own** (#482), so a
+  session never writes into the user's real home. See
   [Studio's own home directory](#studios-own-home-directory).
 
 **Not done / open:**
-- **Not yet run on a live portal.** The batch-connect app reuses the parts of
-  the earlier native-launcher app that were validated end to end on Open
-  OnDemand 4.0 (port/password handling, the `/auth` Connect button, baking
-  `site.env` in at render time), and its home handling is covered by
-  `studio-api/tests/test_ood_studio_home.py`, but this combination has not
-  been launched behind a real portal yet.
 - **Local Slurm submission.** The intent is for HTCondor itself to submit
   onward into the cluster's Slurm queue (a local schedd using HTCondor's
   Slurm/BLAHP grid support), which is *why* the OS-matching in the section
@@ -101,35 +94,22 @@ Studio. On a cluster it is the user's real home, and Apptainer binds it by
 default, so a plain `apptainer run` would overwrite the user's own Codex,
 Claude, OpenCode and Pegasus setup on first launch.
 
-So the batch-connect app never lets Studio see the real home as `$HOME`:
+So the batch-connect app ([pegasus-isi/bc_pegasus_ai_studio](https://github.com/pegasus-isi/bc_pegasus_ai_studio)) never lets Studio see the real home as
+`$HOME`:
 
 ```bash
-apptainer run --cleanenv --home "$STUDIO_HOME" --bind "$HOME" studio-el9.sif
+apptainer run --home "$STUDIO_HOME" --bind "$HOME" studio-el9.sif
 ```
 
-- `--home` moves `$HOME` **and** the passwd entry inside the container, so
-  tools that read the home from passwd (ssh, HTCondor's token directory) agree
-  with everything else. No application code changes: this is the same model
-  as K8s, where Studio owns its home.
-- `STUDIO_HOME` comes from the launch form's *Studio directory* field, falling
-  back to the site's `STUDIO_HOME_DEFAULT`, then `~/pegasus-studio`.
-  [`template/studio-home.sh`](template/studio-home.sh) refuses the real home
-  itself, a symlink to it, or any directory containing it, and creates the
-  directory `0700`.
-- Entries listed in `STUDIO_HOME_INHERIT` (default `.condor/tokens.d
-  .gitconfig`) are symlinked from the real home when present and when nothing
-  is already there, so HTCondor submission and the user's git identity keep
-  working and a refreshed token is picked up without relaunching. Add `.ssh`
-  for SSH-based submission; set it to `""` to link nothing.
+- `--home` moves `$HOME` (and, unless the site binds the host's
+  `/etc/passwd`, the passwd entry too) to the Studio directory. Everything
+  Studio and its AI tools write lands there. No application code changes:
+  this is the same model as K8s, where Studio owns its home.
 - The real home stays bind-mounted at its own path, so terminals can reach
-  existing data. Studio's file panel and JupyterLab are rooted at the Studio
-  directory.
-- `--cleanenv` keeps the host's module environment (`PYTHONPATH`,
-  `LD_LIBRARY_PATH`, a conda `PATH`) out of the Rocky 9 image. Only
-  `STUDIO_*`, `_CONDOR_*`, `CONDOR_CONFIG`, `KNOWLEDGE_*` and locale variables
-  are forwarded.
-- One session per Studio directory (a `flock` on `.studio/session.lock`):
-  `studio.db` is SQLite.
+  existing data, and the app links credentials (`.condor/tokens.d`,
+  `.gitconfig`) in from it.
+- How the directory is chosen and checked (a form field, never the real home
+  or anything containing it) is the app's business, not the image's.
 
 The directory must be on storage the HTCondor submit host also mounts at the
 same path. DAGMan and remote planning (`studio-api/services/remote_exec.py`)
@@ -142,48 +122,14 @@ warns that passwd-based lookups still see the real home.
 
 ## Installing the batch-connect app
 
-```
-manifest.yml            app metadata (Interactive Apps → Scientific Workflows)
-form.yml.erb            cluster, partition, hours, cores, memory, Studio directory
-submit.yml.erb          Slurm resources
-template/
-  before.sh.erb         port, session token ($password → STUDIO_AUTH_TOKEN), URL prefix
-  script.sh.erb         site.env, Studio home, one-session lock, apptainer run
-  studio-home.sh        resolves and prepares the Studio home (tested in studio-api)
-view.html.erb           Connect button → <prefix>/auth?token=… (the one ungated route)
-examples/site.env       site configuration template
-```
-
-1. Build `studio-el9.sif` (above) and put it where every session host can read
-   it, e.g. `/opt/pegasus-ai/studio/studio-el9.sif`.
-2. Copy this directory (without the `.def`/`.sif`) to
-   `/var/www/ood/apps/sys/pegasus-studio`.
-3. Set `cluster:` in `form.yml.erb` to the cluster in
-   `/etc/ood/config/clusters.d/` that sessions run on, and adjust
-   `submit.yml.erb` to the site's Slurm options.
-4. Copy `examples/site.env` to
-   `/etc/ood/config/apps/pegasus-studio/site.env` on the **portal** host and
-   fill it in (`STUDIO_SIF`, and the HTCondor access point if the session host
-   is not one). `script.sh.erb` bakes it into each job script at render time,
-   so compute nodes need no copy.
-5. Enable `node_uri` (and `rnode_uri`) in `ood_portal.yml`: the session is
-   proxied at `/node/<host>/<port>`.
-
-Things that broke on the way to the earlier validated deployment, none of
-which announce their real cause:
-
-| Symptom | Cause |
-|---|---|
-| Connect button → Apache 404 | `node_uri` not enabled in `ood_portal.yml` |
-| Form 500s | An unsupported widget (there is no `static` widget) |
-| Session runs but Connect does nothing; `connection.yml` has an empty port | `before.sh` did not call `find_port`/`create_passwd` |
-| Session dies at once: `STUDIO_URL_PREFIX may only contain …` | An entrypoint older than #482, which refused the dots in a FQDN session host |
-| `Can't find address of local schedd` | `_CONDOR_SCHEDD_HOST` unset, or set to a short name |
-| Session refuses to start: "already using …" | Another session holds that Studio directory; reconnect to it or choose another |
+See [pegasus-isi/bc_pegasus_ai_studio](https://github.com/pegasus-isi/bc_pegasus_ai_studio): clone it into `/var/www/ood/apps/sys/`, put the `.sif` where every
+session host can read it, and set the image path in its `form.yml.erb`.
+Enable `node_uri` in `ood_portal.yml`, since the session is proxied at
+`/node/<host>/<port>`.
 
 ## Running the image by hand
 
-Simulate what `script.sh.erb` does, with its own Studio directory:
+Simulate what the batch-connect app does, with its own Studio directory:
 
 ```bash
 mkdir -p ~/pegasus-studio
