@@ -538,10 +538,15 @@ export async function getProjectParams(projectId: string) {
   );
 }
 
-export async function generateWorkflow(projectId: string, args: string[] = []) {
+export async function generateWorkflow(
+  projectId: string,
+  args: string[] = [],
+  /** Where it will be planned; set as a gromacs-template generator's -e (#466). */
+  site?: string
+) {
   return request<{ status: string; output: string }>(
     `/workflows/projects/${encodeURIComponent(projectId)}/generate`,
-    { method: "POST", body: JSON.stringify({ args }) }
+    { method: "POST", body: JSON.stringify({ args, site: site || undefined }) }
   );
 }
 

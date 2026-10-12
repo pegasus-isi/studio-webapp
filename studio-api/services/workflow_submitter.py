@@ -58,8 +58,13 @@ async def submit_workflow(
         "--submit",
         "-s", site,
         "-o", output_site,
-        wf_file,
     ]
+    from services.execution_sites import plan_output_dir
+
+    output_dir = plan_output_dir(workflow_dir, output_site)
+    if output_dir:
+        cmd += ["--output-dir", output_dir]
+    cmd.append(wf_file)
 
     try:
         proc = await asyncio.create_subprocess_exec(

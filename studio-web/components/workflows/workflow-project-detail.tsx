@@ -177,6 +177,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
       generate.mutateAsync({
         projectId,
         args: buildArgs(genParams, values),
+        site: String(values["site"] ?? "") || undefined,
       })
     );
     if (result) showOutput(result.output);

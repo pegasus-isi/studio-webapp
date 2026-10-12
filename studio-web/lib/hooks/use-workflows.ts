@@ -89,8 +89,15 @@ export function useProjectParams(projectId: string) {
 export function useGenerateWorkflow() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ projectId, args }: { projectId: string; args: string[] }) =>
-      api.generateWorkflow(projectId, args),
+    mutationFn: ({
+      projectId,
+      args,
+      site,
+    }: {
+      projectId: string;
+      args: string[];
+      site?: string;
+    }) => api.generateWorkflow(projectId, args, site),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["workflow-projects"] }),
   });
 }

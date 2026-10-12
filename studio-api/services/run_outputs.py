@@ -171,6 +171,44 @@ def project_dir_for_run(
     return None
 
 
+def planned_output_dir(run_dir: str) -> str | None:
+    """The `--output-dir` the run was planned with, from braindump.yml.
+
+    It overrides every catalog: Pegasus staged this run's results there. The
+    gromacs-template projects define no local site and are planned with it
+    (#466).
+    """
+    import shlex
+
+    try:
+        from services.workflow_scanner import _parse_braindump
+
+        bd = _parse_braindump(os.path.join(run_dir, "braindump.yml"))
+        argv = shlex.split(str(bd.get("planner_arguments") or "").strip().strip('"'))
+    except Exception:  # noqa: BLE001 — no braindump or unparsable: no override
+        return None
+    for i, arg in enumerate(argv):
+        if arg == "--output-dir" and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith("--output-dir="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def run_catalogs(run_dir: str, project_dir: str | None) -> list[str]:
+    """Site catalogs that may describe a run, most authoritative first.
+
+    `catalogs/sites-combined.yml` is what pegasus-plan actually used: the
+    project's sites.yml, any hosted catalog and its own built-in local site,
+    merged. A gromacs-template project has no sites.yml at all, so without it
+    nothing says where scratch is (`wf-scratch/LOCAL`).
+    """
+    out = [os.path.join(run_dir, "catalogs", "sites-combined.yml")]
+    for directory in [run_dir] + ([project_dir] if project_dir else []):
+        out += [os.path.join(directory, n) for n in ("sites.yml", "sites.yaml")]
+    return [c for c in out if os.path.isfile(c)]
+
+
 def resolve_output_dir(
     run_dir: str,
     workflows_root: str | Sequence[str],
@@ -184,19 +222,18 @@ def resolve_output_dir(
     """
     project_dir = project_dir_for_run(run_dir, workflows_root)
 
-    # 1. The site catalog, wherever it lives. pegasus-plan copies catalogs into
-    #    the submit directory, so check there first — it's the one that was
-    #    actually used for this run, not whatever the project has since been
-    #    regenerated with.
-    search_dirs = [run_dir] + ([project_dir] if project_dir else [])
-    for directory in search_dirs:
-        for name in ("sites.yml", "sites.yaml"):
-            candidate = os.path.join(directory, name)
-            if not os.path.isfile(candidate):
-                continue
-            storage = _site_catalog_storage(candidate, output_site)
-            if storage:
-                return storage, "catalog"
+    # 0. An explicit --output-dir wins over any catalog's storage directory.
+    planned = planned_output_dir(run_dir)
+    if planned:
+        return os.path.realpath(planned), "catalog"
+
+    # 1. The site catalog the run used, then the project's. pegasus-plan
+    #    leaves its merged catalog in the submit directory — the one actually
+    #    used for this run, not whatever the project has since regenerated.
+    for candidate in run_catalogs(run_dir, project_dir):
+        storage = _site_catalog_storage(candidate, output_site)
+        if storage:
+            return storage, "catalog"
 
     # 2. Convention, relative to the project.
     if project_dir:
