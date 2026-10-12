@@ -156,14 +156,16 @@ When you plan from a terminal yourself — to test a fix, say — do the same by
 hand, from the project directory:
 
 ```bash
-python3 workflow_generator.py -e condorpool [workflow options]
-pegasus-plan --dir submit -s condorpool -o local \
+SITE=$(grep -qs '^pegasus\.catalog\.site\.repo\.file' ~/.pegasusrc && echo compute || echo condorpool)
+python3 workflow_generator.py -e "$SITE" [workflow options]
+pegasus-plan --dir submit -s "$SITE" -o local \
     --output-dir "$PWD/output" --submit "$PWD/workflow.yml"
 ```
 
-`condorpool` is the site with no setup here (Pegasus defines it itself). Use a
-different name only when the user has chosen a cluster, and then use it for
-**both** `-e` and `-s`.
+The site is `compute` whenever `~/.pegasusrc` names a site catalog — Studio's
+own pool and every published cluster catalog call their site that — and
+Pegasus's built-in `condorpool` only when none is named. Whatever it is, use
+the **same** name for `-e` and `-s`.
 
 **Clusters and allocations are the user's choice, made once, on the Resources
 page** ("Where your workflows run"): a hosted site catalog and the allocation
