@@ -8,6 +8,46 @@
 
 set -euo pipefail
 
+# ---- Studio's home (Open OnDemand, #482) ----
+#
+# Everything Studio writes is $HOME-relative: its database, the marketplace
+# checkout, the generated CLAUDE.md/AGENTS.md, ~/.pegasusrc, and every tool
+# config the knowledge adapters write (~/.codex, ~/.config/opencode,
+# ~/.claude*). Under KubeSpawner that home is a volume that exists only for
+# Studio. Under Open OnDemand it would be the user's real home on the cluster,
+# and the first launch would overwrite their own Codex/Claude/Pegasus setup.
+#
+# So an OOD session gives Studio a directory of its own and makes *that* the
+# home. The batch-connect app (github.com/pegasus-isi/bc_pegasus_ai_studio)
+# does it properly, with Apptainer's
+# --home, which also rewrites the passwd entry. This is the fallback for a
+# launch that only set STUDIO_HOME: env-reading tools follow the export, but
+# anything that looks the home up in passwd (ssh, HTCondor's token directory)
+# still sees the real one, hence the warning.
+apply_studio_home() {
+    [ -n "${STUDIO_HOME:-}" ] || return 0
+    STUDIO_HOME="${STUDIO_HOME%/}"
+    case "${STUDIO_HOME}" in
+        /?*) ;;
+        *)
+            # A relative path would resolve against whatever cwd the job
+            # started in, which for OOD is the session's own output directory.
+            echo "[studio] FATAL: STUDIO_HOME must be an absolute path," \
+                 "got '${STUDIO_HOME}'" >&2
+            return 1
+            ;;
+    esac
+    if [ "${HOME:-}" != "${STUDIO_HOME}" ]; then
+        echo "[studio] WARNING: HOME is '${HOME:-}', not STUDIO_HOME;" \
+             "using ${STUDIO_HOME}. ssh and HTCondor read the home from passwd" \
+             "and will still look in the old one; start the container with" \
+             "--home \"\$STUDIO_HOME\" to move both." >&2
+        HOME="${STUDIO_HOME}"
+    fi
+    export HOME STUDIO_HOME
+}
+apply_studio_home
+
 # The workspace root: where workflow projects, uploaded data and the terminal's
 # cwd all live. $HOME since #401 — it used to be $HOME/work, a level that
 # marked a persistence boundary this deployment does not have (the spawner
@@ -130,10 +170,16 @@ if [ -n "${STUDIO_URL_PREFIX}" ]; then
     # and a cookie Path. Constrain the charset for the same reason as the
     # token below — a prefix containing a quote or brace would produce a
     # config that either fails to parse or parses into something else.
+    #
+    # The dot is allowed because OOD's prefix is /node/<host>/<port> and
+    # <host> is whatever `hostname` printed, a FQDN on many clusters; refusing
+    # it killed every session there before the proxy started (#482). In the
+    # two regex uses (the gate's /auth match) an unescaped dot only widens what
+    # the optional prefix group accepts, and /auth still demands the token.
     case "${STUDIO_URL_PREFIX}" in
-        *[!A-Za-z0-9_/-]*)
+        *[!A-Za-z0-9_./-]*)
             echo "[studio] FATAL: STUDIO_URL_PREFIX may only contain" \
-                 "[A-Za-z0-9_/-]" >&2
+                 "[A-Za-z0-9_./-]" >&2
             exit 1
             ;;
     esac

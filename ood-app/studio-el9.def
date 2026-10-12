@@ -8,24 +8,24 @@ From: rockylinux:9
 # Same product as ../Dockerfile (nginx+supervisord fronting studio-api,
 # studio-web, and JupyterLab, plus HTCondor, Pegasus WMS, and Apptainer for
 # running workflow job containers) — packaged for Open OnDemand instead of
-# K8s/KubeSpawner. This is the container image only; the OOD "app" glue
-# (form.yml, submit.yml.erb, batch-connect scripts) is separate follow-up
-# work, not part of this file.
+# K8s/KubeSpawner. This is the container image only; the OOD batch-connect app
+# that launches it is github.com/pegasus-isi/bc_pegasus_ai_studio.
 #
 # Build (from the repo root — %files sources below are resolved relative to
 # the current working directory, not this .def file's location):
 #   apptainer build --build-arg KNOWLEDGE_REF=main \
 #       ood-app/studio-el9.sif ood-app/studio-el9.def
 #
-# Run (foreground, mirrors `docker run`):
-#   apptainer run --bind "$HOME" ood-app/studio-el9.sif
+# Run — always with a Studio directory as the home (#482):
+#   mkdir -p ~/pegasus-studio && apptainer run --home ~/pegasus-studio --bind "$HOME" \
+#       --env STUDIO_HOME="$HOME/pegasus-studio" ood-app/studio-el9.sif
 #
-# Run (as a background instance, e.g. for an OOD batch-connect script):
-#   apptainer instance start --bind "$HOME" ood-app/studio-el9.sif studio
-#
-# Apptainer auto-binds the real host $HOME by default, so entrypoint.sh's
-# existing $HOME-relative state (SQLite db, workspace, marketplace checkout)
-# works unmodified — no extra bind-mount config needed for that part.
+# Not a bare `apptainer run`: Apptainer binds the user's real $HOME by
+# default, and everything entrypoint.sh and studio-api write is $HOME-relative
+# (the SQLite db, the marketplace checkout, ~/.pegasusrc, and the codex/
+# opencode/claude configs the knowledge adapters generate). On a cluster that
+# overwrites the user's own setup of those tools. --home gives Studio a home
+# of its own, as the KubeSpawner volume does in K8s.
 #
 
 %arguments
@@ -409,10 +409,12 @@ echo "[test] studio-el9.sif basic sanity checks passed"
     Build (from the repo root):
         apptainer build ood-app/studio-el9.sif ood-app/studio-el9.def
 
-    Run:
-        apptainer run --bind "$HOME" ood-app/studio-el9.sif
+    Run, with a directory of its own as the home so Studio never writes
+    into your real one:
+        mkdir -p ~/pegasus-studio && apptainer run --home ~/pegasus-studio --bind "$HOME" \
+            --env STUDIO_HOME="$HOME/pegasus-studio" ood-app/studio-el9.sif
 
-    Nginx listens on :8888, same as the Docker image. There is no built-in
-    auth — an OOD batch-connect app (not part of this file) is expected to
-    front the session per-user, the same role KubeSpawner plays for the K8s
+    Nginx listens on :8888 (STUDIO_PORT), same as the Docker image. There is
+    no built-in auth: the OOD batch-connect app (pegasus-isi/bc_pegasus_ai_studio) fronts the
+    session per-user, the same role KubeSpawner plays for the K8s
     deployment.

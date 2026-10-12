@@ -5,9 +5,8 @@ An Apptainer/Singularity port of the same product as [`../Dockerfile`](../Docker
 HTCondor, Pegasus WMS, and Apptainer for running workflow job containers),
 packaged for [Open OnDemand](https://openondemand.org/) instead of
 K8s/KubeSpawner. [`studio-el9.def`](studio-el9.def) builds the container image
-only; the OOD batch-connect app that launches it (`form.yml`,
-`submit.yml.erb`, `before.sh.erb`) is a separate, site-specific piece — see
-[Status](#status).
+only; the OOD batch-connect app that launches it is
+[pegasus-isi/bc_pegasus_ai_studio](https://github.com/pegasus-isi/bc_pegasus_ai_studio).
 
 ## Why a separate `.def` instead of running the Docker image under Apptainer
 
@@ -37,14 +36,11 @@ for the Dockerfile's apt list.
   `/node/compute-1/20153`), not just KubeSpawner's `/user/<name>` shape —
   `../docker/nginx/prefix-proxy.conf.tmpl`.
 
+- Image-side support for a Studio **home directory of its own** (#482), so a
+  session never writes into the user's real home. See
+  [Studio's own home directory](#studios-own-home-directory).
+
 **Not done / open:**
-- **The OOD batch-connect app** (`form.yml`, `submit.yml.erb`,
-  `before.sh.erb` — the Slurm job script that starts `apptainer instance
-  start` and generates `STUDIO_AUTH_TOKEN`/reads `STUDIO_URL_PREFIX`) is not
-  in this repo. It's expected to live in a site-specific OOD apps catalog
-  repo that references this image, the same way a site's OOD deployment
-  usually isn't checked into the application's own repo. Nothing here should
-  be read as reserving a location for it.
 - **Local Slurm submission.** The intent is for HTCondor itself to submit
   onward into the cluster's Slurm queue (a local schedd using HTCondor's
   Slurm/BLAHP grid support), which is *why* the OS-matching in the section
@@ -86,56 +82,74 @@ Build on `x86_64` — `%post` refuses any other arch, same reasoning as the
 Dockerfile's `linux/amd64` requirement (HTCondor/Pegasus/Apptainer EL9
 packages are pulled x86_64-specifically).
 
-## Run
+## Studio's own home directory
 
-Foreground, mirrors `docker run`:
+Everything Studio writes is `$HOME`-relative: its SQLite database
+(`~/.studio`), the marketplace checkout (`~/.local/share/pegasus-ai`),
+`~/.pegasusrc` and `~/.pegasus/pegasus.conf`, the generated `CLAUDE.md`,
+`AGENTS.md` and `.mcp.json`, `~/workflows` and `~/data`, and the configs the
+knowledge adapters write for the AI tools (`~/.codex`, `~/.config/opencode`,
+`~/.claude*`). Under KubeSpawner that home is a volume that exists only for
+Studio. On a cluster it is the user's real home, and Apptainer binds it by
+default, so a plain `apptainer run` would overwrite the user's own Codex,
+Claude, OpenCode and Pegasus setup on first launch.
+
+So the batch-connect app ([pegasus-isi/bc_pegasus_ai_studio](https://github.com/pegasus-isi/bc_pegasus_ai_studio)) never lets Studio see the real home as
+`$HOME`:
 
 ```bash
-apptainer run --bind "$HOME" ood-app/studio-el9.sif
+apptainer run --home "$STUDIO_HOME" --bind "$HOME" studio-el9.sif
 ```
 
-As a background instance (what an OOD batch-connect job would do):
+- `--home` moves `$HOME` (and, unless the site binds the host's
+  `/etc/passwd`, the passwd entry too) to the Studio directory. Everything
+  Studio and its AI tools write lands there. No application code changes:
+  this is the same model as K8s, where Studio owns its home.
+- The real home stays bind-mounted at its own path, so terminals can reach
+  existing data, and the app links credentials (`.condor/tokens.d`,
+  `.gitconfig`) in from it.
+- How the directory is chosen and checked (a form field, never the real home
+  or anything containing it) is the app's business, not the image's.
+
+The directory must be on storage the HTCondor submit host also mounts at the
+same path. DAGMan and remote planning (`studio-api/services/remote_exec.py`)
+read the workflow's submit directory and `HOME` from there. The default under
+an NFS home satisfies that; node-local scratch does not.
+
+`docker/entrypoint.sh` backs this up: when `STUDIO_HOME` is set and `$HOME`
+differs (a launch that forgot `--home`), it exports `HOME=$STUDIO_HOME` and
+warns that passwd-based lookups still see the real home.
+
+## Installing the batch-connect app
+
+See [pegasus-isi/bc_pegasus_ai_studio](https://github.com/pegasus-isi/bc_pegasus_ai_studio): clone it into `/var/www/ood/apps/sys/`, put the `.sif` where every
+session host can read it, and set the image path in its `form.yml.erb`.
+Enable `node_uri` in `ood_portal.yml`, since the session is proxied at
+`/node/<host>/<port>`.
+
+## Running the image by hand
+
+Simulate what the batch-connect app does, with its own Studio directory:
 
 ```bash
-apptainer instance start --bind "$HOME" ood-app/studio-el9.sif studio
-apptainer instance stop studio
+mkdir -p ~/pegasus-studio
+STUDIO_HOME=~/pegasus-studio \
+STUDIO_PORT=20153 STUDIO_ALLOC_PORTS=1 \
+STUDIO_URL_PREFIX=/node/$(hostname)/20153 \
+STUDIO_AUTH_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))') \
+apptainer run --home ~/pegasus-studio --bind "$HOME" ood-app/studio-el9.sif
 ```
 
-Apptainer auto-binds the real host `$HOME` by default, so `entrypoint.sh`'s
-`$HOME`-relative state (SQLite DB, workspace, marketplace checkout) works
-unmodified; `--bind "$HOME"` above is belt-and-suspenders, matching the
-`.def` file's own documented run commands.
-
-nginx listens on `:8888` inside the container, same as the Docker image —
-whatever fronts it (an OOD portal's own allocator, a `-p`-style mapping) picks
-the externally-visible port and is expected to set two environment variables
-before starting the instance:
+Then reach it through something that proxies under that prefix (a local
+nginx/OOD-shaped reverse proxy, or a cluster's real OOD portal). Hitting the
+port directly with a browser won't exercise the prefix rewriting.
 
 | Env | Purpose |
 |---|---|
-| `STUDIO_URL_PREFIX` | The path Open OnDemand's own proxy assigns this session (e.g. `/node/compute-1/20153`) — without it, the app answers at `/` and every asset/API request under the assigned prefix 404s. See `../docker/nginx/prefix-proxy.conf.tmpl`. |
-| `STUDIO_AUTH_TOKEN` | Turns on the session token gate (#218): the proxy port itself has no isolation on a shared host otherwise. Generate one the same way any other batch-connect password is generated (e.g. `before.sh.erb`); the container does not need it pre-shared anywhere else. |
-
-Both are read by `entrypoint.sh` at container start, not build time — see
-the top-level [`README.md`](../README.md#configuration) and
-`../CLAUDE.md`'s "session token gate" and "Prefix handling" notes for the
-full design rationale (shared by both deployments).
-
-## Testing without a batch-connect app yet
-
-Simulate what the (not-yet-written) OOD job script will do:
-
-```bash
-STUDIO_URL_PREFIX=/node/compute-1/20153 \
-STUDIO_AUTH_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))') \
-apptainer instance start --bind "$HOME" ood-app/studio-el9.sif studio
-```
-
-Then reach it through something that actually proxies under that prefix
-(a local nginx/OOD-shaped reverse proxy, or a cluster's real OOD portal) —
-hitting the container's port directly with a browser won't exercise the
-prefix rewriting, since there'd be no proxy adding the prefix in the first
-place.
+| `STUDIO_HOME` | Studio's home; see above. Pair it with `--home`. |
+| `STUDIO_URL_PREFIX` | The path Open OnDemand's proxy assigns this session (e.g. `/node/compute-1/20153`). Without it, every asset/API request under the prefix 404s. See `../docker/nginx/prefix-proxy.conf.tmpl`. |
+| `STUDIO_AUTH_TOKEN` | Turns on the session token gate (#218). The proxy port has no isolation on a shared host otherwise. |
+| `STUDIO_PORT`, `STUDIO_ALLOC_PORTS` | Front port, and pick free internal ports; Apptainer shares the host network namespace. |
 
 ## See also
 
