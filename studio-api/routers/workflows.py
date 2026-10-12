@@ -1151,6 +1151,7 @@ async def get_run_output_file(
         resolved,
         filename=os.path.basename(resolved) if download else None,
         content_disposition_type="attachment" if download else "inline",
+        headers=run_outputs.serve_headers(resolved),
     )
 
 
@@ -1212,6 +1213,7 @@ def _serve_file(base: str | None, path: str, download: bool, head: bool = False)
         resolved,
         filename=os.path.basename(resolved) if download else None,
         content_disposition_type="attachment" if download else "inline",
+        headers=run_outputs.serve_headers(resolved),
     )
 
 

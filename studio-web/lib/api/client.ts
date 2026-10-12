@@ -698,7 +698,7 @@ export interface OutputFile {
   name: string;
   size: number;
   modified: string;
-  kind: "image" | "table" | "text" | "pdf" | "binary";
+  kind: "image" | "table" | "text" | "pdf" | "html" | "binary";
   /** Decided server-side, so the size threshold can't drift between the two. */
   previewable: boolean;
   /** Too big to show whole: the preview shows its start (#460). */

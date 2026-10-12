@@ -150,8 +150,10 @@ cannot be inferred stays a plain text field, and `argparse` remains the
 validator.
 
 When a run finishes, its output files are on the **Results** tab, with previews
-for images and PDFs (up to 25 MB), CSV/TSV as a sortable, filterable table, JSON
-as a collapsible tree, and text. Text and tables over 2 MB preview their first
+for images and PDFs (up to 25 MB), HTML reports rendered in a sandbox (scripts
+run but cannot reach Studio; `.html`/`.svg` are always served with a CSP
+`sandbox`), CSV/TSV as a sortable, filterable table, JSON as a collapsible tree,
+and text. Text and tables over 2 MB preview their first
 2 MB. When one fails, the failure is reported as a cause
 and a suggested action, with the raw log kept underneath and an "Explain this
 failure" button that hands it to the assistant.

@@ -16,6 +16,7 @@ import {
   ArrowDown,
   ArrowUp,
   FileArchive,
+  FileCode,
   FileImage,
   FileJson,
   FileSpreadsheet,
@@ -64,6 +65,8 @@ export function FileTypeIcon({
       ? [FileImage, "text-violet-600 dark:text-violet-400"]
       : kind === "pdf"
         ? [FileType2, "text-rose-600 dark:text-rose-400"]
+        : kind === "html"
+          ? [FileCode, "text-orange-600 dark:text-orange-400"]
       : kind === "table"
         ? [FileSpreadsheet, "text-emerald-600 dark:text-emerald-400"]
         : kind === "text"
@@ -120,6 +123,13 @@ const RENDERERS: Renderer[] = [
       />
     ),
   },
+  // A whole HTML file renders sandboxed; one too big to render shows the
+  // start of its source through the text renderer below.
+  {
+    matches: (t) => t.kind === "html" && !t.partial,
+    needsText: false,
+    render: (t) => <HtmlPreview target={t} />,
+  },
   // Before plain text: .json is classified as text server-side. A partial
   // JSON file is cut mid-structure and cannot parse, so it shows as text.
   {
@@ -132,7 +142,11 @@ const RENDERERS: Renderer[] = [
     needsText: true,
     render: (t, text) => <TablePreview text={text} name={t.name} />,
   },
-  { matches: (t) => t.kind === "text", needsText: true, render: (_t, text) => <TextPreview text={text} /> },
+  {
+    matches: (t) => t.kind === "text" || (t.kind === "html" && !!t.partial),
+    needsText: true,
+    render: (_t, text) => <TextPreview text={text} />,
+  },
 ];
 
 /** What the server sends for a partial preview (run_outputs.PREVIEW_MAX_BYTES). */
@@ -216,6 +230,61 @@ export function FilePreviewDialog({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * An HTML output, rendered (#470).
+ *
+ * Untrusted, and served from Studio's own origin, so it is framed with
+ * `sandbox="allow-scripts"` and deliberately *without* `allow-same-origin`:
+ * scripts run — interactive reports need them — but in an opaque origin that
+ * cannot read Studio's cookies or responses, submit forms, open popups or
+ * navigate the page. The server adds the same sandbox as a CSP header, so the
+ * file URL opened directly is contained too. Reports that load sibling files
+ * (`report_files/…`) will not find them through the preview URL; a
+ * self-contained report renders fully.
+ */
+function HtmlPreview({ target }: { target: PreviewTarget }) {
+  const [source, setSource] = useState(false);
+  const { data: text, isLoading } = useQuery({
+    queryKey: ["file-preview-source", target.url],
+    enabled: source,
+    queryFn: async () => {
+      const res = await fetch(target.url);
+      if (!res.ok) throw new Error(`Couldn't read the file (${res.status})`);
+      return res.text();
+    },
+  });
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-fgsubtle">
+          Rendered in a sandbox: scripts run, but cannot reach Studio.
+        </span>
+        <button
+          onClick={() => setSource((s) => !s)}
+          className="ml-auto rounded border border-line px-2 py-0.5 text-xs text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
+        >
+          {source ? "Rendered" : "Source"}
+        </button>
+      </div>
+      {source ? (
+        isLoading ? (
+          <p className="text-sm text-fgmuted">Loading…</p>
+        ) : (
+          <TextPreview text={text ?? ""} />
+        )
+      ) : (
+        <iframe
+          src={target.url}
+          title={target.name}
+          sandbox="allow-scripts"
+          referrerPolicy="no-referrer"
+          className="h-[70vh] w-full rounded border border-line bg-white"
+        />
+      )}
     </div>
   );
 }

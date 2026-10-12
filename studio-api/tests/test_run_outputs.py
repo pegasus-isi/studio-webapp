@@ -329,3 +329,45 @@ def test_head_preview_endpoint(client, monkeypatch, tmp_path):
     assert int(head.headers["x-file-size"]) == big.stat().st_size
     assert len(head.content) <= ro.PREVIEW_MAX_BYTES and head.text.startswith("a,b\n")
     assert head.headers["content-type"].startswith("text/plain")
+
+
+# --- HTML previews, sandboxed (#470) ---
+
+
+def test_html_is_its_own_kind_with_the_render_ceiling(tmp_path):
+    (tmp_path / "report.html").write_text("<p>hi</p>")
+    big = tmp_path / "huge.html"
+    big.write_text("x" * (ro.IMAGE_PREVIEW_MAX_BYTES + 1))
+    small = ro._entry(str(tmp_path / "report.html"), "report.html")
+    assert small["kind"] == "html" and (small["previewable"], small["partial"]) == (True, False)
+    # Past the render ceiling: the start of the source, as text.
+    huge = ro._entry(str(big), "huge.html")
+    assert (huge["previewable"], huge["partial"]) == (True, True)
+
+
+def test_active_files_are_served_sandboxed():
+    for name in ("r.html", "r.HTM", "plot.svg"):
+        h = ro.serve_headers(name)
+        assert h["Content-Security-Policy"] == "sandbox allow-scripts"
+        assert h["X-Content-Type-Options"] == "nosniff"
+    plain = ro.serve_headers("data.csv")
+    assert "Content-Security-Policy" not in plain
+    assert plain["X-Content-Type-Options"] == "nosniff"
+
+
+def test_output_endpoint_sends_the_sandbox(client, monkeypatch, tmp_path):
+    import routers.workflows as wf
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "report.html").write_text("<script>fetch('/api/x')</script>")
+
+    async def _resolve(run_id):
+        return str(tmp_path)
+
+    monkeypatch.setattr(wf, "_resolve_run_dir", _resolve)
+    monkeypatch.setattr(ro, "resolve_output_dir", lambda *a, **k: (str(out), "catalog"))
+    res = client.get("/api/workflows/r1/outputs/file", params={"path": "report.html"})
+    assert res.status_code == 200
+    assert res.headers["content-security-policy"] == "sandbox allow-scripts"
+    assert res.headers["x-content-type-options"] == "nosniff"
