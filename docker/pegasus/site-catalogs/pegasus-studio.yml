@@ -6,7 +6,9 @@
 # it for Studio's pool, so the template default, the notebooks and the README
 # commands all work here unchanged.
 #
-# Installed at /opt/studio/site-catalogs/<MAJOR.MINOR>/conf/ and named in
+# Installed at /opt/studio/site-catalogs/<MAJOR.MINOR>/conf/, copied by the
+# entrypoint to ~/.studio/site-catalogs (the submit host, where planning
+# usually runs, shares the home directory but not /opt — #476), and named in
 # ~/.pegasusrc as pegasus.catalog.site.repo.file with a file:// repo base, so
 # pegasus-plan treats it exactly like a published catalog: a project's own
 # sites.yml is merged over it, and the planner leaves a copy in the project.
