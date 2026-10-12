@@ -1,0 +1,20 @@
+<%-
+  # The Connect button must hit /auth first: that is the one route the session
+  # gate lets through without a cookie, and it sets the cookie before
+  # redirecting to the app root. Linking straight at the app would 403.
+  # `password` is used verbatim: before.sh.erb already normalized it to the
+  # charset Studio accepts, so that rule lives in exactly one place. Two
+  # copies that must agree would fail as a Connect button that 403s.
+  prefix = "/node/#{host}/#{port}"
+-%>
+<form action="<%= prefix %>/auth" method="get" target="_blank">
+  <input type="hidden" name="token" value="<%= password %>">
+  <button class="btn btn-primary" type="submit">
+    <i class="fa fa-rocket"></i> Connect to PegasusAI Studio
+  </button>
+</form>
+
+<p style="margin-top:0.75em">
+  Running on <strong><%= host %></strong>. Studio keeps its files in the
+  Studio directory you chose when launching, not in your home directory.
+</p>

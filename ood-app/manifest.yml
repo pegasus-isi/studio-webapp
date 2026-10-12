@@ -1,0 +1,14 @@
+---
+name: PegasusAI Studio
+category: Interactive Apps
+subcategory: Scientific Workflows
+role: batch_connect
+description: |
+  Build, run and monitor [Pegasus WMS](https://pegasus.isi.edu/) workflows in a
+  browser IDE: editor, terminals, JupyterLab, workflow DAG viewer, and an AI
+  assistant that knows Pegasus.
+
+  The session runs as **you**, on this cluster. Studio keeps everything it
+  writes (workflows, settings, AI tool configuration) in its own directory,
+  `~/pegasus-studio` unless you choose another, and leaves the rest of your
+  home directory alone.

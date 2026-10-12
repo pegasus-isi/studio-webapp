@@ -132,7 +132,12 @@ writable by the injected uid, so **never bake a rendered config into the image**
   tools to be library-ABI compatible (not built yet — see `ood-app/README.md`
   for current status). Read `ood-app/README.md` and `SPEC.md`'s "Open OnDemand
   / Apptainer Packaging" section before changing anything under `docker/` that
-  the OOD image also relies on.
+  the OOD image also relies on. The batch-connect app beside it runs the image
+  with `apptainer --home "$STUDIO_HOME"` (a Studio directory, `~/pegasus-studio`
+  by default) so Studio never writes into the user's real home (#482). That is
+  why nothing in studio-api needs to know about OOD: keep it that way, and
+  resolve paths from `$HOME` rather than from the passwd entry or a hardcoded
+  `/home/<user>`.
 - **The workspace root is `$HOME`** (`studio-api/workspace.py`, #401). Projects
   live in `$HOME/workflows/<name>/`, uploads in `$HOME/data/`. It used to be
   `$HOME/work`, a level copied from JupyterHub images where only that subdir is
