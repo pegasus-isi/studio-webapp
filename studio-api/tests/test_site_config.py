@@ -183,7 +183,8 @@ def test_studio_pool_reports_compute_and_where_it_runs_follows(client, monkeypat
     assert site_problem(str(proj), "compute", environ={}) is None
 
 
-def test_the_shipped_catalog_defines_compute_and_condorpool():
+def test_the_shipped_catalog_defines_only_compute():
+    # Pegasus supplies condorpool itself; listing it doubled the Run form's pool.
     import pathlib
 
     import yaml
@@ -191,7 +192,7 @@ def test_the_shipped_catalog_defines_compute_and_condorpool():
     shipped = pathlib.Path(__file__).resolve().parents[2] / "docker" / "pegasus" / "site-catalogs" / "pegasus-studio.yml"
     doc = yaml.safe_load(shipped.read_text())
     sites = {s["name"]: s for s in doc["sites"]}
-    assert set(sites) == {"compute", "condorpool"}
+    assert set(sites) == {"compute"}
     for s in sites.values():
         assert s["profiles"]["pegasus"]["style"] == "condor"
         assert s["profiles"]["condor"]["universe"] == "vanilla"
