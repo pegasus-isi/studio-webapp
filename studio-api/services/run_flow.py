@@ -608,6 +608,34 @@ async def _execute(
                 "on the submit host — but it is worth fixing.",
             )
 
+        # The site is checked before anything runs, and handed to a
+        # gromacs-template generator's -e so its transformations are bound to
+        # the site the plan will use (#466).
+        from services import execution_sites as xs
+
+        loop = asyncio.get_event_loop()
+        problem = await loop.run_in_executor(
+            None, lambda: xs.site_problem(project_dir, site)
+        )
+        if problem:
+            flow.failure = Failure(
+                stage="plan",
+                cause=problem,
+                action="Choose another place under \u201cWhere it runs\u201d.",
+                technical=f"pegasus-plan -s {site}: no catalog defines it",
+            )
+            flow.state = "failed"
+            for st in flow.stages:
+                if st.status == "pending":
+                    st.status = "skipped"
+            log.warning("run_flow_blocked_undefined_site", flow_id=flow.flow_id, site=site)
+            return
+        if generator_file:
+            from services.generator_introspect import introspect_generator
+
+            params = (await introspect_generator(project_dir)).get("params") or []
+            generator_args = xs.sync_site_arg(generator_args, params, site)
+
         if any(s.key == "generate" for s in flow.stages):
             if not await _run_generate(
                 flow, project_dir=project_dir,
@@ -924,7 +952,15 @@ async def _run_plan(
     # --dir is relative to the project directory, which is the cwd both for a
     # local plan and for one wrapped onto the submit host (remote_exec cd's
     # there first). See SUBMIT_BASE for why the GUI and the assistant share it.
-    argv = ["pegasus-plan", "--dir", SUBMIT_BASE, "-s", site, "-o", output_site, wf_file]
+    argv = ["pegasus-plan", "--dir", SUBMIT_BASE, "-s", site, "-o", output_site]
+    # A project with no catalog for the output site (the gromacs template)
+    # would otherwise stage results to Pegasus's default ./wf-output.
+    from services.execution_sites import plan_output_dir
+
+    output_dir = plan_output_dir(project_dir, output_site)
+    if output_dir:
+        argv += ["--output-dir", output_dir]
+    argv.append(wf_file)
     code, output = await _plan_capture(
         flow, argv, project_dir=project_dir, mode=plan_mode
     )

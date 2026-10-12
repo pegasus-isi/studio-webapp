@@ -135,15 +135,14 @@ def scratch_run_dir(run_dir: str, project_dir: str | None) -> str | None:
     if relative.startswith(".."):
         return None
 
-    for directory in [run_dir] + ([project_dir] if project_dir else []):
-        for name in ("sites.yml", "sites.yaml"):
-            catalog = os.path.join(directory, name)
-            if not os.path.isfile(catalog):
-                continue
-            root = _site_directory(catalog, "local", ("sharedscratch",))
-            if root:
-                candidate = os.path.join(root, relative)
-                return candidate if os.path.isdir(candidate) else None
+    # The planner's merged catalog first: a gromacs-template project has no
+    # sites.yml, and Pegasus's built-in local site puts scratch under
+    # wf-scratch/LOCAL, which only that file records (#466).
+    for catalog in run_outputs.run_catalogs(run_dir, project_dir):
+        root = _site_directory(catalog, "local", ("sharedscratch",))
+        if root:
+            candidate = os.path.join(root, relative)
+            return candidate if os.path.isdir(candidate) else None
     return None
 
 

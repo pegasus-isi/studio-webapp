@@ -122,7 +122,7 @@ def execution_sites(
             known["style"] = style
 
     project_sites = _catalog_sites(os.path.join(project_dir, "sites.yml"))
-    hosted = hosted_catalog(pegasusrc)
+    hosted = project_hosted_catalog(project_dir) or hosted_catalog(pegasusrc)
     # The planner leaves a copy of the hosted file where it ran; it says which
     # sites the hosted catalog defines and how each submits.
     hosted_sites = (
@@ -166,6 +166,108 @@ def execution_sites(
         "sites": [{"name": "local", "style": None, "source": "default"}]
         + list(sites.values()),
     }
+
+
+def project_hosted_catalog(project_dir: str) -> str | None:
+    """A hosted catalog named in the project's own pegasus.properties.
+
+    The gromacs-template generators write it there (`-s/--hosted-site-catalog`),
+    and pegasus-plan reads it ahead of ~/.pegasusrc, so it is checked first.
+    """
+    return hosted_catalog(Path(project_dir) / "pegasus.properties")
+
+
+# ── Keeping the site in sync with gromacs-template generators (#466) ──
+
+#: Generator options that name the execution site. The template binds every
+#: transformation to this name, so it must equal pegasus-plan's -s: a generator
+#: left at its default (`compute`) and a plan against `condorpool` cannot plan.
+SITE_ARG_DESTS = frozenset({"execution_site_name"})
+
+#: Sites pegasus-plan defines itself when no catalog does.
+_BUILTIN_SITES = frozenset({"local", DEFAULT_CONDOR_SITE})
+
+
+def _site_param(params: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return next((p for p in params if p.get("dest") in SITE_ARG_DESTS), None)
+
+
+def sync_site_arg(
+    args: list[str], params: list[dict[str, Any]], site: str
+) -> list[str]:
+    """Generator argv with its execution-site option set to `site`.
+
+    Any value already present (a hand-set `-e`, `--execution-site-name=x`) is
+    replaced: "Where it runs" is the one place the site is chosen. A generator
+    without the option gets its argv back unchanged.
+    """
+    param = _site_param(params)
+    if param is None or not site:
+        return list(args)
+    flags = [f for f in (param.get("flags") or [param.get("flag")]) if f]
+    out: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in flags:
+            i += 2  # the flag and its value
+            continue
+        if any(arg.startswith(f"{f}=") for f in flags if f.startswith("--")):
+            i += 1
+            continue
+        out.append(arg)
+        i += 1
+    return out + [str(param.get("flag") or flags[0]), site]
+
+
+def hide_managed_params(params: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The run form without the options Studio sets itself. Offering `-e` beside
+    "Where it runs" would be the same question twice, and the two answers
+    disagreeing is exactly the failure being prevented."""
+    return [p for p in params if p.get("dest") not in SITE_ARG_DESTS]
+
+
+def plan_output_dir(project_dir: str, output_site: str = "local") -> str | None:
+    """`--output-dir` for pegasus-plan, or None to leave it to the catalog.
+
+    A gromacs-template project defines no `local` site, so Pegasus's built-in
+    one would stage results to `./wf-output`; the template plans with
+    `--output-dir <project>/output`, and so does Studio. A project whose
+    sites.yml says where the output site stores results keeps that.
+    """
+    from services.run_outputs import _site_catalog_storage
+
+    for name in ("sites.yml", "sites.yaml"):
+        catalog = os.path.join(project_dir, name)
+        if os.path.isfile(catalog) and _site_catalog_storage(catalog, output_site):
+            return None
+    return os.path.join(project_dir, "output")
+
+
+def site_problem(
+    project_dir: str,
+    site: str,
+    *,
+    environ: dict[str, str] | None = None,
+    pegasusrc: Path | None = None,
+) -> str | None:
+    """Why planning against `site` cannot work, or None.
+
+    Checked before the run starts, because pegasus-plan reports a site no
+    catalog defines as a missing-entry error halfway through its output.
+    """
+    if site in _BUILTIN_SITES:
+        return None
+    offered = execution_sites(project_dir, environ=environ, pegasusrc=pegasusrc)
+    if any(s["name"] == site for s in offered["sites"]):
+        return None
+    return (
+        f"Nothing defines an execution site named \u201c{site}\u201d for this "
+        "workflow: there is no site catalog for it in the project, in its "
+        "pegasus.properties, or in ~/.pegasusrc. Pick another place under "
+        "\u201cWhere it runs\u201d, or set up a hosted site catalog for your "
+        "cluster and allocation."
+    )
 
 
 def apply_generator_site_defaults(

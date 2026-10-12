@@ -23,6 +23,7 @@ from models import (
 )
 from services.execution_sites import (
     apply_generator_site_defaults,
+    hide_managed_params,
     execution_sites,
 )
 from services.generator_introspect import PLAN_PARAMS, introspect_generator
@@ -48,6 +49,9 @@ class GenerateRequest(BaseModel):
     """CLI args (already flag-formatted) to pass to workflow_generator.py."""
 
     args: list[str] = Field(default_factory=list)
+    # Where the workflow will be planned. A gromacs-template generator binds
+    # its transformations to this name, so it is passed as its -e (#466).
+    site: str | None = None
 
 
 class PlanRequest(BaseModel):
@@ -314,7 +318,11 @@ async def get_project_params(project_id: str) -> dict:
         generator = await introspect_generator(proj["project_dir"])
         generator = {
             **generator,
-            "params": apply_generator_site_defaults(generator.get("params", [])),
+            # Studio sets the execution-site option itself, from "Where it
+            # runs" (#466), so it is not offered as a second, conflicting field.
+            "params": hide_managed_params(
+                apply_generator_site_defaults(generator.get("params", []))
+            ),
         }
 
     # The sites this project can actually plan against, so "Where it runs"
@@ -351,7 +359,14 @@ async def generate_workflow(
         )
 
     project_dir = proj["project_dir"]
-    cmd = ["python3", generator_file, *req.args]
+    args = list(req.args)
+    if req.site:
+        from services.execution_sites import sync_site_arg
+        from services.generator_introspect import introspect_generator
+
+        params = (await introspect_generator(project_dir)).get("params") or []
+        args = sync_site_arg(args, params, req.site)
+    cmd = ["python3", generator_file, *args]
 
     # Same environment as the one-button Run flow gives the generator, so the
     # Advanced "Generate" verb is not the one path where a workflow's API keys
@@ -569,12 +584,13 @@ async def plan_workflow(
             detail="No workflow YAML file found. Run generate first.",
         )
 
-    cmd = [
-        "pegasus-plan",
-        "-s", req.site,
-        "-o", req.output_site,
-        wf_file,
-    ]
+    cmd = ["pegasus-plan", "-s", req.site, "-o", req.output_site]
+    from services.execution_sites import plan_output_dir
+
+    output_dir = plan_output_dir(project_dir, req.output_site)
+    if output_dir:
+        cmd += ["--output-dir", output_dir]
+    cmd.append(wf_file)
 
     try:
         proc = await asyncio.create_subprocess_exec(
