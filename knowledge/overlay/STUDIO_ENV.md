@@ -138,6 +138,41 @@ The Studio-specific part is only *where* to verify:
 ls -R $HOME/workflows/<workflow-name>
 ```
 
+## Planning and running here
+
+**Prefer the user's Run button.** On the Analyses page, **Run** generates,
+builds the image if it is stale, plans and submits — and it does three things a
+hand-typed `pegasus-plan` does not:
+
+- sets the generator's `-e/--execution-site-name` to the site chosen under
+  "Where it runs". The generator registers every transformation on that site,
+  so `-e` and the plan's `-s` must be the same name or planning cannot map the
+  jobs;
+- plans with `--output-dir $HOME/workflows/<name>/output`, so results land in
+  `output/` (without it Pegasus's built-in local site stages them to
+  `wf-output/`);
+- checks the site exists before planning, instead of failing halfway through.
+
+When you plan from a terminal yourself — to test a fix, say — do the same by
+hand, from the project directory:
+
+```bash
+python3 workflow_generator.py -e condorpool [workflow options]
+pegasus-plan --dir submit -s condorpool -o local \
+    --output-dir "$PWD/output" --submit "$PWD/workflow.yml"
+```
+
+`condorpool` is the site with no setup here (Pegasus defines it itself). Use a
+different name only when the user has chosen a cluster, and then use it for
+**both** `-e` and `-s`.
+
+**Clusters and allocations are the user's choice, made once, on the Resources
+page** ("Where your workflows run"): a hosted site catalog and the allocation
+fields it needs, saved to `~/.pegasusrc`, after which their site is
+`compute`. Never put an execution site, a queue, an account or a
+`pegasus.catalog.site.repo.file` into the workflow, its generator or its
+`pegasus.properties` on the user's behalf — point them to Resources instead.
+
 ## How to talk to the user
 
 Most people using Studio are domain scientists, not workflow engineers. They
