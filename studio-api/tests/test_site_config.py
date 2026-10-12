@@ -325,3 +325,41 @@ def test_endpoint_keeps_overrides_per_catalog_and_imports_hand_added(client, mon
         "catalog": "unity.yml", "env": {},
         "overrides": [{"site": "compute", "namespace": "shell", "key": "x", "value": "1"}]})
     assert bad.status_code == 400
+
+
+def test_switching_cluster_stashes_settings_hand_added_after_last_get(client, monkeypatch, tmp_path):
+    """A slot already in the DB must not shadow lines added to the file later:
+    switching away and back keeps them (Codex review of #479)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(tmp_path / "absent"))
+    monkeypatch.setenv("STUDIO_SITE_REPO_IMAGE", str(tmp_path / "absent"))
+    rc = tmp_path / ".pegasusrc"
+    rc.write_text("pegasus.catalog.site.repo.file = purdue-anvil.yml\n")
+
+    async def catalogs(ref):
+        return [{"name": "purdue-anvil.yml", "label": "Anvil", "needs": []},
+                {"name": "unity.yml", "label": "Unity", "needs": []}]
+
+    async def none(*a):
+        return []
+
+    async def version(cmd):
+        return "6.0.0dev"
+
+    async def text(name, ref):
+        return None
+
+    monkeypatch.setattr(sc, "list_catalogs", catalogs)
+    monkeypatch.setattr(sc, "slurm_accounts", none)
+    monkeypatch.setattr(sc, "catalog_text", text)
+    monkeypatch.setattr("routers.health._run_version_cmd", version)
+
+    # Anvil gets an (empty) slot in the DB.
+    client.put("/api/settings/compute-site", json={"catalog": "purdue-anvil.yml", "env": {}, "overrides": []})
+    # The user then hand-adds a line, and switches cluster without reloading.
+    rc.write_text(rc.read_text() + "pegasus.catalog.site.sites.compute.profiles.pegasus.queue = wholenode\n")
+    client.put("/api/settings/compute-site", json={"catalog": "unity.yml", "env": {}, "overrides": []})
+    assert "wholenode" not in rc.read_text()
+
+    body = client.put("/api/settings/compute-site", json={"catalog": "purdue-anvil.yml", "env": {}}).json()
+    assert [o["value"] for o in body["overrides"]] == ["wholenode"]
