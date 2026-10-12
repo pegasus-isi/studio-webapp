@@ -3,6 +3,7 @@
 import type { PoolBucket, WorkflowDemand } from "@/lib/api/client";
 import { useProvisioningStatus } from "@/lib/hooks/use-dashboard";
 import { cn, formatDuration } from "@/lib/utils";
+import { ComputeSiteCard } from "@/components/resources/compute-site-card";
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
@@ -100,9 +101,10 @@ export default function ProvisioningPage() {
   return (
     <div className="h-full overflow-auto">
       <div className="border-b border-line bg-surface px-6 py-4">
-        <h1 className="text-lg font-semibold text-fg">Computing capacity</h1>
+        <h1 className="text-lg font-semibold text-fg">Resources</h1>
         <p className="text-sm text-fgmuted">
-          How much computing power is available to run your analyses right now.
+          Where your analyses run, and how much computing power is available
+          right now.
         </p>
       </div>
 
@@ -113,6 +115,7 @@ export default function ProvisioningPage() {
       )}
 
       <div className="space-y-6 p-6">
+        <ComputeSiteCard />
         {isLoading ? (
           <p className="text-sm text-fgmuted">Checking…</p>
         ) : !poolUp ? (
