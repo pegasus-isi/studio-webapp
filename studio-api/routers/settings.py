@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from models import LLMConfigRequest, SettingsResponse
 
@@ -390,6 +391,67 @@ class TelemetryConsent(BaseModel):
     # Read-only too: whether the user has made the choice at all, so the tour
     # keeps asking until they have (#454). Ignored on PUT; saving is deciding.
     decided: bool = False
+
+
+# ── Where workflows run: hosted site catalog + allocation (#468) ──
+
+
+class ComputeSiteRequest(BaseModel):
+    """A hosted catalog file name (None: Studio's own pool) and allocation
+    values (`RESOURCE_*` → value; an empty value removes it)."""
+
+    catalog: str | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+
+
+async def _compute_site_view() -> dict:
+    from routers.health import _run_version_cmd
+    from services import site_config
+
+    current = site_config.read_config()
+    version = await _run_version_cmd("pegasus-version")
+    ref = site_config.series(version)
+    catalogs, accounts = await asyncio.gather(
+        site_config.list_catalogs(ref), site_config.slurm_accounts()
+    )
+    # Keep a hand-set catalog visible even if it is not (or no longer)
+    # published for this Pegasus series, so saving the form never silently
+    # drops it.
+    if current["catalog"] and not any(c["name"] == current["catalog"] for c in catalogs):
+        catalogs = [{"name": current["catalog"], "label": current["catalog"], "needs": []}] + catalogs
+    return {
+        **current,
+        # Every hosted catalog names its execution site "compute"; without one,
+        # Pegasus' built-in HTCondor pool is where jobs go.
+        "site": "compute" if current["catalog"] else "condorpool",
+        "pegasus_version": version,
+        "pegasus_series": ref,
+        "catalogs": catalogs,
+        "slurm_accounts": accounts,
+        "field_labels": site_config.FIELD_LABELS,
+    }
+
+
+@router.get("/compute-site")
+async def get_compute_site() -> dict:
+    """The user's hosted site catalog and allocation, with the catalogs on
+    offer for the running Pegasus version and which fields each needs."""
+    return await _compute_site_view()
+
+
+@router.put("/compute-site")
+async def update_compute_site(req: ComputeSiteRequest) -> dict:
+    """Write the catalog and allocation to ~/.pegasusrc, keeping any other
+    properties the user set there."""
+    from services import site_config
+
+    try:
+        site_config.write_config(req.catalog or None, req.env)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not write ~/.pegasusrc: {e}") from None
+    return await _compute_site_view()
 
 
 @router.get("/telemetry", response_model=TelemetryConsent)

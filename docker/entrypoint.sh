@@ -407,6 +407,19 @@ if ! grep -qs '^pegasus\.agent\.url' "${PEGASUS_CONF}"; then
     echo "[studio] Wrote pegasus.agent.url to ${PEGASUS_CONF}"
 fi
 
+# Hosted site catalog (#468). An admin can name one for every user of an
+# install (an OOD site.env on a Slurm cluster: STUDIO_SITE_CATALOG=unity.yml);
+# it is written to ~/.pegasusrc only when the user has not chosen one, so a
+# choice made on the Resources page is never overwritten.
+if [ -n "${STUDIO_SITE_CATALOG:-}" ]; then
+    PEGASUSRC="${HOME:-/tmp}/.pegasusrc"
+    if ! grep -qs '^pegasus\.catalog\.site\.repo\.file' "${PEGASUSRC}"; then
+        echo "pegasus.catalog.site.repo.file = ${STUDIO_SITE_CATALOG}" >> "${PEGASUSRC}"
+        chmod 600 "${PEGASUSRC}" 2>/dev/null || true
+        echo "[studio] Wrote hosted site catalog ${STUDIO_SITE_CATALOG} to ${PEGASUSRC}"
+    fi
+fi
+
 # ---- OpenCode server password ----
 # The chat panel is a client of `opencode serve` (#367), which runs on loopback
 # with the user's full file and shell authority. Basic auth is the only thing

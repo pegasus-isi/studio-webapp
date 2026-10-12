@@ -1283,6 +1283,44 @@ export async function updateTelemetryConsent(contentCapture: boolean) {
   });
 }
 
+// --- Where workflows run: hosted site catalog + allocation (#468) ---
+
+export interface SiteCatalogOption {
+  name: string;
+  label: string;
+  /** Allocation variables this catalog references (RESOURCE_*). */
+  needs: string[];
+}
+
+export interface ComputeSite {
+  /** Hosted catalog file in ~/.pegasusrc, or null for Studio's own pool. */
+  catalog: string | null;
+  /** RESOURCE_* → value, as written in ~/.pegasusrc. */
+  env: Record<string, string>;
+  /** "compute" with a catalog, else "condorpool". */
+  site: string;
+  pegasus_version: string | null;
+  pegasus_series: string | null;
+  catalogs: SiteCatalogOption[];
+  /** The user's Slurm accounts, where sacctmgr exists; else empty. */
+  slurm_accounts: string[];
+  field_labels: Record<string, string>;
+}
+
+export async function getComputeSite() {
+  return request<ComputeSite>("/settings/compute-site");
+}
+
+export async function updateComputeSite(
+  catalog: string | null,
+  env: Record<string, string>
+) {
+  return request<ComputeSite>("/settings/compute-site", {
+    method: "PUT",
+    body: JSON.stringify({ catalog, env }),
+  });
+}
+
 // --- User profile (early-user feedback program) ---
 
 export type ProfileRole =
