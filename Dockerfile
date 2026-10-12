@@ -331,6 +331,20 @@ RUN install -d /etc/apt/keyrings && \
     rm -rf /var/lib/apt/lists/* && \
     node --version
 
+# ---- GitHub CLI ----
+# Pinned .deb from cli/cli releases, same pattern as the Apptainer step:
+# no extra apt source to maintain, reproducible across builds.
+# Bump via --build-arg GH_VERSION=... ; verifies with gh --version.
+ARG GH_VERSION=2.78.0
+RUN curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb" \
+        -o /tmp/gh.deb && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends /tmp/gh.deb && \
+    rm -f /tmp/gh.deb && \
+    rm -rf /var/lib/apt/lists/* && \
+    gh --version
+
+
 # ---- npm global prefix ----
 # AI tools (Claude Code, OpenCode, Codex CLI, …) are installed on-demand via
 # `npm install -g`.  Use a fixed path under /opt so it is writable by any UID
