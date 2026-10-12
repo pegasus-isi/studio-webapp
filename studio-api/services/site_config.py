@@ -40,15 +40,48 @@ REPO_INTERVAL_KEY = "pegasus.catalog.site.repo.interval"
 STUDIO_CATALOG = "pegasus-studio.yml"
 
 
-def studio_repo_dir() -> str:
+def studio_repo_image_dir() -> str:
     """Where the image installs Studio's own catalog (<series>/conf/...)."""
-    return os.environ.get("STUDIO_SITE_REPO", "/opt/studio/site-catalogs")
+    return os.environ.get("STUDIO_SITE_REPO_IMAGE", "/opt/studio/site-catalogs")
+
+
+def studio_repo_dir() -> str:
+    """Where ~/.pegasusrc points for Studio's own catalog: a copy in the home
+    directory (#476).
+
+    Not the image path: pegasus-plan usually runs on the HTCondor submit host,
+    which cannot see /opt/studio in this container but shares the home
+    directory (its NFS export, mounted at the same path). The entrypoint keeps
+    the copy current; ensure_studio_repo() makes it on demand.
+    """
+    return os.environ.get(
+        "STUDIO_SITE_REPO", str(Path.home() / ".studio" / "site-catalogs")
+    )
+
+
+def _has_catalog(root: str) -> bool:
+    return any(Path(root).glob(f"*/conf/{STUDIO_CATALOG}"))
+
+
+def ensure_studio_repo() -> bool:
+    """Make sure the shared copy exists (copying from the image if needed);
+    True when Studio's own catalog is usable."""
+    if _has_catalog(studio_repo_dir()):
+        return True
+    image = studio_repo_image_dir()
+    if not _has_catalog(image):
+        return False
+    try:
+        shutil.copytree(image, studio_repo_dir(), dirs_exist_ok=True)
+    except OSError as e:
+        log.warning("studio_site_repo_copy_failed", error=str(e))
+        return False
+    return _has_catalog(studio_repo_dir())
 
 
 def studio_pool_available() -> bool:
-    """Whether this image ships Studio's own catalog (defining "compute")."""
-    root = Path(studio_repo_dir())
-    return any(root.glob(f"*/conf/{STUDIO_CATALOG}"))
+    """Whether Studio's own catalog (defining "compute") can be used here."""
+    return _has_catalog(studio_repo_dir()) or _has_catalog(studio_repo_image_dir())
 _ENV_PREFIX = "env."
 #: Allocation variables a catalog may reference. Anything else in a catalog's
 #: ${...} placeholders is ignored: it is not ours to ask for.
@@ -163,7 +196,7 @@ def write_config(
         # A published catalog: no repo base, so pegasus-plan fetches it from
         # the pegasushub repository rather than looking in the image.
         wanted[REPO_FILE_KEY] = catalog
-    elif studio_pool_available():
+    elif ensure_studio_repo():
         # "No cluster": Studio's own pool, which defines "compute" (#474).
         wanted[REPO_BASE_KEY] = f"file://{studio_repo_dir()}"
         wanted[REPO_FILE_KEY] = STUDIO_CATALOG
