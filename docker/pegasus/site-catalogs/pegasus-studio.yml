@@ -13,23 +13,16 @@
 # pegasus-plan treats it exactly like a published catalog: a project's own
 # sites.yml is merged over it, and the planner leaves a copy in the project.
 # Pegasus adds its own "local" site; --output-dir sets where results go.
+#
+# Only "compute" is defined. The planner adds a default "condorpool" for
+# this same pool whenever no catalog names one (PegasusConfiguration,
+# PM-1516), so workflows bound to that name still plan; defining it here too
+# made the Run form offer the pool twice (#480).
 x-pegasus:
   createdBy: pegasus-ai-studio
 pegasus: "5.0"
 sites:
 - name: compute
-  directories: []
-  profiles:
-    condor:
-      universe: vanilla
-    env:
-      LANG: C
-      PYTHONUNBUFFERED: "1"
-    pegasus:
-      style: condor
-# Same pool under the name earlier Studio workflows were generated for, so
-# their transformation catalogs (bound to "condorpool") still plan.
-- name: condorpool
   directories: []
   profiles:
     condor:
