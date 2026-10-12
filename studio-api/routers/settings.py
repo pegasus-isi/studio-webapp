@@ -406,6 +406,17 @@ def _overrides_slot(catalog: str | None, studio_pool: bool) -> str:
     return catalog or ("studio" if studio_pool else "none")
 
 
+def _adopt_file_overrides(saved: dict, current: dict) -> bool:
+    """Copy the file's overrides into the active slot; True if it changed."""
+    slot = _overrides_slot(current["catalog"], current["studio_pool"])
+    if not current["overrides"] and slot not in saved:
+        return False
+    if saved.get(slot) == current["overrides"]:
+        return False
+    saved[slot] = current["overrides"]
+    return True
+
+
 async def _compute_site_view() -> dict:
     from routers.health import _run_version_cmd
     from services import site_config
@@ -417,10 +428,10 @@ async def _compute_site_view() -> dict:
     saved = await db.get_setting(_OVERRIDES_KEY, {}) or {}
     if not isinstance(saved, dict):
         saved = {}
-    # Overrides already in ~/.pegasusrc (set by hand, or before #478) are
-    # adopted for the active catalog rather than dropped on the next save.
-    if current["overrides"] and slot not in saved:
-        saved[slot] = current["overrides"]
+    # ~/.pegasusrc is the truth for the active catalog: overrides set there by
+    # hand (or before #478) are adopted, so switching cluster later stashes
+    # them instead of discarding them.
+    if _adopt_file_overrides(saved, current):
         await db.set_setting(_OVERRIDES_KEY, saved)
     version = await _run_version_cmd("pegasus-version")
     ref = site_config.series(version)
@@ -485,6 +496,10 @@ async def update_compute_site(req: ComputeSiteRequest) -> dict:
     saved = await db.get_setting(_OVERRIDES_KEY, {}) or {}
     if not isinstance(saved, dict):
         saved = {}
+    current = site_config.read_config()
+    # Stash what the file holds for the outgoing cluster first, so settings
+    # hand-added since the last GET survive a switch away and back.
+    _adopt_file_overrides(saved, current)
     studio_pool = not req.catalog and site_config.studio_pool_available()
     slot = _overrides_slot(req.catalog or None, studio_pool)
     try:
@@ -492,12 +507,10 @@ async def update_compute_site(req: ComputeSiteRequest) -> dict:
             rows = site_config.validate_overrides(req.overrides)
             saved[slot] = rows
         else:
-            # No rows sent (an older client). Same cluster: leave the file's
-            # overrides alone. Another cluster: write that cluster's set, even
-            # an empty one, so the previous cluster's settings don't follow.
-            current = site_config.read_config()
-            same = slot == _overrides_slot(current["catalog"], current["studio_pool"])
-            rows = saved.get(slot) if same else saved.get(slot, [])
+            # No rows sent (an older client): write that cluster's set — for
+            # the same cluster, the file's own, just adopted above; for another,
+            # its saved set, even an empty one, so settings don't follow.
+            rows = saved.get(slot, [])
         site_config.write_config(req.catalog or None, req.env, overrides=rows)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
