@@ -407,18 +407,40 @@ if ! grep -qs '^pegasus\.agent\.url' "${PEGASUS_CONF}"; then
     echo "[studio] Wrote pegasus.agent.url to ${PEGASUS_CONF}"
 fi
 
-# Site catalog (#468, #474). Written to ~/.pegasusrc only when the user has
-# not chosen one (no repo.file there yet), so a choice made on the Resources
-# page is never overwritten:
+# Site catalog (#468, #474, #476). Written to ~/.pegasusrc only when the user
+# has not chosen one (no repo.file there yet), so a choice made on the
+# Resources page is never overwritten:
 #   - an admin-named published catalog for every user of an install (an OOD
 #     site.env on a Slurm cluster: STUDIO_SITE_CATALOG=unity.yml), fetched
 #     from github.com/pegasushub/pegasus-site-catalogs;
-#   - otherwise Studio's own pool, shipped in the image as a hosted-style
-#     catalog defining "compute", so the workflow template's default site
-#     plans here. A file:// repo base and interval 0: no download, always the
-#     image's current file. A project's own sites.yml is still merged over it.
+#   - otherwise Studio's own pool, a hosted-style catalog defining "compute",
+#     so the workflow template's default site plans here. A project's own
+#     sites.yml is still merged over it.
+#
+# The image ships it under /opt, but pegasus-plan usually runs on the HTCondor
+# submit host ("Where planning runs: Automatic"), where /opt/studio does not
+# exist (#476). The home directory is that host's own NFS export, mounted at
+# the same path here, so the catalog is copied into it — every start, so an
+# image update reaches it — and ~/.pegasusrc points there. interval 0: the
+# planner re-reads the file each plan instead of keeping a day-old copy.
 PEGASUSRC="${HOME:-/tmp}/.pegasusrc"
-STUDIO_SITE_REPO="/opt/studio/site-catalogs"
+STUDIO_SITE_REPO_IMAGE="/opt/studio/site-catalogs"
+STUDIO_SITE_REPO="${STUDIO_DIR}/site-catalogs"
+if ls "${STUDIO_SITE_REPO_IMAGE}"/*/conf/pegasus-studio.yml >/dev/null 2>&1; then
+    mkdir -p "${STUDIO_SITE_REPO}"
+    cp -R "${STUDIO_SITE_REPO_IMAGE}/." "${STUDIO_SITE_REPO}/" 2>/dev/null \
+        || echo "[studio] WARNING: could not copy the site catalog to ${STUDIO_SITE_REPO}"
+fi
+# Users seeded by #475 point at the image path, which the submit host cannot
+# read; move them to the shared copy.
+if grep -qs "^pegasus\.catalog\.site\.repo = file://${STUDIO_SITE_REPO_IMAGE}\$" "${PEGASUSRC}"; then
+    # Temp file + mv rather than `sed -i`, whose argument differs between GNU
+    # and BSD sed; the rename keeps the file whole if anything fails.
+    sed "s#^pegasus\.catalog\.site\.repo = file://${STUDIO_SITE_REPO_IMAGE}\$#pegasus.catalog.site.repo = file://${STUDIO_SITE_REPO}#" \
+        "${PEGASUSRC}" > "${PEGASUSRC}.studio-tmp" && mv "${PEGASUSRC}.studio-tmp" "${PEGASUSRC}"
+    chmod 600 "${PEGASUSRC}" 2>/dev/null || true
+    echo "[studio] Moved ${PEGASUSRC} to the shared site catalog at ${STUDIO_SITE_REPO}"
+fi
 if ! grep -qs '^pegasus\.catalog\.site\.repo\.file' "${PEGASUSRC}"; then
     if [ -n "${STUDIO_SITE_CATALOG:-}" ]; then
         echo "pegasus.catalog.site.repo.file = ${STUDIO_SITE_CATALOG}" >> "${PEGASUSRC}"

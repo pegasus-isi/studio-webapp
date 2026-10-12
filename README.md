@@ -274,8 +274,11 @@ catalog is named in `~/.pegasusrc` (`pegasus.catalog.site.repo.file`):
 - **Studio's own pool** (the default). The image ships
   `/opt/studio/site-catalogs/<MAJOR.MINOR>/conf/pegasus-studio.yml`, defining
   `compute` (and `condorpool`, for workflows generated before the template) as
-  Studio's HTCondor pool, and the entrypoint points `~/.pegasusrc` at it with a
-  `file://` repo base when no catalog is chosen (#474). The template default,
+  Studio's HTCondor pool. The entrypoint copies it to `~/.studio/site-catalogs`
+  — the home directory is the submit host's own NFS export, so the planner can
+  read it there, which it cannot under `/opt` in the container (#476) — and
+  points `~/.pegasusrc` at that copy with a `file://` repo base when no catalog
+  is chosen (#474). The template default,
   the notebooks and every README's `pegasus-plan -s compute` work unchanged.
 - **A cluster the user has an allocation on**, chosen on **Resources** ("Where
   your workflows run"): a catalog published in pegasushub/pegasus-site-catalogs

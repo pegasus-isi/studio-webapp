@@ -194,3 +194,22 @@ def test_the_shipped_catalog_defines_compute_and_condorpool():
     for s in sites.values():
         assert s["profiles"]["pegasus"]["style"] == "condor"
         assert s["profiles"]["condor"]["universe"] == "vanilla"
+
+
+def test_studio_pool_points_at_the_shared_home_copy_not_the_image(tmp_path, monkeypatch):
+    """The planner usually runs on the submit host, which shares the home
+    directory but not /opt in the container (#476)."""
+    image = tmp_path / "opt" / "site-catalogs"
+    (image / "6.0" / "conf").mkdir(parents=True)
+    (image / "6.0" / "conf" / "pegasus-studio.yml").write_text("sites: []\n")
+    home_copy = tmp_path / "home" / ".studio" / "site-catalogs"
+    monkeypatch.setenv("STUDIO_SITE_REPO_IMAGE", str(image))
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(home_copy))
+    rc = tmp_path / "home" / ".pegasusrc"
+
+    got = sc.write_config(None, {}, rc)
+    assert got["studio_pool"] is True
+    assert (home_copy / "6.0" / "conf" / "pegasus-studio.yml").is_file()
+    text = rc.read_text()
+    assert f"pegasus.catalog.site.repo = file://{home_copy}" in text
+    assert str(image) not in text
