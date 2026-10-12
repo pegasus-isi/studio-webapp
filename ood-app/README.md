@@ -4,10 +4,10 @@ An Apptainer/Singularity port of the same product as [`../Dockerfile`](../Docker
 (nginx + supervisord fronting studio-api, studio-web, and JupyterLab, plus
 HTCondor, Pegasus WMS, and Apptainer for running workflow job containers),
 packaged for [Open OnDemand](https://openondemand.org/) instead of
-K8s/KubeSpawner. [`studio-el9.def`](studio-el9.def) builds the container image
-only; the OOD batch-connect app that launches it (`form.yml`,
-`submit.yml.erb`, `before.sh.erb`) is a separate, site-specific piece — see
-[Status](#status).
+K8s/KubeSpawner. [`studio-el9.def`](studio-el9.def) builds the container image;
+the rest of this directory is the OOD batch-connect app that launches it,
+a reference a site copies and adjusts (see
+[Installing the batch-connect app](#installing-the-batch-connect-app)).
 
 ## Why a separate `.def` instead of running the Docker image under Apptainer
 
@@ -37,14 +37,17 @@ for the Dockerfile's apt list.
   `/node/compute-1/20153`), not just KubeSpawner's `/user/<name>` shape —
   `../docker/nginx/prefix-proxy.conf.tmpl`.
 
+- The batch-connect app (#482), which gives Studio a **home directory of its
+  own** instead of the user's real one. See
+  [Studio's own home directory](#studios-own-home-directory).
+
 **Not done / open:**
-- **The OOD batch-connect app** (`form.yml`, `submit.yml.erb`,
-  `before.sh.erb` — the Slurm job script that starts `apptainer instance
-  start` and generates `STUDIO_AUTH_TOKEN`/reads `STUDIO_URL_PREFIX`) is not
-  in this repo. It's expected to live in a site-specific OOD apps catalog
-  repo that references this image, the same way a site's OOD deployment
-  usually isn't checked into the application's own repo. Nothing here should
-  be read as reserving a location for it.
+- **Not yet run on a live portal.** The batch-connect app reuses the parts of
+  the earlier native-launcher app that were validated end to end on Open
+  OnDemand 4.0 (port/password handling, the `/auth` Connect button, baking
+  `site.env` in at render time), and its home handling is covered by
+  `studio-api/tests/test_ood_studio_home.py`, but this combination has not
+  been launched behind a real portal yet.
 - **Local Slurm submission.** The intent is for HTCondor itself to submit
   onward into the cluster's Slurm queue (a local schedd using HTCondor's
   Slurm/BLAHP grid support), which is *why* the OS-matching in the section
@@ -86,56 +89,121 @@ Build on `x86_64` — `%post` refuses any other arch, same reasoning as the
 Dockerfile's `linux/amd64` requirement (HTCondor/Pegasus/Apptainer EL9
 packages are pulled x86_64-specifically).
 
-## Run
+## Studio's own home directory
 
-Foreground, mirrors `docker run`:
+Everything Studio writes is `$HOME`-relative: its SQLite database
+(`~/.studio`), the marketplace checkout (`~/.local/share/pegasus-ai`),
+`~/.pegasusrc` and `~/.pegasus/pegasus.conf`, the generated `CLAUDE.md`,
+`AGENTS.md` and `.mcp.json`, `~/workflows` and `~/data`, and the configs the
+knowledge adapters write for the AI tools (`~/.codex`, `~/.config/opencode`,
+`~/.claude*`). Under KubeSpawner that home is a volume that exists only for
+Studio. On a cluster it is the user's real home, and Apptainer binds it by
+default, so a plain `apptainer run` would overwrite the user's own Codex,
+Claude, OpenCode and Pegasus setup on first launch.
+
+So the batch-connect app never lets Studio see the real home as `$HOME`:
 
 ```bash
-apptainer run --bind "$HOME" ood-app/studio-el9.sif
+apptainer run --cleanenv --home "$STUDIO_HOME" --bind "$HOME" studio-el9.sif
 ```
 
-As a background instance (what an OOD batch-connect job would do):
+- `--home` moves `$HOME` **and** the passwd entry inside the container, so
+  tools that read the home from passwd (ssh, HTCondor's token directory) agree
+  with everything else. No application code changes: this is the same model
+  as K8s, where Studio owns its home.
+- `STUDIO_HOME` comes from the launch form's *Studio directory* field, falling
+  back to the site's `STUDIO_HOME_DEFAULT`, then `~/pegasus-studio`.
+  [`template/studio-home.sh`](template/studio-home.sh) refuses the real home
+  itself, a symlink to it, or any directory containing it, and creates the
+  directory `0700`.
+- Entries listed in `STUDIO_HOME_INHERIT` (default `.condor/tokens.d
+  .gitconfig`) are symlinked from the real home when present and when nothing
+  is already there, so HTCondor submission and the user's git identity keep
+  working and a refreshed token is picked up without relaunching. Add `.ssh`
+  for SSH-based submission; set it to `""` to link nothing.
+- The real home stays bind-mounted at its own path, so terminals can reach
+  existing data. Studio's file panel and JupyterLab are rooted at the Studio
+  directory.
+- `--cleanenv` keeps the host's module environment (`PYTHONPATH`,
+  `LD_LIBRARY_PATH`, a conda `PATH`) out of the Rocky 9 image. Only
+  `STUDIO_*`, `_CONDOR_*`, `CONDOR_CONFIG`, `KNOWLEDGE_*` and locale variables
+  are forwarded.
+- One session per Studio directory (a `flock` on `.studio/session.lock`):
+  `studio.db` is SQLite.
+
+The directory must be on storage the HTCondor submit host also mounts at the
+same path. DAGMan and remote planning (`studio-api/services/remote_exec.py`)
+read the workflow's submit directory and `HOME` from there. The default under
+an NFS home satisfies that; node-local scratch does not.
+
+`docker/entrypoint.sh` backs this up: when `STUDIO_HOME` is set and `$HOME`
+differs (a launch that forgot `--home`), it exports `HOME=$STUDIO_HOME` and
+warns that passwd-based lookups still see the real home.
+
+## Installing the batch-connect app
+
+```
+manifest.yml            app metadata (Interactive Apps → Scientific Workflows)
+form.yml.erb            cluster, partition, hours, cores, memory, Studio directory
+submit.yml.erb          Slurm resources
+template/
+  before.sh.erb         port, session token ($password → STUDIO_AUTH_TOKEN), URL prefix
+  script.sh.erb         site.env, Studio home, one-session lock, apptainer run
+  studio-home.sh        resolves and prepares the Studio home (tested in studio-api)
+view.html.erb           Connect button → <prefix>/auth?token=… (the one ungated route)
+examples/site.env       site configuration template
+```
+
+1. Build `studio-el9.sif` (above) and put it where every session host can read
+   it, e.g. `/opt/pegasus-ai/studio/studio-el9.sif`.
+2. Copy this directory (without the `.def`/`.sif`) to
+   `/var/www/ood/apps/sys/pegasus-studio`.
+3. Set `cluster:` in `form.yml.erb` to the cluster in
+   `/etc/ood/config/clusters.d/` that sessions run on, and adjust
+   `submit.yml.erb` to the site's Slurm options.
+4. Copy `examples/site.env` to
+   `/etc/ood/config/apps/pegasus-studio/site.env` on the **portal** host and
+   fill it in (`STUDIO_SIF`, and the HTCondor access point if the session host
+   is not one). `script.sh.erb` bakes it into each job script at render time,
+   so compute nodes need no copy.
+5. Enable `node_uri` (and `rnode_uri`) in `ood_portal.yml`: the session is
+   proxied at `/node/<host>/<port>`.
+
+Things that broke on the way to the earlier validated deployment, none of
+which announce their real cause:
+
+| Symptom | Cause |
+|---|---|
+| Connect button → Apache 404 | `node_uri` not enabled in `ood_portal.yml` |
+| Form 500s | An unsupported widget (there is no `static` widget) |
+| Session runs but Connect does nothing; `connection.yml` has an empty port | `before.sh` did not call `find_port`/`create_passwd` |
+| Session dies at once: `STUDIO_URL_PREFIX may only contain …` | An entrypoint older than #482, which refused the dots in a FQDN session host |
+| `Can't find address of local schedd` | `_CONDOR_SCHEDD_HOST` unset, or set to a short name |
+| Session refuses to start: "already using …" | Another session holds that Studio directory; reconnect to it or choose another |
+
+## Running the image by hand
+
+Simulate what `script.sh.erb` does, with its own Studio directory:
 
 ```bash
-apptainer instance start --bind "$HOME" ood-app/studio-el9.sif studio
-apptainer instance stop studio
+mkdir -p ~/pegasus-studio
+STUDIO_HOME=~/pegasus-studio \
+STUDIO_PORT=20153 STUDIO_ALLOC_PORTS=1 \
+STUDIO_URL_PREFIX=/node/$(hostname)/20153 \
+STUDIO_AUTH_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))') \
+apptainer run --home ~/pegasus-studio --bind "$HOME" ood-app/studio-el9.sif
 ```
 
-Apptainer auto-binds the real host `$HOME` by default, so `entrypoint.sh`'s
-`$HOME`-relative state (SQLite DB, workspace, marketplace checkout) works
-unmodified; `--bind "$HOME"` above is belt-and-suspenders, matching the
-`.def` file's own documented run commands.
-
-nginx listens on `:8888` inside the container, same as the Docker image —
-whatever fronts it (an OOD portal's own allocator, a `-p`-style mapping) picks
-the externally-visible port and is expected to set two environment variables
-before starting the instance:
+Then reach it through something that proxies under that prefix (a local
+nginx/OOD-shaped reverse proxy, or a cluster's real OOD portal). Hitting the
+port directly with a browser won't exercise the prefix rewriting.
 
 | Env | Purpose |
 |---|---|
-| `STUDIO_URL_PREFIX` | The path Open OnDemand's own proxy assigns this session (e.g. `/node/compute-1/20153`) — without it, the app answers at `/` and every asset/API request under the assigned prefix 404s. See `../docker/nginx/prefix-proxy.conf.tmpl`. |
-| `STUDIO_AUTH_TOKEN` | Turns on the session token gate (#218): the proxy port itself has no isolation on a shared host otherwise. Generate one the same way any other batch-connect password is generated (e.g. `before.sh.erb`); the container does not need it pre-shared anywhere else. |
-
-Both are read by `entrypoint.sh` at container start, not build time — see
-the top-level [`README.md`](../README.md#configuration) and
-`../CLAUDE.md`'s "session token gate" and "Prefix handling" notes for the
-full design rationale (shared by both deployments).
-
-## Testing without a batch-connect app yet
-
-Simulate what the (not-yet-written) OOD job script will do:
-
-```bash
-STUDIO_URL_PREFIX=/node/compute-1/20153 \
-STUDIO_AUTH_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))') \
-apptainer instance start --bind "$HOME" ood-app/studio-el9.sif studio
-```
-
-Then reach it through something that actually proxies under that prefix
-(a local nginx/OOD-shaped reverse proxy, or a cluster's real OOD portal) —
-hitting the container's port directly with a browser won't exercise the
-prefix rewriting, since there'd be no proxy adding the prefix in the first
-place.
+| `STUDIO_HOME` | Studio's home; see above. Pair it with `--home`. |
+| `STUDIO_URL_PREFIX` | The path Open OnDemand's proxy assigns this session (e.g. `/node/compute-1/20153`). Without it, every asset/API request under the prefix 404s. See `../docker/nginx/prefix-proxy.conf.tmpl`. |
+| `STUDIO_AUTH_TOKEN` | Turns on the session token gate (#218). The proxy port has no isolation on a shared host otherwise. |
+| `STUDIO_PORT`, `STUDIO_ALLOC_PORTS` | Front port, and pick free internal ports; Apptainer shares the host network namespace. |
 
 ## See also
 

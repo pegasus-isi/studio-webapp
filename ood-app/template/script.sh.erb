@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# The session itself: give Studio a home of its own, then run the image in
+# the foreground. A batch-connect session lasts as long as this script does, so
+# it is `apptainer run`, not `instance start` (which returns at once and would
+# end the job with Studio still starting).
+<%- require "shellwords" -%>
+
+set -euo pipefail
+
+# Site settings (image path, Studio directory default, HTCondor targeting,
+# optional LLM gateway), BAKED IN at render time rather than sourced at run
+# time.
+#
+# This file is rendered by the dashboard on the PORTAL host, but it *runs* on
+# the session host, which for a Slurm cluster is a compute node with no
+# /etc/ood on it at all. Sourcing the path there silently found nothing:
+# Studio started fine, and only workflow submission failed later with "Can't
+# find address of local schedd", because _CONDOR_SCHEDD_HOST had quietly never
+# been set. Reading the file here means the session host needs no OOD install
+# and no shared copy of the config. $HOME and friends still expand on the
+# session host (and to the REAL home: nothing has been redirected yet), so
+# per-user paths in site.env keep working.
+set -a
+<%- site_env = "/etc/ood/config/apps/pegasus-studio/site.env" -%>
+<%- if File.exist?(site_env) -%>
+<%= File.read(site_env) %>
+<%- else -%>
+# (no site.env found on the portal host at render time)
+<%- end -%>
+set +a
+
+STUDIO_SIF="${STUDIO_SIF:-/opt/pegasus-ai/studio/studio-el9.sif}"
+if command -v apptainer >/dev/null 2>&1; then
+    APPTAINER=apptainer
+elif command -v singularity >/dev/null 2>&1; then
+    APPTAINER=singularity
+else
+    echo "Neither apptainer nor singularity is on PATH on $(hostname)." >&2
+    exit 1
+fi
+if [ ! -r "${STUDIO_SIF}" ]; then
+    echo "Studio image ${STUDIO_SIF} is missing or unreadable on $(hostname)." >&2
+    exit 1
+fi
+
+# ---- Studio's home ----
+# See studio-home.sh for why Studio never runs with the real home as $HOME.
+# By path, not ./: the job's cwd is the scheduler's choice, not ours.
+. "$(dirname "${BASH_SOURCE[0]}")/studio-home.sh"
+REAL_HOME="${HOME}"
+STUDIO_HOME="$(studio_home_resolve <%= studio_home.to_s.strip.shellescape %> \
+    "${STUDIO_HOME_DEFAULT:-${REAL_HOME}/pegasus-studio}" "${REAL_HOME}")"
+studio_home_prepare "${STUDIO_HOME}" "${REAL_HOME}" \
+    "${STUDIO_HOME_INHERIT-.condor/tokens.d .gitconfig}"
+export STUDIO_HOME
+
+# One session per Studio directory: studio.db is SQLite and the stack assumes
+# it owns its state. Keyed on the directory, not the user, so someone who
+# genuinely wants two independent Studios can give each its own directory.
+LOCK="${STUDIO_HOME}/.studio/session.lock"
+mkdir -p "$(dirname "${LOCK}")"
+exec 9>"${LOCK}"
+if ! flock -n 9; then
+    echo "A PegasusAI Studio session is already using ${STUDIO_HOME}." >&2
+    echo "Reconnect to it from 'My Interactive Sessions', or choose another" \
+         "Studio directory." >&2
+    exit 1
+fi
+
+# ---- What reaches the container ----
+# --cleanenv: a cluster login environment carries module state (PYTHONPATH,
+# LD_LIBRARY_PATH, a conda PATH) built for the host, and inside a Rocky 9
+# image it points Studio's Python and Node at the wrong libraries. Only what
+# Studio is configured by goes through: the STUDIO_* set (session token,
+# ports, URL prefix, site settings), HTCondor client config, and locale.
+# Forwarded under both prefixes, since a site may still run SingularityCE.
+for name in $(compgen -e); do
+    case "${name}" in
+        STUDIO_*|_CONDOR_*|CONDOR_CONFIG|KNOWLEDGE_*|LANG|LC_*|TZ)
+            export "APPTAINERENV_${name}=${!name}"
+            export "SINGULARITYENV_${name}=${!name}"
+            ;;
+    esac
+done
+
+# --home sets $HOME *and* the passwd entry inside the container, so ssh and
+# HTCondor (which read the home from passwd, not the environment) agree with
+# everything else. The real home is still bound, at its own path: terminals
+# can reach existing data, and the links studio-home.sh made resolve.
+# STUDIO_APPTAINER_ARGS is the site's hook for scratch/project binds or --nv.
+# shellcheck disable=SC2086
+set -- --cleanenv --home "${STUDIO_HOME}" --bind "${REAL_HOME}" \
+    ${STUDIO_APPTAINER_ARGS:-}
+
+echo "Starting PegasusAI Studio on $(hostname) port ${STUDIO_PORT}"
+echo "  image:  ${STUDIO_SIF}"
+echo "  home:   ${STUDIO_HOME}"
+echo "  prefix: ${STUDIO_URL_PREFIX:-<none>}"
+condor_status -schedd -af Name 2>/dev/null | head -1 | sed 's/^/  schedd: /' || \
+    echo "  schedd: (none reachable from the host; workflow submission may not work)"
+
+# Run from the Studio home: Apptainer also binds the current directory, and the
+# job's own (the session's output directory) has no business in the container.
+cd "${STUDIO_HOME}"
+exec "${APPTAINER}" run "$@" "${STUDIO_SIF}"
