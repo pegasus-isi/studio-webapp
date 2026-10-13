@@ -115,3 +115,52 @@ def test_a_fqdn_session_host_in_the_url_prefix_is_accepted(tmp_path):
     assert proc.returncode == 0, proc.stderr
     rendered = (tmp_path / "rt" / "prefix-proxy.conf").read_text(encoding="utf-8")
     assert f"location {prefix}/api/" in rendered
+
+
+# --- Java's home (#489) -------------------------------------------------------
+
+
+def _apply_java_home(env: dict[str, str], passwd_home: str) -> subprocess.CompletedProcess[str]:
+    with open(_ENTRYPOINT, encoding="utf-8") as fh:
+        script = fh.read()
+    match = re.search(
+        r"^apply_java_home\(\) \{\n.*?^\}$", script, re.MULTILINE | re.DOTALL
+    )
+    assert match, "apply_java_home() not found in docker/entrypoint.sh"
+    # A getent that reports the given passwd home, so the test does not depend
+    # on who runs it.
+    fake_getent = f'getent() {{ echo "u:x:1000:1000::{passwd_home}:/bin/bash"; }}'
+    base = {k: v for k, v in os.environ.items() if k != "JAVA_TOOL_OPTIONS"}
+    return subprocess.run(
+        ["bash", "-c", f"set -euo pipefail\n{fake_getent}\n{match.group(0)}\n"
+         'apply_java_home\nbash -c \'printf "%s" "${JAVA_TOOL_OPTIONS:-}"\''],
+        capture_output=True,
+        text=True,
+        env={**base, **env},
+    )
+
+
+def test_java_is_told_the_studio_home_when_passwd_names_another():
+    """Under OOD the app binds the host /etc/passwd, so the JVM's user.home is
+    the real home and pegasus-plan read the real ~/.pegasusrc."""
+    proc = _apply_java_home({"HOME": "/home/u/pegasus-studio"}, "/home/u")
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "-Duser.home=/home/u/pegasus-studio"
+
+
+def test_java_is_left_alone_when_passwd_agrees():
+    """KubeSpawner: the home is Studio's and passwd says so."""
+    proc = _apply_java_home({"HOME": "/home/u/"}, "/home/u")
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == ""
+
+
+def test_existing_java_options_are_kept_and_not_stacked():
+    proc = _apply_java_home(
+        {"HOME": "/s", "JAVA_TOOL_OPTIONS": "-Xmx2g"}, "/home/u"
+    )
+    assert proc.stdout == "-Duser.home=/s -Xmx2g"
+    again = _apply_java_home(
+        {"HOME": "/s", "JAVA_TOOL_OPTIONS": "-Duser.home=/s -Xmx2g"}, "/home/u"
+    )
+    assert again.stdout == "-Duser.home=/s -Xmx2g"

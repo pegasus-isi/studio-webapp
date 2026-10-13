@@ -597,6 +597,10 @@ async def _execute(
                 plan_mode=plan_mode,
                 **compat.as_dict(),
             )
+        if plan_mode == "remote":
+            warning = submit_host.series_warning(compat)
+            if warning:
+                flow._line("plan", warning)
         if compat.blocks_run and plan_mode == "remote":
             # Say it in the run's own output. The mismatch is real and someone
             # should still fix it; it just isn't fatal while the planner runs
