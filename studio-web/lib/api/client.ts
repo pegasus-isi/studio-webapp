@@ -1315,6 +1315,9 @@ export interface ComputeSite {
   /** YAML of the execution site with overrides applied. */
   effective_site: string | null;
   studio_pool_available: boolean;
+  /** What to call the default catalog: "Studio's own pool", or the
+   *  cluster's own when an administrator supplied one (#496). */
+  default_label: string;
 }
 
 /** A profile set on a site over the active catalog:

@@ -106,9 +106,11 @@ export function ComputeSiteCard() {
   const rowProblem = filled(rows).find((r) => !r.value.trim() || !r.site.trim());
   const missing = needs.filter((k) => !(env[k] ?? "").trim());
 
+  // The cluster's own catalog when an administrator supplied one (#496).
+  const defaultLabel = data?.default_label ?? "Studio’s own pool";
   const current = data?.catalog
     ? `${data.catalogs.find((c) => c.name === data.catalog)?.label ?? data.catalog} (site “compute”)`
-    : `Studio’s own pool (site “${data?.site ?? "compute"}”)`;
+    : `${defaultLabel} (site “${data?.site ?? "compute"}”)`;
 
   return (
     <section className="rounded-xl border border-line bg-surface p-4">
@@ -152,7 +154,7 @@ export function ComputeSiteCard() {
               }}
               className="mt-1 block w-full max-w-md rounded-md border border-line bg-base px-2 py-1.5 text-sm text-fg outline-none focus:border-pegasus-400"
             >
-              <option value={NONE}>Studio&apos;s own pool (no setup needed)</option>
+              <option value={NONE}>{defaultLabel} (no setup needed)</option>
               {data.catalogs.map((c) => (
                 <option key={c.name} value={c.name}>
                   {c.label}
@@ -348,7 +350,7 @@ export function ComputeSiteCard() {
               <span className="text-xs text-emerald-700 dark:text-emerald-400">
                 Saved. {catalog
                   ? "Analyses now run on “compute” at this cluster."
-                  : "Analyses run on Studio’s own pool."}
+                  : `Analyses run on ${defaultLabel}.`}
               </span>
             )}
             {save.isError && (
