@@ -14,6 +14,10 @@ ARG DEBIAN_SUITE=trixie
 FROM node:20-alpine AS frontend-build
 
 WORKDIR /build
+# Next.js uploads build telemetry at the end of `next build` and waits for it;
+# where egress is restricted or flaky the build then hangs after printing its
+# route table (#500).
+ENV NEXT_TELEMETRY_DISABLED=1
 COPY studio-web/package.json studio-web/package-lock.json* ./
 RUN npm ci --ignore-scripts 2>/dev/null || npm install
 
