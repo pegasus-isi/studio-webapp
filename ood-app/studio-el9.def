@@ -121,6 +121,19 @@ rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED /usr/lib64/python3.*/EXTERNALLY-MANA
 python3.12 -m ensurepip --upgrade
 python3.12 -m pip install --no-cache-dir --upgrade pip setuptools wheel
 
+# Keep /usr/local on the path when the user site is off (#486). pip as root
+# installs into /usr/local/lib*/python3.12/site-packages, and RHEL's Python
+# adds those dirs only while the user site is enabled. supervisord starts
+# studio-api with PYTHONNOUSERSITE=1 (to keep ~/.local out of the backend), so
+# without this the API cannot import a single package: "No module named
+# 'uvicorn'", FATAL after the retries, and a proxy that answers 502 to
+# everything. A .pth in the system site dir is read whatever that flag says,
+# and ~/.local stays excluded. Not sysconfig's purelib: on RHEL that is the
+# /usr/local dir itself, the one that disappears.
+printf '%s\n' /usr/local/lib/python3.12/site-packages \
+    /usr/local/lib64/python3.12/site-packages \
+    > /usr/lib/python3.12/site-packages/zz-studio-usr-local.pth
+
 # docker/entrypoint.sh (reused as-is below) finds its interpreter via
 # `which python3` to run init_db.py/propagate_llm.py — both of which import
 # studio-api's deps, which now live only in python3.12's site-packages.
@@ -376,6 +389,10 @@ set -euo pipefail
 grep -qi rocky /etc/os-release
 pegasus-version
 condor_version
+# studio-api the way supervisord starts it: user site off (#486). Without the
+# .pth in %post this is "No module named 'uvicorn'", and the image would ship
+# a proxy that answers 502 to everything.
+PYTHONNOUSERSITE=1 python3 -c 'import uvicorn, fastapi, pydantic, structlog, aiosqlite'
 # Not a bare `nginx -t`: that tests whatever sits at /etc/nginx/nginx.conf,
 # which is now RHEL's untouched stock config (Studio's is template-rendered
 # per session, never installed there — see the Nginx config templates note in
