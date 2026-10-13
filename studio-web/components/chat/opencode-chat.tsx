@@ -44,6 +44,7 @@ import { useFeedbackStore } from "@/lib/feedback/feedback";
 import { FeedbackPromptCard } from "@/components/feedback/feedback-prompt-card";
 import { GiveUpRow } from "@/components/feedback/give-up-row";
 import { cn } from "@/lib/utils";
+import { AppLink } from "@/components/layout/app-link";
 
 const STARTERS = [
   "Build me a workflow that",
@@ -100,6 +101,7 @@ export function OpenCodeChat() {
 
   const defaultLabel = useMemo(() => {
     if (!configured) return "Configured default";
+    if (!configured.provider) return "No provider configured";
     const providerName =
       models?.find((m) => m.providerID === configured.provider)?.providerName ??
       configured.provider;
@@ -462,6 +464,18 @@ export function OpenCodeChat() {
               />
             ))}
 
+            {configured && !configured.provider && (
+              // No provider at all: an Open OnDemand site without an LLM
+              // gateway (#498). Without this the first message fails with an
+              // engine error naming a host the user has never heard of.
+              <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+                No AI provider is set up yet. Add one with your own API key in{" "}
+                <AppLink href="/settings?tab=providers" className="font-semibold underline">
+                  Settings → LLM Providers
+                </AppLink>
+                , then start a new chat.
+              </div>
+            )}
             {chat.error && (
               <div className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1.5 text-xs text-rose-600 dark:text-rose-400">
                 <span className="font-semibold">Error:</span>
