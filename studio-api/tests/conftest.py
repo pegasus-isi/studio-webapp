@@ -19,6 +19,22 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("STUDIO_SCAN_DIR", tempfile.mkdtemp())
 
 
+@pytest.fixture(autouse=True)
+def _no_schedd_nudge(request, monkeypatch):
+    """No background condor_reschedule from code under test (#494).
+
+    A successful submit nudges the schedd from a background task. Under test
+    that task would outlive the event loop and, worse, run through whatever
+    fake a test installed for asyncio.create_subprocess_exec. Its own tests
+    exercise it directly.
+    """
+    if request.node.module.__name__.endswith("test_schedd"):
+        return
+    import services.schedd as sd
+
+    monkeypatch.setattr(sd, "nudge", lambda *a, **k: None)
+
+
 @pytest.fixture
 def tmp_db(tmp_path):
     """Create a temporary SQLite database path."""
