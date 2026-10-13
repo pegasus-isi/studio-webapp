@@ -109,10 +109,17 @@ apptainer exec Apptainer/<Name>_Container.sif python3 bin/<step>.py --help
 apptainer exec Apptainer/<Name>_Container.sif python3 bin/<step>.py <args on a small input>
 ```
 
-Build the image first (the Build Image button, or `apptainer build
+To check a step yourself, build the image by hand first (`apptainer build
 --ignore-fakeroot-command`, see "Container base images"). Before the image
 exists, `python3 -m py_compile bin/<step>.py` catches syntax errors without
 importing anything.
+
+**What to tell the user is different: Run.** The Analyses page shows one
+button by default, **Run**, and Run builds the software environment itself
+when it is missing or stale. There is a Build Image button, but only in the
+Advanced view, so "click Build Image, then Run" sends most users looking for
+something they cannot see. Say "click **Run**; it builds the software
+environment first, which takes a few minutes the first time".
 
 If an isolated environment is unavoidable, make it inside the project and keep
 it out of the deliverables:
@@ -153,8 +160,13 @@ hand-typed `pegasus-plan` does not:
   `wf-output/`);
 - checks the site exists before planning, instead of failing halfway through.
 
-When you plan from a terminal yourself — to test a fix, say — do the same by
-hand, from the project directory:
+When you plan from a terminal yourself — to test a fix, or to check a workflow
+you just wrote before reporting it done — do the same by hand, from the
+project directory. **Every plan you make uses this site, including a quick
+validation plan.** Not `condorpool` by habit: on a cluster whose site
+catalog defines `compute` (a Slurm partition, say), `condorpool` may have no
+machines at all, so a plan for it proves nothing about the run the user will
+make, and a submitted one sits idle forever.
 
 ```bash
 SITE=$(grep -qs '^pegasus\.catalog\.site\.repo\.file' ~/.pegasusrc && echo compute || echo condorpool)
@@ -166,7 +178,8 @@ pegasus-plan --dir submit -s "$SITE" -o local \
 The site is `compute` whenever `~/.pegasusrc` names a site catalog — Studio's
 own pool and every published cluster catalog call their site that — and
 Pegasus's built-in `condorpool` only when none is named. Whatever it is, use
-the **same** name for `-e` and `-s`.
+the **same** name for `-e` and `-s`, and when you report a plan to the user,
+say which site it was for and that it is the one their Run will use.
 
 **Clusters and allocations are the user's choice, made once, on the Resources
 page** ("Where your workflows run"): a hosted site catalog and the allocation
