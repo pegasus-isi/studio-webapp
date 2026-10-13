@@ -254,6 +254,14 @@ def build_command(builder: str, sif: str, definition: str) -> list[str]:
     return cmd + [sif, definition]
 
 
+_SESSION_BIND_VARS = (
+    "APPTAINER_BINDPATH",
+    "APPTAINER_BIND",
+    "SINGULARITY_BINDPATH",
+    "SINGULARITY_BIND",
+)
+
+
 def build_env(base: dict[str, str] | None = None) -> dict[str, str]:
     """Environment for the build subprocess.
 
@@ -262,6 +270,16 @@ def build_env(base: dict[str, str] | None = None) -> dict[str, str]:
     left out rather than set to "0".
     """
     env = dict(os.environ if base is None else base)
+    # The session's own binds, never the build's (#484). Under Open OnDemand
+    # the batch-connect app starts Studio with APPTAINER_BINDPATH set
+    # ($PWD:/ood-session, /etc/passwd, Slurm paths), and Apptainer passes the
+    # host environment through, so it is still set in here. A nested
+    # `apptainer build` applies it to the %post container, which is a writable
+    # sandbox that cannot create a missing destination: "destination
+    # /ood-session doesn't exist in container", and every build fails. A
+    # definition file's build should see only what the file asks for.
+    for name in _SESSION_BIND_VARS:
+        env.pop(name, None)
     if _flag_enabled("STUDIO_BUILD_IGNORE_PROOT", True):
         env["APPTAINER_IGNORE_PROOT"] = "1"
     tmpdir = os.environ.get("STUDIO_BUILD_TMPDIR")
