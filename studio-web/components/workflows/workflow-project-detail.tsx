@@ -14,6 +14,7 @@ import {
   useRenameWorkflowProject,
 } from "@/lib/hooks/use-workflows";
 import type { WorkflowProjectRun } from "@/lib/api/client";
+import { newestFirst } from "@/lib/workflows/run-order";
 import * as api from "@/lib/api/client";
 import type { JobFilesSource } from "@/components/workflows/job-files-panel";
 import { AppLink } from "@/components/layout/app-link";
@@ -777,9 +778,10 @@ function GraphPane({
   projectName: string;
   runs: WorkflowProjectRun[];
 }) {
-  // Newest first — the API returns runs oldest-first, and "most recent" is
-  // what someone opening this page means by "the run".
-  const ordered = useMemo(() => [...runs].reverse(), [runs]);
+  // Newest first: "most recent" is what someone opening this page means by
+  // "the run". Sorted here, not reversed: the API's order changed once
+  // already, and reversing turned the oldest run into "(latest)" (#502).
+  const ordered = useMemo(() => newestFirst(runs), [runs]);
   const [runId, setRunId] = useState<string | null>(null);
   // Follow the newest run as it appears, until the user picks one themselves.
   const [pinned, setPinned] = useState(false);
