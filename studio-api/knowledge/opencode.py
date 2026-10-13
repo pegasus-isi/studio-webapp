@@ -287,6 +287,9 @@ class OpenCodeAdapter(KnowledgeAdapter):
         ensure_context_file(os.path.join(_global_config_dir(), "AGENTS.md"))
         _link_agents_into_global()
         provider = llm_config.get("provider", "anthropic")
+        # "" is "nothing configured" (#504): declare the saved providers, but
+        # name no default model, rather than invent one the user never chose.
+        unconfigured = provider == ""
         ptype = provider_type(provider)  # custom-<id> -> "custom", etc.
         model = llm_config.get("model")
         api_key = llm_config.get("api_key", "")
@@ -307,7 +310,7 @@ class OpenCodeAdapter(KnowledgeAdapter):
         # invisible in the TUI (#205). The active provider may not have a saved
         # row (legacy configs written straight to llm_config), so synthesize it.
         saved = list(llm_config.get("all_providers") or [])
-        if not any(p.get("provider_id") == provider for p in saved):
+        if not unconfigured and not any(p.get("provider_id") == provider for p in saved):
             saved.insert(0, {
                 "provider_id": provider,
                 "name": preset.get("name", provider),
@@ -450,6 +453,10 @@ class OpenCodeAdapter(KnowledgeAdapter):
         # second place to keep in sync, and the only non-hidden file Studio put
         # in the directory users are told to keep workflows in. uninstall()
         # still removes the legacy copy for workspaces that have one.
+        if unconfigured:
+            # No default: the engine then asks for a model per message, from
+            # the picker, instead of defaulting to one nobody configured (#504).
+            config.pop("model", None)
         blob = json.dumps(config, indent=2)
         targets = [os.path.join(global_dir, "opencode.json")]
         self.config_changed = False

@@ -372,3 +372,19 @@ def test_a_users_own_provider_works_without_a_gateway(client, monkeypatch):
     assert resp.status_code == 200
     cfg = client.get("/api/llm/config").json()
     assert cfg["provider"] == "anthropic" and cfg["has_api_key"] is True
+
+
+def test_without_a_gateway_a_saved_provider_is_offered_not_activated(client, monkeypatch):
+    """#504: saving a provider does not make it the default; it is listed in
+    the chat's model picker (via the engine config) for the user to choose."""
+    _no_gateway(monkeypatch)
+    assert _add_provider(client, "custom-az", active=False).status_code == 200
+    assert client.get("/api/llm/config").json()["provider"] == ""
+    ids = [c["provider_id"] for c in client.get("/api/llm/provider-configs").json()["configs"]]
+    assert "custom-az" in ids
+
+
+def test_with_a_gateway_saving_a_provider_does_not_steal_active(client):
+    """Hosted: the gateway default stays active until the user says otherwise."""
+    assert _add_provider(client, "custom-az", active=False).status_code == 200
+    assert client.get("/api/llm/config").json()["provider"] == "gateway"

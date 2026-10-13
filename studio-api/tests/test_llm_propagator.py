@@ -108,3 +108,36 @@ def test_anthropic_and_urlless_providers_are_skipped(monkeypatch):
     ]
     _run(propagator._attach_model_lists(providers))
     assert all("models" not in p for p in providers)
+
+
+def test_nothing_configured_still_rewrites_the_chat_engine(monkeypatch):
+    """#504: an early return left opencode.json pointing at a dead gateway.
+    With nothing configured only the engine is written; terminal tools skip."""
+    from llm import propagator
+
+    class FakeDB:
+        async def get_llm_config(self):
+            return None
+
+        async def list_provider_configs(self):
+            return []
+
+        async def list_tools(self):
+            return [{"tool_id": "codex"}, {"tool_id": "opencode"}]
+
+    written: dict[str, dict] = {}
+
+    class Adapter:
+        def __init__(self, tool_id):
+            self.tool_id = tool_id
+            self.config_changed = False
+
+        def update_llm_config(self, root, config):
+            written[self.tool_id] = config
+
+    monkeypatch.setattr(propagator, "get_adapter", lambda tid: Adapter(tid))
+    monkeypatch.setattr(propagator, "_schedule_engine_restart", lambda a: None)
+    monkeypatch.setattr(propagator, "prune_legacy_workspace_copies", lambda *a: None)
+    _run(propagator.LLMPropagator().propagate(FakeDB()))
+    assert list(written) == ["opencode"]
+    assert written["opencode"]["provider"] == ""
