@@ -295,6 +295,11 @@ python3.12 -m pip install --no-cache-dir -r /opt/studio-api/requirements.txt
 # gained by splitting this out. Trim /build down to just the standalone
 # output afterward.
 cd /opt/build/studio-web
+# Next.js uploads build telemetry at the end of `next build` and waits for it.
+# HPC build hosts often have restricted or flaky egress, and there the build
+# hung after printing its route table, indefinitely: seen on a FABRIC node
+# whose IPv6 route to the endpoint stalled (#500).
+export NEXT_TELEMETRY_DISABLED=1
 npm ci --ignore-scripts 2>/dev/null || npm install
 npm run build
 mkdir -p /opt/studio-web
