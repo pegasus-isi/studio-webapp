@@ -22,6 +22,7 @@ import asyncio
 import os
 import re
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -63,25 +64,92 @@ def _has_catalog(root: str) -> bool:
     return any(Path(root).glob(f"*/conf/{STUDIO_CATALOG}"))
 
 
+def admin_catalog_file() -> str | None:
+    """A site catalog the administrator supplies for every user (#496).
+
+    Set as STUDIO_SITE_CATALOG_FILE, e.g. by an Open OnDemand site's
+    site.env. It takes the place of Studio's own pegasus-studio.yml, so
+    everything built on that default (the shared copy the submit host reads,
+    ~/.pegasusrc, the Resources page, site overrides) works unchanged: on a
+    cluster, "compute" means the cluster's own resources, not a pool that
+    only exists in the hosted deployment.
+    """
+    path = os.environ.get("STUDIO_SITE_CATALOG_FILE", "").strip()
+    return path if path and os.path.isfile(path) else None
+
+
+def default_label() -> str:
+    """What the Resources page calls the default catalog."""
+    if admin_catalog_file():
+        return os.environ.get("STUDIO_SITE_CATALOG_LABEL", "").strip() or "This cluster"
+    return "Studio’s own pool"
+
+
+def _series_dirs(root: str) -> list[Path]:
+    return sorted(p for p in Path(root).glob("*/conf") if p.is_dir())
+
+
+def install_admin_catalog(root: str | None = None) -> bool:
+    """Put the admin's catalog in place of pegasus-studio.yml under every
+    series in `root` (the shared copy). True when one was installed.
+
+    Every series the image ships, because the image's own series is the one
+    its planner looks under; if the image ships none, the local Pegasus
+    series. Copied, not linked: the submit host reads this directory and may
+    not see the admin's path.
+    """
+    src = admin_catalog_file()
+    if not src:
+        return False
+    root = root or studio_repo_dir()
+    targets = _series_dirs(root) or _series_dirs(studio_repo_image_dir())
+    if not targets:
+        found = series(_local_version())
+        if not found:
+            return False
+        targets = [Path(found) / "conf"]
+    try:
+        for conf in targets:
+            dest = Path(root) / conf.parent.name / "conf"
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dest / STUDIO_CATALOG)
+    except OSError as e:
+        log.warning("admin_site_catalog_copy_failed", error=str(e), source=src)
+        return False
+    return True
+
+
+def _local_version() -> str | None:
+    try:
+        out = subprocess.run(
+            ["pegasus-version"], capture_output=True, text=True, timeout=30
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.strip().splitlines()[0] if out.strip() else None
+
+
 def ensure_studio_repo() -> bool:
     """Make sure the shared copy exists (copying from the image if needed);
-    True when Studio's own catalog is usable."""
-    if _has_catalog(studio_repo_dir()):
-        return True
-    image = studio_repo_image_dir()
-    if not _has_catalog(image):
-        return False
-    try:
-        shutil.copytree(image, studio_repo_dir(), dirs_exist_ok=True)
-    except OSError as e:
-        log.warning("studio_site_repo_copy_failed", error=str(e))
-        return False
+    True when Studio's own catalog, or the admin's in its place, is usable."""
+    if not _has_catalog(studio_repo_dir()):
+        image = studio_repo_image_dir()
+        if _has_catalog(image):
+            try:
+                shutil.copytree(image, studio_repo_dir(), dirs_exist_ok=True)
+            except OSError as e:
+                log.warning("studio_site_repo_copy_failed", error=str(e))
+    install_admin_catalog()
     return _has_catalog(studio_repo_dir())
 
 
 def studio_pool_available() -> bool:
-    """Whether Studio's own catalog (defining "compute") can be used here."""
-    return _has_catalog(studio_repo_dir()) or _has_catalog(studio_repo_image_dir())
+    """Whether the default catalog (defining "compute") can be used here."""
+    return (
+        admin_catalog_file() is not None
+        or _has_catalog(studio_repo_dir())
+        or _has_catalog(studio_repo_image_dir())
+    )
 _ENV_PREFIX = "env."
 #: Allocation variables a catalog may reference. Anything else in a catalog's
 #: ${...} placeholders is ignored: it is not ours to ask for.

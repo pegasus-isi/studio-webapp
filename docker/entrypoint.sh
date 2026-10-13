@@ -502,6 +502,34 @@ if ls "${STUDIO_SITE_REPO_IMAGE}"/*/conf/pegasus-studio.yml >/dev/null 2>&1; the
     cp -R "${STUDIO_SITE_REPO_IMAGE}/." "${STUDIO_SITE_REPO}/" 2>/dev/null \
         || echo "[studio] WARNING: could not copy the site catalog to ${STUDIO_SITE_REPO}"
 fi
+# An administrator's catalog for every user (#496): STUDIO_SITE_CATALOG_FILE,
+# e.g. from an Open OnDemand site.env. It takes the place of Studio's own
+# pegasus-studio.yml, so "compute" means this cluster's resources (a Slurm
+# partition through BLAHP, say) and everything built on the default (the
+# shared copy, ~/.pegasusrc below, the Resources page, site overrides) works
+# unchanged. Copied every start so an edit by the admin reaches everyone;
+# copied rather than linked because the submit host reads this directory and
+# may not see the admin's path. Under each series the image ships, since that
+# is where its planner looks; else the local Pegasus series.
+if [ -n "${STUDIO_SITE_CATALOG_FILE:-}" ]; then
+    if [ -r "${STUDIO_SITE_CATALOG_FILE}" ]; then
+        ADMIN_SERIES=""
+        for d in "${STUDIO_SITE_REPO}"/*/conf; do
+            [ -d "${d}" ] && ADMIN_SERIES="${ADMIN_SERIES} $(basename "$(dirname "${d}")")"
+        done
+        if [ -z "${ADMIN_SERIES}" ]; then
+            ADMIN_SERIES="$(pegasus-version 2>/dev/null | sed -n '1s/^\([0-9]*\.[0-9]*\).*/\1/p' || true)"
+        fi
+        for s in ${ADMIN_SERIES}; do
+            mkdir -p "${STUDIO_SITE_REPO}/${s}/conf" \
+                && cp "${STUDIO_SITE_CATALOG_FILE}" "${STUDIO_SITE_REPO}/${s}/conf/pegasus-studio.yml" \
+                && echo "[studio] Site catalog for Pegasus ${s} is the administrator's ${STUDIO_SITE_CATALOG_FILE}"
+        done
+        [ -n "${ADMIN_SERIES}" ] || echo "[studio] WARNING: no Pegasus series found for ${STUDIO_SITE_CATALOG_FILE}" >&2
+    else
+        echo "[studio] WARNING: STUDIO_SITE_CATALOG_FILE=${STUDIO_SITE_CATALOG_FILE} is not readable; using the default catalog" >&2
+    fi
+fi
 # Users seeded by #475 point at the image path, which the submit host cannot
 # read; move them to the shared copy.
 if grep -qs "^pegasus\.catalog\.site\.repo = file://${STUDIO_SITE_REPO_IMAGE}\$" "${PEGASUSRC}"; then

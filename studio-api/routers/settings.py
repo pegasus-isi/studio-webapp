@@ -459,6 +459,9 @@ async def _compute_site_view() -> dict:
         # editor shows the right set when the user switches cluster.
         "saved_overrides": saved,
         "studio_pool_available": site_config.studio_pool_available(),
+        # "Studio's own pool", or the cluster's own catalog when the
+        # administrator supplied one (STUDIO_SITE_CATALOG_FILE, #496).
+        "default_label": site_config.default_label(),
         "override_namespaces": list(site_config.NAMESPACES),
         "effective_site": await _effective_site(current, ref),
     }
