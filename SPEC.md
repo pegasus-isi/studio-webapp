@@ -143,11 +143,19 @@ exists.
 **The batch-connect app** lives in its own repo, [pegasus-isi/bc_pegasus_ai_studio](https://github.com/pegasus-isi/bc_pegasus_ai_studio): form, Slurm
 submit options, the job script that runs this image, and the Connect view. A
 site clones it into `/var/www/ood/apps/sys/` and points it at a published
-`.sif`. See `ood-app/README.md`.
+`.sif`. An administrator configures every session through the app's
+`site.env`: the site catalog Studio uses for `compute`
+(`STUDIO_SITE_CATALOG_FILE`, which replaces `pegasus-studio.yml`, #496), an
+LLM gateway if the site runs one (otherwise none, and users bring their own
+provider and key; the EL9 image defaults `STUDIO_LLM_GATEWAY_URL` to empty,
+#498), and the HTCondor access point. Validated end to end on a FABRIC Slurm
+cluster on 2026-10-13, with workflow jobs reaching Slurm through BLAHP on the
+access point. See `ood-app/README.md`.
 
 ## Workspace
 
-The workspace defaults to `$HOME/work`; application code also supports
+The workspace root is `$HOME` (#401; it used to be `$HOME/work`, still listed
+read-only for old projects); application code also supports
 `STUDIO_WORKSPACE_DIR` for service-level workspace resolution.
 
 The workspace contains:
@@ -324,6 +332,12 @@ Adapters translate the shared knowledge into each tool's native format:
 Supported providers are `gateway` (the zero-config default — an internal
 OpenAI-compatible gateway, so chat/tools work with no keys), `anthropic`,
 `openai`, `google`, `fabric`, `nrp`, `custom`, and `ollama`.
+
+Where there is no gateway (`STUDIO_LLM_GATEWAY_URL` set to empty, the Open
+OnDemand image's default unless a site names one), there is no default: each
+user adds a provider with their own key, every saved provider is offered in the
+chat's model picker, and chat says so when none exists. A shared key is never
+injected into sessions (#498, #505).
 
 Configuration is done at runtime on the Settings page and stored in SQLite.
 Keys are write-only over the API — responses report only whether a key is set —

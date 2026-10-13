@@ -26,10 +26,13 @@ studio-api/
 ├── services/               # workflow scan/submit/monitor, condor pool, image
 │                           # builder, notifications, terminals,
 │                           # chat_permissions, procutil, run_flow, run_outputs,
-│                           # run_diagnosis, chat_turn, onboarding_metrics, …
+│                           # run_diagnosis, chat_turn, onboarding_metrics,
+│                           # job_files, project_rename, telemetry,
+│                           # remote_exec + schedd (planning on the
+│                           # submit host, condor_reschedule), site_config, …
 ├── init_db.py              # CLI: initialize / migrate the SQLite schema
 ├── propagate_llm.py        # CLI: propagate the saved LLM config to installed tools
-└── tests/                  # ~700 tests; no Pegasus/Condor/keys needed
+└── tests/                  # ~1000 tests; no Pegasus/Condor/keys needed
 ```
 
 The SQLite DB (`~/.studio/studio.db`; an existing one is moved out of `~/work/.studio` on first start) has **8 tables**: `app_settings`,
@@ -111,10 +114,10 @@ does not need them:
 | GET/PUT | `/api/settings` | LLM-config accessor (shares the validated `llm` save path) |
 | GET/PUT | `/api/settings/workflow-scan` | user-added run-scan roots/excludes, merged with the env defaults (#306) |
 | GET/PUT | `/api/settings/ui` | interface preferences (Simplified Run, disclosures, `welcome_dismissed`, `skip_welcome`, `tour_on_login`, `chat_engine`). The PUT replaces the whole object; the client merges before sending |
-| GET/PUT | `/api/settings/compute-site` | the user's hosted site catalog and allocation in `~/.pegasusrc` (`pegasus.catalog.site.repo.file`, `env.RESOURCE_*`), with the catalogs published for the running Pegasus series, which `RESOURCE_*` fields each references, and the user's Slurm accounts where `sacctmgr` exists. PUT keeps every other property in the file (#468). `overrides` rows `{site, namespace, key, value}` become `pegasus.catalog.site.sites.<site>.profiles.<ns>.<key>` properties; they are stored per catalog (`saved_overrides`) so switching cluster swaps the set, and GET returns `effective_site`, the execution site's YAML with them merged in (#478) |
+| GET/PUT | `/api/settings/compute-site` | the user's hosted site catalog and allocation in `~/.pegasusrc` (`pegasus.catalog.site.repo.file`, `env.RESOURCE_*`), with the catalogs published for the running Pegasus series, which `RESOURCE_*` fields each references, and the user's Slurm accounts where `sacctmgr` exists. PUT keeps every other property in the file (#468). `overrides` rows `{site, namespace, key, value}` become `pegasus.catalog.site.sites.<site>.profiles.<ns>.<key>` properties; they are stored per catalog (`saved_overrides`) so switching cluster swaps the set, and GET returns `effective_site`, the execution site's YAML with them merged in (#478). `default_label` names the default catalog: "Studio's own pool", or the administrator's (`STUDIO_SITE_CATALOG_FILE`/`_LABEL`, #496) |
 | GET/PUT | `/api/settings/telemetry` | whether this user's traces may carry chat text, plus a read-only `decided` (the choice was made either way: "off" is also the default, so the tour keeps asking until it is, #454). Its own row, not a `UIPreferences` field, because that PUT replaces the bag wholesale and its GET substitutes defaults for invalid values — both wrong for a consent flag. Saving propagates, since the engine reads plugin options once at startup |
 | GET/PUT | `/api/settings/profile` | the optional four-question profile (research field, role, Pegasus/HTCondor experience, coding comfort 1–5) for the feedback program, stored in the `user_profile` setting with a server-stamped `answered_at`. Its own row for the same reasons as telemetry consent; the free-text field is never logged |
-| GET/PUT | `/api/llm/config` | active provider/model; **keys are write-only** — GETs return `has_api_key`, never the value |
+| GET/PUT | `/api/llm/config` | active provider/model; **keys are write-only** — GETs return `has_api_key`, never the value. `provider: ""` means nothing is configured (no gateway and no active provider, #498) |
 | GET/PUT | `/api/llm/provider-configs` | saved providers (also write-only keys) |
 | GET | `/api/llm/provider-configs/{id}/models` | model discovery using the **stored** key (server-side) |
 | POST | `/api/llm/validate` | test key connectivity |
@@ -165,7 +168,7 @@ stop it.
 | `KNOWLEDGE_OVERLAY` | `/opt/pegasus-ai/overlay` | Studio-specific context composed on top of the portable Pegasus guide |
 | `STUDIO_ALLOWED_ORIGINS` | (empty) | extra origins allowed to read responses **and to make writes** (same-origin always allowed) |
 | `STUDIO_TRUST_AUTH_HEADER` | `0` | trust `X-Auth-User` for display identity (opt-in) |
-| `STUDIO_LLM_GATEWAY_URL` | internal | base URL for the zero-config `gateway` provider |
+| `STUDIO_LLM_GATEWAY_URL` | internal | base URL for the zero-config `gateway` provider; an empty value means no gateway: no default provider, the preset is not offered, and the chat engine's config declares every saved provider with no default model (#498, #505) |
 | `STUDIO_SECRET_KEY` / `STUDIO_SECRET_KEY_FILE` | (unset) | master secret used to encrypt stored API keys / registry password at rest (S7). Unset → stored plaintext with a warning. Must come from a sealed secret, **not** the PVC. |
 
 Provider API keys are stored in the DB via the app (not env). See `main.py` /
@@ -274,4 +277,6 @@ Supervised by supervisord, whose config takes those ports through its own
 `gateway` (the zero-config default, points at the internal LLM gateway),
 `anthropic`, `openai`, `google`, `fabric`, `nrp`, `ollama`, and `custom`
 (user-specified base URL). Keyed presets are validated at save time; the
-gateway/ollama/custom endpoints may be keyless.
+gateway/ollama/custom endpoints may be keyless. With no gateway configured
+(`STUDIO_LLM_GATEWAY_URL=""`, the Open OnDemand image's default) there is no
+`gateway` preset and no default; users add their own provider and key.
