@@ -48,6 +48,31 @@ apply_studio_home() {
 }
 apply_studio_home
 
+# ---- Java's idea of home (#489) ----
+#
+# The JVM takes user.home from the passwd entry, not $HOME, and Pegasus reads
+# ${user.home}/.pegasusrc. Wherever the two differ the planner ignores
+# Studio's .pegasusrc (its site catalog, the user's overrides) and silently
+# reads whatever the passwd home holds instead: under Open OnDemand that is
+# the user's real home, because the app binds the host /etc/passwd. Set for
+# every Java process rather than per pegasus-plan call, since the Pegasus
+# Python API, generators and the assistant's terminals plan too. Left alone
+# where they agree (KubeSpawner), and never stacked twice.
+apply_java_home() {
+    local passwd_home
+    # `|| true`: no getent (or no entry for an injected uid) is "nothing to
+    # fix", and under pipefail it would otherwise end the entrypoint here.
+    passwd_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
+    [ -n "${passwd_home}" ] && [ -n "${HOME:-}" ] || return 0
+    [ "${passwd_home%/}" != "${HOME%/}" ] || return 0
+    case " ${JAVA_TOOL_OPTIONS:-} " in
+        *" -Duser.home="*) return 0 ;;
+    esac
+    JAVA_TOOL_OPTIONS="-Duser.home=${HOME}${JAVA_TOOL_OPTIONS:+ ${JAVA_TOOL_OPTIONS}}"
+    export JAVA_TOOL_OPTIONS
+}
+apply_java_home
+
 # The workspace root: where workflow projects, uploaded data and the terminal's
 # cwd all live. $HOME since #401 — it used to be $HOME/work, a level that
 # marked a persistence boundary this deployment does not have (the spawner

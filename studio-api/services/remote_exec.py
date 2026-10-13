@@ -91,7 +91,16 @@ def _submit_text(
 ) -> str:
     # PATH is set explicitly rather than inherited: see the module docstring on
     # why getenv=false matters here.
-    env = f"PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME={home} USER={user} LANG=C.UTF-8"
+    #
+    # JAVA_TOOL_OPTIONS beside HOME (#489): pegasus-plan is Java, and the JVM
+    # takes user.home from passwd, not $HOME. On the submit host passwd names
+    # the user's real home, so the planner read *that* ~/.pegasusrc and
+    # ignored Studio's: under Open OnDemand, where Studio's home is a directory
+    # of its own, the site catalog never loaded.
+    env = (
+        f"PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME={home} USER={user} LANG=C.UTF-8 "
+        f"JAVA_TOOL_OPTIONS=-Duser.home={home}"
+    )
     return (
         "universe = local\n"
         f"executable = {wrapper}\n"
@@ -236,6 +245,18 @@ async def run_on_submit_host(
             f"condor_submit failed: {(sub_err or sub_out).strip()[:300]}"
         )
     cluster = _SUBMIT_RE.search(sub_out)
+
+    # Ask the schedd to start it now (#488). Local-universe jobs are started
+    # from the schedd's periodic timer (SCHEDD_INTERVAL, 300 s by default),
+    # not on submit, so without this every remote step could sit idle for up
+    # to five minutes first, under a "checking the plan" that says nothing.
+    # Best effort: the timer still starts it if this fails.
+    try:
+        resched_code, _, resched_err = await _run(["condor_reschedule"], timeout=30)
+    except (OSError, asyncio.TimeoutError) as e:
+        resched_code, resched_err = -1, str(e)
+    if resched_code != 0:
+        log.info("remote_exec_reschedule_failed", error=(resched_err or "").strip()[:200])
 
     # Watch the job log rather than using `condor_wait`. condor_wait returns
     # on termination but not on *hold*, and a held job never terminates — so a
