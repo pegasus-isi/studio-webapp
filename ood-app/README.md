@@ -127,6 +127,19 @@ session host can read it, and set the image path in its `form.yml.erb`.
 Enable `node_uri` in `ood_portal.yml`, since the session is proxied at
 `/node/<host>/<port>`.
 
+## Site settings an administrator passes in
+
+Studio reads these from its environment; the batch-connect app is what sets
+them for every session. None needs any privilege the user lacks.
+
+| Env | Purpose |
+|---|---|
+| `STUDIO_SITE_CATALOG_FILE` | Path to the site's own Pegasus site catalog (#496). It replaces Studio's default `pegasus-studio.yml`, so site `compute` means this cluster, e.g. a Slurm partition through HTCondor BLAHP like the published `unity.yml`. Copied into each user's Studio directory every start, where the submit host can read it. |
+| `STUDIO_SITE_CATALOG_LABEL` | What the Resources page calls it (default "This cluster"). |
+| `STUDIO_SITE_CATALOG` | Alternatively, the name of a catalog published in `pegasushub/pegasus-site-catalogs`. |
+| `STUDIO_LLM_GATEWAY_URL`, `STUDIO_LLM_DEFAULT_MODEL` | An OpenAI-compatible gateway the site runs for the AI assistant. Without one, users add their own provider and key in Settings. |
+| `_CONDOR_SCHEDD_HOST`, `_CONDOR_COLLECTOR_HOST` | The HTCondor access point, by fully qualified name, when the session host is not it. |
+
 ## Running the image by hand
 
 Simulate what the batch-connect app does, with its own Studio directory:

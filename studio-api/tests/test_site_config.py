@@ -364,3 +364,65 @@ def test_switching_cluster_stashes_settings_hand_added_after_last_get(client, mo
 
     body = client.put("/api/settings/compute-site", json={"catalog": "purdue-anvil.yml", "env": {}}).json()
     assert [o["value"] for o in body["overrides"]] == ["wholenode"]
+
+
+# ── An administrator's catalog in place of Studio's own (#496) ──
+
+
+def _admin_catalog(tmp_path, monkeypatch, text="sites:\n- name: compute  # slurm\n"):
+    src = tmp_path / "admin" / "cluster.yml"
+    src.parent.mkdir()
+    src.write_text(text)
+    monkeypatch.setenv("STUDIO_SITE_CATALOG_FILE", str(src))
+    return src
+
+
+def test_the_admin_catalog_replaces_pegasus_studio_yml(tmp_path, monkeypatch):
+    """On a cluster "compute" must mean the cluster, not the hosted pool."""
+    repo = _studio_repo(tmp_path, monkeypatch)
+    _admin_catalog(tmp_path, monkeypatch)
+    assert sc.install_admin_catalog() is True
+    assert "# slurm" in (repo / "6.0" / "conf" / "pegasus-studio.yml").read_text()
+    assert "# slurm" in sc.studio_catalog_text()
+
+
+def test_the_admin_catalog_goes_under_the_images_series(tmp_path, monkeypatch):
+    """Nothing copied yet: the image's series is where its planner looks."""
+    image = tmp_path / "image"
+    (image / "6.0" / "conf").mkdir(parents=True)
+    (image / "6.0" / "conf" / "pegasus-studio.yml").write_text("sites: []\n")
+    monkeypatch.setenv("STUDIO_SITE_REPO_IMAGE", str(image))
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(tmp_path / "home-copy"))
+    _admin_catalog(tmp_path, monkeypatch)
+    assert sc.ensure_studio_repo() is True
+    assert "# slurm" in (tmp_path / "home-copy" / "6.0" / "conf" / "pegasus-studio.yml").read_text()
+    # The image itself is never written.
+    assert "# slurm" not in (image / "6.0" / "conf" / "pegasus-studio.yml").read_text()
+
+
+def test_no_cluster_with_an_admin_catalog_plans_on_it(tmp_path, monkeypatch):
+    repo = _studio_repo(tmp_path, monkeypatch)
+    _admin_catalog(tmp_path, monkeypatch)
+    rc = tmp_path / ".pegasusrc"
+    got = sc.write_config(None, {}, rc)
+    assert got["studio_pool"] is True
+    assert f"pegasus.catalog.site.repo = file://{repo}" in rc.read_text()
+    assert "# slurm" in (repo / "6.0" / "conf" / "pegasus-studio.yml").read_text()
+
+
+def test_the_default_is_labelled_for_what_it_is(tmp_path, monkeypatch):
+    monkeypatch.delenv("STUDIO_SITE_CATALOG_FILE", raising=False)
+    assert sc.default_label() == "Studio’s own pool"
+    _admin_catalog(tmp_path, monkeypatch)
+    assert sc.default_label() == "This cluster"
+    monkeypatch.setenv("STUDIO_SITE_CATALOG_LABEL", "FABRIC Slurm")
+    assert sc.default_label() == "FABRIC Slurm"
+
+
+def test_a_missing_admin_file_changes_nothing(tmp_path, monkeypatch):
+    repo = _studio_repo(tmp_path, monkeypatch)
+    monkeypatch.setenv("STUDIO_SITE_CATALOG_FILE", str(tmp_path / "nope.yml"))
+    assert sc.admin_catalog_file() is None
+    assert sc.install_admin_catalog() is False
+    assert sc.default_label() == "Studio’s own pool"
+    assert (repo / "6.0" / "conf" / "pegasus-studio.yml").read_text() == "sites: []\n"
