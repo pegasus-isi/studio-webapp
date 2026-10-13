@@ -1,10 +1,11 @@
 """Workflow Marketplace — browse Pegasus workflows from GitHub and clone one
 into the workspace.
 
-Nothing is baked into the image. The catalog is the **live PegasusHub registry**
-(``pegasushub/workflow-registry`` → ``data/workflows.json``) merged with a
-curated set of Pegasus-ISI repos, deduped by repository URL and cached. "Add"
-performs a shallow ``git clone`` of the selected repo into
+Hackathon scope: the catalog is the **curated trio** (quickstart,
+somospie-pegasus-workflow, earthquake-workflow) defined in `_CURATED` below.
+The live PegasusHub registry fetch (`_fetch_registry`) is intentionally not
+called, so the catalog is deterministic and offline-friendly. "Add" performs
+a shallow ``git clone`` of the selected repo into
 ``<workspace>/workflows/<id>`` so it shows up on the Workflows page.
 """
 
@@ -40,8 +41,9 @@ _ENRICH = os.environ.get("STUDIO_MARKETPLACE_ENRICH", "1") not in ("0", "false",
 WORKSPACE_ROOT = workspace_root()
 WORKFLOWS_DIR = workflows_dir(WORKSPACE_ROOT)
 
-# Curated Pegasus-ISI workflows to always surface, merged (and deduped by repo
-# URL) with the live registry. Descriptions from each repo's GitHub metadata.
+# Curated Pegasus-ISI workflows to surface. Hackathon scope: exactly three —
+# quickstart (Hello-World onramp), somospie (soil-moisture downscaling), and
+# earthquake (USGS science example). Descriptions from each repo's GitHub metadata.
 _CURATED: list[dict[str, str]] = [
     {
         "id": "quickstart",
@@ -51,18 +53,11 @@ _CURATED: list[dict[str, str]] = [
         "repo_url": "https://github.com/pegasus-isi/quickstart-workflow",
     },
     {
-        "id": "soilmoisture",
-        "name": "soilmoisture-workflow",
-        "description": "Analyzes soil-moisture data from the Agromonitoring API to answer “Should I water my crops?”",
+        "id": "somospie",
+        "name": "somospie-pegasus-workflow",
+        "description": "A Pegasus workflow for SOMOSPIE that downloads terrain and soil-moisture data, trains a RandomForest regressor, and produces downscaled soil-moisture maps for states across the United States",
         "topic": "earth science",
-        "repo_url": "https://github.com/pegasus-isi/soilmoisture-workflow",
-    },
-    {
-        "id": "airquality",
-        "name": "airquality-workflow",
-        "description": "Processes air-quality sensor data from OpenAQ/Sage to detect anomalies and analyze pollutant trends.",
-        "topic": "earth science",
-        "repo_url": "https://github.com/pegasus-isi/airquality-workflow",
+        "repo_url": "https://github.com/TauferLab/somospie-pegasus-workflow",
     },
     {
         "id": "earthquake",
@@ -71,27 +66,11 @@ _CURATED: list[dict[str, str]] = [
         "topic": "earth science",
         "repo_url": "https://github.com/pegasus-isi/earthquake-workflow",
     },
-    {
-        "id": "crophealth",
-        "name": "crophealth-workflow",
-        "description": "Crop-health disease detection Pegasus workflow.",
-        "topic": "machine learning",
-        "repo_url": "https://github.com/pegasus-isi/crophealth-workflow",
-    },
-    {
-        "id": "variant-calling-pegasus",
-        "name": "variant-calling-pegasus-workflow",
-        "description": "Automates a variant-calling workflow (Data Carpentry “Data Wrangling and Processing for Genomics”).",
-        "topic": "bioinformatics",
-        "repo_url": "https://github.com/pegasus-isi/variant-calling-pegasus-workflow",
-    },
 ]
 
-# Ids pinned to the front of the catalog, in this order, so newcomers meet the
-# gentlest examples first: a Hello-World tutorial, then a simple single-API
-# science workflow, then a real multi-step bioinformatics pipeline. Everything
-# else follows in the default order (Pegasus-ISI first, then alphabetical).
-_FEATURED_ORDER = ("quickstart", "soilmoisture", "variant-calling-pegasus")
+# Catalog order: quickstart first (gentlest onramp), then somospie, then
+# earthquake. Everything else is out of hackathon scope.
+_FEATURED_ORDER = ("quickstart", "somospie", "earthquake")
 
 _cache: dict[str, Any] = {"ts": 0.0, "data": None}
 _lock = asyncio.Lock()
@@ -283,29 +262,18 @@ async def _enrich_descriptions(entries: list[dict[str, Any]]) -> None:
 
 
 async def _catalog(force: bool = False) -> list[dict[str, Any]]:
-    """Merged, deduped catalog (registry + curated), cached for _CACHE_TTL."""
+    """Curated-only catalog (quickstart, somospie, earthquake), cached for _CACHE_TTL.
+
+    The live PegasusHub registry fetch is intentionally disabled for the
+    hackathon scope: _fetch_registry() is kept for a post-hackathon revert but
+    not called, so the catalog is deterministic and works offline.
+    """
     async with _lock:
         age = time.monotonic() - _cache["ts"]
         if not force and _cache["data"] is not None and age < _CACHE_TTL:
             return _cache["data"]
 
-        registry = await _fetch_registry()
-        curated = [n for e in _CURATED if (n := _normalize(e, "Pegasus-ISI"))]
-
-        merged: dict[str, dict[str, Any]] = {}
-        # Curated first so our ids/descriptions win; registry fills the rest.
-        # Skip an entry whose repo OR id is already taken. The id check matters
-        # (BE-9): two distinct-repo entries sharing an id used to silently
-        # overwrite the first's id slot, dropping it from the catalog even
-        # though its repo key survived. An explicit skip keeps the curated one.
-        for entry in curated + registry:
-            key = _norm_repo(entry["repo_url"])
-            eid = entry["id"]
-            if not key or key in merged or eid in merged:
-                continue
-            merged[eid] = entry
-            merged[key] = entry  # dedup marker
-        catalog = [v for k, v in merged.items() if k == v["id"]]
+        catalog = [n for e in _CURATED if (n := _normalize(e, "Pegasus-ISI"))]
         await _enrich_descriptions(catalog)
         catalog.sort(key=_sort_key)
 
@@ -316,7 +284,7 @@ async def _catalog(force: bool = False) -> list[dict[str, Any]]:
 
 @router.get("")
 async def list_workflows() -> dict[str, Any]:
-    """Browse the merged PegasusHub + Pegasus-ISI catalog."""
+    """Browse the curated Pegasus-ISI workflow catalog."""
     catalog = await _catalog()
     return {"workflows": catalog, "count": len(catalog)}
 

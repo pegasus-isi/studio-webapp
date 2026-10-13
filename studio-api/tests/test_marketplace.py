@@ -12,30 +12,11 @@ def _reset():
     mkt._cache["ts"] = 0.0
 
 
-def test_catalog_merges_registry_and_curated_deduped(client, monkeypatch):
-    # _fetch_registry returns already-normalized entries (repo_url, source, …).
+def test_catalog_is_curated_trio_only(client, monkeypatch):
+    # Hackathon scope: the catalog is exactly quickstart, somospie,
+    # earthquake. The live registry is intentionally not consulted.
     async def fake_registry():
-        return [
-            mkt._normalize(
-                {
-                    "id": "variant-calling",
-                    "name": "variant-calling",
-                    # Duplicate of a curated repo (different case + .git) -> deduped.
-                    "repo_url": "https://GitHub.com/pegasus-isi/variant-calling-pegasus-workflow.git",
-                    "topic": "bioinformatics",
-                },
-                "PegasusHub",
-            ),
-            mkt._normalize(
-                {
-                    "id": "orcasound",
-                    "name": "orcasound-workflow",
-                    "github_repo": "https://github.com/pegasus-isi/orcasound-workflow",
-                    "topic": "machine learning",
-                },
-                "PegasusHub",
-            ),
-        ]
+        raise AssertionError("registry must not be fetched in curated-only mode")
 
     monkeypatch.setattr(mkt, "_fetch_registry", fake_registry)
     _reset()
@@ -43,42 +24,30 @@ def test_catalog_merges_registry_and_curated_deduped(client, monkeypatch):
     body = client.get("/api/marketplace").json()
     wfs = {w["id"]: w for w in body["workflows"]}
 
-    # All 6 curated + 1 unique registry = 7; the dup collapses onto curated.
-    assert body["count"] == 7
-    assert "orcasound" in wfs and wfs["orcasound"]["source"] == "PegasusHub"
-    # variant-calling appears once, as the curated Pegasus-ISI entry.
-    vc = [w for w in body["workflows"] if "variant-calling" in w["repo_url"].lower()]
-    assert len(vc) == 1
-    assert vc[0]["source"] == "Pegasus-ISI"
-    # The specific repos the user asked for are all present.
-    ids = set(wfs)
-    for expected in ("soilmoisture", "crophealth", "earthquake", "airquality",
-                     "quickstart", "variant-calling-pegasus"):
-        assert expected in ids
+    assert body["count"] == 3
+    assert [w["id"] for w in body["workflows"]] == [
+        "quickstart",
+        "somospie",
+        "earthquake",
+    ]
+    assert all(w["source"] == "Pegasus-ISI" for w in body["workflows"])
+    assert (
+        wfs["somospie"]["repo_url"]
+        == "https://github.com/TauferLab/somospie-pegasus-workflow"
+    )
+    assert "SOMOSPIE" in wfs["somospie"]["description"]
 
 
 def test_catalog_leads_with_featured_examples(client, monkeypatch):
-    """The catalog opens with the gentle-onramp trio, in order, ahead of the
-    other curated/registry entries."""
+    """The catalog opens with the hackathon trio, in order."""
     async def fake_registry():
-        return [
-            mkt._normalize(
-                {
-                    "id": "orcasound",
-                    "name": "orcasound-workflow",
-                    "github_repo": "https://github.com/pegasus-isi/orcasound-workflow",
-                },
-                "PegasusHub",
-            ),
-        ]
+        raise AssertionError("registry must not be fetched in curated-only mode")
 
     monkeypatch.setattr(mkt, "_fetch_registry", fake_registry)
     _reset()
 
     ids = [w["id"] for w in client.get("/api/marketplace").json()["workflows"]]
-    assert ids[:3] == ["quickstart", "soilmoisture", "variant-calling-pegasus"]
-    # Non-featured entries still follow (alphabetical within their group).
-    assert ids[3:6] == ["airquality", "crophealth", "earthquake"]
+    assert ids == ["quickstart", "somospie", "earthquake"]
 
 
 def test_registry_failure_falls_back_to_curated(client, monkeypatch):
@@ -111,12 +80,12 @@ def test_add_clones_selected_repo(client, monkeypatch, tmp_path):
     monkeypatch.setattr(mkt.asyncio, "create_subprocess_exec", fake_exec)
     _reset()
 
-    res = client.post("/api/marketplace/soilmoisture/add")
+    res = client.post("/api/marketplace/somospie/add")
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "added"
-    assert data["project_id"] == "soilmoisture"
-    assert "soilmoisture-workflow" in data["repo_url"]
+    assert data["project_id"] == "somospie"
+    assert "somospie-pegasus-workflow" in data["repo_url"]
 
 
 def test_add_rejects_bad_id(client):
@@ -370,7 +339,7 @@ def test_add_uses_separator_and_protocol_pin(client, monkeypatch, tmp_path):
     monkeypatch.setattr(mkt.asyncio, "create_subprocess_exec", fake_exec)
     _reset()
 
-    assert client.post("/api/marketplace/soilmoisture/add").status_code == 200
+    assert client.post("/api/marketplace/somospie/add").status_code == 200
     args = captured["args"]
     sep = args.index("--")
     # Everything after "--" is positional: <url> <dir>.

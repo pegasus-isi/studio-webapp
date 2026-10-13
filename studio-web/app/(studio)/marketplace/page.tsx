@@ -67,6 +67,11 @@ export default function MarketplacePage() {
 
   const workflows = data?.workflows ?? [];
 
+  // Hackathon scope: the catalog is exactly three curated cards, so the
+  // search / source / sort / topic filters are hidden — there is nothing to
+  // narrow. They return automatically if the catalog ever grows again.
+  const minimal = workflows.length <= 3;
+
   // A workflow can sit under several subjects now that the registry's
   // free-text topic is split server-side (#314), so the chip set is built from
   // the flattened tags with counts, most-populated first. Filters that match a
@@ -122,17 +127,9 @@ export default function MarketplacePage() {
       <div className="border-b border-line bg-surface px-6 py-4">
         <h1 className="text-lg font-semibold text-fg">Marketplace</h1>
         <p className="text-sm text-fgmuted">
-          Ready-made Pegasus workflows from{" "}
-          <a
-            href="https://pegasushub.io/pages/workflows.html"
-            target="_blank"
-            rel="noreferrer"
-            className="text-pegasus-600 hover:underline dark:text-pegasus-300"
-          >
-            PegasusHub
-          </a>{" "}
-          and Pegasus-ISI. Add one to clone it into your workspace, then
-          Generate, Plan, and Run it from the Workflows page.
+          Three ready-made Pegasus workflows to start from. Add one to clone
+          it into your workspace, then Generate, Plan, and Run it from the
+          Workflows page.
         </p>
       </div>
 
@@ -143,7 +140,7 @@ export default function MarketplacePage() {
           </div>
         )}
 
-        {!isLoading && workflows.length > 0 && (
+        {!isLoading && !minimal && workflows.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <label className="relative min-w-[200px] flex-1 sm:max-w-xs">
               <span className="sr-only">Search examples</span>
@@ -209,7 +206,7 @@ export default function MarketplacePage() {
           </div>
         )}
 
-        {!isLoading && tagCounts.length > 1 && (
+        {!isLoading && !minimal && tagCounts.length > 1 && (
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <TopicChip
               label="All"
