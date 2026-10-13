@@ -135,6 +135,15 @@ apptainer run --home "$STUDIO_HOME" --bind "$HOME" studio-el9.sif
   `.gitconfig`) in from it.
 - How the directory is chosen and checked (a form field, never the real home
   or anything containing it) is the app's business, not the image's.
+- **What can still be written in the real home, by design:** the files the
+  user's own tools keep there, exactly as outside Studio. HTCondor records
+  which method authenticated to which server in `~/.condor/known_hosts` the
+  first time the user's tools reach it (it resolves `~/.condor` from the
+  passwd entry, beside the token Studio reads), and ssh records servers in
+  `~/.ssh/known_hosts`. Nothing Studio or Pegasus writes goes there: an
+  end-to-end Quickstart run (session, Run, Slurm jobs) left a test user's real
+  home otherwise byte-identical, with Pegasus's master database and logs in
+  the Studio directory (#508).
 
 The directory must be on storage the HTCondor submit host also mounts at the
 same path. DAGMan and remote planning (`studio-api/services/remote_exec.py`)
