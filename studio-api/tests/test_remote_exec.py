@@ -506,3 +506,53 @@ def test_the_schedd_is_asked_to_start_the_job_at_once(tmp_path, monkeypatch):
     )
     assert rc == 0
     assert calls.index("nudge") == calls.index("condor_submit") + 1
+
+
+def test_the_wrapper_sets_home_itself(tmp_path):
+    """#508: HTCondor replaces HOME in a local-universe job with the owner's
+    passwd home, so the planner copied the user's real home into the DAGMan
+    environment. The wrapper's own export runs after that and wins."""
+    import subprocess
+
+    studio_home = tmp_path / "studio home"
+    studio_home.mkdir()
+    rc = tmp_path / "rc"
+    script = tmp_path / "w.sh"
+    script.write_text(
+        rx._wrapper_text(["bash", "-c", 'printf %s "$HOME"'], str(tmp_path), str(rc),
+                         home=str(studio_home))
+    )
+    # What HTCondor hands the job: the passwd home, not Studio's.
+    out = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True,
+        env={"PATH": "/usr/bin:/bin", "HOME": "/home/real"},
+    )
+    assert out.stdout == str(studio_home)
+    assert rc.read_text().strip() == "0"
+
+
+def test_the_wrapper_leaves_home_alone_when_not_given(tmp_path):
+    text = rx._wrapper_text(["true"], str(tmp_path), str(tmp_path / "rc"))
+    assert "export HOME" not in text
+
+
+def test_run_on_submit_host_passes_studio_home_to_the_wrapper(tmp_path, monkeypatch):
+    seen: dict[str, str] = {}
+
+    async def fake_run(cmd, timeout):
+        if cmd[0] == "condor_submit":
+            stamp = next(p for p in tmp_path.glob("remote-*.sub")).stem
+            seen["wrapper"] = (tmp_path / f"{stamp}.sh").read_text()
+            (tmp_path / f"{stamp}.rc").write_text("0\n")
+            (tmp_path / f"{stamp}.log").write_text("005 (3.000.000) Job terminated.\n")
+            return 0, "1 job(s) submitted to cluster 3.", ""
+        return 0, "", ""
+
+    monkeypatch.setattr(rx, "_run", fake_run)
+    monkeypatch.setattr(rx, "available", lambda: True)
+    monkeypatch.setenv("HOME", "/home/u/pegasus-studio")
+    rc, _ = asyncio.run(
+        rx.run_on_submit_host(["true"], cwd=str(tmp_path), scratch_dir=str(tmp_path))
+    )
+    assert rc == 0
+    assert "export HOME=/home/u/pegasus-studio\n" in seen["wrapper"]
