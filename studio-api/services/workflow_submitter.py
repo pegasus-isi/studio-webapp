@@ -12,6 +12,7 @@ import time
 
 import structlog
 
+from services import schedd
 from services.procutil import communicate_or_kill
 from workspace import workspace_root
 
@@ -82,6 +83,8 @@ async def submit_workflow(
             output += f"\nstderr:\n{err}"
 
         if proc.returncode == 0:
+            # DAGMan otherwise waits for the schedd's timer (#494).
+            schedd.nudge()
             # Try to extract run directory from output
             run_dir = _extract_run_dir(out) or _newest_run_dir(workflow_dir)
             log.info(
@@ -163,6 +166,8 @@ async def run_planned_workflow(
         output = out + (f"\nstderr:\n{err}" if err else "")
 
         if proc.returncode == 0:
+            # DAGMan otherwise waits for the schedd's timer (#494).
+            schedd.nudge()
             log.info("workflow_run_submitted", run_dir=target, site=site)
             return {"status": "submitted", "run_dir": target, "output": output}
 

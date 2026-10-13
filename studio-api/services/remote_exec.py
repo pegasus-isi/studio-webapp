@@ -53,6 +53,8 @@ from pathlib import Path
 
 import structlog
 
+from services import schedd
+
 log = structlog.get_logger()
 
 # Planning a large workflow is not fast; this is a backstop against a job that
@@ -246,17 +248,10 @@ async def run_on_submit_host(
         )
     cluster = _SUBMIT_RE.search(sub_out)
 
-    # Ask the schedd to start it now (#488). Local-universe jobs are started
-    # from the schedd's periodic timer (SCHEDD_INTERVAL, 300 s by default),
-    # not on submit, so without this every remote step could sit idle for up
-    # to five minutes first, under a "checking the plan" that says nothing.
-    # Best effort: the timer still starts it if this fails.
-    try:
-        resched_code, _, resched_err = await _run(["condor_reschedule"], timeout=30)
-    except (OSError, asyncio.TimeoutError) as e:
-        resched_code, resched_err = -1, str(e)
-    if resched_code != 0:
-        log.info("remote_exec_reschedule_failed", error=(resched_err or "").strip()[:200])
+    # Ask the schedd to start it now (#488, #494): local-universe jobs are
+    # otherwise started from its periodic timer, so every remote step could
+    # sit idle for up to five minutes first. See services/schedd.py.
+    schedd.nudge()
 
     # Watch the job log rather than using `condor_wait`. condor_wait returns
     # on termination but not on *hold*, and a held job never terminates — so a

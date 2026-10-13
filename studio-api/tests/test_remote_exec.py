@@ -490,31 +490,19 @@ def _finishing_job(scratch, calls):
             (scratch / f"{stamp}.rc").write_text("0\n")
             (scratch / f"{stamp}.log").write_text("005 (9.000.000) Job terminated.\n")
             return 0, "1 job(s) submitted to cluster 9.", ""
-        if cmd[0] == "condor_reschedule" and "fail" in calls:
-            raise FileNotFoundError("condor_reschedule")
         return 0, "", ""
 
     return fake_run
 
 
 def test_the_schedd_is_asked_to_start_the_job_at_once(tmp_path, monkeypatch):
-    """#488: local-universe jobs otherwise wait for SCHEDD_INTERVAL (300 s)."""
+    """#488/#494: local-universe jobs otherwise wait for SCHEDD_INTERVAL."""
     calls: list[str] = []
     monkeypatch.setattr(rx, "_run", _finishing_job(tmp_path, calls))
     monkeypatch.setattr(rx, "available", lambda: True)
+    monkeypatch.setattr(rx.schedd, "nudge", lambda *a, **k: calls.append("nudge"))
     rc, _ = asyncio.run(
         rx.run_on_submit_host(["true"], cwd=str(tmp_path), scratch_dir=str(tmp_path))
     )
     assert rc == 0
-    assert calls.index("condor_reschedule") == calls.index("condor_submit") + 1
-
-
-def test_a_failed_reschedule_does_not_fail_the_step(tmp_path, monkeypatch):
-    """Best effort: the timer still starts the job."""
-    calls: list[str] = ["fail"]
-    monkeypatch.setattr(rx, "_run", _finishing_job(tmp_path, calls))
-    monkeypatch.setattr(rx, "available", lambda: True)
-    rc, _ = asyncio.run(
-        rx.run_on_submit_host(["true"], cwd=str(tmp_path), scratch_dir=str(tmp_path))
-    )
-    assert rc == 0
+    assert calls.index("nudge") == calls.index("condor_submit") + 1
