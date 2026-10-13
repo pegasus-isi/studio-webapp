@@ -36,7 +36,7 @@ npm run build
 
 ```sh
 # Backend (from repo root; assumes the studio-api venv is active with deps installed)
-(cd studio-api && pytest -q)                          # ~930 tests; no Pegasus/Condor/keys needed
+(cd studio-api && pytest -q)                          # ~1000 tests; no Pegasus/Condor/keys needed
 
 # Frontend (needs `npm ci` first so node_modules/.bin/tsc exists)
 (cd studio-web && npm ci && node_modules/.bin/tsc --noEmit)   # strict mode
@@ -83,7 +83,7 @@ writable by the injected uid, so **never bake a rendered config into the image**
 `render_template()` too; `tests/test_port_rendering.py` fails if the two drift.
 
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
-  migrations in `db.py`), structlog JSON logging. 20 routers in `routers/`, 33 services
+  migrations in `db.py`), structlog JSON logging. 20 routers in `routers/`, 35 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
   notifications, terminal/PTY sessions, telemetry consent, job files, project rename). `mcp.py` serves the
   Pegasus tools to the OpenCode engine. Workflow runs are
@@ -140,7 +140,16 @@ writable by the injected uid, so **never bake a rendered config into the image**
   by default) so Studio never writes into the user's real home (#482). That is
   why nothing in studio-api needs to know about OOD: keep it that way, and
   resolve paths from `$HOME` rather than from the passwd entry or a hardcoded
-  `/home/<user>`.
+  `/home/<user>`. The passwd entry there is the user's *real* home (the app
+  binds the host `/etc/passwd`), so anything that reads it goes wrong in a way
+  that is invisible on K8s, where the two agree: the JVM's `user.home` (hence
+  `JAVA_TOOL_OPTIONS=-Duser.home`, #489) and HTCondor, which resets `HOME` in
+  local-universe jobs (the remote wrapper exports it, #508). Site settings come
+  from the admin's `site.env` in the app: `STUDIO_SITE_CATALOG_FILE` replaces
+  the default `pegasus-studio.yml` (#496), and an empty
+  `STUDIO_LLM_GATEWAY_URL` (the EL9 image's default) means no gateway: no
+  default provider, saved providers offered in chat, never a shared key (#498,
+  #505).
 - **The workspace root is `$HOME`** (`studio-api/workspace.py`, #401). Projects
   live in `$HOME/workflows/<name>/`, uploads in `$HOME/data/`. It used to be
   `$HOME/work`, a level copied from JupyterHub images where only that subdir is
@@ -179,6 +188,13 @@ writable by the injected uid, so **never bake a rendered config into the image**
   `VENDORED.md`); local mods are limited to three files (`src/configPlugin.tsx`,
   `src/api.ts`, `src/toolbarPlugin.ts`). Disable with `--build-arg
   ENABLE_PEGASUS_BOT_CLIENT=0`. Respect the vendoring boundary.
+- **Planning on the submit host** (`services/remote_exec.py`) is an HTCondor
+  local-universe job, and the schedd starts those (and DAGMan) from its
+  `SCHEDD_INTERVAL` timer, 300 s by default. Every submit path calls
+  `services/schedd.nudge()` (`condor_reschedule` now and after the 5 s
+  `SCHEDD_MIN_INTERVAL`), or runs sit idle for minutes with nothing in the UI
+  saying why (#488, #494). It is fire-and-forget; `tests/conftest.py` disables
+  it under test.
 - **Work that outlives a request gets a broker.** `services/run_flow.py` (the
   one-button Run) and `services/chat_turn.py` (an assistant turn) both run as a
   background task with a buffered event log; subscribers replay from the start

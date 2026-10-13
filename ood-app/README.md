@@ -38,21 +38,46 @@ for the Dockerfile's apt list.
 
 - Image-side support for a Studio **home directory of its own** (#482), so a
   session never writes into the user's real home. See
-  [Studio's own home directory](#studios-own-home-directory).
+  [Studio's own home directory](#studios-own-home-directory). That includes
+  what runs *outside* the container: planning on the access point exports
+  Studio's `HOME` itself, because HTCondor resets it to the passwd home and
+  Pegasus's master database followed it there (#508), and the JVM is pointed
+  at Studio's home (#489).
+- **Validated end to end (2026-10-13)** on a FABRIC test cluster
+  ([kthare10/fabric-slurm-test](https://github.com/kthare10/fabric-slurm-test):
+  Slurm + HTCondor access point + Open OnDemand 4.0, three users): sessions on
+  Slurm compute nodes with the token gate and a dotted `/node/<fqdn>/<port>`
+  prefix (#483); the user's real home unchanged by a session; chat on a
+  provider the user added (#498, #505); in-session image builds (#485);
+  workflows submitted from Studio whose jobs ran as Slurm jobs through
+  HTCondor's BLAHP on the access point, using an administrator's site catalog
+  (#496). Fixes it took: #485, #487, #491, #495, #501, #508.
+- **Site settings an administrator passes in** (catalog, LLM gateway,
+  HTCondor access point); see [the table below](#site-settings-an-administrator-passes-in).
 
 **Not done / open:**
-- **Local Slurm submission.** The intent is for HTCondor itself to submit
-  onward into the cluster's Slurm queue (a local schedd using HTCondor's
-  Slurm/BLAHP grid support), which is *why* the OS-matching in the section
-  above matters enough to justify a second image — bind-mounting the host's
+- **Slurm from inside the session** (the original design for this image).
+  Slurm is already reachable the way the validation above does it: an
+  administrator's site catalog sends `compute` to Slurm through BLAHP on the
+  *access point* (`grid_resource = batch slurm`, as pegasushub's `unity.yml`
+  does), which needs nothing in the image. What is not built is the
+  alternative: HTCondor submitting onward into Slurm from a local schedd in
+  the session, which is *why* the OS-matching in the section above matters
+  enough to justify a second image — bind-mounting the host's
   `sbatch`/`squeue`/`scontrol` and munge socket/key only works if they run
   against compatible libraries. **This isn't built yet**:
   [`../docker/htcondor/90-studio.conf`](../docker/htcondor/90-studio.conf),
   installed unmodified into this image too, is still the plain remote-AP
   client config (`CONDOR_HOST = ap.pegasus-ai.org`) that the K8s deployment
   uses. Until a local-pool config and the bind-mount list exist, an OOD
-  session submits to the same remote AP as everywhere else — the Rocky9 base
-  is prerequisite, not sufficient, for local submission.
+  session submits to the same remote AP as everywhere else, unless the site's
+  `_CONDOR_SCHEDD_HOST`/`_CONDOR_COLLECTOR_HOST` point it at the cluster's own
+  (fully qualified names) — the Rocky9 base is prerequisite, not sufficient,
+  for local submission.
+- **Full builds need the Pegasus 6.0 development channel**, which `%post`
+  installs from. On 2026-10-13 it listed 0 packages (RHEL, Debian, Ubuntu)
+  and every from-scratch build failed at `dnf install pegasus`; check the
+  repository before suspecting the definition.
 - **Known flaky build step**: `jlpm install` (building the PegasusAI Chat
   JupyterLab extension) has segfaulted intermittently in `%post` on at least
   one build host, cause unresolved. A 3-attempt retry loop and
