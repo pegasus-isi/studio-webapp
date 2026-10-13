@@ -438,3 +438,41 @@ def test_reported_model_limits_are_declared(tmp_path, monkeypatch):
     }
     assert models["ctx-only"] == {"name": "ctx-only", "limit": {"context": 128000}}
     assert models["unsized"] == {"name": "unsized"}
+
+
+def test_nothing_configured_names_no_default_model(tmp_path, monkeypatch):
+    """#504: with no gateway and no active provider the engine's config used
+    to keep whatever it last held (a dead gateway). Now it declares the saved
+    providers and no default model, and keeps the approval rule and tools."""
+    from knowledge.opencode import OpenCodeAdapter
+
+    home = tmp_path / "home"
+    (home / "work").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    OpenCodeAdapter().update_llm_config(
+        str(home / "work"),
+        {
+            "provider": "",
+            "model": None,
+            "api_key": "",
+            "base_url": "",
+            "require_command_approval": True,
+            "all_providers": [
+                {
+                    "provider_id": "custom-az",
+                    "name": "Azure",
+                    "api_key": "k",
+                    "base_url": "https://llm.example.edu/v1",
+                    "default_model": "gpt-5.6-sol",
+                },
+            ],
+        },
+    )
+    cfg = json.loads((home / ".config" / "opencode" / "opencode.json").read_text())
+    assert "model" not in cfg
+    assert list(cfg["provider"]) == ["custom-az"]
+    assert "gateway" not in json.dumps(cfg["provider"])
+    assert cfg["permission"] == {"bash": "ask"}
+    assert "pegasus" in cfg["mcp"]

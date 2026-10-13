@@ -123,9 +123,15 @@ class LLMPropagator:
         write multi-provider config files.
         """
         config = await db.get_llm_config()
-        if not config:
-            log.info("llm_propagate_skip", reason="no config set")
-            return
+        # Nothing configured (no gateway, no provider yet, #504): the chat
+        # engine is still written, with every saved provider and no default
+        # model. Returning early left whatever opencode.json last held, a dead
+        # gateway included, as the engine's default. Not deleted: the same
+        # file carries the shell-approval rule, the Pegasus MCP tools and the
+        # telemetry plugin. Terminal tools are skipped, as before.
+        unconfigured = not config
+        if unconfigured:
+            config = {"provider": "", "model": None, "api_key": "", "base_url": ""}
 
         # Attach all saved provider configs for adapters that need them
         try:
@@ -163,6 +169,9 @@ class LLMPropagator:
 
         for tool in installed:
             tool_id = tool["tool_id"]
+            if unconfigured and tool_id != "opencode":
+                log.info("llm_propagate_skip", tool_id=tool_id, reason="no config set")
+                continue
             adapter = get_adapter(tool_id)
             if adapter is None:
                 continue
