@@ -160,3 +160,39 @@ def test_endpoint_reports_the_verdict(client, monkeypatch):
     assert body["status"] == "mismatch"
     assert body["local_share_dir"] == _POD_SHARE
     assert body["remote_share_dir"] == _AP_SHARE
+
+
+def test_a_series_difference_is_warned_about_by_name():
+    """#490: a 5.1 planner on the submit host cannot load Studio's 6.0 sites,
+    and nothing said so before the plan failed."""
+    compat = sh.Compat(
+        status="mismatch",
+        detail="",
+        local_version="6.0.0.dev0",
+        remote_version="5.1.3",
+    )
+    warning = sh.series_warning(compat)
+    assert warning is not None
+    assert "5.1.3" in warning and "6.0.0.dev0" in warning
+    assert "Pegasus 6.0 only" in warning
+    assert "not loaded" in warning
+
+
+def test_an_unknown_submit_host_version_is_warned_about():
+    """An AP that does not publish PegasusVersion is the case that hid #490."""
+    compat = sh.Compat(status="unknown", detail="", local_version="6.0.0.dev0")
+    warning = sh.series_warning(compat)
+    assert warning is not None
+    assert "PegasusVersion" in warning and "SCHEDD_ATTRS" in warning
+
+
+def test_the_same_series_needs_no_warning():
+    """A patch-level difference does not change the catalog directory."""
+    compat = sh.Compat(
+        status="mismatch", detail="", local_version="6.0.1", remote_version="6.0.0.dev0"
+    )
+    assert sh.series_warning(compat) is None
+    ok = sh.Compat(
+        status="ok", detail="", local_version="6.0.0.dev0", remote_version="6.0.0.dev0"
+    )
+    assert sh.series_warning(ok) is None

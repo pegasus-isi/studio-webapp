@@ -262,3 +262,39 @@ async def check() -> Compat:
         detail="This workspace and the submit host agree on Pegasus.",
         **common,
     )
+
+
+def series_warning(compat: Compat) -> str | None:
+    """What to say in a run's output when the submit host's Pegasus series
+    differs from this workspace's, or cannot be read at all (#490).
+
+    Not a block. Planning on the submit host makes a share-dir difference
+    harmless, but not a series difference: Studio ships its own sites (such as
+    "compute") in a catalog laid out per series, `<repo>/<series>/conf/`, so a
+    planner of another series looks in a directory that does not exist and
+    fails with "Execution site compute not loaded". A run on a site the user
+    defined themselves can still work, so this warns rather than refuses.
+    """
+    from services.site_config import series
+
+    here = series(compat.local_version)
+    there = series(compat.remote_version)
+    if here and there and here != there:
+        return (
+            f"The submit host runs Pegasus {compat.remote_version} and this "
+            f"workspace {compat.local_version}. Planning happens on the submit "
+            f"host, and Studio's own sites (such as \"compute\") are provided "
+            f"for Pegasus {here} only, so they will not load there: a plan "
+            f"that fails with \"Execution site ... not loaded\" is this. The "
+            f"fix is Pegasus {here} on the submit host."
+        )
+    if compat.status in ("unknown", "unavailable") and here:
+        return (
+            "Couldn't check which Pegasus the submit host has: it doesn't "
+            "publish PegasusVersion on its schedd. Studio's own sites (such as "
+            f"\"compute\") are provided for Pegasus {here}; if planning fails "
+            "with \"Execution site ... not loaded\", a different Pegasus on the "
+            "submit host is the likely cause. An administrator can publish it "
+            "with PegasusVersion and PegasusShareDir in SCHEDD_ATTRS."
+        )
+    return None
