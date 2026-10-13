@@ -607,6 +607,16 @@ class Database:
             ("feedback_episodes", "run_dir"),
             ("feedback_episodes", "rerun_dir"),
         ):
+            # The feedback-episodes table belongs to an upstream feature this
+            # branch does not include, so it may not exist — on a fresh DB it
+            # never does. A rename must not fail for that; episode rows are
+            # re-pointed whenever the table is present.
+            probe = await self.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table,),
+            )
+            if await probe.fetchone() is None:
+                continue
             cursor = await self.db.execute(
                 f"UPDATE {table} SET {column} = ? || substr({column}, ?) "
                 f"WHERE {column} = ? OR substr({column}, 1, ?) = ?",

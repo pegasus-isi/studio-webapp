@@ -135,6 +135,40 @@ def test_stored_run_paths_follow_the_move(tmp_path):
     assert rows["r4"] == f"{old}2/submit/run0001"
 
 
+def test_move_also_repoints_episode_rows_when_the_table_exists(tmp_path):
+    """The feedback-episodes feature is not in this branch, but move_run_dirs
+    must handle its table when present (e.g. a future cherry-pick adds it)."""
+    import asyncio
+
+    from db import Database
+
+    old = "/home/u/workflows/streamflow"
+    new = "/home/u/workflows/streamflow-v2"
+
+    async def go():
+        db = Database(str(tmp_path / "r.db"))
+        await db.connect()
+        try:
+            await db.db.execute(
+                "CREATE TABLE feedback_episodes "
+                "(id INTEGER PRIMARY KEY, run_dir TEXT, rerun_dir TEXT)"
+            )
+            await db.db.execute(
+                "INSERT INTO feedback_episodes (run_dir, rerun_dir) VALUES (?, ?)",
+                (f"{old}/submit/run0001", f"{old}/submit/rerun0001"),
+            )
+            await db.db.commit()
+            changed = await db.move_run_dirs(old, new)
+            cur = await db.db.execute("SELECT run_dir, rerun_dir FROM feedback_episodes")
+            return changed, await cur.fetchone()
+        finally:
+            await db.close()
+
+    changed, row = asyncio.run(go())
+    assert changed == 2
+    assert tuple(row) == (f"{new}/submit/run0001", f"{new}/submit/rerun0001")
+
+
 def test_rename_endpoint(client, monkeypatch, tmp_path):
     import routers.workflows as wf
     from services import workflow_scanner
