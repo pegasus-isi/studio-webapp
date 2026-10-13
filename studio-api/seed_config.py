@@ -64,7 +64,9 @@ async def main() -> None:
     await db.connect()
 
     # Check if config already exists
-    existing = await db.get_llm_config()
+    # llm_config_exists, not get_llm_config: the latter returns the gateway
+    # default when nothing is saved, so this always skipped the seed (#498).
+    existing = await db.llm_config_exists()
     if existing:
         print("LLM config already exists — skipping seed.")
         await db.close()

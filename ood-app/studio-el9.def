@@ -376,6 +376,12 @@ rm -rf /opt/build
 %environment
     export NPM_CONFIG_PREFIX=/opt/npm-global
     export PATH="/opt/npm-global/bin:${PATH}"
+    # No LLM gateway unless the site's administrator names one (#498). Unset,
+    # Studio defaults to the hosted deployment's in-cluster gateway.llm, which
+    # does not exist on anyone else's cluster: chat then failed on its first
+    # message. Empty means "no gateway", and users add their own provider and
+    # key in Settings. An admin's value (site settings) is kept.
+    export STUDIO_LLM_GATEWAY_URL="${STUDIO_LLM_GATEWAY_URL:-}"
 
 %runscript
     exec /usr/local/bin/entrypoint.sh "$@"
