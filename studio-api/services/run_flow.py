@@ -602,14 +602,23 @@ async def _execute(
             if warning:
                 flow._line("plan", warning)
         if compat.blocks_run and plan_mode == "remote":
-            # Say it in the run's own output. The mismatch is real and someone
-            # should still fix it; it just isn't fatal while the planner runs
-            # where the workflow is submitted.
+            # Say it in the run's own output. Planning on the submit host
+            # handles a different *share* dir (the paths baked into auxiliary
+            # jobs are then its own), which is the case this was written for:
+            # same package, different Python minor (#334). It does not handle
+            # a different *bin* dir. Submission still happens here, and
+            # condor_submit refuses an executable that does not exist locally,
+            # so a plan naming the submit host's pegasus-dagman somewhere this
+            # workspace does not have it fails at submit (#490).
             flow._line(
                 "plan",
-                "This workspace and the submit host have Pegasus in different "
-                "places. That no longer breaks runs, because planning happens "
-                "on the submit host — but it is worth fixing.",
+                "This workspace and the submit host have Pegasus installed in "
+                "different places. Planning on the submit host covers most of "
+                "that, but the run is still submitted from here: if submission "
+                "then fails with \"Can't access executable file "
+                ".../pegasus-dagman\", the submit host's Pegasus is not at the "
+                "same path in this workspace, and an administrator needs to "
+                "install it to match (or make that path visible here).",
             )
 
         # The site is checked before anything runs, and handed to a
