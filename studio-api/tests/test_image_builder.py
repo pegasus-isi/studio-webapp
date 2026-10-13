@@ -160,6 +160,29 @@ def test_build_env_takes_proot_out_of_the_packing_step():
         del os.environ["STUDIO_BUILD_IGNORE_PROOT"]
 
 
+def test_build_env_drops_the_sessions_own_binds():
+    """#484: under Open OnDemand Studio itself runs with APPTAINER_BINDPATH set,
+    and a nested build applied it to the %post sandbox, which cannot create
+    /ood-session. The build sees only what its definition file asks for."""
+    session = {
+        "PATH": "/usr/bin",
+        "APPTAINER_BINDPATH": "/etc/passwd,/tmp:/tmp,/home/u/ondemand/x:/ood-session",
+        "APPTAINER_BIND": "/scratch",
+        "SINGULARITY_BINDPATH": "/project",
+        "SINGULARITY_BIND": "/data",
+        "APPTAINER_TMPDIR": "/scratch/tmp",
+    }
+    env = ib.build_env(session)
+    for name in ("APPTAINER_BINDPATH", "APPTAINER_BIND",
+                 "SINGULARITY_BINDPATH", "SINGULARITY_BIND"):
+        assert name not in env
+    # Only the binds: the rest of the session's Apptainer settings still apply.
+    assert env["APPTAINER_TMPDIR"] == "/scratch/tmp"
+    assert env["PATH"] == "/usr/bin"
+    # And the caller's mapping is left alone.
+    assert "APPTAINER_BINDPATH" in session
+
+
 def test_build_env_can_move_the_build_tmpdir():
     os.environ["STUDIO_BUILD_TMPDIR"] = "/scratch/build"
     try:
