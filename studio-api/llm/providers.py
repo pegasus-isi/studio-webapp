@@ -24,6 +24,19 @@ GATEWAY_BASE_URL = os.environ.get("STUDIO_LLM_GATEWAY_URL", "http://gateway.llm:
 # provider". Must be lowercase.
 GATEWAY_DEFAULT_MODEL = os.environ.get("STUDIO_LLM_DEFAULT_MODEL", "default")
 
+
+def gateway_configured() -> bool:
+    """Whether there is a gateway to default to (#498).
+
+    Unset keeps the hosted deployment's in-cluster default. Set to an empty
+    string, as the Open OnDemand image does unless the site's administrator
+    names one, it means there is none: elsewhere `gateway.llm` does not
+    resolve, and defaulting to it only made the first chat message fail
+    against a host the user has never heard of. Users then add their own
+    provider and key in Settings.
+    """
+    return bool(GATEWAY_BASE_URL)
+
 # Provider presets — mirrors config_builder.PROVIDERS
 PROVIDERS: dict[str, dict[str, Any]] = {
     "gateway": {

@@ -316,8 +316,17 @@ class Database:
             if row is None:
                 # Ship a working default: an internal OpenAI-compatible gateway,
                 # so chat/tools work with zero configuration. Users can override
-                # this in Settings, which writes a real row.
-                from llm.providers import GATEWAY_BASE_URL, GATEWAY_DEFAULT_MODEL
+                # this in Settings, which writes a real row. None when there
+                # is no gateway to default to (#498): every caller already
+                # treats None as "nothing configured".
+                from llm.providers import (
+                    GATEWAY_BASE_URL,
+                    GATEWAY_DEFAULT_MODEL,
+                    gateway_configured,
+                )
+
+                if not gateway_configured():
+                    return None
 
                 return {
                     "provider": "gateway",
@@ -335,6 +344,13 @@ class Database:
                 "extra_config": json.loads(row["extra_config"] or "{}"),
                 "updated_at": row["updated_at"],
             }
+
+    async def clear_llm_config(self) -> None:
+        """Forget the active LLM config (#498): with no gateway to fall back
+        to, deleting the last provider leaves nothing configured rather than a
+        config pointing at a host that does not exist."""
+        await self.db.execute("DELETE FROM llm_config WHERE id = 1")
+        await self.db.commit()
 
     async def set_llm_config(
         self,

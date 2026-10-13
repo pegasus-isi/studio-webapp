@@ -75,6 +75,15 @@ export default function SettingsPage() {
   // registry credentials are infrastructure; opening Settings on an API-key
   // form tells a scientist this product is not for them.
   const [activeTab, setActiveTab] = useState<Tab>("notifications");
+  // ?tab=providers: chat links here when no AI provider is configured
+  // (an OOD site without a gateway, #498). Read once, after mount, from the
+  // real URL; useSearchParams would need a Suspense boundary for a value
+  // that matters only on arrival.
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    const known = [...EVERYDAY_TABS, ...ADVANCED_TABS].some(([id]) => id === wanted);
+    if (wanted && known) setActiveTab(wanted as Tab);
+  }, []);
 
   return (
     <div className="mx-auto max-w-4xl p-6">

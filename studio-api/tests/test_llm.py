@@ -325,3 +325,50 @@ def test_activating_a_provider_keeps_extra_config(client):
     extra = client.get("/api/llm/config").json()["extra_config"]
     assert extra.get("max_tokens") == 16384
     assert extra.get("wire_api") == "chat"
+
+
+# ── No gateway to default to (#498) ──
+#
+# On an Open OnDemand cluster the hosted deployment's gateway.llm does not
+# exist. An explicitly empty STUDIO_LLM_GATEWAY_URL means "no gateway": nothing
+# is configured until the user adds a provider with their own key.
+
+
+def _no_gateway(monkeypatch):
+    import llm.providers as p
+
+    monkeypatch.setattr(p, "GATEWAY_BASE_URL", "")
+
+
+def test_without_a_gateway_nothing_is_configured(client, monkeypatch):
+    _no_gateway(monkeypatch)
+    resp = client.get("/api/llm/config")
+    assert resp.status_code == 200
+    assert resp.json()["provider"] == ""
+
+
+def test_without_a_gateway_it_is_not_offered(client, monkeypatch):
+    _no_gateway(monkeypatch)
+    ids = [p["id"] for p in client.get("/api/llm/providers").json()["providers"]]
+    assert "gateway" not in ids
+    assert "anthropic" in ids
+
+
+def test_without_a_gateway_deleting_the_last_provider_clears_it(client, monkeypatch):
+    """Not a fallback to a host that does not exist."""
+    _no_gateway(monkeypatch)
+    assert _add_provider(client, "custom-abc", active=True).status_code == 200
+    assert client.get("/api/llm/config").json()["provider"] == "custom-abc"
+    assert client.delete("/api/llm/provider-configs/custom-abc").status_code == 200
+    assert client.get("/api/llm/config").json()["provider"] == ""
+
+
+def test_a_users_own_provider_works_without_a_gateway(client, monkeypatch):
+    _no_gateway(monkeypatch)
+    resp = client.put(
+        "/api/llm/config",
+        json={"provider": "anthropic", "model": "claude-sonnet-4-5-20250929", "api_key": "sk-x"},
+    )
+    assert resp.status_code == 200
+    cfg = client.get("/api/llm/config").json()
+    assert cfg["provider"] == "anthropic" and cfg["has_api_key"] is True

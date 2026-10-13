@@ -11,6 +11,7 @@ from llm.providers import (
     PROVIDERS,
     check_api_key_requirement,
     fetch_models,
+    gateway_configured,
     provider_type,
 )
 from models import (
@@ -65,6 +66,10 @@ async def get_llm_config() -> LLMConfigResponse:
     from main import db
 
     data = await db.get_llm_config()
+    if data is None and not gateway_configured():
+        # Nothing configured and no gateway to default to (#498): an empty
+        # provider, which the chat turns into "add a provider in Settings".
+        return LLMConfigResponse(provider="")
     if data is None:
         # get_llm_config() bakes in the gateway default, so this is defensive.
         return LLMConfigResponse(
@@ -123,6 +128,8 @@ async def update_llm_config(req: LLMConfigRequest) -> LLMConfigResponse:
 async def list_providers() -> dict[str, list[ProviderInfo]]:
     providers = []
     for pid, preset in PROVIDERS.items():
+        if pid == "gateway" and not gateway_configured():
+            continue  # nothing to point it at (#498)
         defaults = PROVIDER_DEFAULTS.get(pid, {})
         providers.append(ProviderInfo(
             id=pid,
@@ -327,6 +334,8 @@ async def delete_provider_config(provider_id: str) -> dict[str, str]:
         remaining = await db.list_provider_configs()
         if remaining:
             await db.set_active_provider(remaining[0]["provider_id"])
+        elif not gateway_configured():
+            await db.clear_llm_config()
         else:
             g = PROVIDER_DEFAULTS["gateway"]
             await db.set_llm_config(
