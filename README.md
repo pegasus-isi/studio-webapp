@@ -207,14 +207,20 @@ to bypass the proxy if the server is directly browser-reachable.
 
 > **LLM providers and API keys are configured in the Settings UI, not here.**
 > They're stored in the workspace SQLite DB; the default `gateway` provider
-> needs no key, so chat and tools work out of the box.
+> needs no key, so chat and tools work out of the box. Where there is no
+> gateway (`STUDIO_LLM_GATEWAY_URL` set to empty, the Open OnDemand image's
+> default unless the site names one), nothing is configured until the user adds
+> a provider with their own key; every saved provider is offered in the chat's
+> model picker, and chat says so when none exists (#498, #505). Shared keys are
+> never injected.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `STUDIO_WORKSPACE_DIR` | `$HOME/work` | Workspace root for projects, SQLite state, and tool configs |
 | `STUDIO_SCAN_DIR` | `$HOME` | Root scanned for `braindump.yml` runs (the run list + notification scan). Users can add scan roots/excludes on top — see [Workflow discovery](#workflow-discovery) |
 | `STUDIO_SECRET_KEY` / `STUDIO_SECRET_KEY_FILE` | unset | Master secret used to encrypt stored API keys + the registry password at rest. Unset → stored plaintext with a warning. Must come from a sealed secret, **not** the PVC |
-| `STUDIO_LLM_GATEWAY_URL` | internal | Base URL for the zero-config `gateway` provider |
+| `STUDIO_LLM_GATEWAY_URL` | internal | Base URL for the zero-config `gateway` provider. Set to an empty string for **no gateway**: no default provider, the preset is not offered, users add their own (#498) |
+| `STUDIO_LLM_DEFAULT_MODEL` | `default` | Model the `gateway` provider asks for (the hosted gateway is case-sensitive: lowercase) |
 | `STUDIO_ALLOWED_ORIGINS` | (empty) | Extra CORS origins (same-origin is always allowed) |
 | `STUDIO_TRUST_AUTH_HEADER` | `0` | Trust `X-Auth-User` for the display identity (opt-in; prod identity comes from `JUPYTERHUB_USER`) |
 | `NPM_CONFIG_PREFIX` | `/opt/npm-global` | npm global install prefix |
@@ -228,6 +234,9 @@ to bypass the proxy if the server is directly browser-reachable.
 | `PEGASUS_BOT_SERVER_URL` | `http://server.ai-bot:8000` | Upstream PegasusAI Bot server the in-pod proxy (`/api/pegasus-bot`) forwards to |
 | `PEGASUS_BOT_CLIENT_URL` | `<prefix>/api/pegasus-bot` | Server URL injected into the extension; defaults to the same-origin proxy path. Override to point the browser at a directly-reachable server |
 | `STUDIO_SITE_CATALOG` | _(unset)_ | Published site catalog (e.g. `unity.yml`) written to each user's `~/.pegasusrc` at startup when they have not chosen one, so a cluster install needs no per-user setup beyond the allocation. Unset: Studio's own pool (`pegasus-studio.yml`, site `compute`). Users can change it on Resources |
+| `STUDIO_SITE_CATALOG_FILE` | _(unset)_ | A site's own Pegasus site catalog (a path) that **replaces** Studio's `pegasus-studio.yml` for every user, so `compute` means that cluster (e.g. a Slurm partition through HTCondor BLAHP). Copied into each user's `~/.studio/site-catalogs/<series>/conf/` at every start (#496) |
+| `STUDIO_SITE_CATALOG_LABEL` | `This cluster` | What the Resources page calls that catalog, in place of "Studio's own pool" |
+| `STUDIO_HOME` | _(unset)_ | Studio's own home directory under Open OnDemand. The batch-connect app runs the image with `apptainer --home "$STUDIO_HOME"`; if a launch only sets the variable, the entrypoint exports `HOME` from it (#482). Not to be confused with `local-test-instance.sh`'s `STUDIO_HOME`, a host directory to persist the container home |
 | `STUDIO_EXEC_SITE` | _(unset)_ | Execution site the Run form preselects and always offers (e.g. `compute` on a Slurm cluster). Unset: the project's `sites.yml` / hosted catalog decide, else `condorpool`. See [Where it runs](#where-it-runs) |
 | `STUDIO_SITE_STYLE` / `STUDIO_SITE_QUEUE` / `STUDIO_SITE_PROJECT` | _(unset)_ | **Legacy.** Prefill `--site-style`, `--queue` and `--project` for generators that still have them (the retired portable-sites template). Template generators take scheduler details from the site catalog instead: use `STUDIO_SITE_CATALOG` or Resources |
 | `STUDIO_ENABLE_PEGASUS_BOT` | `1` | Inject the PegasusAI Bot config (server + env user) into JupyterLab (`0` leaves the bundled extension inert / manual) |
@@ -287,6 +296,11 @@ catalog is named in `~/.pegasusrc` (`pegasus.catalog.site.repo.file`):
   your workflows run"): a catalog published in pegasushub/pegasus-site-catalogs
   plus the `RESOURCE_*` allocation fields it uses (#468), or set for everyone
   with `STUDIO_SITE_CATALOG`. These also call their site `compute`.
+- **A site's own catalog** (`STUDIO_SITE_CATALOG_FILE`, set by an
+  administrator, e.g. in the Open OnDemand app's `site.env`): it takes the
+  place of `pegasus-studio.yml`, so the default above means *this* cluster
+  and everything built on it (the shared copy, `~/.pegasusrc`, Resources,
+  site overrides) works unchanged (#496).
 
 Either way the catalog is "hosted": a project's own `sites.yml` is merged over
 it, never replaced. The Run form offers the sites the project can plan against
@@ -320,6 +334,25 @@ Connecting to a different host is two things:
    reachable. Without a token the UI still loads but the Resources panel shows
    "unavailable" and submits fail auth.
 
+**Planning on the submit host.** When the schedd is on another machine, Studio
+runs `pegasus-plan` there as an HTCondor local-universe job
+(`services/remote_exec.py`), so the plan names the submit host's own paths.
+The run itself is still submitted from the session, so the submit host's
+Pegasus must be at the same paths (and the same series, whose site catalogs
+Studio ships: a different series is warned about in the run, #490). Three
+details matter off the hosted path, and are handled:
+
+- The schedd starts local- and scheduler-universe jobs (the planning job,
+  DAGMan) from its `SCHEDD_INTERVAL` timer, 300 s by default. Studio sends
+  `condor_reschedule` after every submit (`services/schedd.py`, #488, #494),
+  the same authorization a submit needs.
+- HTCondor resets `HOME` in a local-universe job to the account's passwd home;
+  the wrapper exports Studio's `HOME` itself, or DAGMan and `pegasus-monitord`
+  would keep Pegasus's master database in the user's real home (#508).
+- The JVM takes `user.home` from passwd, so `JAVA_TOOL_OPTIONS=-Duser.home`
+  points the planner at Studio's `~/.pegasusrc` (#489); the entrypoint sets it
+  too wherever passwd's home is not `$HOME`.
+
 The separate OSPool (OSG) capacity panel is configurable via `STUDIO_OSPOOL_CM`
 (empty disables it) and `STUDIO_OSPOOL_OWNER`.
 
@@ -346,7 +379,7 @@ npm run dev
 Tests / gates (CI runs neither — run before every PR):
 
 ```bash
-cd studio-api && pytest -q                       # ~930 tests
+cd studio-api && pytest -q                       # ~1000 tests
 cd studio-web && node_modules/.bin/tsc --noEmit   # NOT `npm test`/`npm run lint` — those don't work
 ```
 
