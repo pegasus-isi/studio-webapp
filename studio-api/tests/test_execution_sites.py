@@ -132,7 +132,8 @@ def test_published_catalog_is_labelled_by_cluster_and_styled_from_cache(
     # Nothing fetched yet: the cluster is still named, its scheduler unknown.
     assert compute == {
         "name": "compute", "style": None, "source": "hosted",
-        "label": "Unity (UMass)", "advanced": False,
+        "label": "Unity (UMass)", "advanced": False, "configured": True,
+        "missing": [],
     }
 
     import time
@@ -184,7 +185,7 @@ def test_generator_condorpool_is_demoted_once_a_cluster_is_chosen(
         str(tmp_path), environ={}, pegasusrc=_rc(tmp_path, "pegasus-studio.yml")
     )
     assert _names(result) == ["local", "condorpool", "compute"]
-    assert _advanced(result) == {"local": False, "condorpool": True, "compute": False}
+    assert _advanced(result) == {"local": True, "condorpool": True, "compute": False}
     assert result["default"] == "compute"
 
 
@@ -199,7 +200,7 @@ def test_generator_condorpool_is_demoted_under_a_deployment_site(tmp_path):
 def test_condorpool_stays_primary_when_nothing_else_is_chosen(tmp_path):
     _catalog(tmp_path / "sites.yml", [{"name": "condorpool", "profiles": CONDOR}])
     result = es.execution_sites(str(tmp_path), environ={}, pegasusrc=_rc(tmp_path))
-    assert _advanced(result) == {"local": False, "condorpool": False}
+    assert _advanced(result) == {"local": True, "condorpool": False}
     # And the fallback the portable generators add is never demoted either.
     bare = es.execution_sites(str(tmp_path / "x"), environ={}, pegasusrc=_rc(tmp_path))
     assert _advanced(bare)["condorpool"] is False
@@ -244,7 +245,7 @@ def test_deployment_site_is_offered_and_preselected(tmp_path):
     hpc = next(s for s in result["sites"] if s["name"] == "hpc")
     assert hpc == {
         "name": "hpc", "style": "slurm", "source": "deployment", "label": None,
-        "advanced": False,
+        "advanced": False, "configured": True, "missing": [],
     }
     assert result["default"] == "hpc"
 
@@ -288,3 +289,124 @@ def test_generator_default_outside_choices_is_ignored():
         params, environ={"STUDIO_SITE_STYLE": "slurm"}
     )
     assert out[0]["default"] == "auto"
+
+
+# ── "This machine", and whether a cluster is ready (#516) ──
+
+
+def test_local_is_the_main_choice_only_when_nothing_else_is(tmp_path):
+    # A pool exists, so the submit host is a "more places" option.
+    result = es.execution_sites(str(tmp_path), environ={}, pegasusrc=_rc(tmp_path))
+    local = result["sites"][0]
+    assert local["name"] == "local" and local["advanced"] is True
+
+
+def test_local_is_not_offered_where_the_deployment_is_a_batch_cluster(tmp_path):
+    # Open OnDemand: "this machine" is the login node.
+    env = {"STUDIO_EXEC_SITE": "hpc", "STUDIO_SITE_STYLE": "slurm"}
+    result = es.execution_sites(str(tmp_path), environ=env, pegasusrc=_rc(tmp_path))
+    assert _names(result) == ["hpc"]
+    assert result["default"] == "hpc"
+    # A deployment pool is not a batch cluster: the pod is still usable.
+    env = {"STUDIO_EXEC_SITE": "pool", "STUDIO_SITE_STYLE": "condor"}
+    result = es.execution_sites(str(tmp_path), environ=env, pegasusrc=_rc(tmp_path))
+    assert _names(result) == ["local", "pool"]
+
+
+def test_local_is_not_offered_with_an_administrators_slurm_catalog(
+    tmp_path, monkeypatch
+):
+    _studio_repo(tmp_path, monkeypatch, SLURM)
+    admin = tmp_path / "cluster.yml"
+    admin.write_text("# the admin's catalog, already installed in the repo\n")
+    monkeypatch.setenv("STUDIO_SITE_CATALOG_FILE", str(admin))
+    rc = _rc(tmp_path, "pegasus-studio.yml")
+    result = es.execution_sites(str(tmp_path), environ={}, pegasusrc=rc)
+    assert _names(result) == ["compute"]
+
+
+def test_local_stays_for_a_cluster_the_user_chose(tmp_path, monkeypatch):
+    # Unity chosen on the K8s deployment: the pod is still "this machine",
+    # fine for a small test, so it stays — behind "more places".
+    from services import site_config as sc
+
+    import time
+
+    import yaml
+
+    monkeypatch.setattr(sc, "_cache", {})
+    sc._cache["text:5.1:unity.yml"] = (
+        time.monotonic(),
+        yaml.safe_dump({"pegasus": "5.0", "sites": [{"name": "compute", "profiles": SLURM}]}),
+    )
+    result = es.execution_sites(
+        str(tmp_path), environ={}, pegasusrc=_rc(tmp_path, "unity.yml")
+    )
+    assert _names(result) == ["local", "compute"]
+    assert _advanced(result) == {"local": True, "compute": False}
+
+
+def _cached_catalog(monkeypatch, name, text):
+    from services import site_config as sc
+
+    import time
+
+    monkeypatch.setattr(sc, "_cache", {f"text:5.1:{name}": (time.monotonic(), text)})
+
+
+PERLMUTTER = """
+pegasus: "5.0"
+sites:
+- name: compute
+  profiles:
+    pegasus: {style: glite, project: "${RESOURCE_PROJECT}"}
+    condor: {grid_resource: batch slurm}
+    env: {SCRATCH: "${RESOURCE_SCRATCH_DIR}"}
+"""
+
+
+def test_a_cluster_whose_allocation_is_not_set_is_offered_but_not_ready(
+    tmp_path, monkeypatch
+):
+    _cached_catalog(monkeypatch, "nersc-perlmutter.yml", PERLMUTTER)
+    rc = _rc(tmp_path, "nersc-perlmutter.yml")
+    result = es.execution_sites(str(tmp_path), environ={}, pegasusrc=rc)
+    compute = next(s for s in result["sites"] if s["name"] == "compute")
+    assert compute["configured"] is False
+    assert compute["missing"] == [
+        "Project / allocation to charge", "Scratch directory on the cluster",
+    ]
+    # Still the default: the form shows it, disabled, with what it needs.
+    assert result["default"] == "compute"
+
+    problem = es.site_problem(str(tmp_path), "compute", environ={}, pegasusrc=rc)
+    assert problem is not None
+    assert "NERSC Perlmutter still needs Project / allocation to charge" in problem
+    assert "Resources page" in problem
+
+
+def test_a_cluster_with_its_allocation_set_is_ready(tmp_path, monkeypatch):
+    _cached_catalog(monkeypatch, "nersc-perlmutter.yml", PERLMUTTER)
+    rc = tmp_path / "pegasusrc"
+    rc.write_text(
+        "pegasus.catalog.site.repo.file = nersc-perlmutter.yml\n"
+        "env.RESOURCE_PROJECT = m1234\n"
+        "env.RESOURCE_SCRATCH_DIR = /pscratch/sd/k/kt\n"
+    )
+    result = es.execution_sites(str(tmp_path), environ={}, pegasusrc=rc)
+    compute = next(s for s in result["sites"] if s["name"] == "compute")
+    assert compute["configured"] is True and compute["missing"] == []
+    assert es.site_problem(str(tmp_path), "compute", environ={}, pegasusrc=rc) is None
+
+
+def test_a_catalog_not_fetched_yet_is_taken_as_ready(tmp_path, monkeypatch):
+    # Nothing is known about what it needs; refusing on that would block a
+    # cluster for a GitHub hiccup.
+    from services import site_config as sc
+
+    monkeypatch.setattr(sc, "_cache", {})
+    result = es.execution_sites(
+        str(tmp_path), environ={}, pegasusrc=_rc(tmp_path, "nersc-perlmutter.yml")
+    )
+    compute = next(s for s in result["sites"] if s["name"] == "compute")
+    assert compute["configured"] is True

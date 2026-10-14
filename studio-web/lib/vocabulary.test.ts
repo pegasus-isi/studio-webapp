@@ -84,6 +84,22 @@ describe("siteChoices", () => {
     expect(choices[2].label).toBe("Studio’s own pool (compute)");
   });
 
+  it("marks a cluster that still needs its allocation, and nothing else", () => {
+    const choices = siteChoices([
+      { name: "local", style: null, source: "default" },
+      {
+        name: "compute", style: "slurm", source: "hosted", label: "NERSC Perlmutter",
+        configured: false, missing: ["Project / allocation to charge"],
+      },
+      { name: "hpc", style: "slurm", source: "deployment", configured: true },
+    ]);
+    expect(choices.map((c) => c.missing)).toEqual([
+      undefined,
+      ["Project / allocation to charge"],
+      undefined,
+    ]);
+  });
+
   it("shows an unrecognised site by its name", () => {
     const [choice] = siteChoices([
       { name: "mysite", style: null, source: "project" },
