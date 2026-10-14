@@ -8,14 +8,14 @@ describe("siteChoices", () => {
     expect(siteChoices([])).toBe(EXECUTION_SITES);
   });
 
-  it("keeps the plain-language labels for local and a condor pool", () => {
+  it("keeps the plain-language labels for local and Studio's own pool", () => {
     const choices = siteChoices([
       { name: "local", style: null, source: "default" },
       { name: "condorpool", style: "condor", source: "default" },
     ]);
     expect(choices.map((c) => [c.value, c.label])).toEqual([
       ["local", "This machine"],
-      ["condorpool", "Shared cluster"],
+      ["condorpool", "Studio’s own pool"],
     ]);
   });
 
@@ -32,14 +32,25 @@ describe("siteChoices", () => {
     expect(slurm[0].label).toBe("HPC cluster");
   });
 
-  it("disambiguates two sites that would share a label", () => {
+  it("names another condor pool by its site, not as Studio's", () => {
     const choices = siteChoices([
       { name: "condorpool", style: "condor", source: "default" },
       { name: "gpu-pool", style: "condor", source: "project" },
     ]);
     expect(choices.map((c) => c.label)).toEqual([
-      "Shared cluster (condorpool)",
-      "Shared cluster (gpu-pool)",
+      "Studio’s own pool",
+      "gpu-pool",
+    ]);
+  });
+
+  it("disambiguates two sites that would share a label", () => {
+    const choices = siteChoices([
+      { name: "compute", style: "slurm", source: "hosted" },
+      { name: "hpc", style: "slurm", source: "project" },
+    ]);
+    expect(choices.map((c) => c.label)).toEqual([
+      "HPC cluster (compute)",
+      "HPC cluster (hpc)",
     ]);
   });
 
