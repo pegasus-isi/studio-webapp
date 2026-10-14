@@ -93,9 +93,10 @@ def _catalog_sites_text(text: str | None) -> dict[str, dict]:
     }
 
 
-def _hosted_catalog_view(name: str) -> tuple[str, dict[str, dict]]:
-    """(label, {site: entry}) for the hosted catalog `name`, read without a
-    plan having run.
+def _hosted_catalog_view(name: str) -> tuple[str, dict[str, dict], list[str]]:
+    """(label, {site: entry}, needs) for the hosted catalog `name`, read
+    without a plan having run. `needs` is the allocation variables the
+    catalog references; [] when its text is not at hand.
 
     The label is the cluster's name ("Unity (UMass)", "Studio's own pool"),
     which is what the run form shows: it does not change between the first
@@ -112,12 +113,10 @@ def _hosted_catalog_view(name: str) -> tuple[str, dict[str, dict]]:
     from services import site_config
 
     if name == site_config.STUDIO_CATALOG:
-        return site_config.default_label(), _catalog_sites_text(
-            site_config.studio_catalog_text()
-        )
-    return site_config.catalog_label(name), _catalog_sites_text(
-        site_config.cached_catalog_text(name)
-    )
+        label, text = site_config.default_label(), site_config.studio_catalog_text()
+    else:
+        label, text = site_config.catalog_label(name), site_config.cached_catalog_text(name)
+    return label, _catalog_sites_text(text), site_config.needed_vars(text or "")
 
 
 def site_style(entry: dict | None) -> str | None:
@@ -150,6 +149,9 @@ def execution_sites(
     so what the user reads does not depend on how much is known about the
     site's scheduler yet (#517). ``advanced`` marks a site the form should
     keep out of the main choice: still selectable, not offered as an equal.
+    ``configured`` is False, with ``missing`` naming the fields, when the
+    cluster's catalog references allocation details ~/.pegasusrc does not
+    set — a site to show, not to run on, until Resources is finished (#516).
     """
     env = os.environ if environ is None else environ
     sites: dict[str, dict[str, Any]] = {}
@@ -163,7 +165,7 @@ def execution_sites(
         if known is None:
             sites[name] = {
                 "name": name, "style": style, "source": source, "label": label,
-                "advanced": False,
+                "advanced": False, "configured": True, "missing": [],
             }
             return
         if known["style"] is None and style is not None:
@@ -175,8 +177,9 @@ def execution_sites(
     hosted = project_hosted_catalog(project_dir) or hosted_catalog(pegasusrc)
     hosted_label: str | None = None
     hosted_sites: dict[str, dict] = {}
+    hosted_needs: list[str] = []
     if hosted:
-        hosted_label, catalog_sites = _hosted_catalog_view(hosted)
+        hosted_label, catalog_sites, hosted_needs = _hosted_catalog_view(hosted)
         # The planner leaves a copy of the hosted file where it ran; it says
         # which sites the hosted catalog defines and how each submits. The
         # catalog itself is the fallback, so the answer is the same before
@@ -224,6 +227,21 @@ def execution_sites(
         # Kept reachable, under "more places", for a workflow bound to it.
         stale_pool["advanced"] = True
 
+    if hosted_needs:
+        # The cluster's catalog wants allocation details (${RESOURCE_*}).
+        # Without them the plan goes through and the job fails on the
+        # cluster, so the form shows the cluster and says what it still
+        # needs instead of letting Run find out (#516).
+        from services import site_config
+
+        rc_env = site_config.read_config(pegasusrc)["env"]
+        missing = site_config.missing_allocation(hosted_needs, rc_env)
+        if missing:
+            for site in sites.values():
+                if site["label"] == hosted_label:
+                    site["configured"] = False
+                    site["missing"] = list(missing)
+
     if deployment:
         default = deployment
     elif hosted and HOSTED_SITE in sites:
@@ -235,16 +253,40 @@ def execution_sites(
         # The project's own site, e.g. a Slurm `compute` in its sites.yml.
         default = next(iter(sites), "local")
 
-    return {
-        "default": default,
-        "sites": [
-            {
-                "name": "local", "style": None, "source": "default",
-                "label": None, "advanced": False,
-            }
-        ]
-        + list(sites.values()),
-    }
+    # "This machine" (#516). It is the submit host: the pod, which shares its
+    # CPU with JupyterLab and the AI tools, or under Open OnDemand the login
+    # node, where running work is usually against the rules. So it is the
+    # main choice only when nothing else is, a "more places" option once a
+    # pool or cluster is, and not offered at all where the deployment itself
+    # is a batch cluster — the administrator's catalog or STUDIO_EXEC_SITE
+    # with a Slurm/batch style. Planning against it stays possible (it is a
+    # built-in site): site_problem() does not refuse it.
+    offered = [
+        {
+            "name": "local", "style": None, "source": "default", "label": None,
+            "advanced": any(not s["advanced"] for s in sites.values()),
+            "configured": True, "missing": [],
+        }
+    ] + list(sites.values())
+    if _deployment_is_batch(sites, default, env):
+        offered = offered[1:]
+
+    return {"default": default, "sites": offered}
+
+
+def _deployment_is_batch(
+    sites: dict[str, dict[str, Any]], default: str, env: Any
+) -> bool:
+    """Whether the place this install runs things is a batch cluster: the
+    login node is then not somewhere to run an analysis."""
+    from services import site_config
+
+    chosen = sites.get(default)
+    if chosen is None or chosen["style"] not in ("slurm", "batch"):
+        return False
+    if chosen["source"] == "deployment":
+        return True
+    return chosen["source"] == "hosted" and site_config.admin_catalog_file() is not None
 
 
 async def prime_hosted_catalog(
@@ -359,8 +401,19 @@ def site_problem(
     if site in _BUILTIN_SITES:
         return None
     offered = execution_sites(project_dir, environ=environ, pegasusrc=pegasusrc)
-    if any(s["name"] == site for s in offered["sites"]):
+    found = next((s for s in offered["sites"] if s["name"] == site), None)
+    if found is not None and found["configured"]:
         return None
+    if found is not None:
+        # Offered, but its catalog wants allocation details that are not
+        # set. The plan would go through and the job fail on the cluster
+        # with the scheduler's own error (#516).
+        return (
+            f"{found['label'] or site} still needs "
+            f"{', '.join(found['missing'])} before an analysis can run "
+            "there. Fill that in on the Resources page, or pick another "
+            "place under “Where it runs”."
+        )
     return (
         f"Nothing defines an execution site named \u201c{site}\u201d for this "
         "workflow: there is no site catalog for it in the project, in its "
