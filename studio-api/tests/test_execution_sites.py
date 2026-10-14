@@ -325,6 +325,13 @@ def test_local_is_not_offered_with_an_administrators_slurm_catalog(
     assert _names(result) == ["compute"]
 
 
+def _no_studio_pool(tmp_path, monkeypatch):
+    """An install without Studio's own catalog (nothing in the image)."""
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(tmp_path / "no-repo"))
+    monkeypatch.setenv("STUDIO_SITE_REPO_IMAGE", str(tmp_path / "no-image"))
+    monkeypatch.delenv("STUDIO_SITE_CATALOG_FILE", raising=False)
+
+
 def test_local_stays_for_a_cluster_the_user_chose(tmp_path, monkeypatch):
     # Unity chosen on the K8s deployment: the pod is still "this machine",
     # fine for a small test, so it stays — behind "more places".
@@ -334,6 +341,7 @@ def test_local_stays_for_a_cluster_the_user_chose(tmp_path, monkeypatch):
 
     import yaml
 
+    _no_studio_pool(tmp_path, monkeypatch)
     monkeypatch.setattr(sc, "_cache", {})
     sc._cache["text:5.1:unity.yml"] = (
         time.monotonic(),
@@ -410,3 +418,88 @@ def test_a_catalog_not_fetched_yet_is_taken_as_ready(tmp_path, monkeypatch):
     )
     compute = next(s for s in result["sites"] if s["name"] == "compute")
     assert compute["configured"] is True
+
+
+# ── Studio's own pool beside a chosen cluster (#530) ──
+
+UNITY = """
+pegasus: "5.0"
+sites:
+- name: compute
+  profiles:
+    pegasus: {style: glite}
+    condor: {grid_resource: batch slurm}
+"""
+
+
+def test_studio_pool_is_offered_beside_the_chosen_cluster(tmp_path, monkeypatch):
+    _studio_repo(tmp_path, monkeypatch, CONDOR)
+    _cached_catalog(monkeypatch, "unity.yml", UNITY)
+    result = es.execution_sites(
+        str(tmp_path), environ={}, pegasusrc=_rc(tmp_path, "unity.yml")
+    )
+    assert _names(result) == ["local", "compute", "condorpool"]
+    pool = result["sites"][2]
+    assert pool["label"] == "Studio’s own pool"
+    assert pool["style"] == "condor"
+    assert pool["advanced"] is False and pool["configured"] is True
+    # The chosen cluster stays the default.
+    assert result["default"] == "compute"
+    assert es.site_problem(str(tmp_path), "condorpool", environ={},
+                           pegasusrc=_rc(tmp_path, "unity.yml")) is None
+
+
+def test_a_projects_leftover_condorpool_is_folded_into_the_pool(tmp_path, monkeypatch):
+    # #518 demotes the leftover; with the pool on offer it *is* the pool.
+    _studio_repo(tmp_path, monkeypatch, CONDOR)
+    _cached_catalog(monkeypatch, "unity.yml", UNITY)
+    _catalog(tmp_path / "sites.yml", [{"name": "condorpool", "profiles": CONDOR}])
+    result = es.execution_sites(
+        str(tmp_path), environ={}, pegasusrc=_rc(tmp_path, "unity.yml")
+    )
+    pool = next(s for s in result["sites"] if s["name"] == "condorpool")
+    assert pool["advanced"] is False
+    assert pool["label"] == "Studio’s own pool"
+    assert pool["source"] == "project"
+    assert _names(result).count("condorpool") == 1
+
+
+def test_no_second_pool_when_the_catalog_is_studios_own(tmp_path, monkeypatch):
+    # "compute" is the pool there; a condorpool beside it is the #480 bug.
+    _studio_repo(tmp_path, monkeypatch, CONDOR)
+    result = es.execution_sites(
+        str(tmp_path), environ={}, pegasusrc=_rc(tmp_path, "pegasus-studio.yml")
+    )
+    assert _names(result) == ["local", "compute"]
+
+
+def test_no_pool_where_the_deployment_names_its_site(tmp_path, monkeypatch):
+    _studio_repo(tmp_path, monkeypatch, CONDOR)
+    _cached_catalog(monkeypatch, "unity.yml", UNITY)
+    env = {"STUDIO_EXEC_SITE": "hpc", "STUDIO_SITE_STYLE": "slurm"}
+    result = es.execution_sites(
+        str(tmp_path), environ=env, pegasusrc=_rc(tmp_path, "unity.yml")
+    )
+    assert "condorpool" not in _names(result)
+
+
+def test_no_pool_with_an_administrators_catalog(tmp_path, monkeypatch):
+    # Open OnDemand: the local HTCondor submits to Slurm, it is not a pool.
+    _studio_repo(tmp_path, monkeypatch, SLURM)
+    admin = tmp_path / "cluster.yml"
+    admin.write_text("# admin catalog\n")
+    monkeypatch.setenv("STUDIO_SITE_CATALOG_FILE", str(admin))
+    _cached_catalog(monkeypatch, "unity.yml", UNITY)
+    result = es.execution_sites(
+        str(tmp_path), environ={}, pegasusrc=_rc(tmp_path, "unity.yml")
+    )
+    assert "condorpool" not in _names(result)
+
+
+def test_no_pool_where_the_image_ships_none(tmp_path, monkeypatch):
+    _no_studio_pool(tmp_path, monkeypatch)
+    _cached_catalog(monkeypatch, "unity.yml", UNITY)
+    result = es.execution_sites(
+        str(tmp_path), environ={}, pegasusrc=_rc(tmp_path, "unity.yml")
+    )
+    assert _names(result) == ["local", "compute"]

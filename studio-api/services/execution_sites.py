@@ -227,6 +227,27 @@ def execution_sites(
         # Kept reachable, under "more places", for a workflow bound to it.
         stale_pool["advanced"] = True
 
+    if _pool_beside_cluster(hosted, deployment):
+        # Studio's own pool, beside the cluster the user chose (#530).
+        # ~/.pegasusrc names one catalog and every catalog calls its site
+        # "compute", so choosing a cluster used to *replace* the pool: a
+        # quick test on the pool meant switching the cluster off again on
+        # Resources. The planner defines `condorpool` for the local HTCondor
+        # pool whenever no catalog names one (PM-1516), and on this
+        # deployment that is Studio's pool — verified: `-s condorpool` plans
+        # with unity.yml active. A project's leftover `condorpool` entry is
+        # the same pool, so it is folded in rather than demoted.
+        from services import site_config
+
+        pool = sites.get(DEFAULT_CONDOR_SITE)
+        if pool is None:
+            offer(DEFAULT_CONDOR_SITE, "condor", "deployment",
+                  site_config.default_label())
+        else:
+            pool["label"] = site_config.default_label()
+            pool["style"] = pool["style"] or "condor"
+            pool["advanced"] = False
+
     if hosted_needs:
         # The cluster's catalog wants allocation details (${RESOURCE_*}).
         # Without them the plan goes through and the job fails on the
@@ -272,6 +293,24 @@ def execution_sites(
         offered = offered[1:]
 
     return {"default": default, "sites": offered}
+
+
+def _pool_beside_cluster(hosted: str | None, deployment: str) -> bool:
+    """Whether this install has Studio's own pool to offer next to a chosen
+    hosted catalog. Not when the catalog *is* the pool's (then "compute" is
+    it, and offering it twice was #480), not where the deployment names its
+    own site, and not where an administrator's catalog stands in for the
+    pool (Open OnDemand: the local HTCondor is an access point to Slurm,
+    not a pool of its own)."""
+    from services import site_config
+
+    return bool(
+        hosted
+        and hosted != site_config.STUDIO_CATALOG
+        and not deployment
+        and site_config.admin_catalog_file() is None
+        and site_config.studio_pool_available()
+    )
 
 
 def _deployment_is_batch(
