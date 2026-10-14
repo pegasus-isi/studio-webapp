@@ -94,10 +94,10 @@ export function ToolCard({ tool }: Props) {
             {info.name}
             {info.paid && (
               <span
-                title="Runs on your own LLM API tokens"
+                title="Bring your own subscription: runs on your own LLM account or API tokens, not on anything Studio pays for"
                 className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
               >
-                Paid
+                Your subscription
               </span>
             )}
           </h3>

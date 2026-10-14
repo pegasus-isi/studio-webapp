@@ -182,7 +182,9 @@ class ToolInstaller:
 
 # Inline fallback registry (used when tool_registry.json doesn't exist).
 # Order here is the Workbench/Settings display order. `paid: True` flags tools
-# that run on the user's own LLM API tokens (shown as a "Paid" badge).
+# that run on the user's own LLM subscription or API tokens (shown as a
+# "Your subscription" badge: "Paid" read as if Studio charged for the tool,
+# #515).
 # JupyterLab (Notebooks nav) and PegasusAI Chat (built-in slide-in) are
 # intentionally NOT marketplace tools — they have dedicated entry points and
 # aren't installable AI CLIs.
