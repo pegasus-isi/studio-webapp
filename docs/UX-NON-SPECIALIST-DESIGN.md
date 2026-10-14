@@ -113,7 +113,7 @@ Pegasus terms survive only in Advanced disclosures and technical-detail panes.
 | job | Step |
 | DAG | Pipeline diagram |
 | held | Stuck (always paired with an action — see Phase 5) |
-| site / `condorpool` / `output_site` | Where it runs → *This machine* / *Shared cluster* |
+| site / `condorpool` / `output_site` | Where it runs → *This machine* / *Studio's own pool* |
 | Apptainer def / `.sif` | Software environment |
 | pool / slots / machines | Computing capacity |
 | pegasus-analyzer output | What went wrong |
