@@ -121,11 +121,11 @@ export default function ProvisioningPage() {
         ) : !poolUp ? (
           <div className="rounded-md border border-line bg-surface p-4">
             <p className="text-sm font-medium text-fg">
-              We can&apos;t reach the shared cluster right now.
+              We can&apos;t reach Studio&apos;s own pool right now.
             </p>
             <p className="mt-1 text-sm text-fgmuted">
               You can still run analyses on this machine. If you need the
-              cluster, this is worth reporting to whoever runs Studio
+              pool, this is worth reporting to whoever runs Studio
               {pool?.error ? ` — the error was: ${pool.error}` : ""}.
             </p>
           </div>

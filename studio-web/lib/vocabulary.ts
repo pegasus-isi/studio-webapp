@@ -77,7 +77,7 @@ export const TERMS = {
     ui: "Where it runs",
     pegasus: "execution site",
     definition:
-      "Whether your analysis runs on this machine or is sent out to a shared cluster.",
+      "Whether your analysis runs on this machine, on Studio’s own pool, or on a cluster you set up.",
   },
   analyzerOutput: {
     ui: "What went wrong",
@@ -124,10 +124,13 @@ export const EXECUTION_SITES: ReadonlyArray<SiteChoice> = [
   },
   {
     value: "condorpool",
-    label: "Shared cluster",
-    hint: "Best for a full analysis. Sends your steps out to many machines, which may mean waiting for a turn.",
+    label: "Studio’s own pool",
+    hint: "Studio’s own HTCondor pool. Best for a full analysis; your steps may wait for a free slot.",
   },
 ];
+
+const OTHER_POOL_HINT =
+  "An HTCondor pool from this project’s site catalog. Your steps may wait for a free slot.";
 
 const BATCH_CLUSTER: Omit<SiteChoice, "value"> = {
   label: "HPC cluster",
@@ -136,12 +139,14 @@ const BATCH_CLUSTER: Omit<SiteChoice, "value"> = {
 
 /**
  * "Where it runs" choices for the sites a project can actually plan against
- * (from the backend). Keeps the plain-language labels: a condor pool is the
- * "Shared cluster", a Slurm or other batch site the "HPC cluster" — the
- * scheduler's name is the answer to a question the user did not ask. A site
- * whose kind is unknown but came from a hosted catalog is a batch cluster
- * (that is all hosted catalogs describe). When two sites would share a label
- * the site name is appended, so the choice is never ambiguous.
+ * (from the backend). Keeps the plain-language labels: the default condor
+ * pool is "Studio's own pool", a Slurm or other batch site the "HPC cluster"
+ * — the scheduler's name is the answer to a question the user did not ask.
+ * Another condor pool shows its own name: calling it Studio's would claim
+ * something the project's catalog, not Studio, defines (#514). A site whose
+ * kind is unknown but came from a hosted catalog is a batch cluster (that is
+ * all hosted catalogs describe). When two sites would share a label the site
+ * name is appended, so the choice is never ambiguous.
  */
 export function siteChoices(
   sites: ReadonlyArray<{ name: string; style: string | null; source: string }> | undefined
@@ -155,8 +160,9 @@ export function siteChoices(
       s.style === "batch" ||
       (s.style === null && s.source === "hosted");
     if (batch) return { value: s.name, ...BATCH_CLUSTER };
-    if (s.style === "condor" || known) {
-      return { value: s.name, label: "Shared cluster", hint: EXECUTION_SITES[1].hint };
+    if (known) return known;
+    if (s.style === "condor") {
+      return { value: s.name, label: s.name, hint: OTHER_POOL_HINT };
     }
     return {
       value: s.name,
