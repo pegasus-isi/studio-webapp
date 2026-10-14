@@ -86,6 +86,91 @@ def test_hosted_catalog_before_first_plan_offers_compute_not_condorpool(tmp_path
     assert result["default"] == "compute"
 
 
+def _studio_repo(tmp_path, monkeypatch, profiles):
+    """Studio's own catalog as the image installs it, under a series dir."""
+    root = tmp_path / "site-catalogs"
+    conf = root / "5.1" / "conf"
+    conf.mkdir(parents=True)
+    _catalog(conf / "pegasus-studio.yml", [{"name": "compute", "profiles": profiles}])
+    monkeypatch.setenv("STUDIO_SITE_REPO", str(root))
+    monkeypatch.setenv("STUDIO_SITE_REPO_IMAGE", str(tmp_path / "no-image"))
+    monkeypatch.delenv("STUDIO_SITE_CATALOG_FILE", raising=False)
+    return root
+
+
+def test_studio_pool_is_labelled_and_a_condor_pool_before_first_plan(
+    tmp_path, monkeypatch
+):
+    # #517: the hosted "compute" used to be "HPC cluster" until the planner
+    # left a copy of the catalog in the project, then became a pool. The
+    # catalog itself is readable without a plan, so the answer is the same
+    # on the first visit as after the first run.
+    _studio_repo(tmp_path, monkeypatch, CONDOR)
+    rc = _rc(tmp_path, "pegasus-studio.yml")
+    result = es.execution_sites(str(tmp_path), environ={}, pegasusrc=rc)
+    compute = next(s for s in result["sites"] if s["name"] == "compute")
+    assert compute["style"] == "condor"
+    assert compute["label"] == "Studio’s own pool"
+    assert compute["source"] == "hosted"
+    assert result["default"] == "compute"
+
+    # After a plan the local copy says the same.
+    _catalog(tmp_path / "pegasus-studio.yml", [{"name": "compute", "profiles": CONDOR}])
+    again = es.execution_sites(str(tmp_path), environ={}, pegasusrc=rc)
+    assert [s for s in again["sites"] if s["name"] == "compute"] == [compute]
+
+
+def test_published_catalog_is_labelled_by_cluster_and_styled_from_cache(
+    tmp_path, monkeypatch
+):
+    from services import site_config as sc
+
+    monkeypatch.setattr(sc, "_cache", {})
+    rc = _rc(tmp_path, "unity.yml")
+    cold = es.execution_sites(str(tmp_path), environ={}, pegasusrc=rc)
+    compute = next(s for s in cold["sites"] if s["name"] == "compute")
+    # Nothing fetched yet: the cluster is still named, its scheduler unknown.
+    assert compute == {
+        "name": "compute", "style": None, "source": "hosted",
+        "label": "Unity (UMass)",
+    }
+
+    import time
+
+    import yaml
+
+    text = yaml.safe_dump(
+        {"pegasus": "5.0", "sites": [{"name": "compute", "profiles": SLURM}]}
+    )
+    sc._cache["text:5.1:unity.yml"] = (time.monotonic(), text)
+    warm = es.execution_sites(str(tmp_path), environ={}, pegasusrc=rc)
+    compute = next(s for s in warm["sites"] if s["name"] == "compute")
+    assert compute["style"] == "slurm"
+    assert compute["label"] == "Unity (UMass)"
+
+
+def test_overlay_on_hosted_catalog_keeps_the_cluster_label(tmp_path, monkeypatch):
+    _studio_repo(tmp_path, monkeypatch, CONDOR)
+    _catalog(
+        tmp_path / "sites.yml",
+        [{"name": "compute", "profiles": {"pegasus": {"project": "lab"}}}],
+    )
+    result = es.execution_sites(
+        str(tmp_path), environ={}, pegasusrc=_rc(tmp_path, "pegasus-studio.yml")
+    )
+    compute = next(s for s in result["sites"] if s["name"] == "compute")
+    assert compute["source"] == "project"
+    assert compute["label"] == "Studio’s own pool"
+    assert compute["style"] == "condor"
+
+
+def test_sites_without_a_hosted_catalog_carry_no_label(tmp_path):
+    result = es.execution_sites(
+        str(tmp_path), environ={"STUDIO_EXEC_SITE": "hpc"}, pegasusrc=_rc(tmp_path)
+    )
+    assert all(s["label"] is None for s in result["sites"])
+
+
 def test_overlay_without_style_takes_it_from_hosted_copy(tmp_path):
     _catalog(tmp_path / "unity.yml", [{"name": "compute", "profiles": SLURM}])
     _catalog(
@@ -105,7 +190,9 @@ def test_deployment_site_is_offered_and_preselected(tmp_path):
     env = {"STUDIO_EXEC_SITE": "hpc", "STUDIO_SITE_STYLE": "slurm"}
     result = es.execution_sites(str(tmp_path), environ=env, pegasusrc=_rc(tmp_path))
     hpc = next(s for s in result["sites"] if s["name"] == "hpc")
-    assert hpc == {"name": "hpc", "style": "slurm", "source": "deployment"}
+    assert hpc == {
+        "name": "hpc", "style": "slurm", "source": "deployment", "label": None,
+    }
     assert result["default"] == "hpc"
 
 

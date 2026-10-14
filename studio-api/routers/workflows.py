@@ -25,6 +25,7 @@ from services.execution_sites import (
     apply_generator_site_defaults,
     hide_managed_params,
     execution_sites,
+    prime_hosted_catalog,
 )
 from services.generator_introspect import PLAN_PARAMS, introspect_generator
 from services.procutil import communicate_or_kill
@@ -327,7 +328,9 @@ async def get_project_params(project_id: str) -> dict:
 
     # The sites this project can actually plan against, so "Where it runs"
     # offers `compute` on a Slurm/hosted-catalog install instead of a
-    # `condorpool` nothing defines there.
+    # `condorpool` nothing defines there. The published catalog is fetched
+    # first so the site's scheduler is known before the first plan (#517).
+    await prime_hosted_catalog(proj["project_dir"])
     sites = execution_sites(proj["project_dir"])
     plan_params = [
         {**p, "default": sites["default"]} if p["dest"] == "site" else p
