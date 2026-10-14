@@ -693,6 +693,14 @@ export async function getUIPreferences() {
   return request<UIPreferences>("/settings/ui");
 }
 
+export interface SiteMode {
+  hackathon_mode: boolean;
+}
+
+export async function getSiteMode() {
+  return request<SiteMode>("/settings/mode");
+}
+
 export async function updateUIPreferences(prefs: UIPreferences) {
   return request<UIPreferences>("/settings/ui", {
     method: "PUT",

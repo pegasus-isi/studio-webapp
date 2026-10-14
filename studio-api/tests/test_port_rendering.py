@@ -229,6 +229,10 @@ def test_supervisord_config_expands_the_port_environment(tmp_path, monkeypatch):
     # Referenced by the studio-web program; supervisord has no default syntax
     # for %(ENV_...)s, so it must be defined even when empty.
     monkeypatch.setenv("STUDIO_INTERNAL_SECRET", "")
+    # Gate the supervised `opencode serve` program; the entrypoint always
+    # exports both (supervisord has no default syntax for %(ENV_...)s).
+    monkeypatch.setenv("OPENCODE_AUTOSTART", "true")
+    monkeypatch.setenv("OPENCODE_AUTORESTART", "true")
 
     opts = options.ServerOptions()
     opts.configfile = os.path.join(_REPO, "docker", "supervisor", "supervisord.conf")
@@ -261,6 +265,8 @@ def test_supervisord_config_expands_the_port_environment(tmp_path, monkeypatch):
     assert "STUDIO_INTERNAL_SECRET" in commands["studio-web"].environment
     # nginx must be pointed at the rendered config; the baked one is gone.
     assert f"-c {runtime}/nginx.conf" in commands["nginx"].command
+    # The opencode engine program honors its autostart switches.
+    assert commands["opencode"].autostart is True
 
     # Runtime state is per session: on a shared host these are what two users
     # would otherwise collide on.

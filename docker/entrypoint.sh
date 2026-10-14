@@ -260,6 +260,29 @@ export STUDIO_URL_PREFIX
 export STUDIO_PORT STUDIO_API_PORT STUDIO_WEB_PORT STUDIO_JUPYTER_PORT \
        STUDIO_OPENCODE_PORT STUDIO_BIND_ADDR
 
+# Hackathon kiosk (STUDIO_HACKATHON_MODE=1): the OpenCode engine is not part
+# of the event. OPENCODE_AUTOSTART/AUTORESTART gate the supervised `opencode
+# serve` program below (supervisord has no default syntax for %(ENV_...)s, so
+# both are always exported). Values mirror the server-side flag reader
+# (studio-api/routers/settings.py:_hackathon_mode): 1/true/yes.
+case "$(printf '%s' "${STUDIO_HACKATHON_MODE:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes) OPENCODE_AUTOSTART=false; OPENCODE_AUTORESTART=false ;;
+    *)          OPENCODE_AUTOSTART=true;  OPENCODE_AUTORESTART=true ;;
+esac
+export OPENCODE_AUTOSTART OPENCODE_AUTORESTART
+
+# Remove the baked `opencode` CLI so no interactive shell (Studio terminal,
+# JupyterLab, SSH) can run it. Never fatal under `set -e`: a missing path on
+# a future image layout must not take boot down, and HOME-prefix copies
+# (user-installed, persistent home) are theirs — warn only, never delete.
+if [ "$OPENCODE_AUTOSTART" = "false" ]; then
+    rm -rf /opt/npm-global/lib/node_modules/opencode-ai \
+           /opt/npm-global/bin/opencode 2>/dev/null || true
+    if command -v opencode >/dev/null 2>&1; then
+        echo "[studio] WARNING: opencode still on PATH after prune: $(command -v opencode)" >&2
+    fi
+fi
+
 # Not under $HOME: in K8s the home is NFS-backed and a unix domain socket
 # (supervisor.sock) cannot live on NFS. /tmp is local in both models, and the
 # uid suffix is what keeps two users on one shared host out of each other's

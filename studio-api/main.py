@@ -90,6 +90,15 @@ async def _reconcile_installed_tools() -> None:
 
     from services.installer import get_tool_info
 
+    if os.environ.get("STUDIO_HACKATHON_MODE", "").strip().lower() in ("1", "true", "yes"):
+        # Kiosk: never (re)install tool binaries. The entrypoint removes the
+        # baked opencode CLI, and without this guard the repair loop below
+        # puts it straight back from any pre-kiosk DB row still marked
+        # installed. Stale rows stay stored but inert — the tools API already
+        # hides them and refuses installs.
+        log.info("reconcile_skipped", reason="hackathon_mode")
+        return
+
     installed = await db.list_tools()
     for tool in installed:
         tool_id = tool["tool_id"]

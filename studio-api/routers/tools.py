@@ -18,6 +18,17 @@ router = APIRouter(prefix="/api/tools", tags=["tools"])
 installer = ToolInstaller()
 
 
+def _hackathon_mode() -> bool:
+    """Whether the hackathon kiosk restrictions apply (STUDIO_HACKATHON_MODE).
+
+    Read at call time so tests can flip it with monkeypatch.setenv. Default
+    off: unset means the full tool marketplace.
+    """
+    return os.environ.get("STUDIO_HACKATHON_MODE", "").strip().lower() in (
+        "1", "true", "yes",
+    )
+
+
 def _is_pid_alive(pid: int | None) -> bool:
     """Check if a process is still running."""
     if not pid:
@@ -36,6 +47,11 @@ async def list_tools() -> dict[str, list[ToolDetailResponse]]:
     Auto-corrects stale 'running' status when the process is dead.
     """
     from main import db
+
+    if _hackathon_mode():
+        # Kiosk: Settings shows the Bash Terminal launcher only. Installed
+        # rows (if any linger in the DB) stay stored but are not offered.
+        return {"tools": []}
 
     registry = get_all_tools()
     installed = {t["tool_id"]: t for t in await db.list_tools()}
@@ -71,6 +87,8 @@ async def list_tools() -> dict[str, list[ToolDetailResponse]]:
 
 @router.get("/{tool_id}", response_model=ToolDetailResponse)
 async def get_tool(tool_id: str) -> ToolDetailResponse:
+    if _hackathon_mode():
+        raise HTTPException(status_code=404, detail="Tools are disabled for this event")
     from main import db
 
     info = get_tool_info(tool_id)
@@ -102,6 +120,10 @@ async def get_tool(tool_id: str) -> ToolDetailResponse:
 
 @router.post("/{tool_id}/install", response_model=InstallResponse)
 async def install_tool(tool_id: str) -> InstallResponse:
+    if _hackathon_mode():
+        # 403, not 404: the tool exists — reinstalling it is what's refused,
+        # otherwise opencode comes back with one click.
+        raise HTTPException(status_code=403, detail="Installing tools is disabled for this event")
     from main import db
 
     try:

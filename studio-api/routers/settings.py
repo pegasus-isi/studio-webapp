@@ -332,7 +332,24 @@ class UIPreferences(BaseModel):
     chat_engine: Literal["builtin", "opencode"] = "builtin"
 
 
+def _hackathon_mode() -> bool:
+    """Whether the hackathon kiosk restrictions apply (STUDIO_HACKATHON_MODE).
+
+    Read at call time so tests can flip it with monkeypatch.setenv. Default
+    off: unset means the full product.
+    """
+    return os.environ.get("STUDIO_HACKATHON_MODE", "").strip().lower() in (
+        "1", "true", "yes",
+    )
+
+
 _UI_PREFS_KEY = "ui_preferences"
+
+
+@router.get("/mode")
+async def get_site_mode() -> dict[str, bool]:
+    """Deployment feature flags the UI gates on (hackathon kiosk mode)."""
+    return {"hackathon_mode": _hackathon_mode()}
 
 
 @router.get("/ui", response_model=UIPreferences)
@@ -345,7 +362,7 @@ async def get_ui_preferences() -> UIPreferences:
         stored = {}
     known = {k: v for k, v in stored.items() if k in UIPreferences.model_fields}
     try:
-        return UIPreferences(**known)
+        prefs = UIPreferences(**known)
     except ValidationError:
         # A stored *value* that no longer validates — a retired `chat_engine`
         # name, a string where a bool belongs — must not 500 this endpoint and
@@ -359,7 +376,13 @@ async def get_ui_preferences() -> UIPreferences:
                 log.warning("ui_preference_invalid", key=key, value=value)
                 continue
             safe[key] = value
-        return UIPreferences(**safe)
+        prefs = UIPreferences(**safe)
+    if _hackathon_mode():
+        # Kiosk: the OpenCode engine is not installed in this image, so a
+        # stored "opencode" (e.g. a persistent home from before the event)
+        # must not strand the panel on a dead engine.
+        prefs = prefs.model_copy(update={"chat_engine": "builtin"})
+    return prefs
 
 
 @router.put("/ui", response_model=UIPreferences)
@@ -367,6 +390,9 @@ async def update_ui_preferences(req: UIPreferences) -> UIPreferences:
     """Replace UI preferences wholesale (the payload is small and complete)."""
     from main import db
 
+    if _hackathon_mode() and req.chat_engine != "builtin":
+        req = req.model_copy(update={"chat_engine": "builtin"})
+        log.info("ui_preference_engine_forced_builtin", reason="hackathon_mode")
     await db.set_setting(_UI_PREFS_KEY, req.model_dump())
     log.info("ui_preferences_updated", **req.model_dump())
     return req

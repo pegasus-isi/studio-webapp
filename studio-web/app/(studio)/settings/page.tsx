@@ -10,6 +10,7 @@ import {
   useValidateProvider,
 } from "@/lib/hooks/use-llm";
 import { useTools } from "@/lib/hooks/use-tools";
+import { useHackathonMode } from "@/lib/hooks/use-site-mode";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
 import {
   useUIPreferences,
@@ -153,6 +154,7 @@ export default function SettingsPage() {
 /* ─── LLM Providers Tab ─── */
 
 function ProvidersTab() {
+  const kiosk = useHackathonMode();
   const { data: providerData } = useProviders();
   const { data: configData, isLoading } = useProviderConfigs();
   const upsertConfig = useUpsertProviderConfig();
@@ -246,11 +248,12 @@ function ProvidersTab() {
             );
           }}
           isSaving={upsertConfig.isPending}
+          kiosk={kiosk}
         />
       ))}
 
-      {/* Add provider */}
-      {showAdd ? (
+      {/* Add provider (hidden in hackathon kiosk mode). */}
+      {!kiosk && (showAdd ? (
         <div className="rounded-lg border border-dashed border-line bg-base p-4">
           <div className="flex items-center gap-2">
             <select
@@ -291,6 +294,7 @@ function ProvidersTab() {
         >
           + Add Provider
         </button>
+      )
       )}
     </div>
   );
@@ -305,6 +309,7 @@ function ProviderCard({
   onActivate,
   onDelete,
   isSaving,
+  kiosk = false,
 }: {
   config: ProviderConfig;
   presets: { id: string; name: string; base_url: string | null; default_model: string; api_key_env: string | null }[];
@@ -319,6 +324,9 @@ function ProviderCard({
   onActivate: () => Promise<void>;
   onDelete: () => Promise<void>;
   isSaving: boolean;
+  /** Hackathon kiosk: hides Remove (deleting the last provider would void the
+      LLM config with no add-form to recover). */
+  kiosk?: boolean;
 }) {
   const validate = useValidateProvider();
 
@@ -419,12 +427,14 @@ function ProviderCard({
               Set Active
             </button>
           )}
-          <button
-            onClick={onDelete}
-            className="text-xs text-red-500 hover:text-red-700 dark:text-rose-400"
-          >
-            Remove
-          </button>
+          {!kiosk && (
+            <button
+              onClick={onDelete}
+              className="text-xs text-red-500 hover:text-red-700 dark:text-rose-400"
+            >
+              Remove
+            </button>
+          )}
         </div>
       </div>
 
@@ -671,6 +681,7 @@ function KnowledgeSection() {
 }
 
 function ToolsTab() {
+  const kiosk = useHackathonMode();
   const { data, isLoading } = useTools();
   const addTab = useToolStore((s) => s.addTab);
   const setTerminalOpen = usePanelStore((s) => s.setTerminalOpen);
@@ -685,8 +696,9 @@ function ToolsTab() {
   return (
     <div className="space-y-5">
       <p className="text-sm text-fgmuted">
-        Install, launch, and manage AI coding tools. Starting a terminal tool
-        opens it in the terminal panel below.
+        {kiosk
+          ? "Open a bash shell below. AI tools are disabled for this event."
+          : "Install, launch, and manage AI coding tools. Starting a terminal tool opens it in the terminal panel below."}
       </p>
 
       {/* Bash terminal launcher (moved here from the old Workbench). */}
@@ -706,21 +718,22 @@ function ToolsTab() {
         </span>
       </button>
 
-      <KnowledgeSection />
+      {!kiosk && <KnowledgeSection />}
 
-      {isLoading ? (
-        <p className="text-sm text-fgsubtle">Loading tools...</p>
-      ) : tools.length === 0 ? (
-        <p className="text-sm text-fgmuted">
-          No tools available. Check your tool registry configuration.
-        </p>
-      ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {tools.map((tool) => (
-            <ToolCard key={tool.info.id} tool={tool} />
-          ))}
-        </div>
-      )}
+      {!kiosk &&
+        (isLoading ? (
+          <p className="text-sm text-fgsubtle">Loading tools...</p>
+        ) : tools.length === 0 ? (
+          <p className="text-sm text-fgmuted">
+            No tools available. Check your tool registry configuration.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {tools.map((tool) => (
+              <ToolCard key={tool.info.id} tool={tool} />
+            ))}
+          </div>
+        ))}
     </div>
   );
 }
@@ -932,6 +945,7 @@ function TelemetrySection() {
  * rollback.
  */
 function ChatEngineSection() {
+  const kiosk = useHackathonMode();
   const { prefs } = useUIPreferences();
   const update = useUpdateUIPreferences();
   const [status, setStatus] = useState<oc.EngineStatus | null>(null);
@@ -945,7 +959,10 @@ function ChatEngineSection() {
       );
   }, []);
 
-  useEffect(refresh, [refresh]);
+  useEffect(() => {
+    // Kiosk: no engine to query (and nothing renders the result).
+    if (!kiosk) refresh();
+  }, [refresh, kiosk]);
 
   const restart = async () => {
     setRestarting(true);
@@ -974,31 +991,38 @@ function ChatEngineSection() {
             the simpler loop Studio has always used.
           </p>
         </div>
-        <select
-          value={prefs.chat_engine}
-          disabled={update.isPending}
-          onChange={(e) => {
-            update.mutate(
-              { chat_engine: e.target.value as "builtin" | "opencode" },
-              {
-                // Announced only once the save has landed. Another document
-                // responds by refetching the preference, so announcing first
-                // raced the PUT: it could read the old value and then never
-                // hear again, leaving the notebook chat on the engine the user
-                // had just switched away from. This document doesn't wait —
-                // its cache is updated optimistically by the hook.
-                onSuccess: () => announceEngineChange(),
-              }
-            );
-          }}
-          className="mt-0.5 shrink-0 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:opacity-50"
-        >
-          <option value="builtin">Built-in</option>
-          <option value="opencode">OpenCode</option>
-        </select>
+        {!kiosk && (
+          <select
+            value={prefs.chat_engine}
+            disabled={update.isPending}
+            onChange={(e) => {
+              update.mutate(
+                { chat_engine: e.target.value as "builtin" | "opencode" },
+                {
+                  // Announced only once the save has landed. Another document
+                  // responds by refetching the preference, so announcing first
+                  // raced the PUT: it could read the old value and then never
+                  // hear again, leaving the notebook chat on the engine the user
+                  // had just switched away from. This document doesn't wait —
+                  // its cache is updated optimistically by the hook.
+                  onSuccess: () => announceEngineChange(),
+                }
+              );
+            }}
+            className="mt-0.5 shrink-0 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:opacity-50"
+          >
+            <option value="builtin">Built-in</option>
+            <option value="opencode">OpenCode</option>
+          </select>
+        )}
+        {kiosk && (
+          <span className="mt-0.5 shrink-0 rounded border border-line px-2 py-1 text-xs text-fgmuted">
+            Built-in — set for this event
+          </span>
+        )}
       </div>
 
-      {onOpenCode && (
+      {!kiosk && onOpenCode && (
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-xs">
           <span className="text-fgmuted">Engine:</span>
           {status === null ? (
