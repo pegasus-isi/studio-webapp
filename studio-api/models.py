@@ -66,7 +66,7 @@ class ToolInfo(BaseModel):
     supports_mcp: bool = False
     supports_web: bool = False
     required_env: list[str] = Field(default_factory=list)
-    paid: bool = False  # runs on the user's own LLM API tokens
+    paid: bool = False  # runs on the user's own LLM subscription/API tokens
     knowledge_adapter: str | None = None
     icon: str | None = None
     homepage: str | None = None
