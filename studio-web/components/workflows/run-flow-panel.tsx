@@ -75,13 +75,21 @@ function SiteOption({
   selected: boolean;
   onChoose: (value: string) => void;
 }) {
+  // Not ready: shown where the user expects the cluster they chose, but
+  // not selectable, and the hint says what it needs rather than what it is
+  // good for.
+  const needs = site.missing ?? [];
+  const ready = needs.length === 0;
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+        "flex items-start gap-3 rounded-lg border p-3 transition-colors",
+        ready ? "cursor-pointer" : "cursor-not-allowed opacity-70",
         selected
           ? "border-pegasus-400 bg-pegasus-50 dark:bg-pegasus-400/10"
-          : "border-line hover:bg-base"
+          : ready
+            ? "border-line hover:bg-base"
+            : "border-dashed border-line"
       )}
     >
       <input
@@ -90,11 +98,23 @@ function SiteOption({
         className="mt-0.5"
         value={site.value}
         checked={selected}
+        disabled={!ready}
         onChange={() => onChoose(site.value)}
       />
       <span>
-        <span className="block text-sm font-medium text-fg">{site.label}</span>
-        <span className="block text-xs text-fgmuted">{site.hint}</span>
+        <span className="block text-sm font-medium text-fg">
+          {site.label}
+          {!ready && (
+            <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+              Needs setup
+            </span>
+          )}
+        </span>
+        <span className="block text-xs text-fgmuted">
+          {ready
+            ? site.hint
+            : `Still needs ${needs.join(", ").toLowerCase()}. Finish setting it up on Resources.`}
+        </span>
       </span>
     </label>
   );
@@ -159,6 +179,11 @@ export function RunFlowPanel({
   const advancedSites = useMemo(() => sites.filter((s) => s.advanced), [sites]);
   const chosenSite = String(values["site"] ?? defaultSite);
   const chosenIsAdvanced = advancedSites.some((s) => s.value === chosenSite);
+  // A cluster whose catalog wants allocation details that are not set is
+  // shown, so the user sees what they chose on Resources, but cannot be run
+  // on: the plan would go through and the job fail on the cluster with the
+  // scheduler's own error (#516).
+  const chosenNeeds = sites.find((s) => s.value === chosenSite)?.missing ?? [];
 
   const genParams = useMemo(
     () => allGenParams.filter((p) => !siteParams.includes(p)),
@@ -622,7 +647,9 @@ export function RunFlowPanel({
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <button
             onClick={handleRun}
-            disabled={running || starting || missing.length > 0}
+            disabled={
+              running || starting || missing.length > 0 || chosenNeeds.length > 0
+            }
             className="rounded-md bg-pegasus-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-pegasus-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {running ? "Running…" : starting ? "Starting…" : "Run"}
@@ -632,6 +659,15 @@ export function RunFlowPanel({
           {missing.length > 0 && (
             <p className="text-sm text-amber-700 dark:text-amber-400">
               Fill in {missing.join(", ")} to run.
+            </p>
+          )}
+          {missing.length === 0 && chosenNeeds.length > 0 && (
+            <p className="text-sm text-amber-700 dark:text-amber-400">
+              This cluster still needs {chosenNeeds.join(", ").toLowerCase()}.{" "}
+              <AppLink href="/provisioning" className="underline">
+                Finish setting it up on Resources
+              </AppLink>
+              , or pick another place.
             </p>
           )}
         </div>

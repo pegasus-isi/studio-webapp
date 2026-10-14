@@ -387,6 +387,21 @@ def needed_vars(catalog_text: str) -> list[str]:
     return seen
 
 
+def missing_allocation(needs: list[str], env: dict[str, str]) -> list[str]:
+    """The allocation fields a catalog references that ~/.pegasusrc does not
+    set, as the labels the Resources form shows for them (#516).
+
+    A catalog whose placeholders are unfilled still plans, and the job then
+    fails on the cluster with the scheduler's own error, which names neither
+    the field nor the page that sets it. The Resources form refuses to save
+    with a field empty, so this is normally [] — but ~/.pegasusrc can be
+    edited by hand, and a catalog can grow a new placeholder upstream.
+    """
+    return [
+        FIELD_LABELS.get(var, var) for var in needs if not (env.get(var) or "").strip()
+    ]
+
+
 async def _get(client: httpx.AsyncClient, url: str, **kw: Any) -> httpx.Response:
     resp = await client.get(url, **kw)
     resp.raise_for_status()

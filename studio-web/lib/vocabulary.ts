@@ -116,6 +116,8 @@ export interface SiteChoice {
   readonly hint: string;
   /** Offered under "more places" rather than as one of the main choices. */
   readonly advanced?: boolean;
+  /** What the cluster still needs before it can be used; empty when ready. */
+  readonly missing?: ReadonlyArray<string>;
 }
 
 export const EXECUTION_SITES: ReadonlyArray<SiteChoice> = [
@@ -162,13 +164,19 @@ export function siteChoices(
         source: string;
         label?: string | null;
         advanced?: boolean;
+        configured?: boolean;
+        missing?: string[];
       }>
     | undefined
 ): ReadonlyArray<SiteChoice> {
   if (!sites || sites.length === 0) return EXECUTION_SITES;
   const base = sites.map((s): SiteChoice => {
-    const choice = describeSite(s);
-    return s.advanced ? { ...choice, advanced: true } : choice;
+    let choice = describeSite(s);
+    if (s.advanced) choice = { ...choice, advanced: true };
+    // Only an explicit "not configured" marks a site; an older backend says
+    // nothing and every site is taken as usable.
+    if (s.configured === false) choice = { ...choice, missing: s.missing ?? [] };
+    return choice;
   });
   const counts = new Map<string, number>();
   for (const c of base) counts.set(c.label, (counts.get(c.label) ?? 0) + 1);

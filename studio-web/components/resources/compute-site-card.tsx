@@ -111,6 +111,16 @@ export function ComputeSiteCard() {
   const current = data?.catalog
     ? `${data.catalogs.find((c) => c.name === data.catalog)?.label ?? data.catalog} (site “compute”)`
     : `${defaultLabel} (site “${data?.site ?? "compute"}”)`;
+  // Which clusters are usable as they stand, and which are only on offer
+  // (#516). One catalog is active at a time, so "ready" is the default pool
+  // and the chosen cluster when its allocation is complete; every other
+  // published catalog is something to set up, not something configured.
+  // Listing them all alike read as if they were all available.
+  const readyNames = new Set<string>(
+    data?.catalog && data.configured ? [data.catalog] : []
+  );
+  const toSetUp = (data?.catalogs ?? []).filter((c) => !readyNames.has(c.name));
+  const stillNeeds = (data?.missing ?? []).map((m) => m.toLowerCase()).join(", ");
 
   return (
     <section className="rounded-xl border border-line bg-surface p-4">
@@ -121,6 +131,12 @@ export function ComputeSiteCard() {
           <p className="mt-0.5 text-xs text-fgmuted">
             {isLoading ? "Checking…" : <>Now: <span className="font-medium text-fg">{current}</span></>}
           </p>
+          {data && !data.configured && (
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+              Not ready yet: still needs {stillNeeds}. Workflows cannot run
+              there until it is filled in below.
+            </p>
+          )}
         </div>
       </div>
 
@@ -154,12 +170,25 @@ export function ComputeSiteCard() {
               }}
               className="mt-1 block w-full max-w-md rounded-md border border-line bg-base px-2 py-1.5 text-sm text-fg outline-none focus:border-pegasus-400"
             >
-              <option value={NONE}>{defaultLabel} (no setup needed)</option>
-              {data.catalogs.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.label}
-                </option>
-              ))}
+              <optgroup label="Ready to use">
+                <option value={NONE}>{defaultLabel} (no setup needed)</option>
+                {data.catalogs
+                  .filter((c) => readyNames.has(c.name))
+                  .map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.label} (set up)
+                    </option>
+                  ))}
+              </optgroup>
+              {toSetUp.length > 0 && (
+                <optgroup label="Available to set up">
+                  {toSetUp.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
             <span className="mt-1 block text-[11px] font-normal text-fgsubtle">
               Site catalogs published by the Pegasus team

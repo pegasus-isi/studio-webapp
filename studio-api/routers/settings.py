@@ -444,8 +444,17 @@ async def _compute_site_view() -> dict:
     catalogs = [c for c in catalogs if c["name"] != site_config.STUDIO_CATALOG]
     if current["catalog"] and not any(c["name"] == current["catalog"] for c in catalogs):
         catalogs = [{"name": current["catalog"], "label": current["catalog"], "needs": []}] + catalogs
+    # Whether the chosen cluster can be used as it stands (#516). The form
+    # refuses to save with a field empty, so this is False only when
+    # ~/.pegasusrc was edited by hand or the catalog grew a placeholder.
+    needs = next(
+        (c["needs"] for c in catalogs if c["name"] == current["catalog"]), []
+    ) if current["catalog"] else []
+    missing = site_config.missing_allocation(needs, current["env"])
     return {
         **current,
+        "configured": not missing,
+        "missing": missing,
         # Every hosted catalog names its execution site "compute", and so does
         # Studio's own pool (#474). Only with no catalog at all is it Pegasus'
         # built-in "condorpool".

@@ -515,6 +515,11 @@ export interface ExecutionSite {
       "more places"): a generator-written condorpool once a cluster has been
       chosen (#518). Absent on a backend that predates it. */
   advanced?: boolean;
+  /** False when the cluster's catalog wants allocation details that are
+      not set; `missing` then names them as the Resources form does (#516).
+      Absent on a backend that predates it. */
+  configured?: boolean;
+  missing?: string[];
 }
 
 export async function renameWorkflowProject(projectId: string, name: string) {
@@ -1306,6 +1311,10 @@ export interface ComputeSite {
   /** What to call the default catalog: "Studio's own pool", or the
    *  cluster's own when an administrator supplied one (#496). */
   default_label: string;
+  /** Whether the chosen cluster can be used as it stands; `missing` names
+   *  the allocation fields it still needs (#516). */
+  configured: boolean;
+  missing: string[];
 }
 
 /** A profile set on a site over the active catalog:

@@ -426,3 +426,12 @@ def test_a_missing_admin_file_changes_nothing(tmp_path, monkeypatch):
     assert sc.install_admin_catalog() is False
     assert sc.default_label() == "Studio’s own pool"
     assert (repo / "6.0" / "conf" / "pegasus-studio.yml").read_text() == "sites: []\n"
+
+
+def test_missing_allocation_names_the_fields_the_form_shows():
+    needs = ["RESOURCE_USERNAME", "RESOURCE_PROJECT", "RESOURCE_OTHER"]
+    env = {"RESOURCE_USERNAME": "kt", "RESOURCE_PROJECT": "  "}
+    assert sc.missing_allocation(needs, env) == [
+        "Project / allocation to charge", "RESOURCE_OTHER",
+    ]
+    assert sc.missing_allocation([], {}) == []
