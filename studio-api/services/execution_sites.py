@@ -26,6 +26,7 @@ A deployment can steer the defaults without touching any workflow
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any
@@ -67,10 +68,20 @@ def hosted_catalog(pegasusrc: Path | None = None) -> str | None:
 def _catalog_sites(path: str) -> dict[str, dict]:
     """{site name: entry} from a Pegasus 5 site catalog; {} if unreadable."""
     try:
+        with open(path) as fh:
+            return _catalog_sites_text(fh.read())
+    except OSError:
+        return {}
+
+
+def _catalog_sites_text(text: str | None) -> dict[str, dict]:
+    """{site name: entry} from site-catalog YAML; {} for none or a bad one."""
+    if not text:
+        return {}
+    try:
         import yaml
 
-        with open(path) as fh:
-            data = yaml.safe_load(fh)
+        data = yaml.safe_load(text)
     except Exception:  # noqa: BLE001 — a bad catalog just offers nothing
         return {}
     if not isinstance(data, dict) or not isinstance(data.get("sites"), list):
@@ -80,6 +91,33 @@ def _catalog_sites(path: str) -> dict[str, dict]:
         for s in data["sites"]
         if isinstance(s, dict) and s.get("name")
     }
+
+
+def _hosted_catalog_view(name: str) -> tuple[str, dict[str, dict]]:
+    """(label, {site: entry}) for the hosted catalog `name`, read without a
+    plan having run.
+
+    The label is the cluster's name ("Unity (UMass)", "Studio's own pool"),
+    which is what the run form shows: it does not change between the first
+    visit and the first plan, unlike the site's style, which used to be known
+    only once the planner left a copy of the catalog in the project. Before
+    that, Studio's own pool was labelled an HPC cluster and switched to a
+    pool after one run (#517).
+
+    Studio's own catalog is read from the image or the shared copy; a
+    published one from the listing cache, which the Resources page and the
+    params route keep warm — and may be cold, in which case only the label
+    is known and the entries are {}.
+    """
+    from services import site_config
+
+    if name == site_config.STUDIO_CATALOG:
+        return site_config.default_label(), _catalog_sites_text(
+            site_config.studio_catalog_text()
+        )
+    return site_config.catalog_label(name), _catalog_sites_text(
+        site_config.cached_catalog_text(name)
+    )
 
 
 def site_style(entry: dict | None) -> str | None:
@@ -102,43 +140,61 @@ def execution_sites(
     environ: dict[str, str] | None = None,
     pegasusrc: Path | None = None,
 ) -> dict[str, Any]:
-    """{"default": name, "sites": [{name, style, source}, ...]} for a project.
+    """{"default": name, "sites": [{name, style, source, label}, ...]}.
 
     ``local`` is always offered first (planning on the submit host needs no
     catalog entry). ``source`` says where a site came from — "project"
     (its sites.yml), "hosted", "deployment" or "default" — so the UI can
-    describe it honestly.
+    describe it honestly. ``label`` is the cluster's own name for a site a
+    hosted catalog defines (None otherwise): the run form shows it as is,
+    so what the user reads does not depend on how much is known about the
+    site's scheduler yet (#517).
     """
     env = os.environ if environ is None else environ
     sites: dict[str, dict[str, Any]] = {}
 
-    def offer(name: str, style: str | None, source: str) -> None:
+    def offer(
+        name: str, style: str | None, source: str, label: str | None = None
+    ) -> None:
         if name == "local":
             return
         known = sites.get(name)
         if known is None:
-            sites[name] = {"name": name, "style": style, "source": source}
-        elif known["style"] is None and style is not None:
+            sites[name] = {
+                "name": name, "style": style, "source": source, "label": label,
+            }
+            return
+        if known["style"] is None and style is not None:
             known["style"] = style
+        if known["label"] is None and label is not None:
+            known["label"] = label
 
     project_sites = _catalog_sites(os.path.join(project_dir, "sites.yml"))
     hosted = project_hosted_catalog(project_dir) or hosted_catalog(pegasusrc)
-    # The planner leaves a copy of the hosted file where it ran; it says which
-    # sites the hosted catalog defines and how each submits.
-    hosted_sites = (
-        _catalog_sites(os.path.join(project_dir, hosted)) if hosted else {}
-    )
+    hosted_label: str | None = None
+    hosted_sites: dict[str, dict] = {}
+    if hosted:
+        hosted_label, catalog_sites = _hosted_catalog_view(hosted)
+        # The planner leaves a copy of the hosted file where it ran; it says
+        # which sites the hosted catalog defines and how each submits. The
+        # catalog itself is the fallback, so the answer is the same before
+        # the first plan.
+        hosted_sites = (
+            _catalog_sites(os.path.join(project_dir, hosted)) or catalog_sites
+        )
 
     for name, entry in project_sites.items():
-        # An overlay on a hosted catalog may state no style of its own.
+        # An overlay on a hosted catalog may state no style of its own, and
+        # is still that cluster.
+        overlay = name in hosted_sites or (hosted and name == HOSTED_SITE)
         offer(name, site_style(entry) or site_style(hosted_sites.get(name)),
-              "project")
+              "project", hosted_label if overlay else None)
     for name, entry in hosted_sites.items():
-        offer(name, site_style(entry), "hosted")
+        offer(name, site_style(entry), "hosted", hosted_label)
     if hosted and not hosted_sites:
-        # Not planned here yet, so no local copy: hosted catalogs all call
-        # their site "compute" and describe batch clusters.
-        offer(HOSTED_SITE, None, "hosted")
+        # Neither planned here nor in the cache: hosted catalogs all call
+        # their site "compute"; which scheduler is behind it is not known.
+        offer(HOSTED_SITE, None, "hosted", hosted_label)
 
     deployment = (env.get("STUDIO_EXEC_SITE") or "").strip()
     if deployment and deployment != "local":
@@ -163,9 +219,32 @@ def execution_sites(
 
     return {
         "default": default,
-        "sites": [{"name": "local", "style": None, "source": "default"}]
+        "sites": [
+            {"name": "local", "style": None, "source": "default", "label": None}
+        ]
         + list(sites.values()),
     }
+
+
+async def prime_hosted_catalog(
+    project_dir: str, *, pegasusrc: Path | None = None
+) -> None:
+    """Fetch (into the cache) the published catalog this project plans
+    against, so execution_sites() can read its sites' styles synchronously.
+
+    Studio's own catalog is a local file and needs no fetching. Failures are
+    the cache's own business: the sites are still offered, by label.
+    """
+    from services import site_config
+
+    hosted = project_hosted_catalog(project_dir) or hosted_catalog(pegasusrc)
+    if not hosted or hosted == site_config.STUDIO_CATALOG:
+        return
+    if site_config.cached_catalog_text(hosted) is not None:
+        return
+    loop = asyncio.get_running_loop()
+    version = await loop.run_in_executor(None, site_config._local_version)
+    await site_config.catalog_text(hosted, site_config.series(version))
 
 
 def project_hosted_catalog(project_dir: str) -> str | None:

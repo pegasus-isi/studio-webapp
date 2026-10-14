@@ -462,6 +462,23 @@ def studio_catalog_text() -> str | None:
     return None
 
 
+def catalog_label(name: str) -> str:
+    """The cluster's name for a published catalog, or the file name."""
+    return _LABELS.get(name, name)
+
+
+def cached_catalog_text(name: str) -> str | None:
+    """A published catalog's YAML if catalog_text() fetched it within the
+    hour, for any Pegasus series; None otherwise. Never fetches: this is
+    for callers that cannot await (services/execution_sites)."""
+    suffix = f":{name}"
+    now = time.monotonic()
+    for key, (stamp, text) in _cache.items():
+        if key.startswith("text:") and key.endswith(suffix) and now - stamp < _CACHE_TTL:
+            return text
+    return None
+
+
 async def catalog_text(name: str, ref: str | None) -> str | None:
     """A published catalog's YAML, cached like the listing."""
     if not _SAFE_CATALOG.match(name):
