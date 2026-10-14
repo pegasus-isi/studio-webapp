@@ -54,6 +54,24 @@ describe("siteChoices", () => {
     ]);
   });
 
+  it("labels a hosted catalog's site by its cluster, whatever is known of its scheduler", () => {
+    const before = siteChoices([
+      { name: "compute", style: null, source: "hosted", label: "Studio’s own pool" },
+    ]);
+    const after = siteChoices([
+      { name: "compute", style: "condor", source: "hosted", label: "Studio’s own pool" },
+    ]);
+    expect(before[0].label).toBe("Studio’s own pool");
+    expect(after[0].label).toBe("Studio’s own pool");
+    expect(after[0].hint).toBe(EXECUTION_SITES[1].hint);
+
+    const unity = siteChoices([
+      { name: "compute", style: "slurm", source: "hosted", label: "Unity (UMass)" },
+    ]);
+    expect(unity[0]).toMatchObject({ value: "compute", label: "Unity (UMass)" });
+    expect(unity[0].hint).toMatch(/batch scheduler/);
+  });
+
   it("shows an unrecognised site by its name", () => {
     const [choice] = siteChoices([
       { name: "mysite", style: null, source: "project" },

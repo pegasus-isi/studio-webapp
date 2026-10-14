@@ -130,12 +130,16 @@ export const EXECUTION_SITES: ReadonlyArray<SiteChoice> = [
 ];
 
 const OTHER_POOL_HINT =
-  "An HTCondor pool from this project’s site catalog. Your steps may wait for a free slot.";
+  "An HTCondor pool. Best for a full analysis; your steps may wait for a free slot.";
 
 const BATCH_CLUSTER: Omit<SiteChoice, "value"> = {
   label: "HPC cluster",
   hint: "Best for a full analysis on this cluster. Submits your steps to its batch scheduler, which may mean waiting in its queue.",
 };
+
+/** A hosted catalog's site whose scheduler is not known (not fetched yet). */
+const CLUSTER_HINT =
+  "Best for a full analysis. Submits your steps to this cluster's scheduler, which may mean waiting in its queue.";
 
 /**
  * "Where it runs" choices for the sites a project can actually plan against
@@ -149,12 +153,33 @@ const BATCH_CLUSTER: Omit<SiteChoice, "value"> = {
  * name is appended, so the choice is never ambiguous.
  */
 export function siteChoices(
-  sites: ReadonlyArray<{ name: string; style: string | null; source: string }> | undefined
+  sites:
+    | ReadonlyArray<{
+        name: string;
+        style: string | null;
+        source: string;
+        label?: string | null;
+      }>
+    | undefined
 ): ReadonlyArray<SiteChoice> {
   if (!sites || sites.length === 0) return EXECUTION_SITES;
   const base = sites.map((s): SiteChoice => {
     const known = EXECUTION_SITES.find((e) => e.value === s.name);
     if (s.name === "local" && known) return known;
+    if (s.label) {
+      // A hosted catalog's site is the cluster it names. The label is fixed;
+      // only the hint follows the scheduler, which may not be known until
+      // the catalog has been fetched (#517).
+      const hint =
+        s.style === "condor"
+          ? s.label === EXECUTION_SITES[1].label
+            ? EXECUTION_SITES[1].hint
+            : OTHER_POOL_HINT
+          : s.style === "slurm" || s.style === "batch"
+            ? BATCH_CLUSTER.hint
+            : CLUSTER_HINT;
+      return { value: s.name, label: s.label, hint };
+    }
     const batch =
       s.style === "slurm" ||
       s.style === "batch" ||

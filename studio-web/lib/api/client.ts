@@ -510,6 +510,10 @@ export interface ExecutionSite {
   /** Where the site came from: "project" (its sites.yml), "hosted",
       "deployment" or "default". */
   source: string;
+  /** The cluster's own name when a hosted catalog defines the site
+      ("Unity (UMass)", "Studio's own pool"); null otherwise, and absent on a
+      backend that predates it. */
+  label?: string | null;
 }
 
 export async function renameWorkflowProject(projectId: string, name: string) {
