@@ -72,6 +72,18 @@ describe("siteChoices", () => {
     expect(unity[0].hint).toMatch(/batch scheduler/);
   });
 
+  it("carries the backend's advanced flag through, and only that", () => {
+    const choices = siteChoices([
+      { name: "local", style: null, source: "default", advanced: false },
+      { name: "condorpool", style: "condor", source: "project", advanced: true },
+      { name: "compute", style: "condor", source: "hosted", label: "Studio’s own pool" },
+    ]);
+    expect(choices.map((c) => c.advanced ?? false)).toEqual([false, true, false]);
+    // Demoted, not relabelled: it is still the pool it always was.
+    expect(choices[1].label).toBe("Studio’s own pool (condorpool)");
+    expect(choices[2].label).toBe("Studio’s own pool (compute)");
+  });
+
   it("shows an unrecognised site by its name", () => {
     const [choice] = siteChoices([
       { name: "mysite", style: null, source: "project" },

@@ -132,7 +132,7 @@ def test_published_catalog_is_labelled_by_cluster_and_styled_from_cache(
     # Nothing fetched yet: the cluster is still named, its scheduler unknown.
     assert compute == {
         "name": "compute", "style": None, "source": "hosted",
-        "label": "Unity (UMass)",
+        "label": "Unity (UMass)", "advanced": False,
     }
 
     import time
@@ -164,6 +164,58 @@ def test_overlay_on_hosted_catalog_keeps_the_cluster_label(tmp_path, monkeypatch
     assert compute["style"] == "condor"
 
 
+def _advanced(result):
+    return {s["name"]: s["advanced"] for s in result["sites"]}
+
+
+def test_generator_condorpool_is_demoted_once_a_cluster_is_chosen(
+    tmp_path, monkeypatch
+):
+    # #518: the quickstart was generated before the user chose a cluster, so
+    # its sites.yml carries condorpool; after choosing one, the form showed
+    # both as equals. The chosen cluster is the choice; the leftover pool is
+    # kept behind "more places".
+    _studio_repo(tmp_path, monkeypatch, CONDOR)
+    _catalog(
+        tmp_path / "sites.yml",
+        [{"name": "local"}, {"name": "condorpool", "profiles": CONDOR}],
+    )
+    result = es.execution_sites(
+        str(tmp_path), environ={}, pegasusrc=_rc(tmp_path, "pegasus-studio.yml")
+    )
+    assert _names(result) == ["local", "condorpool", "compute"]
+    assert _advanced(result) == {"local": False, "condorpool": True, "compute": False}
+    assert result["default"] == "compute"
+
+
+def test_generator_condorpool_is_demoted_under_a_deployment_site(tmp_path):
+    _catalog(tmp_path / "sites.yml", [{"name": "condorpool", "profiles": CONDOR}])
+    env = {"STUDIO_EXEC_SITE": "hpc", "STUDIO_SITE_STYLE": "slurm"}
+    result = es.execution_sites(str(tmp_path), environ=env, pegasusrc=_rc(tmp_path))
+    assert _advanced(result)["condorpool"] is True
+    assert result["default"] == "hpc"
+
+
+def test_condorpool_stays_primary_when_nothing_else_is_chosen(tmp_path):
+    _catalog(tmp_path / "sites.yml", [{"name": "condorpool", "profiles": CONDOR}])
+    result = es.execution_sites(str(tmp_path), environ={}, pegasusrc=_rc(tmp_path))
+    assert _advanced(result) == {"local": False, "condorpool": False}
+    # And the fallback the portable generators add is never demoted either.
+    bare = es.execution_sites(str(tmp_path / "x"), environ={}, pegasusrc=_rc(tmp_path))
+    assert _advanced(bare)["condorpool"] is False
+
+
+def test_a_project_condor_site_under_another_name_is_not_demoted(tmp_path, monkeypatch):
+    # Only the generator's default pool is a leftover; a pool the project
+    # deliberately defines is a real choice.
+    _studio_repo(tmp_path, monkeypatch, CONDOR)
+    _catalog(tmp_path / "sites.yml", [{"name": "gpu-pool", "profiles": CONDOR}])
+    result = es.execution_sites(
+        str(tmp_path), environ={}, pegasusrc=_rc(tmp_path, "pegasus-studio.yml")
+    )
+    assert _advanced(result)["gpu-pool"] is False
+
+
 def test_sites_without_a_hosted_catalog_carry_no_label(tmp_path):
     result = es.execution_sites(
         str(tmp_path), environ={"STUDIO_EXEC_SITE": "hpc"}, pegasusrc=_rc(tmp_path)
@@ -192,6 +244,7 @@ def test_deployment_site_is_offered_and_preselected(tmp_path):
     hpc = next(s for s in result["sites"] if s["name"] == "hpc")
     assert hpc == {
         "name": "hpc", "style": "slurm", "source": "deployment", "label": None,
+        "advanced": False,
     }
     assert result["default"] == "hpc"
 
