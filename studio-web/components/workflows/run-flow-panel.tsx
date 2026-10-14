@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
-import { siteChoices } from "@/lib/vocabulary";
+import { siteChoices, type SiteChoice } from "@/lib/vocabulary";
 import { GlossaryTerm } from "@/components/ui/glossary-term";
 import { AppLink } from "@/components/layout/app-link";
 import { cn } from "@/lib/utils";
@@ -64,6 +64,41 @@ const STAGE_TONE: Record<RunFlowStage["status"], string> = {
   skipped: "text-fgsubtle",
   failed: "text-red-600 dark:text-rose-400",
 };
+
+
+function SiteOption({
+  site,
+  selected,
+  onChoose,
+}: {
+  site: SiteChoice;
+  selected: boolean;
+  onChoose: (value: string) => void;
+}) {
+  return (
+    <label
+      className={cn(
+        "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+        selected
+          ? "border-pegasus-400 bg-pegasus-50 dark:bg-pegasus-400/10"
+          : "border-line hover:bg-base"
+      )}
+    >
+      <input
+        type="radio"
+        name="run-site"
+        className="mt-0.5"
+        value={site.value}
+        checked={selected}
+        onChange={() => onChoose(site.value)}
+      />
+      <span>
+        <span className="block text-sm font-medium text-fg">{site.label}</span>
+        <span className="block text-xs text-fgmuted">{site.hint}</span>
+      </span>
+    </label>
+  );
+}
 
 export function RunFlowPanel({
   projectId,
@@ -116,6 +151,14 @@ export function RunFlowPanel({
   // offers a site nothing defines on a Slurm or hosted-catalog install.
   const defaultSite = params?.sites?.default ?? "condorpool";
   const sites = useMemo(() => siteChoices(params?.sites?.sites), [params]);
+  // A site the backend demoted — a generator-written condorpool once a
+  // cluster has been chosen (#518) — is offered under "More places", so the
+  // main choice is the one the user made on Resources. If a saved value
+  // points at one, that group opens so the selection is never invisible.
+  const primarySites = useMemo(() => sites.filter((s) => !s.advanced), [sites]);
+  const advancedSites = useMemo(() => sites.filter((s) => s.advanced), [sites]);
+  const chosenSite = String(values["site"] ?? defaultSite);
+  const chosenIsAdvanced = advancedSites.some((s) => s.value === chosenSite);
 
   const genParams = useMemo(
     () => allGenParams.filter((p) => !siteParams.includes(p)),
@@ -499,39 +542,32 @@ export function RunFlowPanel({
             </AppLink>
           </legend>
           <div className="mt-2 space-y-2">
-            {sites.map((site) => {
-              const selected =
-                String(values["site"] ?? defaultSite) === site.value;
-              return (
-                <label
-                  key={site.value}
-                  className={cn(
-                    "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
-                    selected
-                      ? "border-pegasus-400 bg-pegasus-50 dark:bg-pegasus-400/10"
-                      : "border-line hover:bg-base"
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="run-site"
-                    className="mt-0.5"
-                    value={site.value}
-                    checked={selected}
-                    onChange={() => chooseSite(site.value)}
-                  />
-                  <span>
-                    <span className="block text-sm font-medium text-fg">
-                      {site.label}
-                    </span>
-                    <span className="block text-xs text-fgmuted">
-                      {site.hint}
-                    </span>
-                  </span>
-                </label>
-              );
-            })}
+            {primarySites.map((site) => (
+              <SiteOption
+                key={site.value}
+                site={site}
+                selected={chosenSite === site.value}
+                onChoose={chooseSite}
+              />
+            ))}
           </div>
+          {advancedSites.length > 0 && (
+            <details className="mt-2" open={chosenIsAdvanced || undefined}>
+              <summary className="cursor-pointer text-xs font-medium text-fgmuted hover:text-fg">
+                More places ({advancedSites.length})
+              </summary>
+              <div className="mt-2 space-y-2">
+                {advancedSites.map((site) => (
+                  <SiteOption
+                    key={site.value}
+                    site={site}
+                    selected={chosenSite === site.value}
+                    onChoose={chooseSite}
+                  />
+                ))}
+              </div>
+            </details>
+          )}
         </fieldset>
 
         {/* What pressing Run will actually do. A non-specialist has no way to

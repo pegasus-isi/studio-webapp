@@ -148,7 +148,8 @@ def execution_sites(
     describe it honestly. ``label`` is the cluster's own name for a site a
     hosted catalog defines (None otherwise): the run form shows it as is,
     so what the user reads does not depend on how much is known about the
-    site's scheduler yet (#517).
+    site's scheduler yet (#517). ``advanced`` marks a site the form should
+    keep out of the main choice: still selectable, not offered as an equal.
     """
     env = os.environ if environ is None else environ
     sites: dict[str, dict[str, Any]] = {}
@@ -162,6 +163,7 @@ def execution_sites(
         if known is None:
             sites[name] = {
                 "name": name, "style": style, "source": source, "label": label,
+                "advanced": False,
             }
             return
         if known["style"] is None and style is not None:
@@ -206,6 +208,22 @@ def execution_sites(
         # preselect a pool that does not exist there.
         offer(DEFAULT_CONDOR_SITE, "condor", "default")
 
+    stale_pool = sites.get(DEFAULT_CONDOR_SITE)
+    if (
+        stale_pool is not None
+        and (hosted or deployment)
+        and stale_pool["source"] == "project"
+        and stale_pool["style"] in ("condor", None)
+    ):
+        # The generator wrote a `condorpool` into sites.yml — the portable
+        # generators do that when they run before a cluster is chosen, and
+        # older ones always — and it stays there after the user picks a
+        # cluster on Resources. Offered as an equal, the form showed two
+        # places to run when the user had chosen one (#518). On Studio's own
+        # deployment it is the same pool as "compute" under another name.
+        # Kept reachable, under "more places", for a workflow bound to it.
+        stale_pool["advanced"] = True
+
     if deployment:
         default = deployment
     elif hosted and HOSTED_SITE in sites:
@@ -220,7 +238,10 @@ def execution_sites(
     return {
         "default": default,
         "sites": [
-            {"name": "local", "style": None, "source": "default", "label": None}
+            {
+                "name": "local", "style": None, "source": "default",
+                "label": None, "advanced": False,
+            }
         ]
         + list(sites.values()),
     }

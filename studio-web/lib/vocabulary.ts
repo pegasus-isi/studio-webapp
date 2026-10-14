@@ -114,6 +114,8 @@ export interface SiteChoice {
   readonly value: string;
   readonly label: string;
   readonly hint: string;
+  /** Offered under "more places" rather than as one of the main choices. */
+  readonly advanced?: boolean;
 }
 
 export const EXECUTION_SITES: ReadonlyArray<SiteChoice> = [
@@ -159,41 +161,14 @@ export function siteChoices(
         style: string | null;
         source: string;
         label?: string | null;
+        advanced?: boolean;
       }>
     | undefined
 ): ReadonlyArray<SiteChoice> {
   if (!sites || sites.length === 0) return EXECUTION_SITES;
   const base = sites.map((s): SiteChoice => {
-    const known = EXECUTION_SITES.find((e) => e.value === s.name);
-    if (s.name === "local" && known) return known;
-    if (s.label) {
-      // A hosted catalog's site is the cluster it names. The label is fixed;
-      // only the hint follows the scheduler, which may not be known until
-      // the catalog has been fetched (#517).
-      const hint =
-        s.style === "condor"
-          ? s.label === EXECUTION_SITES[1].label
-            ? EXECUTION_SITES[1].hint
-            : OTHER_POOL_HINT
-          : s.style === "slurm" || s.style === "batch"
-            ? BATCH_CLUSTER.hint
-            : CLUSTER_HINT;
-      return { value: s.name, label: s.label, hint };
-    }
-    const batch =
-      s.style === "slurm" ||
-      s.style === "batch" ||
-      (s.style === null && s.source === "hosted");
-    if (batch) return { value: s.name, ...BATCH_CLUSTER };
-    if (known) return known;
-    if (s.style === "condor") {
-      return { value: s.name, label: s.name, hint: OTHER_POOL_HINT };
-    }
-    return {
-      value: s.name,
-      label: s.name,
-      hint: "A site from this project's site catalog.",
-    };
+    const choice = describeSite(s);
+    return s.advanced ? { ...choice, advanced: true } : choice;
   });
   const counts = new Map<string, number>();
   for (const c of base) counts.set(c.label, (counts.get(c.label) ?? 0) + 1);
@@ -202,6 +177,44 @@ export function siteChoices(
       ? { ...c, label: `${c.label} (${c.value})` }
       : c
   );
+}
+
+function describeSite(s: {
+  name: string;
+  style: string | null;
+  source: string;
+  label?: string | null;
+}): SiteChoice {
+  const known = EXECUTION_SITES.find((e) => e.value === s.name);
+  if (s.name === "local" && known) return known;
+  if (s.label) {
+    // A hosted catalog's site is the cluster it names. The label is fixed;
+    // only the hint follows the scheduler, which may not be known until
+    // the catalog has been fetched (#517).
+    const hint =
+      s.style === "condor"
+        ? s.label === EXECUTION_SITES[1].label
+          ? EXECUTION_SITES[1].hint
+          : OTHER_POOL_HINT
+        : s.style === "slurm" || s.style === "batch"
+          ? BATCH_CLUSTER.hint
+          : CLUSTER_HINT;
+    return { value: s.name, label: s.label, hint };
+  }
+  const batch =
+    s.style === "slurm" ||
+    s.style === "batch" ||
+    (s.style === null && s.source === "hosted");
+  if (batch) return { value: s.name, ...BATCH_CLUSTER };
+  if (known) return known;
+  if (s.style === "condor") {
+    return { value: s.name, label: s.name, hint: OTHER_POOL_HINT };
+  }
+  return {
+    value: s.name,
+    label: s.name,
+    hint: "A site from this project's site catalog.",
+  };
 }
 
 /**
