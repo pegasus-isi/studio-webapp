@@ -78,6 +78,29 @@ def admin_catalog_file() -> str | None:
     return path if path and os.path.isfile(path) else None
 
 
+def deployment() -> str:
+    """Which kind of install this is: ``"hosted"`` or ``"ood"`` (#532).
+
+    The two differ in how a user reaches more compute. On the hosted
+    deployment the pool is Studio's own and extra capacity comes from an
+    HTCondor annex the user leases from a cluster they have an account on.
+    Under Open OnDemand the cluster *is* the install, described by the
+    administrator's catalog (STUDIO_SITE_CATALOG_FILE / STUDIO_SITE_CATALOG
+    in site.env), and an annex makes no sense. The Resources page shows a
+    different set of cards for each.
+
+    Derived from whether an admin catalog is configured, because that is
+    what every OOD install sets and no hosted pod does. STUDIO_DEPLOYMENT
+    overrides it, for a local test instance of either shape.
+    """
+    forced = os.environ.get("STUDIO_DEPLOYMENT", "").strip().lower()
+    if forced in ("hosted", "ood"):
+        return forced
+    if admin_catalog_file() or os.environ.get("STUDIO_SITE_CATALOG", "").strip():
+        return "ood"
+    return "hosted"
+
+
 def default_label() -> str:
     """What the Resources page calls the default catalog."""
     if admin_catalog_file():

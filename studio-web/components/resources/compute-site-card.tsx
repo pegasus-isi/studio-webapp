@@ -1,50 +1,38 @@
 "use client";
 
 /**
- * "Where your workflows run": the hosted site catalog and allocation (#468).
+ * "Where your workflows run": the cluster this install sits on, and the
+ * user's allocation there (#468, #532).
  *
- * Workflows no longer define where they run (the pegasus-gromacs template,
- * #466). The site comes from a centrally hosted catalog named in
- * ~/.pegasusrc, and the allocation travels as RESOURCE_* properties the
- * catalog references — the ACCESS setup, done from a form instead of a
- * notebook cell. The fields shown are the ones the chosen catalog actually
- * uses, so Unity asks for nothing and NERSC asks for three.
+ * Shown on the Open OnDemand app only. There the execution site "compute"
+ * is the administrator's catalog (STUDIO_SITE_CATALOG_FILE or a published
+ * one named by STUDIO_SITE_CATALOG in site.env), so the cluster is a fact
+ * of the install, not a choice: the card names it and asks for the
+ * allocation fields that catalog references (RESOURCE_*), the ACCESS setup
+ * done from a form instead of a notebook cell. Unity asks for nothing and
+ * NERSC asks for three.
  *
- * "Advanced: site settings" (#478) adds profiles on top of the catalog —
- * a condor requirement, a queue, an env var — as Pegasus' own
- * pegasus.catalog.site.sites.* properties, so the published catalog stays
- * untouched and the planner merges them in. Kept per cluster: every catalog
- * calls its site "compute", so one cluster's settings must not follow the
- * user to the next.
+ * Until #532 this card also offered every published catalog to pick from.
+ * Those describe "compute" as a BLAHP site on the cluster's own access
+ * point, which only an install on that cluster can use; on the hosted
+ * deployment the way to a cluster is an annex (see annex-panel.tsx), so the
+ * picker had no deployment left to serve.
+ *
+ * "Advanced: site settings" (#478) adds profiles on top of the catalog, a
+ * Slurm queue say, as Pegasus' own pegasus.catalog.site.sites.* properties,
+ * so the published catalog stays untouched and the planner merges them in.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Server, X } from "lucide-react";
+import { Server } from "lucide-react";
 import * as api from "@/lib/api/client";
-
-const NONE = "";
-
-// Suggestions only; any namespace key Pegasus accepts can be typed.
-const KEY_HINTS: Record<string, string[]> = {
-  condor: ["requirements", "request_memory", "request_cpus", "request_disk", "+ProjectName", "priority"],
-  pegasus: ["queue", "project", "runtime", "cores", "nodes", "memory", "glite.arguments", "auxillary.local"],
-  env: ["PATH", "PYTHONPATH", "OMP_NUM_THREADS"],
-  dagman: ["retry", "maxjobs", "post.scope"],
-  globus: ["maxwalltime", "queue", "project"],
-  selector: ["execution.site"],
-};
-
-type Row = api.SiteOverride;
-
-const blankRow = (): Row => ({ site: "compute", namespace: "condor", key: "", value: "" });
-const filled = (rows: Row[]) => rows.filter((r) => r.key.trim());
-const sameRows = (a: Row[], b: Row[]) =>
-  JSON.stringify(filled(a).map((r) => [r.site, r.namespace, r.key, r.value])) ===
-  JSON.stringify(filled(b).map((r) => [r.site, r.namespace, r.key, r.value]));
-
-const inputCls =
-  "rounded-md border border-line bg-base px-2 py-1 font-mono text-xs text-fg outline-none focus:border-pegasus-400";
+import {
+  SiteOverridesEditor,
+  filled,
+  sameRows,
+  type Row,
+} from "@/components/resources/site-overrides-editor";
 
 export function ComputeSiteCard() {
   const qc = useQueryClient();
@@ -52,36 +40,33 @@ export function ComputeSiteCard() {
     queryKey: ["compute-site"],
     queryFn: () => api.getComputeSite(),
   });
-  const [catalog, setCatalog] = useState<string>(NONE);
   const [env, setEnv] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const slotFor = (name: string) =>
-    name || (data?.studio_pool_available ? "studio" : "none");
-
-  // Start from what is stored; re-seed when the server's view changes.
+  // Start from what is stored; re-seed only when the stored values change,
+  // not on every refetch, or a refresh would throw away what is being typed.
+  const savedValues = data ? JSON.stringify([data.env, data.overrides]) : null;
   useEffect(() => {
     if (!data) return;
-    setCatalog(data.catalog ?? NONE);
     setEnv(data.env);
     setRows(data.overrides);
     if (data.overrides.length) setShowAdvanced(true);
-  }, [data]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedValues]);
 
   const option = useMemo(
-    () => data?.catalogs.find((c) => c.name === catalog),
-    [data, catalog]
+    () => data?.catalogs.find((c) => c.name === data.catalog),
+    [data]
   );
   const needs = option?.needs ?? [];
 
   const save = useMutation({
     mutationFn: () =>
       api.updateComputeSite(
-        catalog || null,
-        // Send every field the catalog uses, and clear the ones it doesn't,
-        // so switching clusters leaves no stale account behind.
+        data?.catalog ?? null,
+        // Send every field the catalog uses, and clear the ones it doesn't.
         Object.fromEntries(
           Array.from(new Set([...Object.keys(env), ...needs])).map((k) => [
             k,
@@ -100,26 +85,17 @@ export function ComputeSiteCard() {
 
   const dirty =
     !!data &&
-    ((data.catalog ?? NONE) !== catalog ||
-      needs.some((k) => (data.env[k] ?? "") !== (env[k] ?? "")) ||
+    (needs.some((k) => (data.env[k] ?? "") !== (env[k] ?? "")) ||
       !sameRows(data.overrides, rows));
   const rowProblem = filled(rows).find((r) => !r.value.trim() || !r.site.trim());
   const missing = needs.filter((k) => !(env[k] ?? "").trim());
 
-  // The cluster's own catalog when an administrator supplied one (#496).
-  const defaultLabel = data?.default_label ?? "Studio’s own pool";
-  const current = data?.catalog
-    ? `${data.catalogs.find((c) => c.name === data.catalog)?.label ?? data.catalog} (site “compute”)`
-    : `${defaultLabel} (site “${data?.site ?? "compute"}”)`;
-  // Which clusters are usable as they stand, and which are only on offer
-  // (#516). One catalog is active at a time, so "ready" is the default pool
-  // and the chosen cluster when its allocation is complete; every other
-  // published catalog is something to set up, not something configured.
-  // Listing them all alike read as if they were all available.
-  const readyNames = new Set<string>(
-    data?.catalog && data.configured ? [data.catalog] : []
-  );
-  const toSetUp = (data?.catalogs ?? []).filter((c) => !readyNames.has(c.name));
+  // The cluster's own catalog when an administrator supplied one (#496),
+  // else the published catalog the entrypoint wrote into ~/.pegasusrc.
+  const clusterLabel = data?.catalog
+    ? option?.label ?? data.catalog
+    : data?.default_label ?? "This cluster";
+  const current = `${clusterLabel} (site “${data?.site ?? "compute"}”)`;
   const stillNeeds = (data?.missing ?? []).map((m) => m.toLowerCase()).join(", ");
 
   return (
@@ -153,49 +129,11 @@ export function ComputeSiteCard() {
             save.mutate();
           }}
         >
-          <label className="block text-xs font-medium text-fgmuted">
-            Cluster
-            <select
-              value={catalog}
-              onChange={(e) => {
-                const next = e.target.value;
-                setCatalog(next);
-                // Show the settings kept for that cluster, not this one's.
-                setRows(
-                  next === (data.catalog ?? NONE)
-                    ? data.overrides
-                    : (data.saved_overrides[slotFor(next)] ?? [])
-                );
-                setSaved(false);
-              }}
-              className="mt-1 block w-full max-w-md rounded-md border border-line bg-base px-2 py-1.5 text-sm text-fg outline-none focus:border-pegasus-400"
-            >
-              <optgroup label="Ready to use">
-                <option value={NONE}>{defaultLabel} (no setup needed)</option>
-                {data.catalogs
-                  .filter((c) => readyNames.has(c.name))
-                  .map((c) => (
-                    <option key={c.name} value={c.name}>
-                      {c.label} (set up)
-                    </option>
-                  ))}
-              </optgroup>
-              {toSetUp.length > 0 && (
-                <optgroup label="Available to set up">
-                  {toSetUp.map((c) => (
-                    <option key={c.name} value={c.name}>
-                      {c.label}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-            <span className="mt-1 block text-[11px] font-normal text-fgsubtle">
-              Site catalogs published by the Pegasus team
-              {data.pegasus_series ? ` for Pegasus ${data.pegasus_series}` : ""}.
-              Pick the cluster you have an allocation on.
-            </span>
-          </label>
+          <p className="text-xs text-fgsubtle">
+            This cluster is where this copy of Studio runs; its scheduler is
+            described by a site catalog your administrator set up
+            {data.pegasus_series ? ` for Pegasus ${data.pegasus_series}` : ""}.
+          </p>
 
           {needs.map((k) => {
             const label = data.field_labels[k] ?? k;
@@ -235,7 +173,7 @@ export function ComputeSiteCard() {
             );
           })}
 
-          {catalog && needs.length === 0 && (
+          {needs.length === 0 && (
             <p className="text-xs text-fgsubtle">
               This cluster needs no allocation details here: it uses your
               account as you are.
@@ -256,101 +194,27 @@ export function ComputeSiteCard() {
               <span aria-hidden="true">{showAdvanced ? "−" : "+"}</span>
             </button>
             {showAdvanced && (
-              <div className="space-y-2 border-t border-line px-3 py-3">
-                <p className="text-[11px] text-fgsubtle">
-                  Extra profiles applied on top of this cluster&apos;s catalog,
-                  for example a <code className="font-mono">condor</code>{" "}
-                  <code className="font-mono">requirements</code> expression or a
-                  Slurm <code className="font-mono">pegasus</code>{" "}
-                  <code className="font-mono">queue</code>. Yours win over the
-                  catalog&apos;s; they are kept separately for each cluster.
-                </p>
-                <datalist id="site-override-sites">
-                  <option value="compute" />
-                  <option value="local" />
-                  <option value="condorpool" />
-                </datalist>
-                {rows.map((r, i) => {
-                  const set = (patch: Partial<Row>) => {
-                    setRows((all) => all.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+              <div className="border-t border-line px-3 py-3">
+                <SiteOverridesEditor
+                  rows={rows}
+                  onChange={(next) => {
+                    setRows(next);
                     setSaved(false);
-                  };
-                  const listId = `site-override-keys-${r.namespace}`;
-                  return (
-                    <div key={i} className="flex flex-wrap items-center gap-1.5">
-                      <input
-                        aria-label="Site"
-                        list="site-override-sites"
-                        value={r.site}
-                        onChange={(e) => set({ site: e.target.value })}
-                        spellCheck={false}
-                        className={`${inputCls} w-24`}
-                      />
-                      <select
-                        aria-label="Namespace"
-                        value={r.namespace}
-                        onChange={(e) => set({ namespace: e.target.value })}
-                        className={`${inputCls} w-24`}
-                      >
-                        {data.override_namespaces.map((n) => (
-                          <option key={n} value={n}>
-                            {n}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        aria-label="Key"
-                        list={listId}
-                        value={r.key}
-                        placeholder="key"
-                        onChange={(e) => set({ key: e.target.value })}
-                        spellCheck={false}
-                        className={`${inputCls} w-36`}
-                      />
-                      <datalist id={listId}>
-                        {(KEY_HINTS[r.namespace] ?? []).map((k) => (
-                          <option key={k} value={k} />
-                        ))}
-                      </datalist>
-                      <input
-                        aria-label="Value"
-                        value={r.value}
-                        placeholder="value"
-                        onChange={(e) => set({ value: e.target.value })}
-                        spellCheck={false}
-                        className={`${inputCls} min-w-0 flex-1`}
-                      />
-                      <button
-                        type="button"
-                        aria-label="Remove setting"
-                        onClick={() => {
-                          setRows((all) => all.filter((_, j) => j !== i));
-                          setSaved(false);
-                        }}
-                        className="rounded p-1 text-fgsubtle hover:bg-muted hover:text-fg"
-                      >
-                        <X size={14} aria-hidden="true" />
-                      </button>
-                    </div>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={() => setRows((all) => [...all, blankRow()])}
-                  className="inline-flex items-center gap-1 text-xs font-medium text-pegasus-700 hover:underline dark:text-pegasus-300"
-                >
-                  <Plus size={13} aria-hidden="true" /> Add setting
-                </button>
-                {data.effective_site && (
-                  <details className="pt-1">
-                    <summary className="cursor-pointer text-[11px] text-fgsubtle">
-                      The “{data.site}” site as Pegasus sees it (as saved)
-                    </summary>
-                    <pre className="mt-1 max-h-64 overflow-auto rounded bg-muted p-2 font-mono text-[11px] text-fg">
-                      {data.effective_site}
-                    </pre>
-                  </details>
-                )}
+                  }}
+                  namespaces={data.override_namespaces}
+                  site={data.site}
+                  effectiveSite={data.effective_site}
+                  intro={
+                    <>
+                      Extra profiles applied on top of this cluster&apos;s catalog,
+                      for example a Slurm <code className="font-mono">pegasus</code>{" "}
+                      <code className="font-mono">queue</code> or a{" "}
+                      <code className="font-mono">condor</code>{" "}
+                      <code className="font-mono">requirements</code> expression.
+                      Yours win over the catalog&apos;s.
+                    </>
+                  }
+                />
               </div>
             )}
           </div>
@@ -358,14 +222,12 @@ export function ComputeSiteCard() {
           <div className="flex flex-wrap items-center gap-3 pt-1">
             <button
               type="submit"
-              disabled={
-                !dirty || save.isPending || !!rowProblem || (catalog !== NONE && missing.length > 0)
-              }
+              disabled={!dirty || save.isPending || !!rowProblem || missing.length > 0}
               className="rounded-md bg-pegasus-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-pegasus-700 disabled:opacity-50"
             >
               {save.isPending ? "Saving…" : "Save"}
             </button>
-            {catalog !== NONE && missing.length > 0 && (
+            {missing.length > 0 && (
               <span className="text-xs text-fgsubtle">
                 Fill in {missing.map((k) => data.field_labels[k] ?? k).join(", ").toLowerCase()} to save.
               </span>
@@ -377,9 +239,7 @@ export function ComputeSiteCard() {
             )}
             {saved && !dirty && (
               <span className="text-xs text-emerald-700 dark:text-emerald-400">
-                Saved. {catalog
-                  ? "Analyses now run on “compute” at this cluster."
-                  : `Analyses run on ${defaultLabel}.`}
+                Saved. Analyses run on “{data.site}” at {clusterLabel}.
               </span>
             )}
             {save.isError && (
