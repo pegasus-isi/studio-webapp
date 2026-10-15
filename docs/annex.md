@@ -2,7 +2,11 @@
 
 > Source of the instructions the Resources page shows on the hosted
 > deployment (`studio-web/components/resources/annex-panel.tsx`, #532).
-> Drafted by Mats Rynge, 2026-10-15. Keep the two in step.
+> Drafted by Mats Rynge, 2026-10-15. Keep the two in step. On the page,
+> steps 1 and 5 are buttons (#534), step 2 is a download the user uploads
+> to the cluster themselves (no scp from the pod, by decision), and step 3
+> is generated from a short Slurm-options form as a paste-ready block
+> that also writes `~/.condor/annex_slurm_args`.
 
 If your workflows need more compute than Pegasus AI Studio provides, you can
 add resources from any Slurm-based HPC cluster you have an account on (for

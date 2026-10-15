@@ -138,3 +138,80 @@ def test_deployment_detection(monkeypatch, tmp_path):
     assert site_config.deployment() == "ood"
     monkeypatch.setenv("STUDIO_DEPLOYMENT", "HOSTED")
     assert site_config.deployment() == "hosted"
+
+
+# --- bundle and actions (#534) ---
+
+
+def _fake_create(tmp_path, monkeypatch, rc=0):
+    calls = []
+
+    async def run(cmd, timeout, cwd=None):
+        calls.append((cmd, cwd))
+        if cmd[:3] == ["htcondor", "annex", "create"] and rc == 0:
+            (__import__("pathlib").Path(cwd) / f"annex-{cmd[3]}.tar").write_bytes(b"tar!")
+            return 0, "Please copy the file annex-alice.tar to the HPC system"
+        if cmd[:3] == ["htcondor", "annex", "shutdown"]:
+            return 0, "done"
+        return rc, "annex create failed: no token"
+
+    monkeypatch.setattr(annex, "_run_text", run)
+    monkeypatch.setattr(annex, "annex_name", lambda: "alice")
+    monkeypatch.setenv("STUDIO_ANNEX_DIR", str(tmp_path / "annex"))
+    monkeypatch.setenv("STUDIO_DEPLOYMENT", "hosted")
+    return calls
+
+
+def test_create_bundle_keeps_newest_only(tmp_path, monkeypatch):
+    calls = _fake_create(tmp_path, monkeypatch)
+    first = asyncio.run(annex.create_bundle())
+    assert first["ok"] and first["bundle"]["filename"] == "annex-alice.tar"
+    # A second create replaces the first (each holds a live token), even
+    # within the same second: directories are unique, not timestamps.
+    second = asyncio.run(annex.create_bundle())
+    assert second["bundle"]["path"] != first["bundle"]["path"]
+    assert len(list((tmp_path / "annex").iterdir())) == 1
+    assert annex.current_bundle()["path"] == second["bundle"]["path"]
+    # Nothing is left staging, and staging is never "current".
+    (tmp_path / "annex" / ".staging-x").mkdir()
+    (tmp_path / "annex" / ".staging-x" / "annex-alice.tar").write_bytes(b"half")
+    assert annex.current_bundle()["path"] == second["bundle"]["path"]
+    assert all(cmd[:3] == ["htcondor", "annex", "create"] for cmd, _ in calls)
+
+
+def test_create_bundle_failure_leaves_nothing(tmp_path, monkeypatch):
+    _fake_create(tmp_path, monkeypatch, rc=1)
+    res = asyncio.run(annex.create_bundle())
+    assert res["ok"] is False and "no token" in res["error"]
+    assert annex.current_bundle() is None
+
+
+def test_bundle_endpoints(client, tmp_path, monkeypatch):
+    _fake_create(tmp_path, monkeypatch)
+    assert client.get("/api/provisioning/annex/bundle").status_code == 404
+    res = client.post("/api/provisioning/annex/bundle")
+    assert res.status_code == 200 and res.json()["bundle"]["filename"] == "annex-alice.tar"
+    dl = client.get("/api/provisioning/annex/bundle")
+    assert dl.status_code == 200 and dl.content == b"tar!"
+    assert "attachment" in dl.headers["content-disposition"]
+    assert "annex-alice.tar" in dl.headers["content-disposition"]
+    res = client.post("/api/provisioning/annex/shutdown")
+    assert res.status_code == 200 and res.json()["ok"] is True
+
+
+def test_annex_actions_refused_on_ood(client, tmp_path, monkeypatch):
+    _fake_create(tmp_path, monkeypatch)
+    monkeypatch.setenv("STUDIO_DEPLOYMENT", "ood")
+    assert client.post("/api/provisioning/annex/bundle").status_code == 404
+    assert client.post("/api/provisioning/annex/shutdown").status_code == 404
+    assert client.get("/api/provisioning/annex/bundle").status_code == 404
+
+
+def test_status_reports_bundle(tmp_path, monkeypatch):
+    _fake_create(tmp_path, monkeypatch)
+    annex._cache["data"] = None
+    monkeypatch.setattr(annex, "_config", {"enabled": "", "collector": ""})
+    asyncio.run(annex.create_bundle())
+    s = asyncio.run(annex.get_status(force=True))
+    assert s["bundle"]["filename"] == "annex-alice.tar"
+

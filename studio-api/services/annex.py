@@ -36,7 +36,10 @@ import asyncio
 import getpass
 import os
 import re
+import shutil
+import tempfile
 import time
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -54,6 +57,9 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 _cache: dict[str, Any] = {"ts": 0.0, "data": None}
 _cache_lock = asyncio.Lock()
+# One create/shutdown at a time: each create submits a request job and
+# writes a tarball, and two at once would race on both.
+_action_lock = asyncio.Lock()
 # ANNEX_COLLECTOR / HPC_ANNEX_ENABLED from condor_config_val, read once: they
 # are static per container. None until read; "" when annex is off here.
 _config: dict[str, str] | None = None
@@ -198,6 +204,134 @@ def summarize(
     }
 
 
+# ── the setup bundle and the two actions (#534) ────────────────────────────
+
+
+def bundle_dir() -> Path:
+    """Where Studio keeps the annex tarball: under ~/.studio, which the file
+    tools treat as protected (workspace.is_protected), because the tarball
+    carries an IDTOKEN good for 90 days."""
+    return Path(os.environ.get("STUDIO_ANNEX_DIR") or Path.home() / ".studio" / "annex")
+
+
+def current_bundle() -> dict[str, Any] | None:
+    """The newest tarball `htcondor annex create` left, or None."""
+    root = bundle_dir()
+    try:
+        # Published directories only: a create in progress works in a
+        # dot-prefixed staging directory the glob does not match.
+        tars = sorted(
+            (p for p in root.glob("[!.]*/annex-*.tar") if p.is_file()),
+            key=lambda p: p.stat().st_mtime,
+        )
+    except OSError:
+        return None
+    if not tars:
+        return None
+    tar = tars[-1]
+    st = tar.stat()
+    return {
+        "filename": tar.name,
+        "path": str(tar),
+        "size": st.st_size,
+        "created_at": int(st.st_mtime),
+    }
+
+
+async def _run_text(
+    cmd: list[str], timeout: float, cwd: str | None = None
+) -> tuple[int | None, str]:
+    """Run a command, returning (exit code or None, combined output)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except FileNotFoundError:
+        return None, f"{cmd[0]} not found"
+    except asyncio.TimeoutError:
+        # Reap it: a create left running would still submit its request
+        # job and write into a directory about to be removed.
+        try:
+            proc.kill()
+            await proc.wait()
+        except (ProcessLookupError, OSError):
+            pass
+        return None, f"{cmd[0]} timed out after {int(timeout)}s"
+    except OSError as e:
+        return None, f"{cmd[0]} failed: {e}"
+    return proc.returncode, out.decode("utf-8", errors="replace").strip()
+
+
+def _last_line(text: str, fallback: str) -> str:
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return lines[-1][:300] if lines else fallback
+
+
+async def create_bundle() -> dict[str, Any]:
+    """Run `htcondor annex create <user>` in a fresh directory and keep its
+    tarball, dropping any older one (each holds a live token).
+
+    The command also submits one annex *request* job to the schedd, which
+    is what the status page then shows as pending until the cluster's nodes
+    arrive, so a bundle that is never submitted shows up as a request that
+    never joins; that is upstream's model and the retired count absorbs it.
+    """
+    name = annex_name()
+    if not _SAFE_NAME.match(name):
+        return {"ok": False, "error": f"unusable annex name {name!r}"}
+    async with _action_lock:
+        root = bundle_dir()
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            os.chmod(root, 0o700)
+        except OSError as e:
+            return {"ok": False, "error": f"cannot create {root}: {e}"}
+        # A private, exclusively created staging directory, dot-prefixed so
+        # current_bundle() never sees a tarball still being written; moved
+        # into place (one rename) only once the command succeeded.
+        try:
+            work = Path(tempfile.mkdtemp(prefix=".staging-", dir=root))
+        except OSError as e:
+            return {"ok": False, "error": f"cannot create a working directory: {e}"}
+        rc, out = await _run_text(["htcondor", "annex", "create", name], 120, cwd=str(work))
+        tar = work / f"annex-{name}.tar"
+        if rc != 0 or not tar.is_file():
+            shutil.rmtree(work, ignore_errors=True)
+            log.warning("annex_create_failed", name=name, rc=rc, output=out[-500:])
+            return {"ok": False, "error": _last_line(out, "htcondor annex create failed"), "output": out}
+        published = root / f"{time.strftime('%Y%m%d-%H%M%S')}-{work.name[len('.staging-'):]}"
+        work.rename(published)
+        # Older bundles go now; a download already in flight keeps reading
+        # its open file (the route opens before it streams).
+        for old in root.iterdir():
+            if old != published and not old.name.startswith("."):
+                shutil.rmtree(old, ignore_errors=True)
+        _cache["data"] = None  # the request job is new
+        log.info("annex_bundle_created", name=name, path=str(published / tar.name))
+        return {"ok": True, "bundle": current_bundle(), "output": out}
+
+
+async def shutdown() -> dict[str, Any]:
+    """Run `htcondor annex shutdown <user>`: tells the annex's nodes to leave
+    and retires its requests. Idle nodes leave on their own as well; this is
+    for when the user is done and wants the allocation back now."""
+    name = annex_name()
+    if not _SAFE_NAME.match(name):
+        return {"ok": False, "error": f"unusable annex name {name!r}"}
+    async with _action_lock:
+        rc, out = await _run_text(["htcondor", "annex", "shutdown", name], 60)
+        _cache["data"] = None
+        if rc != 0:
+            log.warning("annex_shutdown_failed", name=name, rc=rc, output=out[-500:])
+            return {"ok": False, "error": _last_line(out, "htcondor annex shutdown failed"), "output": out}
+        log.info("annex_shutdown", name=name)
+        return {"ok": True, "output": out}
+
+
 def _cache_fresh(force: bool) -> bool:
     return (
         not force
@@ -231,6 +365,7 @@ async def get_status(force: bool = False) -> dict[str, Any]:
                 status["error"] = "ANNEX_COLLECTOR is not configured"
             else:
                 status.update(await _query(name, config["collector"]))
+        status["bundle"] = current_bundle()
         if not status["available"]:
             log.debug("annex_unavailable", name=name, error=status.get("error"))
         _cache["ts"] = time.monotonic()
