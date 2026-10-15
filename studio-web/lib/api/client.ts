@@ -967,11 +967,36 @@ export interface PressureFinding {
   delta: Record<string, number>;
 }
 
+/** Which kind of install this is (#532): the hosted deployment, where extra
+ *  compute is an annex the user leases, or the Open OnDemand app, where the
+ *  cluster is the install. The Resources page shows different cards. */
+export type Deployment = "hosted" | "ood";
+
+/** The user's HTCondor annex, as `htcondor annex status <user>` reads it
+ *  (services/annex.py). Only on the hosted deployment. */
+export interface AnnexStatus {
+  available: boolean;
+  error?: string;
+  /** The annex the access point sends this user's jobs to: their username. */
+  name: string;
+  established?: boolean;
+  nodes?: number;
+  total_cpus?: number;
+  busy_cpus?: number;
+  requests?: { total: number; pending: number; active: number; retired: number };
+  jobs?: { total: number; running: number; idle: number; held: number };
+  oldest_started_at?: number | null;
+  oldest_retires_at?: number | null;
+  checked_at?: number;
+}
+
 export interface ProvisioningStatus {
   available: boolean;
   pool: Partial<PoolSummary> & { available: boolean; error?: string };
   demand: Partial<QueueDemand> & { available: boolean; error?: string };
   pressure: PressureFinding[];
+  deployment?: Deployment;
+  annex?: AnnexStatus;
   // OSPool (OSG) — user-scoped: capacity available to burst into + this user's
   // own claimed slots. Other users' tasks are excluded. Own longer cache.
   ospool?: {
@@ -1316,7 +1341,10 @@ export interface ComputeSite {
   site: string;
   pegasus_version: string | null;
   pegasus_series: string | null;
+  /** The catalog in use, described (label, fields it needs), or empty for
+   *  Studio's own pool. No longer a list to pick from (#532). */
   catalogs: SiteCatalogOption[];
+  deployment: Deployment;
   /** The user's Slurm accounts, where sacctmgr exists; else empty. */
   slurm_accounts: string[];
   field_labels: Record<string, string>;

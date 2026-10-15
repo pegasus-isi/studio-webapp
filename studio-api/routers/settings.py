@@ -446,15 +446,21 @@ async def _compute_site_view() -> dict:
         await db.set_setting(_OVERRIDES_KEY, saved)
     version = await _run_version_cmd("pegasus-version")
     ref = site_config.series(version)
-    catalogs, accounts = await asyncio.gather(
-        site_config.list_catalogs(ref), site_config.slurm_accounts()
-    )
-    # Keep a hand-set catalog visible even if it is not (or no longer)
-    # published for this Pegasus series, so saving the form never silently
-    # drops it.
-    catalogs = [c for c in catalogs if c["name"] != site_config.STUDIO_CATALOG]
-    if current["catalog"] and not any(c["name"] == current["catalog"] for c in catalogs):
-        catalogs = [{"name": current["catalog"], "label": current["catalog"], "needs": []}] + catalogs
+    accounts = await site_config.slurm_accounts()
+    # Only the catalog in use, not the published list (#532). A user no
+    # longer picks a cluster here: on the hosted deployment extra compute is
+    # an annex, and under Open OnDemand the cluster is the administrator's
+    # catalog. A catalog named in ~/.pegasusrc (by the entrypoint from
+    # STUDIO_SITE_CATALOG, or by hand) is still described, with the fields
+    # it needs, so its allocation can be filled in.
+    catalogs: list[dict] = []
+    if current["catalog"]:
+        text = await site_config.catalog_text(current["catalog"], ref)
+        catalogs = [{
+            "name": current["catalog"],
+            "label": site_config.catalog_label(current["catalog"]),
+            "needs": site_config.needed_vars(text) if text else [],
+        }]
     # Whether the chosen cluster can be used as it stands (#516). The form
     # refuses to save with a field empty, so this is False only when
     # ~/.pegasusrc was edited by hand or the catalog grew a placeholder.
@@ -473,6 +479,7 @@ async def _compute_site_view() -> dict:
         "pegasus_version": version,
         "pegasus_series": ref,
         "catalogs": catalogs,
+        "deployment": site_config.deployment(),
         "slurm_accounts": accounts,
         "field_labels": site_config.FIELD_LABELS,
         # Per catalog slot ("studio", "none" or a catalog file name), so the

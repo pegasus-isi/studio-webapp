@@ -1,0 +1,271 @@
+"""The user's HTCondor annex: nodes they leased from a cluster of their own.
+
+On the hosted deployment extra compute comes from an *annex* (HTCondor's
+"Bringing Your Own Resources"): the user runs ``htcondor annex create
+$USER`` here, carries the tarball to a Slurm cluster they have an account
+on, and submits it there. The nodes it starts join the access point and
+run only that user's jobs. The access point stamps every job with
+``TargetAnnexName = Owner`` (a job transform, see
+``docker/htcondor/90-studio.conf``), so the annex *must* be named after the
+user, and jobs still run on Studio's pool when the annex is down.
+
+Status is what ``htcondor annex status <name>`` prints, but structured.
+That command's only output is prose, and it talks to three places the pool
+snapshot in :mod:`services.condor_pool` never looks at:
+
+* the schedd, for the *annex request* jobs (``hpc_annex_name`` set), one
+  per ``htcondor annex create``/``add``;
+* ``ANNEX_COLLECTOR``, a collector the access point runs for annex slots
+  alone (``ap:9618?sock=ap_collector``): annex nodes never register with
+  the pool's central manager, so ``condor_status`` against the pool shows
+  nothing and the pool's "annex" bucket stays empty;
+* the schedd again, for the jobs targeting the annex.
+
+The same three queries, through the JSON CLI (the image has the ``htcondor``
+command but no Python bindings), summarized by :func:`summarize`, which is
+pure so tests can feed it ClassAds. Mirrors
+``htcondor_cli/annex.py::Status`` upstream, including its reading of request
+state: a request job that is IDLE has been granted; one with slots in the
+collector is part of the established annex; granted with no slots left is
+retired.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import getpass
+import os
+import re
+import time
+from typing import Any
+
+import structlog
+
+from services.condor_pool import _lower_keys, _run_json
+
+log = structlog.get_logger()
+
+_CACHE_TTL = float(os.environ.get("STUDIO_ANNEX_CACHE_TTL", "30"))
+_CMD_TIMEOUT = 20
+
+# Annex names are usernames; anything else is refused before it reaches a
+# ClassAd constraint.
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+_cache: dict[str, Any] = {"ts": 0.0, "data": None}
+_cache_lock = asyncio.Lock()
+# ANNEX_COLLECTOR / HPC_ANNEX_ENABLED from condor_config_val, read once: they
+# are static per container. None until read; "" when annex is off here.
+_config: dict[str, str] | None = None
+
+
+def annex_name() -> str:
+    """The annex a user's jobs target: their username (the AP's transform)."""
+    return (
+        os.environ.get("STUDIO_ANNEX_NAME")
+        or os.environ.get("USER")
+        or getpass.getuser()
+    )
+
+
+async def _config_val(name: str) -> str:
+    """One value from the local HTCondor config, "" when unset or unreadable.
+    One name per call: with several, condor_config_val leaves a missing one
+    out of stdout and the remaining lines no longer line up."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "condor_config_val", name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_CMD_TIMEOUT)
+    except (FileNotFoundError, OSError, asyncio.TimeoutError):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    value = stdout.decode("utf-8", errors="replace").strip()
+    return "" if "not defined" in value.lower() else value
+
+
+async def _condor_config() -> dict[str, str]:
+    """{"enabled": "true"/"", "collector": address or ""} from the local
+    HTCondor config, where ``htcondor annex`` itself reads them. Read once:
+    they are static for the life of the container."""
+    global _config
+    if _config is not None:
+        return _config
+    enabled = (await _config_val("HPC_ANNEX_ENABLED")).lower() == "true"
+    config = {
+        "enabled": "true" if enabled else "",
+        "collector": await _config_val("ANNEX_COLLECTOR") if enabled else "",
+    }
+    _config = config
+    return config
+
+
+def _state(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _num(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(float(str(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def summarize(
+    name: str,
+    requests: list[dict[str, Any]],
+    slots: list[dict[str, Any]],
+    jobs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """One annex's status from its request jobs, its slots, and the jobs
+    targeting it. Keys of every ad are matched case-insensitively."""
+    # request id -> "requested" | "granted" | dict of slot aggregates
+    by_request: dict[str, Any] = {}
+    for ad in requests:
+        ad = _lower_keys(ad)
+        rid = str(ad.get("hpc_annex_request_id", ""))
+        by_request[rid] = "granted" if _state(ad.get("jobstatus")) == 1 else "requested"
+
+    oldest_start: int | None = None
+    oldest_stop: int | None = None
+    for ad in slots:
+        ad = _lower_keys(ad)
+        rid = str(ad.get("hpc_annex_request_id", "None"))
+        agg = by_request.get(rid)
+        if not isinstance(agg, dict):
+            agg = by_request[rid] = {"nodes": 0, "total_cpus": 0, "busy_cpus": 0}
+        # Partitionable slots only: each is one node, and its children are
+        # the busy part. Static slots never come from an annex.
+        if ad.get("partitionableslot"):
+            agg["nodes"] += 1
+            agg["total_cpus"] += _num(ad.get("totalslotcpus"))
+            children = ad.get("childcpus") or []
+            agg["busy_cpus"] += sum(_num(c) for c in children) if isinstance(children, list) else 0
+        start = ad.get("daemonstarttime")
+        if isinstance(start, (int, float)) and (oldest_start is None or start < oldest_start):
+            oldest_start = int(start)
+            stop = ad.get("daemonstoptime")
+            oldest_stop = int(stop) if isinstance(stop, (int, float)) else None
+
+    pending = active = retired = 0
+    nodes = total_cpus = busy_cpus = 0
+    for value in by_request.values():
+        if isinstance(value, dict):
+            active += 1
+            nodes += value["nodes"]
+            total_cpus += value["total_cpus"]
+            busy_cpus += value["busy_cpus"]
+        elif value == "granted":
+            retired += 1
+        else:
+            pending += 1
+
+    running = idle = held = 0
+    for ad in jobs:
+        status = _state(_lower_keys(ad).get("jobstatus"))
+        if status == 2:
+            running += 1
+        elif status == 1:
+            idle += 1
+        elif status == 5:
+            held += 1
+
+    return {
+        "name": name,
+        "established": total_cpus > 0,
+        "nodes": nodes,
+        "total_cpus": total_cpus,
+        "busy_cpus": busy_cpus,
+        "requests": {
+            "total": len(by_request),
+            "pending": pending,
+            "active": active,
+            "retired": retired,
+        },
+        "jobs": {"total": len(jobs), "running": running, "idle": idle, "held": held},
+        "oldest_started_at": oldest_start,
+        "oldest_retires_at": oldest_stop,
+    }
+
+
+def _cache_fresh(force: bool) -> bool:
+    return (
+        not force
+        and _cache["data"] is not None
+        and (time.monotonic() - _cache["ts"]) < _CACHE_TTL
+    )
+
+
+async def get_status(force: bool = False) -> dict[str, Any]:
+    """The user's annex, cached for _CACHE_TTL seconds.
+
+    ``available`` is False, with ``error`` saying why, when annex is not
+    enabled on this access point or the queries fail; the page then shows
+    the instructions alone.
+    """
+    if _cache_fresh(force):
+        return _cache["data"]
+    async with _cache_lock:
+        if _cache_fresh(force):
+            return _cache["data"]
+
+        name = annex_name()
+        status: dict[str, Any] = {"available": False, "name": name, "checked_at": time.time()}
+        if not _SAFE_NAME.match(name):
+            status["error"] = f"unusable annex name {name!r}"
+        else:
+            config = await _condor_config()
+            if not config["enabled"]:
+                status["error"] = "HPC annex is not enabled on this access point"
+            elif not config["collector"]:
+                status["error"] = "ANNEX_COLLECTOR is not configured"
+            else:
+                status.update(await _query(name, config["collector"]))
+        if not status["available"]:
+            log.debug("annex_unavailable", name=name, error=status.get("error"))
+        _cache["ts"] = time.monotonic()
+        _cache["data"] = status
+        return status
+
+
+async def _query(name: str, collector: str) -> dict[str, Any]:
+    quoted = f'"{name}"'
+    (requests, req_err), (slots, slot_err), (jobs, job_err) = await asyncio.gather(
+        _run_json([
+            "condor_q", "-json",
+            "-constraint", f"hpc_annex_name == {quoted}",
+            "-attributes", "JobStatus,hpc_annex_request_id,hpc_annex_name",
+        ]),
+        _run_json([
+            "condor_status", "-json", "-pool", collector,
+            "-constraint", f"AnnexName == {quoted}",
+            "-attributes",
+            "Name,PartitionableSlot,TotalSlotCpus,ChildCpus,"
+            "DaemonStartTime,DaemonStopTime,hpc_annex_request_id",
+        ]),
+        _run_json([
+            "condor_q", "-json",
+            # The request jobs carry TargetAnnexName too; they are not work.
+            "-constraint", f"TargetAnnexName == {quoted} && hpc_annex_name =?= undefined",
+            "-attributes", "JobStatus",
+        ]),
+    )
+    # ANNEX_COLLECTOR is a daemon the access point always runs (it answered
+    # "0 nodes" for Mats with no annex up), so a failure there is an outage,
+    # not an empty annex: reporting zero would turn every granted request
+    # into "retired" and tell the user their nodes are gone.
+    if requests is None or jobs is None or slots is None:
+        return {"available": False, "error": req_err or job_err or slot_err}
+    summary = summarize(name, requests, slots, jobs)
+    summary["available"] = True
+    return summary

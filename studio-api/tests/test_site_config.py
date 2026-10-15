@@ -172,8 +172,10 @@ def test_studio_pool_reports_compute_and_where_it_runs_follows(client, monkeypat
 
     body = client.put("/api/settings/compute-site", json={"catalog": None, "env": {}}).json()
     assert body["studio_pool"] is True and body["site"] == "compute" and body["catalog"] is None
-    # Studio's own catalog is not offered as a published cluster.
-    assert [c["name"] for c in body["catalogs"]] == ["unity.yml"]
+    # No published list any more (#532): only the catalog in use is
+    # described, and Studio's own pool is not a catalog.
+    assert body["catalogs"] == []
+    assert body["deployment"] == "hosted"
 
     from services.execution_sites import execution_sites, site_problem
 
@@ -310,6 +312,9 @@ def test_endpoint_keeps_overrides_per_catalog_and_imports_hand_added(client, mon
 
     # The hand-added override is adopted for Anvil and shown in the effective site.
     body = client.get("/api/settings/compute-site").json()
+    # The catalog in use is described from its own text, with what it needs.
+    assert [c["name"] for c in body["catalogs"]] == ["purdue-anvil.yml"]
+    assert body["catalogs"][0]["label"] == "Purdue Anvil" and body["catalogs"][0]["needs"] == []
     assert body["saved_overrides"]["purdue-anvil.yml"][0]["key"] == "queue"
     assert "queue: wholenode" in body["effective_site"]
 

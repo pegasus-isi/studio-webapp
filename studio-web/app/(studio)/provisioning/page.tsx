@@ -4,6 +4,8 @@ import type { PoolBucket, WorkflowDemand } from "@/lib/api/client";
 import { useProvisioningStatus } from "@/lib/hooks/use-dashboard";
 import { cn, formatDuration } from "@/lib/utils";
 import { ComputeSiteCard } from "@/components/resources/compute-site-card";
+import { AnnexPanel } from "@/components/resources/annex-panel";
+import { JobSettingsCard } from "@/components/resources/job-settings-card";
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
@@ -89,6 +91,17 @@ function Verdict({
   );
 }
 
+/**
+ * Two deployments, two pages (#532).
+ *
+ * On the hosted deployment the pool is Studio's own and a user adds compute
+ * by leasing an annex from a cluster of theirs, so the page leads with the
+ * annex (status and how-to) and a job-settings card (OSPool project name).
+ * Under Open OnDemand the cluster is the install: "Where your workflows
+ * run" names it and takes the allocation, and there is no annex to have.
+ * Until the status arrives, neither set is shown: guessing wrong would flash
+ * the other deployment's cards.
+ */
 export default function ProvisioningPage() {
   const { data, isLoading, error } = useProvisioningStatus();
 
@@ -97,14 +110,16 @@ export default function ProvisioningPage() {
   const poolUp = !!pool?.available;
   const demandUp = !!demand?.available;
   const workflows = Object.entries(demand?.by_workflow ?? {});
+  const deployment = data?.deployment;
 
   return (
     <div className="h-full overflow-auto">
       <div className="border-b border-line bg-surface px-6 py-4">
         <h1 className="text-lg font-semibold text-fg">Resources</h1>
         <p className="text-sm text-fgmuted">
-          Where your analyses run, and how much computing power is available
-          right now.
+          {deployment === "ood"
+            ? "Where your analyses run, and how much computing power is available right now."
+            : "How much computing power is available right now, and how to bring your own."}
         </p>
       </div>
 
@@ -115,7 +130,8 @@ export default function ProvisioningPage() {
       )}
 
       <div className="space-y-6 p-6">
-        <ComputeSiteCard />
+        {deployment === "ood" && <ComputeSiteCard />}
+        {deployment === "hosted" && data?.annex && <AnnexPanel annex={data.annex} />}
         {isLoading ? (
           <p className="text-sm text-fgmuted">Checking…</p>
         ) : !poolUp ? (
@@ -306,7 +322,10 @@ export default function ProvisioningPage() {
         )}
 
         {/* OSPool (OSG) — shown independently of the local pool. */}
-        {!isLoading && data?.ospool && <OSPoolPanel ospool={data.ospool} />}
+        {!isLoading && data?.ospool && (
+          <OSPoolPanel ospool={data.ospool} flocks={deployment === "hosted"} />
+        )}
+        {deployment === "hosted" && <JobSettingsCard />}
       </div>
     </div>
   );
@@ -314,8 +333,11 @@ export default function ProvisioningPage() {
 
 function OSPoolPanel({
   ospool,
+  flocks,
 }: {
   ospool: NonNullable<import("@/lib/api/client").ProvisioningStatus["ospool"]>;
+  /** The hosted access point flocks there, for jobs naming a project (#532). */
+  flocks: boolean;
 }) {
   const mine = ospool.mine;
   return (
@@ -326,6 +348,8 @@ function OSPoolPanel({
           Your usage and available capacity via{" "}
           {ospool.cm ?? "the OSG collector"}. Other users&rsquo; tasks are not
           shown.
+          {flocks &&
+            " Studio sends steps there when its own pool is busy, but only steps that carry an OSPool project name (set it under Job settings below)."}
         </p>
       </div>
       {!ospool.available ? (
