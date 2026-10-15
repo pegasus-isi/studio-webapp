@@ -101,9 +101,14 @@ async def _condor_config() -> dict[str, str]:
     if _config is not None:
         return _config
     enabled = (await _config_val("HPC_ANNEX_ENABLED")).lower() == "true"
+    # `htcondor annex create` refuses to run with nothing queued for the
+    # annex unless the administrator sets HPC_ANNEX_REQUIRE_JOB = False.
+    # The page gates its button on the same rule (#537).
+    require_job = (await _config_val("HPC_ANNEX_REQUIRE_JOB")).lower() != "false" if enabled else True
     config = {
         "enabled": "true" if enabled else "",
         "collector": await _config_val("ANNEX_COLLECTOR") if enabled else "",
+        "require_job": "true" if require_job else "",
     }
     _config = config
     return config
@@ -302,7 +307,14 @@ async def create_bundle() -> dict[str, Any]:
         if rc != 0 or not tar.is_file():
             shutil.rmtree(work, ignore_errors=True)
             log.warning("annex_create_failed", name=name, rc=rc, output=out[-500:])
-            return {"ok": False, "error": _last_line(out, "htcondor annex create failed"), "output": out}
+            error = _last_line(out, "htcondor annex create failed")
+            if "No jobs for" in out:
+                # Upstream's wording points at a CLI the user never sees.
+                error = (
+                    "Nothing is queued for your annex yet. Run a workflow first; "
+                    "the annex can be created once its steps are waiting."
+                )
+            return {"ok": False, "error": error, "output": out}
         published = root / f"{time.strftime('%Y%m%d-%H%M%S')}-{work.name[len('.staging-'):]}"
         work.rename(published)
         # Older bundles go now; a download already in flight keeps reading
@@ -365,6 +377,7 @@ async def get_status(force: bool = False) -> dict[str, Any]:
                 status["error"] = "ANNEX_COLLECTOR is not configured"
             else:
                 status.update(await _query(name, config["collector"]))
+                status["requires_jobs"] = bool(config.get("require_job"))
         status["bundle"] = current_bundle()
         if not status["available"]:
             log.debug("annex_unavailable", name=name, error=status.get("error"))

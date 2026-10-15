@@ -215,6 +215,10 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
   // The polled status is the truth (another tab may have made a newer
   // bundle); the mutation's own answer only bridges the gap to the refetch.
   const bundle = annex.bundle ?? create.data?.bundle ?? null;
+  // `htcondor annex create` refuses to run while nothing is queued for the
+  // annex (#537), so the button says so instead of relaying that refusal.
+  const queued = annex.jobs?.total ?? 0;
+  const needsJobs = annex.available && annex.requires_jobs !== false && queued === 0;
   const sbatch = sbatchLine(form);
   const clusterCmd =
     (sbatch
@@ -325,7 +329,8 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
               your jobs to an annex of that name and no other.
             </p>
             <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-              <strong>Submit your workflow first.</strong> Annex nodes that find
+              <strong>Run your workflow first.</strong> The annex cannot be
+              created until steps are waiting for it, and annex nodes that find
               nothing to run shut themselves down after a few minutes.
             </div>
 
@@ -366,12 +371,18 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    disabled={create.isPending}
+                    disabled={create.isPending || needsJobs}
                     onClick={() => create.mutate()}
                     className="rounded-md bg-pegasus-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-pegasus-700 disabled:opacity-50"
                   >
                     {create.isPending ? "Creating…" : bundle ? "Create a new bundle" : "Create bundle"}
                   </button>
+                  {needsJobs && (
+                    <span className="text-xs text-fgsubtle">
+                      Nothing is queued for your annex yet. Run a workflow first;
+                      this unlocks once its steps are waiting.
+                    </span>
+                  )}
                   {bundle && (
                     <a
                       href={api.annexBundleUrl()}
