@@ -81,11 +81,13 @@ export function JobSettingsCard() {
   // so and offer the way back; never switch it silently.
   const staleCatalog = data?.catalog ?? null;
   const resetCatalog = useMutation({
+    // No overrides sent: the rows on screen belong to the catalog being
+    // left (a queue, a cluster's requirements), and the server keeps a set
+    // per catalog, so omitting them restores whatever the pool had.
     mutationFn: () =>
       api.updateComputeSite(
         null,
-        Object.fromEntries(Object.keys(data?.env ?? {}).map((k) => [k, ""])),
-        filled(rows)
+        Object.fromEntries(Object.keys(data?.env ?? {}).map((k) => [k, ""]))
       ),
     onSuccess: (fresh) => {
       qc.setQueryData(["compute-site"], fresh);
