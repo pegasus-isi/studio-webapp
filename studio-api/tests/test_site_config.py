@@ -73,8 +73,6 @@ def test_series_and_needed_vars():
 def test_endpoint_reads_writes_and_offers_compute(client, monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    async def catalogs(ref):
-        return [{"name": "unity.yml", "label": "Unity (UMass)", "needs": ["RESOURCE_PROJECT"]}]
 
     async def accounts():
         return ["pi_lab", "pi_other"]
@@ -82,7 +80,6 @@ def test_endpoint_reads_writes_and_offers_compute(client, monkeypatch, tmp_path)
     async def version(cmd):
         return "6.0.0dev"
 
-    monkeypatch.setattr(sc, "list_catalogs", catalogs)
     monkeypatch.setattr(sc, "slurm_accounts", accounts)
     monkeypatch.setattr("routers.health._run_version_cmd", version)
 
@@ -156,9 +153,6 @@ def test_studio_pool_reports_compute_and_where_it_runs_follows(client, monkeypat
     _studio_repo(tmp_path, monkeypatch)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    async def catalogs(ref):
-        return [{"name": "pegasus-studio.yml", "label": "x", "needs": []},
-                {"name": "unity.yml", "label": "Unity", "needs": []}]
 
     async def accounts():
         return []
@@ -166,7 +160,6 @@ def test_studio_pool_reports_compute_and_where_it_runs_follows(client, monkeypat
     async def version(cmd):
         return "6.0.0dev"
 
-    monkeypatch.setattr(sc, "list_catalogs", catalogs)
     monkeypatch.setattr(sc, "slurm_accounts", accounts)
     monkeypatch.setattr("routers.health._run_version_cmd", version)
 
@@ -292,9 +285,6 @@ def test_endpoint_keeps_overrides_per_catalog_and_imports_hand_added(client, mon
         "pegasus.catalog.site.repo.file = purdue-anvil.yml\n"
         "pegasus.catalog.site.sites.compute.profiles.pegasus.queue = wholenode\n")
 
-    async def catalogs(ref):
-        return [{"name": "purdue-anvil.yml", "label": "Anvil", "needs": []},
-                {"name": "unity.yml", "label": "Unity", "needs": []}]
 
     async def accounts():
         return []
@@ -305,7 +295,6 @@ def test_endpoint_keeps_overrides_per_catalog_and_imports_hand_added(client, mon
     async def text(name, ref):
         return "sites:\n- name: compute\n  profiles:\n    pegasus: {style: glite}\n"
 
-    monkeypatch.setattr(sc, "list_catalogs", catalogs)
     monkeypatch.setattr(sc, "slurm_accounts", accounts)
     monkeypatch.setattr(sc, "catalog_text", text)
     monkeypatch.setattr("routers.health._run_version_cmd", version)
@@ -342,9 +331,6 @@ def test_switching_cluster_stashes_settings_hand_added_after_last_get(client, mo
     rc = tmp_path / ".pegasusrc"
     rc.write_text("pegasus.catalog.site.repo.file = purdue-anvil.yml\n")
 
-    async def catalogs(ref):
-        return [{"name": "purdue-anvil.yml", "label": "Anvil", "needs": []},
-                {"name": "unity.yml", "label": "Unity", "needs": []}]
 
     async def none(*a):
         return []
@@ -355,7 +341,6 @@ def test_switching_cluster_stashes_settings_hand_added_after_last_get(client, mo
     async def text(name, ref):
         return None
 
-    monkeypatch.setattr(sc, "list_catalogs", catalogs)
     monkeypatch.setattr(sc, "slurm_accounts", none)
     monkeypatch.setattr(sc, "catalog_text", text)
     monkeypatch.setattr("routers.health._run_version_cmd", version)

@@ -75,6 +75,24 @@ export function JobSettingsCard() {
   const dirty = !!data && !sameRows(data.overrides, rows);
   const rowProblem = filled(rows).find((r) => !r.value.trim() || !r.site.trim());
 
+  // A published catalog chosen before #532 is still the planner's "compute":
+  // on this deployment that means scratch paths on a cluster the pool's
+  // machines cannot see, and a run that fails with a missing directory. Say
+  // so and offer the way back; never switch it silently.
+  const staleCatalog = data?.catalog ?? null;
+  const resetCatalog = useMutation({
+    mutationFn: () =>
+      api.updateComputeSite(
+        null,
+        Object.fromEntries(Object.keys(data?.env ?? {}).map((k) => [k, ""])),
+        filled(rows)
+      ),
+    onSuccess: (fresh) => {
+      qc.setQueryData(["compute-site"], fresh);
+      qc.invalidateQueries({ queryKey: ["project-params"] });
+    },
+  });
+
   return (
     <section className="rounded-xl border border-line bg-surface p-4">
       <div className="flex items-start gap-3">
@@ -100,6 +118,30 @@ export function JobSettingsCard() {
             save.mutate();
           }}
         >
+          {staleCatalog && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+              <p>
+                Your workflows are still set to run on the{" "}
+                <span className="font-mono">{data.catalogs[0]?.label ?? staleCatalog}</span>{" "}
+                site catalog, chosen in an earlier version of this page. Studio&apos;s
+                pool and your annex cannot see that cluster&apos;s directories, so
+                steps there fail with a missing directory.
+              </p>
+              <button
+                type="button"
+                disabled={resetCatalog.isPending}
+                onClick={() => resetCatalog.mutate()}
+                className="mt-2 rounded-md border border-amber-400 px-2 py-1 text-xs font-medium hover:bg-amber-100 disabled:opacity-50 dark:hover:bg-amber-500/20"
+              >
+                {resetCatalog.isPending ? "Switching…" : "Use Studio's pool instead"}
+              </button>
+              {resetCatalog.isError && (
+                <p className="mt-1 text-red-600 dark:text-rose-400">
+                  Couldn&apos;t switch: {(resetCatalog.error as Error).message}
+                </p>
+              )}
+            </div>
+          )}
           <label className="block text-xs font-medium text-fgmuted">
             OSPool project name
             <input

@@ -28,6 +28,7 @@ def test_simple_run_is_on_by_default(client):
         # showed it working. Asserted so flipping it is an edit to this line,
         # not a side effect.
         "chat_engine": "opencode",
+        "resource_source": "pool",
     }
 
 
@@ -42,6 +43,7 @@ def test_preferences_round_trip(client):
         # The non-default engine, so the round trip proves a stored value is
         # served back rather than coincidentally matching the default.
         "chat_engine": "builtin",
+        "resource_source": "annex",
     }
     saved = client.put("/api/settings/ui", json=payload)
     assert saved.status_code == 200
@@ -73,6 +75,7 @@ def test_unknown_keys_in_stored_settings_are_ignored(client, monkeypatch):
         "skip_welcome": False,
         "tour_on_login": True,
         "chat_engine": "opencode",
+        "resource_source": "pool",
     }
 
 
@@ -96,6 +99,7 @@ def test_corrupt_stored_settings_fall_back_to_defaults(client, monkeypatch):
         "skip_welcome": False,
         "tour_on_login": True,
         "chat_engine": "opencode",
+        "resource_source": "pool",
     }
 
 

@@ -431,64 +431,6 @@ async def _get(client: httpx.AsyncClient, url: str, **kw: Any) -> httpx.Response
     return resp
 
 
-async def list_catalogs(ref: str | None) -> list[dict[str, Any]]:
-    """[{name, label, needs}] for the catalogs on branch `ref` (else main).
-
-    Cached for an hour; on any failure, the last good list, so a GitHub hiccup
-    does not empty the picker. `needs` comes from each catalog's own
-    ${RESOURCE_*} placeholders, so the form asks for exactly what that cluster
-    uses and nothing more.
-    """
-    key = f"catalogs:{ref}"
-    hit = _cache.get(key)
-    if hit and time.monotonic() - hit[0] < _CACHE_TTL:
-        return hit[1]
-    try:
-        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
-            refs = [ref, "main"] if ref else ["main"]
-            items = None
-            for r in refs:
-                try:
-                    resp = await _get(
-                        client,
-                        f"https://api.github.com/repos/{_CATALOG_REPO}/contents/conf",
-                        params={"ref": r},
-                        headers={"Accept": "application/vnd.github+json"},
-                    )
-                    items, used = resp.json(), r
-                    break
-                except httpx.HTTPStatusError:
-                    continue  # no branch for this Pegasus series yet
-            if not isinstance(items, list):
-                raise ValueError("no catalog listing")
-            names = sorted(
-                i["name"] for i in items
-                if isinstance(i, dict) and _SAFE_CATALOG.match(str(i.get("name", "")))
-            )
-
-            async def describe(name: str) -> dict[str, Any]:
-                needs: list[str] = []
-                try:
-                    raw = await _get(
-                        client,
-                        f"https://raw.githubusercontent.com/{_CATALOG_REPO}/{used}/conf/{name}",
-                    )
-                    needs = needed_vars(raw.text)
-                except httpx.HTTPError:
-                    pass
-                return {"name": name, "label": _LABELS.get(name, name), "needs": needs}
-
-            catalogs = list(await asyncio.gather(*(describe(n) for n in names)))
-    except (httpx.HTTPError, ValueError) as e:
-        log.warning("site_catalog_list_failed", error=str(e), ref=ref)
-        return hit[1] if hit else []
-    _cache[key] = (time.monotonic(), catalogs)
-    return catalogs
-
-
-# ── The effective site ────────────────────────────────────────────────────
-
-
 def studio_catalog_text() -> str | None:
     """Studio's own catalog, from the shared copy or the image."""
     for root in (studio_repo_dir(), studio_repo_image_dir()):

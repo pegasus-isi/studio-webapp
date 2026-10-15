@@ -6,6 +6,8 @@ import { cn, formatDuration } from "@/lib/utils";
 import { ComputeSiteCard } from "@/components/resources/compute-site-card";
 import { AnnexPanel } from "@/components/resources/annex-panel";
 import { JobSettingsCard } from "@/components/resources/job-settings-card";
+import { SourcePicker } from "@/components/resources/source-picker";
+import { useUIPreferences, useUpdateUIPreferences } from "@/lib/hooks/use-ui-prefs";
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
@@ -94,9 +96,10 @@ function Verdict({
 /**
  * Two deployments, two pages (#532).
  *
- * On the hosted deployment the pool is Studio's own and a user adds compute
- * by leasing an annex from a cluster of theirs, so the page leads with the
- * annex (status and how-to) and a job-settings card (OSPool project name).
+ * On the hosted deployment the pool is Studio's own and a user picks where
+ * extra compute comes from (source-picker.tsx): a cluster they already
+ * have, as an annex, with its status and how-to; or, later, a provisioned
+ * cloud or testbed. A job-settings card (OSPool project name) follows.
  * Under Open OnDemand the cluster is the install: "Where your workflows
  * run" names it and takes the allocation, and there is no annex to have.
  * Until the status arrives, neither set is shown: guessing wrong would flash
@@ -104,6 +107,8 @@ function Verdict({
  */
 export default function ProvisioningPage() {
   const { data, isLoading, error } = useProvisioningStatus();
+  const { prefs } = useUIPreferences();
+  const updatePrefs = useUpdateUIPreferences();
 
   const pool = data?.pool;
   const demand = data?.demand;
@@ -111,6 +116,11 @@ export default function ProvisioningPage() {
   const demandUp = !!demand?.available;
   const workflows = Object.entries(demand?.by_workflow ?? {});
   const deployment = data?.deployment;
+  const annex = data?.annex;
+  // An annex that is up or requested is shown whatever the choice: the
+  // choice is what to explain, not what exists.
+  const annexLive = !!annex?.available && (!!annex.established || (annex.requests?.pending ?? 0) > 0);
+  const showAnnex = deployment === "hosted" && !!annex && (prefs.resource_source === "annex" || annexLive);
 
   return (
     <div className="h-full overflow-auto">
@@ -131,7 +141,13 @@ export default function ProvisioningPage() {
 
       <div className="space-y-6 p-6">
         {deployment === "ood" && <ComputeSiteCard />}
-        {deployment === "hosted" && data?.annex && <AnnexPanel annex={data.annex} />}
+        {deployment === "hosted" && (
+          <SourcePicker
+            value={prefs.resource_source}
+            onChange={(next) => updatePrefs.mutate({ resource_source: next })}
+          />
+        )}
+        {showAnnex && annex && <AnnexPanel annex={annex} />}
         {isLoading ? (
           <p className="text-sm text-fgmuted">Checking…</p>
         ) : !poolUp ? (

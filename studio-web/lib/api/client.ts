@@ -690,6 +690,9 @@ export interface UIPreferences {
    * loop in studio-api. Opt-in while the OpenCode engine is being tried.
    */
   chat_engine: "builtin" | "opencode";
+  /** Where extra computing power comes from, on the hosted Resources page
+   *  (#532): Studio's own pool, or an annex from a cluster the user has. */
+  resource_source: "pool" | "annex";
 }
 
 export async function getUIPreferences() {
