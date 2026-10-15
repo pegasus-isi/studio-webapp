@@ -69,7 +69,7 @@ def test_get_status_not_enabled(monkeypatch):
 
 def test_get_status_queries_and_caches(monkeypatch):
     annex._cache["data"] = None
-    monkeypatch.setattr(annex, "_config", {"enabled": "true", "collector": "ap:9618?sock=ap_collector"})
+    monkeypatch.setattr(annex, "_config", {"enabled": "true", "collector": "ap:9618?sock=ap_collector", "require_job": "true"})
     monkeypatch.setattr(annex, "annex_name", lambda: "alice")
     calls = []
 
@@ -93,6 +93,7 @@ def test_get_status_queries_and_caches(monkeypatch):
     first, second = asyncio.run(go())
     assert first["available"] is True
     assert first["established"] is True and first["jobs"]["running"] == 1
+    assert first["requires_jobs"] is True
     assert second is first
     assert len(calls) == 3
 
@@ -184,6 +185,19 @@ def test_create_bundle_failure_leaves_nothing(tmp_path, monkeypatch):
     res = asyncio.run(annex.create_bundle())
     assert res["ok"] is False and "no token" in res["error"]
     assert annex.current_bundle() is None
+
+
+def test_create_bundle_with_empty_queue_is_said_plainly(tmp_path, monkeypatch):
+    _fake_create(tmp_path, monkeypatch)
+
+    async def run(cmd, timeout, cwd=None):
+        return 1, "No jobs for 'alice' are in the queue. Use 'htcondor job submit --annex-name' to add them first."
+
+    monkeypatch.setattr(annex, "_run_text", run)
+    res = asyncio.run(annex.create_bundle())
+    assert res["ok"] is False
+    assert res["error"].startswith("Nothing is queued for your annex yet")
+    assert "htcondor job submit" not in res["error"]
 
 
 def test_bundle_endpoints(client, tmp_path, monkeypatch):

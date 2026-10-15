@@ -998,6 +998,9 @@ export interface AnnexStatus {
   busy_cpus?: number;
   requests?: { total: number; pending: number; active: number; retired: number };
   jobs?: { total: number; running: number; idle: number; held: number };
+  /** Whether the access point refuses to create an annex with nothing
+   *  queued for it (HTCondor's default; HPC_ANNEX_REQUIRE_JOB). */
+  requires_jobs?: boolean;
   oldest_started_at?: number | null;
   oldest_retires_at?: number | null;
   checked_at?: number;
