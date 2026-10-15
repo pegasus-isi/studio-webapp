@@ -44,6 +44,9 @@ const FALLBACK: api.UIPreferences = {
   // builtin one fetches history and can reattach to a running turn, so a
   // mismatch here would start work on the wrong engine and then swap it.
   chat_engine: "opencode",
+  // Matches the server default; the Resources page renders the pool view
+  // until the fetch lands either way.
+  resource_source: "pool",
 };
 
 export function useUIPreferences() {

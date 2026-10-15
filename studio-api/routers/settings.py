@@ -338,6 +338,13 @@ class UIPreferences(BaseModel):
     # engine, not two, and a retired value should read as a stale name rather
     # than an inverted flag.
     chat_engine: Literal["builtin", "opencode"] = "opencode"
+    # Where extra computing power comes from, on the hosted deployment's
+    # Resources page (#532): Studio's own pool, or a cluster the user already
+    # has an account on (an HTCondor annex). Chooses what the page explains
+    # and shows; the access point routes jobs on its own. A provisioned
+    # source kind (cloud and testbed providers) is shown as coming and is
+    # not yet a value here.
+    resource_source: Literal["pool", "annex"] = "pool"
 
 
 _UI_PREFS_KEY = "ui_preferences"

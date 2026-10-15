@@ -690,6 +690,9 @@ export interface UIPreferences {
    * loop in studio-api. Opt-in while the OpenCode engine is being tried.
    */
   chat_engine: "builtin" | "opencode";
+  /** Where extra computing power comes from, on the hosted Resources page
+   *  (#532): Studio's own pool, or an annex from a cluster the user has. */
+  resource_source: "pool" | "annex";
 }
 
 export async function getUIPreferences() {
@@ -974,11 +977,21 @@ export type Deployment = "hosted" | "ood";
 
 /** The user's HTCondor annex, as `htcondor annex status <user>` reads it
  *  (services/annex.py). Only on the hosted deployment. */
+/** The setup tarball `htcondor annex create` left under ~/.studio/annex (#534). */
+export interface AnnexBundle {
+  filename: string;
+  /** Where it sits in the pod (under ~/.studio/annex); informational. */
+  path: string;
+  size: number;
+  created_at: number;
+}
+
 export interface AnnexStatus {
   available: boolean;
   error?: string;
   /** The annex the access point sends this user's jobs to: their username. */
   name: string;
+  bundle?: AnnexBundle | null;
   established?: boolean;
   nodes?: number;
   total_cpus?: number;
@@ -1021,6 +1034,26 @@ export interface ProvisioningStatus {
 
 export async function getProvisioningStatus() {
   return request<ProvisioningStatus>("/provisioning/status");
+}
+
+/** Run `htcondor annex create <user>` here; the tarball is kept for download. */
+export async function createAnnexBundle() {
+  return request<{ ok: boolean; bundle: AnnexBundle; output: string }>(
+    "/provisioning/annex/bundle",
+    { method: "POST" }
+  );
+}
+
+/** Where the browser fetches the current bundle (an attachment). */
+export function annexBundleUrl() {
+  return apiUrl("provisioning/annex/bundle");
+}
+
+/** Run `htcondor annex shutdown <user>`: release the nodes now. */
+export async function shutdownAnnex() {
+  return request<{ ok: boolean; output: string }>("/provisioning/annex/shutdown", {
+    method: "POST",
+  });
 }
 
 // --- Marketplace (PegasusHub + Pegasus-ISI workflows from GitHub) ---
