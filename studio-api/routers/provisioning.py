@@ -47,7 +47,7 @@ def _hosted_only() -> None:
 async def create_annex_bundle() -> dict:
     """Create the setup bundle (`htcondor annex create <user>`), the Studio
     side of step 1 (#534). The tarball stays under ~/.studio/annex for the
-    download below, or for `scp` from Studio's terminal."""
+    download below; the user carries it to the cluster themselves."""
     _hosted_only()
     result = await annex.create_bundle()
     if not result.get("ok"):

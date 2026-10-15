@@ -980,7 +980,7 @@ export type Deployment = "hosted" | "ood";
 /** The setup tarball `htcondor annex create` left under ~/.studio/annex (#534). */
 export interface AnnexBundle {
   filename: string;
-  /** Path inside the pod, for `scp` from Studio's terminal. */
+  /** Where it sits in the pod (under ~/.studio/annex); informational. */
   path: string;
   size: number;
   created_at: number;

@@ -13,8 +13,9 @@
  * username, and everything below is rendered with it filled in.
  *
  * Steps 1 (create the bundle) and 5 (shut down) run here, through the API.
- * Steps 2 and 3 happen on the cluster, which Studio cannot reach (no SSH
- * from the pod, and the cluster's MFA), so they are generated as commands
+ * Step 2 is a download: the user carries the tarball to the cluster
+ * however they log in there (Studio cannot, and should not try to: no SSH
+ * from the pod, and the cluster's MFA). Step 3 is generated as a paste
  * from a short form, including a ~/.condor/annex_slurm_args block that
  * makes editing hpc.slurm unnecessary. The form is remembered in this
  * browser only; it is a convenience, not state.
@@ -73,13 +74,12 @@ const fieldCls =
   "mt-1 block w-full rounded-md border border-line bg-base px-2 py-1 font-mono text-xs text-fg outline-none focus:border-pegasus-400";
 
 type ClusterForm = {
-  login: string;
   partition: string;
   account: string;
   walltime: string;
   nodes: string;
 };
-const EMPTY_FORM: ClusterForm = { login: "", partition: "", account: "", walltime: "", nodes: "" };
+const EMPTY_FORM: ClusterForm = { partition: "", account: "", walltime: "", nodes: "" };
 const FORM_KEY = "studio.annex.cluster";
 
 function loadForm(): ClusterForm {
@@ -102,10 +102,9 @@ function loadForm(): ClusterForm {
  * What each field may contain once it is pasted into a shell. The values
  * are the user's own and go into the user's own terminal, so this is not
  * a security boundary; it is what keeps a stray newline or quote (typed,
- * or left in storage) from breaking the heredoc or the scp line.
+ * or left in storage) from breaking the heredoc.
  */
 const SHAPE: Record<keyof ClusterForm, RegExp> = {
-  login: /^[A-Za-z0-9._-]+(@[A-Za-z0-9.-]+)?$/,
   partition: /^[A-Za-z0-9._-]+$/,
   account: /^[A-Za-z0-9._-]+$/,
   walltime: /^[0-9]{1,3}(-[0-9]{1,2})?(:[0-9]{1,2}){0,2}$/,
@@ -116,9 +115,6 @@ const valid = (f: ClusterForm, k: keyof ClusterForm) => {
   return v && SHAPE[k].test(v) ? v : "";
 };
 const problem = (f: ClusterForm, k: keyof ClusterForm) => !!f[k].trim() && !valid(f, k);
-
-/** Single-quote a path for a shell line. */
-const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** The #SBATCH line for ~/.condor/annex_slurm_args, or "" when nothing is set. */
 function sbatchLine(f: ClusterForm): string {
@@ -219,7 +215,6 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
   // The polled status is the truth (another tab may have made a newer
   // bundle); the mutation's own answer only bridges the gap to the refetch.
   const bundle = annex.bundle ?? create.data?.bundle ?? null;
-  const login = valid(form, "login") || "<user@login-node-of-your-cluster>";
   const sbatch = sbatchLine(form);
   const clusterCmd =
     (sbatch
@@ -336,24 +331,13 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
 
             {/* The cluster, once: fills the commands below. */}
             <div className="rounded-md border border-line bg-base p-3">
-              <p className="text-xs font-medium text-fg">Your cluster (optional, fills in the commands)</p>
+              <p className="text-xs font-medium text-fg">Your Slurm options (optional, fills in the commands)</p>
               {(Object.keys(EMPTY_FORM) as (keyof ClusterForm)[]).some((k) => problem(form, k)) && (
                 <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
                   A value with spaces or punctuation is left out of the commands below.
                 </p>
               )}
-              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-                <label className="text-[11px] text-fgsubtle lg:col-span-2">
-                  Login (user@host)
-                  <input
-                    value={form.login}
-                    onChange={(e) => setField("login", e.target.value)}
-                    placeholder="alice@login.expanse.sdsc.edu"
-                    spellCheck={false}
-                    autoComplete="off"
-                    className={fieldCls}
-                  />
-                </label>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 <label className="text-[11px] text-fgsubtle">
                   Account / project
                   <input value={form.account} onChange={(e) => setField("account", e.target.value)} placeholder="abc123" spellCheck={false} className={fieldCls} />
@@ -377,8 +361,8 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
               <li>
                 <span className="font-medium text-fg">Create the setup bundle.</span>{" "}
                 Studio runs <code className="font-mono">htcondor annex create {name}</code>{" "}
-                for you. The bundle holds a key that lets nodes join as you, valid
-                for 90 days, so keep it to yourself.
+                for you and gives you the result to download. It holds a key that
+                lets nodes join as you, valid for 90 days, so keep it to yourself.
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
@@ -410,14 +394,16 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                 )}
               </li>
               <li>
-                <span className="font-medium text-fg">Get the bundle onto the cluster.</span>{" "}
-                Either download it above and upload it to the cluster, or copy it
-                straight from Studio&apos;s terminal:
-                <Cmd>{`scp ${bundle ? shq(bundle.path) : `~/.studio/annex/<date>/annex-${name}.tar`} ${login}:`}</Cmd>
+                <span className="font-medium text-fg">Upload the bundle to the cluster.</span>{" "}
+                Download it above, then put{" "}
+                <code className="font-mono">annex-{name}.tar</code> in your home
+                directory on the cluster the way you usually move files there
+                (the cluster&apos;s web portal, <code className="font-mono">scp</code>{" "}
+                from your laptop, Globus).
               </li>
               <li>
                 <span className="font-medium text-fg">On the cluster, set up and submit.</span>{" "}
-                Log in (<code className="font-mono">ssh {login}</code>) and paste:
+                Log in to the cluster and paste:
                 <Cmd>{clusterCmd}</Cmd>
                 {sbatch ? (
                   <p className="mt-1 text-xs text-fgsubtle">
@@ -428,7 +414,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                   </p>
                 ) : (
                   <p className="mt-1 text-xs text-fgsubtle">
-                    Fill in the cluster form above to have the Slurm options written for you.
+                    Fill in the Slurm options above to have them written for you.
                   </p>
                 )}
               </li>
