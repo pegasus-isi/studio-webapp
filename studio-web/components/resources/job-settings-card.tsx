@@ -27,6 +27,16 @@ const PROJECT_ROW = { site: "compute", namespace: "condor", key: "+ProjectName" 
 const isProjectRow = (r: Row) =>
   r.site === PROJECT_ROW.site && r.namespace === PROJECT_ROW.namespace && r.key === PROJECT_ROW.key;
 
+/**
+ * The value goes into the submit file verbatim as `+ProjectName = <value>`,
+ * and there it is a ClassAd expression: unquoted, `USC_Deelman` is a
+ * reference to an attribute of that name, which does not exist, so the
+ * project name arrives at the access point as undefined and the OSPool
+ * never sees it (#539). Store it as a quoted string; show it bare.
+ */
+const quoteProject = (bare: string) => `"${bare.trim().replace(/^"|"$/g, "").replace(/"/g, "")}"`;
+const bareProject = (stored: string) => stored.trim().replace(/^"(.*)"$/, "$1");
+
 export function JobSettingsCard() {
   const qc = useQueryClient();
   const { data, error } = useQuery({
@@ -48,12 +58,12 @@ export function JobSettingsCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [savedRows]);
 
-  const project = rows.find(isProjectRow)?.value ?? "";
+  const project = bareProject(rows.find(isProjectRow)?.value ?? "");
   const setProject = (value: string) => {
     setSaved(false);
     setRows((all) => {
       const rest = all.filter((r) => !isProjectRow(r));
-      return value.trim() ? [{ ...PROJECT_ROW, value }, ...rest] : rest;
+      return value.trim() ? [{ ...PROJECT_ROW, value: quoteProject(value) }, ...rest] : rest;
     });
   };
   const others = rows.filter((r) => !isProjectRow(r));
