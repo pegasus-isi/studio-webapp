@@ -830,7 +830,7 @@ function Capability({
           {title}
         </h4>
         {status === "ok" && (
-          <span className="text-fgsubtle">{items.length}</span>
+          <span className="tabular-nums text-fgsubtle">{items.length}</span>
         )}
       </div>
       {note && <p className="mt-0.5 text-fgsubtle">{note}</p>}
@@ -1167,7 +1167,7 @@ function formatTurnUsage(messages: AssistantMessage[]): string | null {
 
   const parts = [`~${tokens.toLocaleString()} tokens`];
   if (messages.length > 1) {
-    parts.push(`${messages.length} steps`);
+    parts.push(`${messages.length.toLocaleString()} steps`);
   }
   if (cost > 0) parts.push(`$${cost.toFixed(4)}`);
 

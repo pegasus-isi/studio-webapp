@@ -243,7 +243,7 @@ function FileGroup({
                   {f.location ? (
                     <>
                       {f.size !== null && (
-                        <span className="text-[11px] text-fgsubtle">{formatBytes(f.size)}</span>
+                        <span className="text-xs tabular-nums text-fgsubtle">{formatBytes(f.size)}</span>
                       )}
                       {f.previewable && (
                         <button

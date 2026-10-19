@@ -23,7 +23,7 @@ import type { DashboardData } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 import { useDashboard } from "@/lib/hooks/use-dashboard";
 import { usePanelStore } from "@/lib/stores/panel-store";
-import { cn } from "@/lib/utils";
+import { cn, formatCount } from "@/lib/utils";
 import { AppLink } from "@/components/layout/app-link";
 import { GlossaryList } from "@/components/ui/glossary-term";
 import { GuidedTour, type TourStep } from "@/components/onboarding/guided-tour";
@@ -245,8 +245,8 @@ function AttentionStrip({
         <span className="font-semibold text-rose-700 dark:text-rose-300">
           {first.name} needs attention
         </span>
-        <span className="text-fgmuted">
-          {first.failed_jobs} of {first.total_jobs} tasks failed
+        <span className="tabular-nums text-fgmuted">
+          {formatCount(first.failed_jobs)} of {formatCount(first.total_jobs)} tasks failed
           {bad.length > 1 && ` · ${bad.length - 1} more`}
         </span>
         <button
@@ -275,8 +275,8 @@ function AttentionStrip({
   return (
     <div className="mx-auto mb-6 flex w-full max-w-3xl flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm">
       <span className="font-semibold text-fg">{r.name} is running</span>
-      <span className="text-fgmuted">
-        {r.completed_jobs} of {r.total_jobs} tasks finished
+      <span className="tabular-nums text-fgmuted">
+        {formatCount(r.completed_jobs)} of {formatCount(r.total_jobs)} tasks finished
         {running.length > 1 && ` · ${running.length - 1} more running`}
       </span>
       <AppLink

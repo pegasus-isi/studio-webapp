@@ -3,7 +3,7 @@
 import type { WorkflowRun, WorkflowProject } from "@/lib/api/client";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
-import { cn, statusColor } from "@/lib/utils";
+import { cn, formatCount, statusColor } from "@/lib/utils";
 import { TONE_BAR, TONE_TEXT } from "@/lib/tone";
 import { AppLink } from "@/components/layout/app-link";
 
@@ -91,7 +91,7 @@ export function WorkflowList({ projects, workflows }: Props) {
                       {proj.has_workflow_yml && <span>yml</span>}
                       {proj.has_container_def && <span>apptainer</span>}
                       {proj.runs.length > 0 && (
-                        <span className="ml-auto">
+                        <span className="ml-auto tabular-nums">
                           {proj.runs.length} run{proj.runs.length !== 1 ? "s" : ""}
                         </span>
                       )}
@@ -131,7 +131,7 @@ export function WorkflowList({ projects, workflows }: Props) {
                       <span className="font-medium text-fg" title={wf.run_id}>
                         {wf.name}
                         {wf.run_name && (
-                          <span className="ml-1.5 font-mono text-xs font-normal text-fgmuted">
+                          <span className="ml-1.5 text-xs font-normal text-fgmuted">
                             {wf.run_name}
                           </span>
                         )}
@@ -149,11 +149,11 @@ export function WorkflowList({ projects, workflows }: Props) {
                     {wf.total_jobs > 0 && (
                       <div className="mt-2">
                         <div className="flex justify-between text-xs text-fgmuted">
-                          <span>
-                            {wf.completed_jobs}/{wf.total_jobs} jobs
+                          <span className="tabular-nums">
+                            {formatCount(wf.completed_jobs)} / {formatCount(wf.total_jobs)} jobs
                           </span>
                           {wf.failed_jobs > 0 && (
-                            <span className={TONE_TEXT.error}>
+                            <span className={cn("tabular-nums", TONE_TEXT.error)}>
                               {wf.failed_jobs} failed
                             </span>
                           )}

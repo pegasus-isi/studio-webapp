@@ -274,7 +274,7 @@ function passthroughGraph(data: GraphData): {
 /** "7 failed · 20 running · 140 done" — only the statuses actually present. */
 function breakdown(counts: Map<string, number>): string {
   return STATUS_PRECEDENCE.filter((s) => counts.has(s))
-    .map((s) => `${counts.get(s)} ${STATUS_WORD[s] ?? s}`)
+    .map((s) => `${(counts.get(s) ?? 0).toLocaleString()} ${STATUS_WORD[s] ?? s}`)
     .join(" · ");
 }
 

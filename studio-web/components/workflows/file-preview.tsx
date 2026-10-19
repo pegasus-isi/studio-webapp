@@ -32,18 +32,10 @@ import {
   numericColumns,
   parseCsv,
 } from "@/lib/preview/csv";
+import { formatBytes } from "@/lib/utils";
 
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
-}
+// One copy, in lib/utils (#550); re-exported for existing importers.
+export { formatBytes } from "@/lib/utils";
 
 /**
  * A file-type icon. Lucide rather than emoji: emoji render differently on

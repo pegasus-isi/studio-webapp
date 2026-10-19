@@ -7,6 +7,24 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** A count with locale thousands separators: 18234 -> "18,234". */
+export function formatCount(n: number): string {
+  return Number.isFinite(n) ? n.toLocaleString() : "—";
+}
+
+/** Human-friendly size: 512 B, 3.4 MB, 120 GB. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
+
 /** Human-friendly duration: 45s, 12m, 1h 05m. */
 export function formatDuration(seconds: number): string {
   // Guard NaN/Infinity/negative up front (FE-9): NaN slipped past the `< 60`

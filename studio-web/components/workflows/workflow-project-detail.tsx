@@ -35,7 +35,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { RenameProjectDialog } from "@/components/workflows/rename-project-dialog";
 import { apiUrl } from "@/lib/urls";
 import { usePaneSize } from "@/lib/hooks/use-pane-size";
-import { cn, statusColor } from "@/lib/utils";
+import { cn, formatDuration, statusColor } from "@/lib/utils";
 import { TONE_TEXT } from "@/lib/tone";
 
 // Generate, Build and Plan are steps toward Run, which is the one filled
@@ -627,7 +627,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
         {project.runs.length > 0 && (
           <div>
             <h3 className="mb-3 text-sm font-semibold text-fg">
-              Runs ({project.runs.length})
+              Runs <span className="tabular-nums">({project.runs.length})</span>
             </h3>
             <ul className="divide-y divide-line rounded-md border border-line">
               {project.runs.map((run) => (
@@ -650,7 +650,11 @@ export function WorkflowProjectDetail({ projectId }: Props) {
                       }
                       aria-expanded={selectedRunId === run.run_id}
                       title={run.run_id}
-                      className="flex-1 truncate text-left font-mono text-sm text-fg"
+                      className={cn(
+                        "flex-1 truncate text-left text-sm text-fg",
+                        // A run's own name is a label; only the id fallback is typed-exact.
+                        !run.run_name && "font-mono"
+                      )}
                     >
                       {run.run_name || `${run.run_id.slice(0, 12)}...`}
                     </button>
@@ -1053,8 +1057,8 @@ function RunJobsPanel({
             <tr className="border-b border-line text-left text-xs font-medium text-fgmuted">
               <th className="pb-1 pr-3">Job</th>
               <th className="pb-1 pr-3">Status</th>
-              <th className="pb-1 pr-3">Duration</th>
-              <th className="pb-1">Exit</th>
+              <th className="pb-1 pr-3 text-right">Duration</th>
+              <th className="pb-1 text-right">Exit</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -1073,10 +1077,10 @@ function RunJobsPanel({
                     {String(job.status ?? "")}
                   </span>
                 </td>
-                <td className="py-1 pr-3 font-mono">
-                  {job.duration != null ? `${job.duration}s` : "\u2014"}
+                <td className="py-1 pr-3 text-right">
+                  {job.duration != null ? formatDuration(Number(job.duration)) : "\u2014"}
                 </td>
-                <td className="py-1 font-mono">
+                <td className="py-1 text-right">
                   {job.exitcode != null ? String(job.exitcode) : "\u2014"}
                 </td>
               </tr>

@@ -37,7 +37,7 @@ function TopicChip({
       }
     >
       {label}
-      <span className="ml-1 font-mono text-[10px] text-fgsubtle">{count}</span>
+      <span className="ml-1 text-xs tabular-nums text-fgsubtle">{count}</span>
     </button>
   );
 }
@@ -255,7 +255,7 @@ export default function MarketplacePage() {
                 className="rounded-full border border-dashed border-line px-3 py-1 text-xs font-medium text-fgmuted hover:bg-base"
               >
                 More subjects
-                <span className="ml-1 font-mono text-fgsubtle">
+                <span className="ml-1 tabular-nums text-fgsubtle">
                   {restTags.length}
                 </span>
               </button>
