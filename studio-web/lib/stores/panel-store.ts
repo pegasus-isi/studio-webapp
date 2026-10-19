@@ -1,6 +1,6 @@
 /**
  * Zustand store for global panel visibility (chat sidebar, terminal bottom
- * pane, sidebar collapse).
+ * pane, sidebar collapse, the Resources page's section menu collapse).
  *
  * Panel visibility (chat/terminal open, sidebar collapsed) is persisted so it
  * survives navigation. Left-nav links are plain <a> full-page loads (the app
@@ -17,6 +17,7 @@ interface PanelStore {
   chatOpen: boolean;
   terminalOpen: boolean;
   sidebarCollapsed: boolean;
+  resourcesNavCollapsed: boolean;
   // One-shot text to drop into the chat input (e.g. a "/scaffold " prefix from
   // a dashboard capability card). ChatInput consumes it then clears it.
   chatDraft: string | null;
@@ -24,6 +25,7 @@ interface PanelStore {
   toggleChat: () => void;
   toggleTerminal: () => void;
   toggleSidebar: () => void;
+  toggleResourcesNav: () => void;
   setChatOpen: (open: boolean) => void;
   setTerminalOpen: (open: boolean) => void;
   setChatDraft: (draft: string | null) => void;
@@ -37,12 +39,15 @@ export const usePanelStore = create<PanelStore>()(
       chatOpen: false,
       terminalOpen: false,
       sidebarCollapsed: false,
+      resourcesNavCollapsed: false,
       chatDraft: null,
 
       toggleChat: () => set((s) => ({ chatOpen: !s.chatOpen })),
       toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
       toggleSidebar: () =>
         set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      toggleResourcesNav: () =>
+        set((s) => ({ resourcesNavCollapsed: !s.resourcesNavCollapsed })),
       setChatOpen: (open) => set({ chatOpen: open }),
       setTerminalOpen: (open) => set({ terminalOpen: open }),
       setChatDraft: (draft) => set({ chatDraft: draft }),
@@ -52,6 +57,7 @@ export const usePanelStore = create<PanelStore>()(
       name: "studio-panels",
       partialize: (s) => ({
         sidebarCollapsed: s.sidebarCollapsed,
+        resourcesNavCollapsed: s.resourcesNavCollapsed,
         chatOpen: s.chatOpen,
         terminalOpen: s.terminalOpen,
       }),
