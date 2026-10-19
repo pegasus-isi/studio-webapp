@@ -34,7 +34,7 @@ import { Check, Copy, Download } from "lucide-react";
 import * as api from "@/lib/api/client";
 import type { AnnexStatus } from "@/lib/api/client";
 import { AppLink } from "@/components/layout/app-link";
-import { StatusCard, type Tone } from "@/components/resources/status-card";
+import { CARD, FIELD, HINT, LABEL, StatusCard, type Tone } from "@/components/resources/status-card";
 import { cn, formatDuration } from "@/lib/utils";
 
 type StepState = "done" | "current" | "todo";
@@ -106,8 +106,6 @@ function Cmd({ children }: { children: string }) {
   );
 }
 
-const fieldCls =
-  "mt-1 block w-full rounded-md border border-line bg-base px-2 py-1 font-mono text-xs text-fg outline-none focus:border-pegasus-400";
 
 type ClusterForm = {
   partition: string;
@@ -325,7 +323,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
         )}
       </StatusCard>
 
-      <div className="rounded-xl border border-line bg-surface">
+      <div className={CARD}>
         <button
           type="button"
           onClick={() => setShowHow((s) => !s)}
@@ -413,26 +411,26 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     Your Slurm options <span className="font-normal text-fgsubtle">(optional, filled into the command)</span>
                   </p>
                   {(Object.keys(EMPTY_FORM) as (keyof ClusterForm)[]).some((k) => problem(form, k)) && (
-                    <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+                    <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                       A value with spaces or punctuation is left out of the command.
                     </p>
                   )}
                   <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                    <label className="text-[11px] text-fgsubtle">
+                    <label className={LABEL}>
                       Account / project
-                      <input value={form.account} onChange={(e) => setField("account", e.target.value)} placeholder="abc123" spellCheck={false} className={fieldCls} />
+                      <input value={form.account} onChange={(e) => setField("account", e.target.value)} placeholder="abc123" spellCheck={false} className={FIELD} />
                     </label>
-                    <label className="text-[11px] text-fgsubtle">
+                    <label className={LABEL}>
                       Partition
-                      <input value={form.partition} onChange={(e) => setField("partition", e.target.value)} placeholder="compute" spellCheck={false} className={fieldCls} />
+                      <input value={form.partition} onChange={(e) => setField("partition", e.target.value)} placeholder="compute" spellCheck={false} className={FIELD} />
                     </label>
-                    <label className="text-[11px] text-fgsubtle">
+                    <label className={LABEL}>
                       Walltime
-                      <input value={form.walltime} onChange={(e) => setField("walltime", e.target.value)} placeholder="02:00:00" spellCheck={false} className={fieldCls} />
+                      <input value={form.walltime} onChange={(e) => setField("walltime", e.target.value)} placeholder="02:00:00" spellCheck={false} className={FIELD} />
                     </label>
-                    <label className="text-[11px] text-fgsubtle">
+                    <label className={LABEL}>
                       Nodes
-                      <input value={form.nodes} onChange={(e) => setField("nodes", e.target.value)} placeholder="1" inputMode="numeric" spellCheck={false} className={fieldCls} />
+                      <input value={form.nodes} onChange={(e) => setField("nodes", e.target.value)} placeholder="1" inputMode="numeric" spellCheck={false} className={FIELD} />
                     </label>
                   </div>
                 </div>
@@ -440,7 +438,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                   <Cmd>{clusterCmd}</Cmd>
                 </div>
                 {sbatch && (
-                  <p className="mt-1 text-xs text-fgsubtle">
+                  <p className={`mt-1 ${HINT}`}>
                     Your options are saved on the cluster, so next time you can skip the form.
                   </p>
                 )}
@@ -461,7 +459,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
               </Step>
             </ol>
 
-            <details className="mt-5 border-t border-line pt-3 text-xs text-fgsubtle">
+            <details className={`mt-5 border-t border-line pt-3 ${HINT}`}>
               <summary className="cursor-pointer font-medium text-fgmuted hover:text-fg">
                 How this works
               </summary>

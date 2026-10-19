@@ -15,7 +15,6 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SlidersHorizontal } from "lucide-react";
 import * as api from "@/lib/api/client";
 import {
   SiteOverridesEditor,
@@ -23,6 +22,7 @@ import {
   sameRows,
   type Row,
 } from "@/components/resources/site-overrides-editor";
+import { CARD, FIELD, HINT, LABEL, SectionHeader } from "@/components/resources/status-card";
 
 const PROJECT_ROW = { site: "compute", namespace: "condor", key: "+ProjectName" };
 const isProjectRow = (r: Row) =>
@@ -107,24 +107,20 @@ export function JobSettingsCard() {
   });
 
   return (
-    <section className="rounded-xl border border-line bg-surface p-4">
-      <div className="flex items-start gap-3">
-        <SlidersHorizontal size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-pegasus-600 dark:text-pegasus-300" />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-fg">Sending steps to the OSPool</h2>
-          <p className="mt-0.5 text-xs text-fgmuted">
-            Applied to every step of every workflow you run from here.
-          </p>
-        </div>
-      </div>
+    <section>
+      <SectionHeader
+        title="Sending steps to the OSPool"
+        subtitle="Applied to every step of every workflow you run from here."
+      />
+      <div className={`${CARD} p-4`}>
 
       {error ? (
-        <p className="mt-3 text-sm text-red-600 dark:text-rose-400">
+        <p className="text-sm text-red-600 dark:text-rose-400">
           Couldn&apos;t load: {(error as Error).message}
         </p>
       ) : data ? (
         <form
-          className="mt-4 space-y-3"
+          className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault();
             setSaved(false);
@@ -155,7 +151,7 @@ export function JobSettingsCard() {
               )}
             </div>
           )}
-          <label className="block text-xs font-medium text-fgmuted">
+          <label className={LABEL}>
             OSPool project name
             <input
               value={project}
@@ -163,9 +159,9 @@ export function JobSettingsCard() {
               placeholder="e.g. USC_Deelman"
               spellCheck={false}
               autoComplete="off"
-              className="mt-1 block w-full max-w-md rounded-md border border-line bg-base px-2 py-1.5 font-mono text-sm text-fg outline-none focus:border-pegasus-400"
+              className={`${FIELD} max-w-md`}
             />
-            <span className="mt-1 block text-[11px] font-normal text-fgsubtle">
+            <span className={`mt-1 block font-normal ${HINT}`}>
               Studio&apos;s pool can send your jobs on to the{" "}
               <a
                 href="https://portal.osg-htc.org/documentation/"
@@ -249,12 +245,13 @@ export function JobSettingsCard() {
               </span>
             )}
           </div>
-          <p className="text-[11px] text-fgsubtle">
+          <p className={HINT}>
             Stored in <code className="font-mono">~/.pegasusrc</code>, where
             Pegasus reads it for every workflow.
           </p>
         </form>
       ) : null}
+      </div>
     </section>
   );
 }

@@ -53,7 +53,7 @@ export function SiteOverridesEditor({
 }) {
   return (
     <div className="space-y-2">
-      <p className="text-[11px] text-fgsubtle">
+      <p className="text-xs text-fgsubtle">
         {intro} A <code className="font-mono">condor</code> value is a ClassAd
         expression: a string such as a project name needs its quotes, as in{" "}
         <code className="font-mono">&quot;USC_Deelman&quot;</code>.
@@ -131,10 +131,10 @@ export function SiteOverridesEditor({
       </button>
       {effectiveSite && (
         <details className="pt-1">
-          <summary className="cursor-pointer text-[11px] text-fgsubtle">
+          <summary className="cursor-pointer text-xs text-fgsubtle">
             The “{site}” site as Pegasus sees it (as saved)
           </summary>
-          <pre className="mt-1 max-h-64 overflow-auto rounded bg-muted p-2 font-mono text-[11px] text-fg">
+          <pre className="mt-1 max-h-64 overflow-auto rounded bg-muted p-2 font-mono text-xs text-fg">
             {effectiveSite}
           </pre>
         </details>

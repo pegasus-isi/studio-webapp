@@ -25,8 +25,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Server } from "lucide-react";
 import * as api from "@/lib/api/client";
+import { CARD, FIELD, HINT, LABEL, SectionHeader } from "@/components/resources/status-card";
 import {
   SiteOverridesEditor,
   filled,
@@ -99,30 +99,30 @@ export function ComputeSiteCard() {
   const stillNeeds = (data?.missing ?? []).map((m) => m.toLowerCase()).join(", ");
 
   return (
-    <section className="rounded-xl border border-line bg-surface p-4">
-      <div className="flex items-start gap-3">
-        <Server size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-pegasus-600 dark:text-pegasus-300" />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-fg">Where your workflows run</h2>
-          <p className="mt-0.5 text-xs text-fgmuted">
-            {isLoading ? "Checking…" : <>Now: <span className="font-medium text-fg">{current}</span></>}
-          </p>
-          {data && !data.configured && (
-            <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
-              Not ready yet: still needs {stillNeeds}. Workflows cannot run
-              there until it is filled in below.
-            </p>
-          )}
-        </div>
-      </div>
+    <section>
+      <SectionHeader
+        title="Where your workflows run"
+        subtitle={
+          <>
+            <p>{isLoading ? "Checking…" : <>Now: <span className="font-medium text-fg">{current}</span></>}</p>
+            {data && !data.configured && (
+              <p className="mt-1 text-amber-700 dark:text-amber-400">
+                Not ready yet: still needs {stillNeeds}. Workflows cannot run
+                there until it is filled in below.
+              </p>
+            )}
+          </>
+        }
+      />
+      <div className={`${CARD} p-4`}>
 
       {error ? (
-        <p className="mt-3 text-sm text-red-600 dark:text-rose-400">
+        <p className="text-sm text-red-600 dark:text-rose-400">
           Couldn&apos;t load: {(error as Error).message}
         </p>
       ) : data ? (
         <form
-          className="mt-4 space-y-3"
+          className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault();
             setSaved(false);
@@ -139,7 +139,7 @@ export function ComputeSiteCard() {
             const label = data.field_labels[k] ?? k;
             const accounts = k === "RESOURCE_PROJECT" ? data.slurm_accounts : [];
             return (
-              <label key={k} className="block text-xs font-medium text-fgmuted">
+              <label key={k} className={LABEL}>
                 {label}
                 {accounts.length > 0 ? (
                   <select
@@ -148,7 +148,7 @@ export function ComputeSiteCard() {
                       setEnv((v) => ({ ...v, [k]: e.target.value }));
                       setSaved(false);
                     }}
-                    className="mt-1 block w-full max-w-md rounded-md border border-line bg-base px-2 py-1.5 text-sm text-fg outline-none focus:border-pegasus-400"
+                    className={`${FIELD} max-w-md`}
                   >
                     <option value="">Choose an account…</option>
                     {accounts.map((a) => (
@@ -166,7 +166,7 @@ export function ComputeSiteCard() {
                     }}
                     spellCheck={false}
                     autoComplete="off"
-                    className="mt-1 block w-full max-w-md rounded-md border border-line bg-base px-2 py-1.5 font-mono text-sm text-fg outline-none focus:border-pegasus-400"
+                    className={`${FIELD} max-w-md`}
                   />
                 )}
               </label>
@@ -248,13 +248,14 @@ export function ComputeSiteCard() {
               </span>
             )}
           </div>
-          <p className="text-[11px] text-fgsubtle">
+          <p className={HINT}>
             Stored in <code className="font-mono">~/.pegasusrc</code>, where
             Pegasus reads it for every workflow; anything else you keep there is
             left as it is.
           </p>
         </form>
       ) : null}
+      </div>
     </section>
   );
 }
