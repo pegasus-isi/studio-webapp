@@ -1,9 +1,10 @@
 "use client";
 
 /**
- * Job settings on the hosted deployment (#532): the OSPool project name,
- * and the advanced site profiles that used to live inside "Where your
- * workflows run" before that card became OOD-only.
+ * Job settings on the hosted deployment (#532), shown in the Resources
+ * page's OSPool section because the field they exist for is the OSPool
+ * project name. They also carry the advanced site profiles that used to
+ * live inside "Where your workflows run" before that card became OOD-only.
  *
  * The hosted access point flocks to the OSPool, but the OSPool only takes
  * jobs that carry a project name (`+ProjectName = "USC_Deelman"`), so the
@@ -110,7 +111,7 @@ export function JobSettingsCard() {
       <div className="flex items-start gap-3">
         <SlidersHorizontal size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-pegasus-600 dark:text-pegasus-300" />
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-fg">Job settings</h2>
+          <h2 className="text-sm font-semibold text-fg">Sending steps to the OSPool</h2>
           <p className="mt-0.5 text-xs text-fgmuted">
             Applied to every step of every workflow you run from here.
           </p>
