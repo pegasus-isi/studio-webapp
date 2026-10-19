@@ -826,7 +826,7 @@ function Capability({
   return (
     <div>
       <div className="flex items-baseline gap-2">
-        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
+        <h4 className="text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
           {title}
         </h4>
         {status === "ok" && (
@@ -856,7 +856,7 @@ function Capability({
               )}
               {item.source && (
                 <span
-                  className="ml-1.5 block truncate text-[10px] text-fgsubtle"
+                  className="ml-1.5 block truncate text-xs text-fgsubtle"
                   title={item.source}
                 >
                   {item.source}
@@ -966,7 +966,7 @@ const TurnBubble = memo(function TurnBubble({
 
   return (
     <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
-      <span className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
+      <span className="mb-1 px-1 text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
         {isUser ? "You" : "AI"}
         {/* Which agent answered. In Auto mode this is the only place the
             routing decision shows, and a wrong pick has to be visible to be

@@ -87,7 +87,7 @@ export default function DataPage() {
 
         <div className="mt-8">
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-sm font-medium uppercase tracking-wider text-fgsubtle">
+            <h2 className="text-sm font-semibold text-fg">
               Your files
             </h2>
             <a
@@ -101,11 +101,11 @@ export default function DataPage() {
           {isLoading ? (
             <p className="text-sm text-fgmuted">Loading…</p>
           ) : files.length === 0 ? (
-            <p className="rounded-lg border border-line bg-surface px-4 py-6 text-center text-sm text-fgmuted">
+            <p className="rounded-xl border border-line bg-surface px-4 py-6 text-center text-sm text-fgmuted">
               Nothing here yet. Add a file above and it will show up here.
             </p>
           ) : (
-            <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
+            <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
               {files.map((file) => (
                 <li
                   key={file.name}

@@ -87,7 +87,7 @@ export function ToolCard({ tool }: Props) {
   };
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-3">
+    <div className="rounded-xl border border-line bg-surface p-3">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="flex items-center gap-1.5 font-medium text-fg">
@@ -95,7 +95,7 @@ export function ToolCard({ tool }: Props) {
             {info.paid && (
               <span
                 title="Bring your own subscription: runs on your own LLM account or API tokens, not on anything Studio pays for"
-                className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                className="rounded-full bg-amber-100 px-1.5 py-0.5 text-2xs font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
               >
                 Your subscription
               </span>
@@ -167,7 +167,7 @@ export function ToolCard({ tool }: Props) {
       </div>
 
       {error && (
-        <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-red-50 p-2 text-[11px] leading-snug text-red-700 dark:bg-rose-500/10 dark:text-rose-300">
+        <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-red-50 p-2 text-xs leading-snug text-red-700 dark:bg-rose-500/10 dark:text-rose-300">
           {error}
         </pre>
       )}

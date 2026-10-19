@@ -29,7 +29,7 @@ function CodeBlock({ text }: { text: string }) {
     <div className="group relative my-2">
       <button
         onClick={copy}
-        className="absolute right-2 top-2 rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fgmuted opacity-0 transition-opacity hover:text-fg focus-visible:opacity-100 group-hover:opacity-100"
+        className="absolute right-2 top-2 rounded border border-line bg-surface px-1.5 py-0.5 text-2xs font-medium text-fgmuted opacity-0 transition-opacity hover:text-fg focus-visible:opacity-100 group-hover:opacity-100"
         title="Copy"
       >
         {copied ? "Copied" : "Copy"}

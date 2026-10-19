@@ -161,7 +161,7 @@ export function CommandPalette({
             aria-label="Search analyses, examples, or jump to a page"
             className="w-full border-0 bg-transparent text-sm text-fg outline-none placeholder:text-fgsubtle"
           />
-          <kbd className="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-fgsubtle">
+          <kbd className="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-2xs text-fgsubtle">
             esc
           </kbd>
         </div>
@@ -182,7 +182,7 @@ export function CommandPalette({
               return (
                 <div key={hit.key}>
                   {header && (
-                    <p className="px-3.5 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
+                    <p className="px-3.5 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
                       {header}
                     </p>
                   )}

@@ -116,7 +116,7 @@ export function OutputsPanel({
         </a>
       </div>
 
-      <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
+      <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
         {data.files.map((file) => (
           <li
             key={file.path}

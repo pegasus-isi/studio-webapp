@@ -46,7 +46,7 @@ export function SourceTabs({ annex }: { annex?: AnnexStatus }) {
       label: "Cloud & testbeds",
       icon: Sparkles,
       badge: (
-        <span className="rounded-full border border-line px-1.5 py-px text-[10px] font-medium uppercase tracking-wider text-fgsubtle">
+        <span className="rounded-full border border-line px-1.5 py-px text-2xs font-medium uppercase tracking-wider text-fgsubtle">
           Soon
         </span>
       ),

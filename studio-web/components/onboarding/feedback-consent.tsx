@@ -229,7 +229,7 @@ export function ProfileForm({
           aria-label="Coding comfort, 1 (not at all) to 5 (very)"
           className="mt-1 flex items-center gap-1.5"
         >
-          <span className="text-[11px] text-fgsubtle">Not at all</span>
+          <span className="text-xs text-fgsubtle">Not at all</span>
           {[1, 2, 3, 4, 5].map((n) => {
             const on = draft.coding_comfort === n;
             return (
@@ -254,7 +254,7 @@ export function ProfileForm({
               </button>
             );
           })}
-          <span className="text-[11px] text-fgsubtle">Very</span>
+          <span className="text-xs text-fgsubtle">Very</span>
         </div>
       </fieldset>
 
@@ -266,7 +266,7 @@ export function ProfileForm({
 
       <div className="flex items-center gap-2 pt-1">
         {!onSkip && (
-          <span className="text-[11px] text-fgsubtle" aria-live="polite">
+          <span className="text-xs text-fgsubtle" aria-live="polite">
             {savedOnce
               ? "Saved."
               : answeredAt
@@ -397,7 +397,7 @@ export function ContentSharingChoice({ onDone }: { onDone: () => void }) {
         time.
       </p>
       {consent.content_capture && (
-        <p className="text-[11px] text-fgsubtle">You are sharing chat text now.</p>
+        <p className="text-xs text-fgsubtle">You are sharing chat text now.</p>
       )}
       {error && (
         <p className="text-xs text-red-700 dark:text-rose-400">

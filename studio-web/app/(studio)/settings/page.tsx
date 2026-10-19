@@ -131,7 +131,7 @@ export default function SettingsPage() {
           aria-hidden="true"
           className="mx-2 h-4 w-px shrink-0 bg-line"
         />
-        <span className="mr-1 text-xs uppercase tracking-wider text-fgsubtle">
+        <span className="mr-1 text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
           Advanced
         </span>
 
@@ -265,7 +265,7 @@ function ProvidersTab() {
 
       {/* Add provider */}
       {showAdd ? (
-        <div className="rounded-lg border border-dashed border-line bg-base p-4">
+        <div className="rounded-xl border border-dashed border-line bg-base p-4">
           <div className="flex items-center gap-2">
             <select
               value={newProviderId}
@@ -410,7 +410,7 @@ function ProviderCard({
   return (
     <div
       className={cn(
-        "rounded-lg border bg-surface p-4",
+        "rounded-xl border bg-surface p-4",
         config.is_active ? "border-pegasus-500 ring-1 ring-pegasus-200" : "border-line"
       )}
     >
@@ -645,7 +645,7 @@ function KnowledgeSection() {
   if (!status?.exists) return null;
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-4">
+    <div className="rounded-xl border border-line bg-surface p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-fg">Pegasus knowledge base</h2>
@@ -706,7 +706,7 @@ function ToolsTab() {
       {/* Bash terminal launcher (moved here from the old Workbench). */}
       <button
         onClick={openBash}
-        className="flex w-full items-center gap-3 rounded-lg border border-line bg-surface p-3 text-left transition-colors hover:border-pegasus-300 sm:w-auto"
+        className="flex w-full items-center gap-3 rounded-xl border border-line bg-surface p-3 text-left transition-colors hover:border-pegasus-300 sm:w-auto"
       >
         <span className="flex h-9 w-9 items-center justify-center rounded-md bg-gray-800 text-white">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -789,7 +789,7 @@ function ChatTab() {
       <ChatEngineSection />
 
       {/* Shell-command approval (SEC-4) */}
-      <div className="rounded-lg border border-line bg-surface p-4">
+      <div className="rounded-xl border border-line bg-surface p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-sm font-semibold text-fg">
@@ -884,7 +884,7 @@ function TelemetrySection() {
   const collecting = consent?.collector_configured === true;
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-4">
+    <div className="rounded-xl border border-line bg-surface p-4">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h3 className="text-sm font-semibold text-fg">
@@ -951,16 +951,16 @@ function FeedbackTab() {
         </p>
       </div>
 
-      <div className="rounded-lg border border-line bg-surface p-4">
+      <div className="rounded-xl border border-line bg-surface p-4">
         <h3 className="text-sm font-semibold text-fg">What we collect</h3>
         <CollectionNotice where="settings" className="mt-1" />
       </div>
 
-      <div className="rounded-lg border border-line bg-surface p-4">
+      <div className="rounded-xl border border-line bg-surface p-4">
         <FeedbackPromptsToggle />
       </div>
 
-      <div className="rounded-lg border border-line bg-surface p-4">
+      <div className="rounded-xl border border-line bg-surface p-4">
         <h3 className="text-sm font-semibold text-fg">About you</h3>
         <p className="mt-1 mb-3 text-xs leading-relaxed text-fgmuted">
           Optional. These let us tell apart, say, a first-year student from
@@ -1019,7 +1019,7 @@ function ChatEngineSection() {
   const onOpenCode = prefs.chat_engine === "opencode";
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-4">
+    <div className="rounded-xl border border-line bg-surface p-4">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h3 className="text-sm font-semibold text-fg">Chat engine</h3>
@@ -1299,7 +1299,7 @@ function PlanningLocationSection() {
   ];
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-4">
+    <div className="rounded-xl border border-line bg-surface p-4">
       <h2 className="text-sm font-semibold text-fg">Where planning runs</h2>
       <p className="mt-1 text-xs leading-relaxed text-fgmuted">
         Preparing a workflow to run (<code>pegasus-plan</code>) writes file paths
@@ -1319,7 +1319,7 @@ function PlanningLocationSection() {
             <label
               key={o.value}
               className={cn(
-                "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+                "flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors",
                 selected
                   ? "border-pegasus-400 bg-pegasus-50 dark:bg-pegasus-400/10"
                   : "border-line hover:bg-base",
@@ -1442,7 +1442,7 @@ function WorkflowSecretsSection() {
   };
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-4">
+    <div className="rounded-xl border border-line bg-surface p-4">
       <h2 className="text-sm font-semibold text-fg">Workflow secrets</h2>
       <p className="mt-1 text-xs leading-relaxed text-fgmuted">
         API keys and tokens your analyses need to download data — a Kaggle key,
@@ -1585,7 +1585,7 @@ function WorkflowDiscoverySection() {
   };
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-4">
+    <div className="rounded-xl border border-line bg-surface p-4">
       <h2 className="text-sm font-semibold text-fg">Workflow discovery</h2>
       <p className="mt-1 text-xs leading-relaxed text-fgmuted">
         Runs are found by scanning for <code>braindump.yml</code> under{" "}
@@ -1629,7 +1629,7 @@ function WorkflowDiscoverySection() {
             className="mt-1 w-full rounded-md border border-line bg-base px-2 py-1.5 font-mono text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500"
             data-testid="workflow-scan-excludes"
           />
-          <p className="mt-1 text-[11px] text-fgsubtle">
+          <p className="mt-1 text-xs text-fgsubtle">
             Runs whose directory path contains a fragment are hidden. Built-in:{" "}
             {settings?.defaults.builtin_excludes
               .map((f) => f.replace(/^\/+|\/+$/g, ""))
@@ -1682,7 +1682,7 @@ function SimpleRunSection() {
   const update = useUpdateUIPreferences();
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-4">
+    <div className="rounded-xl border border-line bg-surface p-4">
       <h2 className="text-sm font-semibold text-fg">Simplified Run</h2>
       <p className="mt-1 text-xs text-fgmuted">
         A single <strong>Run</strong> button prepares and starts your workflow,
@@ -1724,7 +1724,7 @@ function WelcomePageSection() {
   const update = useUpdateUIPreferences();
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-4">
+    <div className="rounded-xl border border-line bg-surface p-4">
       <h2 className="text-sm font-semibold text-fg">Welcome page &amp; tour</h2>
       <p className="mt-1 text-xs text-fgmuted">
         Studio opens on a welcome page that introduces the product, and Home
@@ -1820,7 +1820,7 @@ function NotificationsTab() {
         toast and don&rsquo;t affect the unread badge.
       </p>
 
-      <div className="divide-y divide-line rounded-lg border border-line bg-surface">
+      <div className="divide-y divide-line rounded-xl border border-line bg-surface">
         {NOTIFICATION_CATEGORIES.map((cat) => {
           const enabled = !muted.includes(cat.kind);
           return (

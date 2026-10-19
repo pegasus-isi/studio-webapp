@@ -84,7 +84,7 @@ function SiteOption({
   return (
     <label
       className={cn(
-        "flex items-start gap-3 rounded-lg border p-3 transition-colors",
+        "flex items-start gap-3 rounded-xl border p-3 transition-colors",
         ready ? "cursor-pointer" : "cursor-not-allowed opacity-70",
         selected
           ? "border-pegasus-400 bg-pegasus-50 dark:bg-pegasus-400/10"
@@ -106,7 +106,7 @@ function SiteOption({
         <span className="block text-sm font-medium text-fg">
           {site.label}
           {!ready && (
-            <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+            <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-2xs font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
               Needs setup
             </span>
           )}
@@ -555,14 +555,14 @@ export function RunFlowPanel({
         )}
 
         <fieldset className="mt-5">
-          <legend className="flex w-full items-center text-xs font-medium uppercase tracking-wide text-fgsubtle">
+          <legend className="flex w-full items-center text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
             Where it runs
             <GlossaryTerm term="Where it runs" />
             {/* A cluster and allocation are chosen once, on Resources
                 (#468); the sites below follow from that choice. */}
             <AppLink
               href="/provisioning"
-              className="ml-auto text-[11px] font-medium normal-case tracking-normal text-pegasus-700 hover:underline dark:text-pegasus-300"
+              className="ml-auto text-xs font-medium normal-case tracking-normal text-pegasus-700 hover:underline dark:text-pegasus-300"
             >
               Set up a cluster…
             </AppLink>
@@ -601,8 +601,8 @@ export function RunFlowPanel({
             "it started something on a cluster" is a bad moment to find out.
             Values only — no flags, no command line. */}
         {!running && summary.length > 0 && (
-          <div className="mt-5 rounded-lg border border-line bg-base p-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-fgsubtle">
+          <div className="mt-5 rounded-xl border border-line bg-base p-4">
+            <p className="text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
               What will happen
             </p>
             <dl className="mt-2 space-y-1">
@@ -727,7 +727,7 @@ export function RunFlowPanel({
           </ol>
 
           {flow.failure && (
-            <div className="mt-4 rounded-lg border border-red-300 bg-red-50 p-4 dark:border-rose-500/40 dark:bg-rose-500/10">
+            <div className="mt-4 rounded-xl border border-red-300 bg-red-50 p-4 dark:border-rose-500/40 dark:bg-rose-500/10">
               <p className="text-sm font-semibold text-red-800 dark:text-rose-300">
                 {flow.failure.cause}
               </p>

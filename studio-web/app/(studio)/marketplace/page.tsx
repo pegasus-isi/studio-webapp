@@ -266,7 +266,7 @@ export default function MarketplacePage() {
         {isLoading ? (
           <p className="text-sm text-fgmuted">Loading workflows…</p>
         ) : shown.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-line p-8 text-center">
+          <div className="rounded-xl border border-dashed border-line p-8 text-center">
             <p className="text-sm text-fgmuted">
               Nothing matches those filters.
             </p>
@@ -323,13 +323,13 @@ function WorkflowCard({
   // needed. It stays in the API for a Preview drawer to use at a size where a
   // graph is actually legible (#314).
   return (
-    <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-surface">
+    <div className="flex flex-col overflow-hidden rounded-xl border border-line bg-surface">
       <div className="flex flex-1 flex-col p-4">
         <div className="flex items-start justify-between gap-2">
           <h2 className="text-sm font-semibold text-fg">{w.name}</h2>
           <span
             title={`Source: ${w.source}`}
-            className="shrink-0 rounded-full bg-base px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-fgmuted"
+            className="shrink-0 rounded-full bg-base px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide text-fgmuted"
           >
             {w.source}
           </span>
@@ -339,7 +339,7 @@ function WorkflowCard({
             {topicsOf(w).map((t) => (
               <span
                 key={t}
-                className="w-fit rounded bg-pegasus-50 px-1.5 py-0.5 text-[10px] font-medium capitalize text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300"
+                className="w-fit rounded bg-pegasus-50 px-1.5 py-0.5 text-2xs font-medium capitalize text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300"
               >
                 {t}
               </span>

@@ -208,7 +208,7 @@ function FileGroup({
 }) {
   return (
     <section>
-      <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-fgsubtle">
+      <h3 className="mb-1 text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
         {title} <span className="font-normal">({files.length})</span>
       </h3>
       {files.length === 0 ? (
@@ -228,14 +228,14 @@ function FileGroup({
                   {where && (
                     <span
                       title={where.title}
-                      className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium", where.cls)}
+                      className={cn("shrink-0 rounded px-1.5 py-0.5 text-2xs font-medium", where.cls)}
                     >
                       {where.label}
                     </span>
                   )}
                 </div>
                 {f.lfn !== f.name && (
-                  <p className="truncate pl-[22px] text-[11px] text-fgsubtle" title={f.lfn}>
+                  <p className="truncate pl-[22px] text-xs text-fgsubtle" title={f.lfn}>
                     {f.lfn}
                   </p>
                 )}
@@ -248,7 +248,7 @@ function FileGroup({
                       {f.previewable && (
                         <button
                           onClick={() => onPreview(f)}
-                          className="rounded border border-line px-1.5 py-0.5 text-[11px] text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
+                          className="rounded border border-line px-1.5 py-0.5 text-xs text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
                         >
                           Preview
                         </button>
@@ -257,14 +257,14 @@ function FileGroup({
                         <a
                           href={download}
                           download={f.name}
-                          className="rounded border border-line px-1.5 py-0.5 text-[11px] text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
+                          className="rounded border border-line px-1.5 py-0.5 text-xs text-fgmuted hover:border-pegasus-400 hover:text-pegasus-700 dark:hover:text-pegasus-300"
                         >
                           Download
                         </a>
                       )}
                     </>
                   ) : (
-                    <span className="text-[11px] text-fgsubtle">
+                    <span className="text-xs text-fgsubtle">
                       {f.link === "output"
                         ? live
                           ? "Not produced yet"
