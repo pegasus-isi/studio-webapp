@@ -18,6 +18,29 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* One focus style for the whole app (#552). There was no rule at all, so
+   every nav item, tab and toolbar button kept the browser's default outline
+   after a mouse click, while keyboard users got whatever the browser drew.
+   Now a click leaves nothing behind, and keyboard focus (:focus-visible) is
+   one brand-coloured ring. In the base layer on purpose: inputs that set
+   `outline-none` with their own `focus:border-*` keep it, because utilities
+   win over base. */
+@layer base {
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
+  /* Embedded surfaces draw their own focus: a ring around the JupyterLab
+     or preview iframe, or around xterm's hidden textarea, is noise. */
+  iframe:focus-visible,
+  .xterm :focus-visible {
+    outline: none;
+  }
+}
 :root {
   --font-outfit: "Outfit", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
