@@ -164,7 +164,7 @@ export function UploadDropZone({
           {queue.map((item) => (
             <li
               key={item.id}
-              className="rounded-lg border border-line bg-surface px-3 py-2"
+              className="rounded-xl border border-line bg-surface px-3 py-2"
             >
               <div className="flex items-center gap-3">
                 <span className="min-w-0 flex-1 truncate text-sm text-fg">

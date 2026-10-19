@@ -219,7 +219,7 @@ export function ChatContextChip() {
             </button>
           )}
 
-          <div className="border-t border-line px-3 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
+          <div className="border-t border-line px-3 pb-0.5 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
             Workflows
           </div>
           {projects === null ? (
@@ -243,14 +243,14 @@ export function ChatContextChip() {
                 )}
               >
                 <span className="truncate">{p.name}</span>
-                <span className="shrink-0 text-[10px] text-fgsubtle">
+                <span className="shrink-0 text-xs text-fgsubtle">
                   {p.status}
                 </span>
               </button>
             ))
           )}
 
-          <div className="border-t border-line px-3 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
+          <div className="border-t border-line px-3 pb-0.5 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
             Runs
           </div>
           {runs === null ? (
@@ -274,7 +274,7 @@ export function ChatContextChip() {
                 )}
               >
                 <span className="truncate">{runLabel(r)}</span>
-                <span className="shrink-0 text-[10px] text-fgsubtle">
+                <span className="shrink-0 text-xs text-fgsubtle">
                   {r.status}
                 </span>
               </button>

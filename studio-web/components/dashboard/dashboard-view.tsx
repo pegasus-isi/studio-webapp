@@ -508,8 +508,8 @@ export function DashboardView() {
   };
 
   const actionClass =
-    "flex flex-col items-center gap-2 rounded-2xl border border-line bg-surface px-3 py-5 text-center transition-colors hover:border-pegasus-300 hover:bg-pegasus-50/40 dark:hover:bg-pegasus-400/5";
-  const actionLabel = "text-[13px] font-medium text-fg";
+    "flex flex-col items-center gap-2 rounded-xl border border-line bg-surface px-3 py-5 text-center transition-colors hover:border-pegasus-300 hover:bg-pegasus-50/40 dark:hover:bg-pegasus-400/5";
+  const actionLabel = "text-sm font-medium text-fg";
 
   return (
     <div className="flex h-full flex-col">
@@ -589,7 +589,7 @@ export function DashboardView() {
           </div>
 
           {/* Openers */}
-          <p className="mt-9 text-[11px] font-semibold uppercase tracking-[0.13em] text-fgsubtle">
+          <p className="mt-9 text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
             Try an example
           </p>
           <div
@@ -600,13 +600,13 @@ export function DashboardView() {
               <button
                 key={o.title}
                 onClick={() => send(o.prompt)}
-                className="flex items-start gap-3 rounded-2xl border border-line bg-surface p-3.5 text-left transition-colors hover:border-pegasus-300 hover:bg-pegasus-50/40 dark:hover:bg-pegasus-400/5"
+                className="flex items-start gap-3 rounded-xl border border-line bg-surface p-3.5 text-left transition-colors hover:border-pegasus-300 hover:bg-pegasus-50/40 dark:hover:bg-pegasus-400/5"
               >
                 <Tile tone={o.tone} size="sm">
                   <Icon d={o.icon} />
                 </Tile>
                 <span className="min-w-0">
-                  <span className="block text-[13px] font-semibold text-fg">
+                  <span className="block text-sm font-semibold text-fg">
                     {o.title}
                   </span>
                   {/* Shown in full. A card that truncates the prompt asks you

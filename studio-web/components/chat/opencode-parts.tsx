@@ -246,7 +246,7 @@ function ToolPartView({ part }: { part: PartOf<"tool"> }) {
           // hid the part that says what it actually did. Capped at three lines
           // so a pathological one-liner still can't take over the transcript;
           // the full text is in the tooltip and in `args`.
-          className="mt-0.5 line-clamp-3 font-mono text-[11px] leading-snug text-fgmuted [overflow-wrap:anywhere]"
+          className="mt-0.5 line-clamp-3 font-mono text-xs leading-snug text-fgmuted [overflow-wrap:anywhere]"
           title={title}
         >
           {title}
@@ -276,7 +276,7 @@ function CompactionPartView({ part }: { part: PartOf<"compaction"> }) {
   return (
     <div className="flex items-center gap-3 py-1" role="separator">
       <div className="h-px flex-1 bg-line" />
-      <span className="text-[10px] font-medium uppercase tracking-wider text-fgsubtle">
+      <span className="text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
         {part.auto ? "Context summarized to fit" : "Context summarized"}
       </span>
       <div className="h-px flex-1 bg-line" />

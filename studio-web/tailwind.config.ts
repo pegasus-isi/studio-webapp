@@ -42,6 +42,13 @@ const config: Config = {
           900: "#1b3252",
         },
       },
+      // One named size below text-xs, for badges, pills, keyboard hints and
+      // small uppercase group labels. There were ten- and eleven-pixel
+      // arbitrary values side by side for the same jobs (#554). Body and
+      // helper text never go below text-xs.
+      fontSize: {
+        "2xs": ["11px", { lineHeight: "16px" }],
+      },
       fontFamily: {
         sans: ["var(--font-outfit)", "system-ui", "sans-serif"],
         mono: ["var(--font-mono)", "ui-monospace", "monospace"],

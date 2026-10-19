@@ -81,9 +81,9 @@ function FailureCard({ card }: { card: DiagnosisCard }) {
   };
 
   return (
-    <div className="rounded-lg border border-red-300 bg-red-50 p-4 dark:border-rose-500/40 dark:bg-rose-500/10">
+    <div className="rounded-xl border border-red-300 bg-red-50 p-4 dark:border-rose-500/40 dark:bg-rose-500/10">
       {card.step && (
-        <p className="text-xs font-medium uppercase tracking-wide text-red-700/70 dark:text-rose-300/70">
+        <p className="text-2xs font-semibold uppercase tracking-wider text-red-700/70 dark:text-rose-300/70">
           {card.step}
           {card.exitcode != null && card.exitcode !== "" && (
             <span className="font-normal"> · exit {card.exitcode}</span>

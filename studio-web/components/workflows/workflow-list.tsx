@@ -56,7 +56,7 @@ export function WorkflowList({ projects, workflows }: Props) {
       {/* Projects section */}
       {projects.length > 0 && (
         <div>
-          <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-fgsubtle">
+          <div className="px-4 py-2 text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
             Projects
           </div>
           <ul className="divide-y divide-line">
@@ -107,7 +107,7 @@ export function WorkflowList({ projects, workflows }: Props) {
       {/* Standalone runs section */}
       {workflows.length > 0 && (
         <div>
-          <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-fgsubtle">
+          <div className="px-4 py-2 text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
             {projects.length > 0 ? "Other Runs" : "Runs"}
           </div>
           <ul className="divide-y divide-line">

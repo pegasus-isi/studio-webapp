@@ -187,7 +187,7 @@ function ContextDivider({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-3 py-1" role="separator">
       <div className="h-px flex-1 bg-line" />
-      <span className="text-[10px] font-medium uppercase tracking-wider text-fgsubtle">
+      <span className="text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
         {label}
       </span>
       <div className="h-px flex-1 bg-line" />
@@ -224,7 +224,7 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
   return (
     <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
       {/* Role label */}
-      <span className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-fgsubtle">
+      <span className="mb-1 px-1 text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
         {isUser ? "You" : "AI"}
       </span>
       <div

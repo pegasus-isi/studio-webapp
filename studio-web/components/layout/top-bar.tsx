@@ -82,7 +82,7 @@ export function TopBar() {
             <path d="M20 20l-3.5-3.5" />
           </svg>
           <span className="truncate">Search analyses, examples…</span>
-          <kbd className="ml-auto shrink-0 rounded border border-line px-1 font-mono text-[10px]">
+          <kbd className="ml-auto shrink-0 rounded border border-line px-1 font-mono text-2xs">
             {mac ? "⌘K" : "Ctrl K"}
           </kbd>
         </button>

@@ -52,7 +52,7 @@ export function GlossaryTerm({ term }: { term: string }) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label={`What does "${entry.term}" mean?`}
-        className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full border border-line text-[10px] font-semibold text-fgsubtle align-middle hover:border-pegasus-400 hover:text-pegasus-600 dark:hover:text-pegasus-300"
+        className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full border border-line text-2xs font-semibold text-fgsubtle align-middle hover:border-pegasus-400 hover:text-pegasus-600 dark:hover:text-pegasus-300"
       >
         ?
       </button>
@@ -71,7 +71,7 @@ export function GlossaryTerm({ term }: { term: string }) {
             // The Pegasus word is deliberately kept, not hidden: it is what
             // they will meet in logs and in Pegasus's own docs, and withholding
             // it strands them there.
-            <span className="mt-1.5 block text-[11px] text-fgsubtle">
+            <span className="mt-1.5 block text-xs text-fgsubtle">
               Pegasus calls this “{entry.alsoKnownAs}”.
             </span>
           )}
