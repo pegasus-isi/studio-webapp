@@ -5,6 +5,19 @@
 @tailwind utilities;
 
 /* Fonts loaded via <link> in layout head (Google Fonts) — no build-time fetch. */
+
+/* Outfit's default digits are proportional (its "1" is about half the width
+   of its "0"), so numbers in a column jitter and a count that ticks from 11
+   to 12 shifts its neighbours. Tables and stat values always want fixed-width
+   figures; running text keeps the default (#550). Elsewhere, use the
+   `tabular-nums` utility on the number itself. */
+@layer base {
+  td,
+  th,
+  dd {
+    font-variant-numeric: tabular-nums;
+  }
+}
 :root {
   --font-outfit: "Outfit", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;

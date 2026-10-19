@@ -495,7 +495,7 @@ export function RunFlowPanel({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium text-fg">
-                    Settings ({primaryParams.length + plumbingParams.length})
+                    Settings <span className="tabular-nums">({primaryParams.length + plumbingParams.length})</span>
                   </span>
                   <span className="block text-xs text-fgmuted">
                     {missing.length > 0
@@ -535,7 +535,7 @@ export function RunFlowPanel({
                 {plumbingParams.length > 0 && (
                   <details className="mt-3">
                     <summary className="cursor-pointer text-xs font-medium text-fgmuted hover:text-fg">
-                      More options ({plumbingParams.length})
+                      More options <span className="tabular-nums">({plumbingParams.length})</span>
                     </summary>
                     <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                       {plumbingParams.map((p: WorkflowParam) => (
@@ -580,7 +580,7 @@ export function RunFlowPanel({
           {advancedSites.length > 0 && (
             <details className="mt-2" open={chosenIsAdvanced || undefined}>
               <summary className="cursor-pointer text-xs font-medium text-fgmuted hover:text-fg">
-                More places ({advancedSites.length})
+                More places <span className="tabular-nums">({advancedSites.length})</span>
               </summary>
               <div className="mt-2 space-y-2">
                 {advancedSites.map((site) => (

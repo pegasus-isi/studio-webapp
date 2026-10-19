@@ -67,7 +67,7 @@ export function StatusBar() {
 
         {/* Terminal tab count */}
         {tabCount > 0 && (
-          <span className="text-fgmuted">
+          <span className="tabular-nums text-fgmuted">
             {tabCount} terminal{tabCount !== 1 ? "s" : ""}
           </span>
         )}

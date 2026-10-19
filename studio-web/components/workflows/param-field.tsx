@@ -207,7 +207,9 @@ export function ParamField({
         // Prefix so a grayed default reads as guidance, not a filled value.
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-md border border-line px-2 py-1 text-sm font-mono"
+        // Not monospace: a text parameter is usually a name or an ID, not
+        // code; file and directory parameters have their own picker (#550).
+        className="rounded-md border border-line px-2 py-1 text-sm"
       />
     );
   })();

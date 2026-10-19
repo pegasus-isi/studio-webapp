@@ -12,6 +12,7 @@
 import { useCallback, useRef, useState } from "react";
 import * as api from "@/lib/api/client";
 import { cn } from "@/lib/utils";
+import { formatBytes } from "@/lib/utils";
 
 interface QueuedUpload {
   id: string;
@@ -23,17 +24,8 @@ interface QueuedUpload {
   landedAs?: string;
 }
 
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
-}
+// One copy, in lib/utils (#550); re-exported for existing importers.
+export { formatBytes } from "@/lib/utils";
 
 export function UploadDropZone({
   dest,
@@ -178,7 +170,7 @@ export function UploadDropZone({
                 <span className="min-w-0 flex-1 truncate text-sm text-fg">
                   {item.name}
                 </span>
-                <span className="shrink-0 text-xs text-fgmuted">
+                <span className="shrink-0 text-xs tabular-nums text-fgmuted">
                   {formatBytes(item.size)}
                 </span>
               </div>

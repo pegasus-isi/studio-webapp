@@ -241,7 +241,7 @@ export function GuidedTour({
         style={cardStyle}
         className="absolute rounded-xl border border-line bg-surface p-4 shadow-2xl"
       >
-        <p className="text-[11px] font-semibold uppercase tracking-[0.13em] text-fgsubtle">
+        <p className="text-[11px] font-semibold uppercase tabular-nums tracking-[0.13em] text-fgsubtle">
           {i + 1} of {live.length}
         </p>
         <h2

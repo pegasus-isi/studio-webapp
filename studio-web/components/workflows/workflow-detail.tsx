@@ -14,7 +14,7 @@ import { OutputsPanel } from "@/components/workflows/outputs-panel";
 import { FailureCards } from "@/components/workflows/failure-cards";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUrl } from "@/lib/urls";
-import { cn, formatDuration, statusColor } from "@/lib/utils";
+import { cn, formatCount, formatDuration, statusColor } from "@/lib/utils";
 import { TONE_BAR, TONE_TEXT } from "@/lib/tone";
 import { useEffect, useState, useRef } from "react";
 
@@ -230,8 +230,8 @@ export function WorkflowDetail({ runId }: Props) {
         {/* Progress bar for running/completed workflows */}
         {totalJobs > 0 && (
           <div className="mt-4">
-            <div className="flex justify-between text-sm text-fgmuted">
-              <span>{completedJobs}/{totalJobs} jobs completed</span>
+            <div className="flex justify-between text-sm tabular-nums text-fgmuted">
+              <span>{formatCount(completedJobs)} / {formatCount(totalJobs)} jobs completed</span>
               <span>{progress}%</span>
             </div>
             <div className="mt-1 h-2 w-full rounded-full bg-muted">
@@ -244,7 +244,7 @@ export function WorkflowDetail({ runId }: Props) {
               />
             </div>
             {(isRunning || runningJobs > 0 || queuedJobs > 0 || failedJobs > 0) && (
-              <div className="mt-2 flex gap-4 text-xs text-fgmuted">
+              <div className="mt-2 flex gap-4 text-xs tabular-nums text-fgmuted">
                 {runningJobs > 0 && (
                   <span className={TONE_TEXT.active}>{runningJobs} running</span>
                 )}
@@ -324,8 +324,8 @@ export function WorkflowDetail({ runId }: Props) {
                 <th className="pb-2 pr-4">Transformation</th>
                 <th className="pb-2 pr-4">Site</th>
                 <th className="pb-2 pr-4">Status</th>
-                <th className="pb-2 pr-4">Duration</th>
-                <th className="pb-2">Exit Code</th>
+                <th className="pb-2 pr-4 text-right">Duration</th>
+                <th className="pb-2 text-right">Exit code</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
@@ -346,10 +346,10 @@ export function WorkflowDetail({ runId }: Props) {
                       {String(job.status ?? "")}
                     </span>
                   </td>
-                  <td className="py-2 pr-4 font-mono text-xs">
-                    {job.duration != null ? `${job.duration}s` : "\u2014"}
+                  <td className="py-2 pr-4 text-right">
+                    {job.duration != null ? formatDuration(Number(job.duration)) : "\u2014"}
                   </td>
-                  <td className="py-2 font-mono text-xs">
+                  <td className="py-2 text-right">
                     {job.exitcode != null ? String(job.exitcode) : "\u2014"}
                   </td>
                 </tr>

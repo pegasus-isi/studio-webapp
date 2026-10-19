@@ -650,7 +650,7 @@ function KnowledgeSection() {
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-fg">Pegasus knowledge base</h2>
           <p className="mt-1 text-xs text-fgmuted">
-            {status.skills} skills shared by every AI tool.
+            <span className="tabular-nums">{status.skills}</span> skills shared by every AI tool.
           </p>
           <p className="mt-1 break-all font-mono text-xs text-fgsubtle">
             {status.path}

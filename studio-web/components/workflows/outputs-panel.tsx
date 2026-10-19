@@ -133,7 +133,7 @@ export function OutputsPanel({
                 </span>
               )}
             </span>
-            <span className="shrink-0 text-xs text-fgmuted">
+            <span className="w-16 shrink-0 text-right text-xs tabular-nums text-fgmuted">
               {formatBytes(file.size)}
             </span>
             {file.previewable && (
@@ -164,8 +164,8 @@ export function OutputsPanel({
           >
             Previous
           </button>
-          <span className="text-xs text-fgmuted">
-            {offset + 1}–{showingTo} of {data.total}
+          <span className="text-xs tabular-nums text-fgmuted">
+            {(offset + 1).toLocaleString()}–{showingTo.toLocaleString()} of {data.total.toLocaleString()}
           </span>
           <button
             onClick={() => setOffset(offset + PAGE_SIZE)}

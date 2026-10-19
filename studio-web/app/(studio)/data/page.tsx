@@ -119,7 +119,7 @@ export default function DataPage() {
                       {dataDir}/{file.name}
                     </span>
                   </span>
-                  <span className="shrink-0 text-xs text-fgmuted">
+                  <span className="w-16 shrink-0 text-right text-xs tabular-nums text-fgmuted">
                     {file.size != null ? formatBytes(file.size) : "—"}
                   </span>
                   {/* Until the run form has a real file picker (Phase 3), the
