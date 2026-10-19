@@ -5,14 +5,16 @@
  *
  * Full width above the rail, carrying what belongs to the whole app rather
  * than to a page. Identity stays on the rail — always visible, and it costs
- * the content area nothing — so this is the wordmark, the step navigator
- * (where you are on the Ask → Run → Notebooks → Resources path) and search.
+ * the content area nothing — so this is the wordmark and search.
+ *
+ * It used to carry a numbered step navigator (Ask AI → Run Jobs → Notebooks
+ * → Resources). It read as a progress indicator that never advanced with the
+ * user's work, and it only repeated the rail, so it was removed (#519).
  */
 
 import { useEffect, useState } from "react";
 import { AppLink } from "@/components/layout/app-link";
 import { CommandPalette } from "@/components/layout/command-palette";
-import { StepNav } from "@/components/layout/step-nav";
 import { useStudioVersion } from "@/lib/hooks/use-version";
 
 export function TopBar() {
@@ -59,11 +61,7 @@ export function TopBar() {
           <span className="text-[11px] text-fgsubtle">Studio</span>
         </AppLink>
 
-        {/* Centred between wordmark and search; hidden below md, where the
-            rail's labels already say where you are. */}
-        <div className="flex min-w-0 flex-1 justify-center">
-          <StepNav />
-        </div>
+        <div className="min-w-0 flex-1" />
 
         <button
           data-tour="search"
