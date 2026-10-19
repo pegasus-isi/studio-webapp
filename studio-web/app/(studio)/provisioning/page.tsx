@@ -8,17 +8,8 @@ import { cn, formatDuration } from "@/lib/utils";
 import { ComputeSiteCard } from "@/components/resources/compute-site-card";
 import { JobSettingsCard } from "@/components/resources/job-settings-card";
 import { SourceTabs } from "@/components/resources/source-tabs";
-import { StatusCard, TONE_DOT, type Tone } from "@/components/resources/status-card";
+import { CARD, SectionHeader, StatusCard, TONE_DOT, type Tone } from "@/components/resources/status-card";
 import { usePanelStore } from "@/lib/stores/panel-store";
-
-function SectionHeader({ title, subtitle }: { title: string; subtitle?: React.ReactNode }) {
-  return (
-    <div className="mb-3">
-      <h2 className="text-sm font-semibold text-fg">{title}</h2>
-      {subtitle && <p className="mt-0.5 text-xs text-fgmuted">{subtitle}</p>}
-    </div>
-  );
-}
 
 const TH = "pb-2 pr-4 font-medium";
 const TH_NUM = "pb-2 pl-4 text-right font-medium";
@@ -102,7 +93,7 @@ function Overview({ data }: { data: ProvisioningStatus }) {
 
   if (!pool?.available) {
     return (
-      <div className="rounded-xl border border-line bg-surface p-5">
+      <div className={cn(CARD, "p-5")}>
         <p className="text-sm font-medium text-fg">
           We can&apos;t reach Studio&apos;s own pool right now.
         </p>
@@ -158,7 +149,7 @@ function Overview({ data }: { data: ProvisioningStatus }) {
           title="Machines"
           subtitle={`${pool.machines ?? 0} machine(s), ${pool.slots ?? 0} slot(s)`}
         />
-        <div className="overflow-x-auto rounded-xl border border-line bg-surface px-4 pt-3">
+        <div className={cn(CARD, "overflow-x-auto px-4 pt-3")}>
           <table className="w-full text-left">
             <thead>
               <tr className="border-b border-line text-xs text-fgmuted">
@@ -187,7 +178,7 @@ function Overview({ data }: { data: ProvisioningStatus }) {
         ) : workflows.length === 0 ? (
           <p className="text-sm text-fgmuted">Nothing queued.</p>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-line bg-surface px-4 pt-3">
+          <div className={cn(CARD, "overflow-x-auto px-4 pt-3")}>
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-line text-xs text-fgmuted">
@@ -236,6 +227,18 @@ function Overview({ data }: { data: ProvisioningStatus }) {
 }
 
 /**
+ * The same colour rule as Studio's pool, so a healthy OSPool does not look
+ * broken beside a green Overview: green when there is capacity free for
+ * you, amber when it is reachable but full, grey only when unreachable.
+ * Whether any of *your* work is running there is the headline, not the
+ * colour.
+ */
+function ospoolTone(ospool: NonNullable<ProvisioningStatus["ospool"]>): Tone {
+  if (!ospool.available) return "off";
+  return (ospool.avail_cpus ?? 0) > 0 || (ospool.avail_gpus ?? 0) > 0 ? "ok" : "warn";
+}
+
+/**
  * OSPool capacity and, on the hosted deployment, the settings that decide
  * whether a step may go there at all. The project name is the only reason a
  * hosted user touches job settings, so it lives beside the OSPool numbers
@@ -270,7 +273,7 @@ function OSPoolSection({
           </p>
         ) : (
           <StatusCard
-            tone={(mine?.cpus ?? 0) > 0 ? "ok" : "off"}
+            tone={ospoolTone(ospool)}
             headline={
               (mine?.cpus ?? 0) > 0
                 ? `You have ${mine?.cpus.toLocaleString()} CPUs running on the OSPool.`
@@ -351,7 +354,7 @@ export default function ProvisioningPage() {
       id: "ospool",
       label: "OSPool",
       icon: Globe,
-      tone: data?.ospool?.available ? undefined : "off",
+      tone: data?.ospool ? ospoolTone(data.ospool) : hosted ? "off" : undefined,
     });
   }
   if (hosted) {
@@ -392,7 +395,7 @@ export default function ProvisioningPage() {
                 aria-current={selected ? "page" : undefined}
                 title={collapsed ? it.label : undefined}
                 className={cn(
-                  "relative flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors",
+                  "relative flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-pegasus-400",
                   selected
                     ? "bg-pegasus-50 font-medium text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300"
                     : "text-fgmuted hover:bg-base hover:text-fg"

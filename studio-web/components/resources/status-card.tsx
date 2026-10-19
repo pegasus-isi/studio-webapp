@@ -10,6 +10,11 @@
  * renders through this component: a status dot and headline, an optional
  * action, a strip of figures in one face with tabular digits, and an
  * optional warning footer.
+ *
+ * The rest of the page's shared look lives here too (section titles, input
+ * fields, labels, hints), so the sections stop drifting apart one card at a
+ * time. Monospace is for things typed or pasted exactly (commands, paths,
+ * ClassAd expressions), never for an ordinary input like a project name.
  */
 
 import { cn } from "@/lib/utils";
@@ -27,6 +32,26 @@ const TONE_BORDER: Record<Tone, string> = {
   warn: "border-amber-300 dark:border-amber-500/40",
   off: "border-line",
 };
+
+/** Section title and subtitle, above the section's card(s). */
+export function SectionHeader({ title, subtitle }: { title: string; subtitle?: React.ReactNode }) {
+  return (
+    <div className="mb-3">
+      <h2 className="text-sm font-semibold text-fg">{title}</h2>
+      {subtitle && <div className="mt-0.5 text-xs text-fgmuted">{subtitle}</div>}
+    </div>
+  );
+}
+
+/** A plain card; StatusCard is the same shape with a tone. */
+export const CARD = "rounded-xl border border-line bg-surface";
+/** Text inputs and selects. */
+export const FIELD =
+  "mt-1 block w-full rounded-md border border-line bg-base px-2.5 py-1.5 text-sm text-fg outline-none focus:border-pegasus-400";
+/** A field's label. */
+export const LABEL = "block text-xs font-medium text-fgmuted";
+/** Help text under a field or at the foot of a card. */
+export const HINT = "text-xs text-fgsubtle";
 
 export type StatItem = { label: string; value: string | number };
 
