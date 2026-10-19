@@ -35,6 +35,7 @@ import {
   paramLabel,
   type ParamValues,
 } from "@/components/workflows/param-field";
+import { TONE_TEXT } from "@/lib/tone";
 
 interface Props {
   projectId: string;
@@ -58,11 +59,11 @@ const STAGE_ICON: Record<RunFlowStage["status"], string> = {
 };
 
 const STAGE_TONE: Record<RunFlowStage["status"], string> = {
-  pending: "text-fgsubtle",
-  running: "text-pegasus-600 dark:text-pegasus-300",
-  done: "text-green-600 dark:text-emerald-400",
-  skipped: "text-fgsubtle",
-  failed: "text-red-600 dark:text-rose-400",
+  pending: TONE_TEXT.off,
+  running: TONE_TEXT.active,
+  done: TONE_TEXT.ok,
+  skipped: TONE_TEXT.off,
+  failed: TONE_TEXT.error,
 };
 
 

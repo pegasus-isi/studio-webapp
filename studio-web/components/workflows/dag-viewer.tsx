@@ -17,6 +17,7 @@ import {
 } from "@/components/workflows/job-files-panel";
 import { cn } from "@/lib/utils";
 import "@xyflow/react/dist/style.css";
+import { TONE_HEX } from "@/lib/tone";
 
 interface GraphNode {
   id: string;
@@ -56,15 +57,18 @@ interface Props {
   jobFiles?: JobFilesSource;
 }
 
-// UML-state-machine-style palette (after mjstealey/workflow-visualizer)
+// UML-state-machine-style palette (after mjstealey/workflow-visualizer),
+// in the app-wide status colours (lib/tone.ts, #548): running is brand,
+// not cyan, so a step looks the same here as on its badge. Held shares
+// amber with waiting but with a darker border, so the two stay apart.
 const STATUS_STYLE: Record<string, { bg: string; border: string; fg: string }> = {
-  unsubmitted: { bg: "#f3f4f6", border: "#d1d5db", fg: "#374151" },
-  pending: { bg: "#fef3c7", border: "#f59e0b", fg: "#78350f" },
-  queued: { bg: "#fef3c7", border: "#f59e0b", fg: "#78350f" },
-  running: { bg: "#cffafe", border: "#06b6d4", fg: "#155e75" },
-  succeeded: { bg: "#dcfce7", border: "#22c55e", fg: "#14532d" },
-  failed: { bg: "#fee2e2", border: "#ef4444", fg: "#7f1d1d" },
-  held: { bg: "#ffedd5", border: "#f97316", fg: "#7c2d12" },
+  unsubmitted: TONE_HEX.off,
+  pending: TONE_HEX.warn,
+  queued: TONE_HEX.warn,
+  running: TONE_HEX.active,
+  succeeded: TONE_HEX.ok,
+  failed: TONE_HEX.error,
+  held: { ...TONE_HEX.warn, border: "#b45309" }, // amber-700
 };
 
 // File nodes are not steps and have no run state: a pill in neutral grey, or
@@ -560,9 +564,9 @@ function buildSvg(
       `<rect x="${lx}" y="${ly - 9}" width="10" height="10" rx="2" fill="${
         style.bg
       }" stroke="${style.border}" stroke-width="1.5"/>`,
-      `<text x="${lx + 15}" y="${ly}" font-family="${PIC_FONT}" font-size="11" fill="#4b5563">${s}</text>`
+      `<text x="${lx + 15}" y="${ly}" font-family="${PIC_FONT}" font-size="11" fill="#4b5563">${STATUS_WORD[s] ?? s}</text>`
     );
-    lx += 15 + s.length * 6.2 + 14;
+    lx += 15 + (STATUS_WORD[s] ?? s).length * 6.2 + 14;
   }
 
   parts.push(`</svg>`);
@@ -1162,7 +1166,7 @@ export function DagViewer({
                   className="inline-block h-3 w-3 rounded"
                   style={{ background: s.bg, border: `1.5px solid ${s.border}` }}
                 />
-                {k}
+                {STATUS_WORD[k] ?? k}
               </span>
             ))}
           {showPegasus && (

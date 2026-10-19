@@ -359,7 +359,7 @@ function WorkflowCard({
         <div className="mt-3 flex items-center gap-3">
           {added || existing ? (
             <>
-              <span className="text-xs font-medium text-green-600 dark:text-emerald-400">
+              <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
                 {added ? "✓ Added" : "✓ In your workspace"}
               </span>
               <AppLink

@@ -15,6 +15,7 @@ import { FailureCards } from "@/components/workflows/failure-cards";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUrl } from "@/lib/urls";
 import { cn, formatDuration, statusColor } from "@/lib/utils";
+import { TONE_BAR, TONE_TEXT } from "@/lib/tone";
 import { useEffect, useState, useRef } from "react";
 
 interface Props {
@@ -237,7 +238,7 @@ export function WorkflowDetail({ runId }: Props) {
               <div
                 className={cn(
                   "h-2 rounded-full transition-all",
-                  failedJobs > 0 ? "bg-red-500" : "bg-pegasus-600"
+                  failedJobs > 0 ? TONE_BAR.error : TONE_BAR.active
                 )}
                 style={{ width: `${progress}%` }}
               />
@@ -245,13 +246,13 @@ export function WorkflowDetail({ runId }: Props) {
             {(isRunning || runningJobs > 0 || queuedJobs > 0 || failedJobs > 0) && (
               <div className="mt-2 flex gap-4 text-xs text-fgmuted">
                 {runningJobs > 0 && (
-                  <span className="text-blue-600">{runningJobs} running</span>
+                  <span className={TONE_TEXT.active}>{runningJobs} running</span>
                 )}
                 {queuedJobs > 0 && (
-                  <span>{queuedJobs} queued</span>
+                  <span className={TONE_TEXT.warn}>{queuedJobs} queued</span>
                 )}
                 {failedJobs > 0 && (
-                  <span className="text-red-600 dark:text-rose-400">{failedJobs} failed</span>
+                  <span className={TONE_TEXT.error}>{failedJobs} failed</span>
                 )}
                 {/* Confidence-gated (#241, Phase 4). The estimate is a
                     historical-mean heuristic, so on a first run — exactly the

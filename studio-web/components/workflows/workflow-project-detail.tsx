@@ -36,6 +36,13 @@ import { RenameProjectDialog } from "@/components/workflows/rename-project-dialo
 import { apiUrl } from "@/lib/urls";
 import { usePaneSize } from "@/lib/hooks/use-pane-size";
 import { cn, statusColor } from "@/lib/utils";
+import { TONE_TEXT } from "@/lib/tone";
+
+// Generate, Build and Plan are steps toward Run, which is the one filled
+// action. They used to be grey, sky and yellow, and yellow read as a
+// warning (#548).
+const SECONDARY_BTN =
+  "rounded-md border border-line bg-surface px-4 py-2 text-sm text-fg hover:border-pegasus-300 hover:bg-base disabled:opacity-50";
 
 interface Props {
   projectId: string;
@@ -376,7 +383,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
             <button
               onClick={handleGenerate}
               disabled={isBusy}
-              className="rounded-md bg-gray-600 px-4 py-2 text-sm text-white hover:bg-gray-700 disabled:opacity-50"
+              className={SECONDARY_BTN}
             >
               {generate.isPending ? "Generating..." : "Generate Workflow"}
             </button>
@@ -387,7 +394,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
               onClick={handleBuild}
               disabled={isBusy}
               title="Build the project's Apptainer definition into a .sif beside it (and publish it if a registry is set in Settings → Pegasus Options)"
-              className="rounded-md bg-sky-700 px-4 py-2 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+              className={SECONDARY_BTN}
             >
               {building ? "Building..." : "Build Image"}
             </button>
@@ -398,7 +405,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
               <button
                 onClick={handlePlan}
                 disabled={isBusy}
-                className="rounded-md bg-yellow-600 px-4 py-2 text-sm text-white hover:bg-yellow-700 disabled:opacity-50"
+                className={SECONDARY_BTN}
               >
                 {plan.isPending ? "Planning..." : "Plan"}
               </button>
@@ -958,7 +965,7 @@ function GraphPane({
 function FileCheck({ label, exists }: { label: string; exists: boolean }) {
   return (
     <div className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm">
-      <span className={exists ? "text-green-600" : "text-gray-300"}>
+      <span className={exists ? TONE_TEXT.ok : TONE_TEXT.off}>
         {exists ? "\u2713" : "\u2717"}
       </span>
       <span className={exists ? "text-fg" : "text-fgsubtle"}>

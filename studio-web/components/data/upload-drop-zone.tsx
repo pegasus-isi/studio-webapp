@@ -193,7 +193,7 @@ export function UploadDropZone({
               )}
 
               {item.status === "done" && (
-                <p className="mt-1 text-xs text-green-600 dark:text-emerald-400">
+                <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">
                   Added to your workspace
                   {item.landedAs && item.landedAs !== item.name && (
                     <> as “{item.landedAs}” (a file with that name already existed)</>
