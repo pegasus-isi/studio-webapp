@@ -301,7 +301,7 @@ function ProvidersTab() {
         <button
           onClick={() => setShowAdd(true)}
           disabled={availablePresets.length === 0}
-          className="w-full rounded-lg border border-dashed border-line py-3 text-sm text-fgmuted hover:border-gray-400 hover:text-fg disabled:opacity-50"
+          className="w-full rounded-lg border border-dashed border-line py-3 text-sm text-fgmuted hover:border-pegasus-300 hover:text-fg disabled:opacity-50"
         >
           + Add Provider
         </button>
@@ -567,7 +567,7 @@ function ProviderCard({
             className={cn(
               "flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium",
               testResult?.valid
-                ? "border-green-300 bg-green-50 dark:bg-emerald-500/10 text-green-700 dark:text-emerald-400"
+                ? "border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
                 : testResult && !testResult.valid
                   ? "border-red-300 bg-red-50 dark:bg-rose-500/10 text-red-700 dark:text-rose-400"
                   : "border-line text-fgmuted hover:bg-base",
@@ -589,7 +589,7 @@ function ProviderCard({
           </button>
 
           {saved && (
-            <span className="text-xs text-green-600">Saved</span>
+            <span className="text-xs text-emerald-700 dark:text-emerald-400">Saved</span>
           )}
         </div>
       </div>
@@ -673,7 +673,7 @@ function KnowledgeSection() {
           <button
             onClick={onUpdate}
             disabled={busy}
-            className="shrink-0 rounded-md border border-line px-3 py-1.5 text-sm text-fg transition-colors hover:border-gray-400 disabled:opacity-50"
+            className="shrink-0 rounded-md border border-line px-3 py-1.5 text-sm text-fg transition-colors hover:border-pegasus-300 disabled:opacity-50"
           >
             {busy ? "Updating..." : "Update"}
           </button>
@@ -706,7 +706,7 @@ function ToolsTab() {
       {/* Bash terminal launcher (moved here from the old Workbench). */}
       <button
         onClick={openBash}
-        className="flex w-full items-center gap-3 rounded-lg border border-line bg-surface p-3 text-left transition-colors hover:border-gray-400 sm:w-auto"
+        className="flex w-full items-center gap-3 rounded-lg border border-line bg-surface p-3 text-left transition-colors hover:border-pegasus-300 sm:w-auto"
       >
         <span className="flex h-9 w-9 items-center justify-center rounded-md bg-gray-800 text-white">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1180,7 +1180,7 @@ function RegistrySection() {
           Save Registry
         </button>
         {saved && (
-          <span className="text-sm text-green-600 dark:text-emerald-400">
+          <span className="text-sm text-emerald-700 dark:text-emerald-400">
             Saved
           </span>
         )}
@@ -1515,7 +1515,7 @@ function WorkflowSecretsSection() {
           {busy ? "Saving…" : "Save"}
         </button>
         {saved && (
-          <span className="text-xs text-green-600 dark:text-emerald-400">
+          <span className="text-xs text-emerald-700 dark:text-emerald-400">
             {saved} saved
           </span>
         )}

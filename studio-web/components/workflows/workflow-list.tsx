@@ -4,6 +4,7 @@ import type { WorkflowRun, WorkflowProject } from "@/lib/api/client";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { cn, statusColor } from "@/lib/utils";
+import { TONE_BAR, TONE_TEXT } from "@/lib/tone";
 import { AppLink } from "@/components/layout/app-link";
 
 interface Props {
@@ -152,14 +153,17 @@ export function WorkflowList({ projects, workflows }: Props) {
                             {wf.completed_jobs}/{wf.total_jobs} jobs
                           </span>
                           {wf.failed_jobs > 0 && (
-                            <span className="text-red-600 dark:text-rose-400">
+                            <span className={TONE_TEXT.error}>
                               {wf.failed_jobs} failed
                             </span>
                           )}
                         </div>
                         <div className="mt-1 h-1.5 w-full rounded-full bg-muted">
                           <div
-                            className="h-1.5 rounded-full bg-pegasus-600 transition-all"
+                            className={cn(
+                              "h-1.5 rounded-full transition-all",
+                              wf.failed_jobs > 0 ? TONE_BAR.error : TONE_BAR.active
+                            )}
                             style={{ width: `${progress}%` }}
                           />
                         </div>

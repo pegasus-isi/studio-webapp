@@ -5,6 +5,7 @@ import { usePanelStore } from "@/lib/stores/panel-store";
 import { useWorkspaceStore } from "@/lib/stores/workspace-store";
 import { useToolStore } from "@/lib/stores/tool-store";
 import * as api from "@/lib/api/client";
+import { TONE_DOT_CLASS } from "@/lib/tone";
 
 export function StatusBar() {
   const chatOpen = usePanelStore((s) => s.chatOpen);
@@ -48,10 +49,10 @@ export function StatusBar() {
           <span
             className={`inline-block h-2 w-2 rounded-full ${
               jupyterStatus === "running"
-                ? "bg-green-500"
+                ? TONE_DOT_CLASS.ok
                 : jupyterStatus === "starting"
-                  ? "bg-yellow-400 animate-pulse"
-                  : "bg-gray-400"
+                  ? `${TONE_DOT_CLASS.warn} animate-pulse`
+                  : TONE_DOT_CLASS.off
             }`}
           />
           <span className="text-fgmuted">
@@ -78,7 +79,7 @@ export function StatusBar() {
           onClick={toggleTerminal}
           className={`flex items-center gap-1.5 rounded px-2 py-0.5 transition-colors ${
             terminalOpen
-              ? "bg-gray-800 text-white"
+              ? "bg-pegasus-600 text-white"
               : "text-fgmuted hover:bg-muted"
           }`}
           title="Toggle terminal panel"
