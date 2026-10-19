@@ -1,35 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Globe, Server } from "lucide-react";
+import { Activity, ChevronsLeft, ChevronsRight, Globe, Server } from "lucide-react";
 import type { PoolBucket, ProvisioningStatus, WorkflowDemand } from "@/lib/api/client";
 import { useProvisioningStatus } from "@/lib/hooks/use-dashboard";
 import { cn, formatDuration } from "@/lib/utils";
 import { ComputeSiteCard } from "@/components/resources/compute-site-card";
-import { AnnexPanel } from "@/components/resources/annex-panel";
 import { JobSettingsCard } from "@/components/resources/job-settings-card";
-import { SourcePicker } from "@/components/resources/source-picker";
-import { useUIPreferences, useUpdateUIPreferences } from "@/lib/hooks/use-ui-prefs";
-
-type Tone = "ok" | "warn" | "off";
-
-const TONE_DOT: Record<Tone, string> = {
-  ok: "bg-emerald-500",
-  warn: "bg-amber-500",
-  off: "bg-fgsubtle",
-};
-
-/** A number with its label, in one face so every figure on the page matches. */
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-xs text-fgmuted">{label}</p>
-      <p className="mt-0.5 text-xl font-semibold tabular-nums text-fg">
-        {typeof value === "number" ? value.toLocaleString() : value}
-      </p>
-    </div>
-  );
-}
+import { SourceTabs } from "@/components/resources/source-tabs";
+import { StatusCard, TONE_DOT, type Tone } from "@/components/resources/status-card";
+import { usePanelStore } from "@/lib/stores/panel-store";
 
 function SectionHeader({ title, subtitle }: { title: string; subtitle?: React.ReactNode }) {
   return (
@@ -144,46 +124,34 @@ function Overview({ data }: { data: ProvisioningStatus }) {
 
   return (
     <div className="space-y-8">
-      <div
-        className={cn(
-          "overflow-hidden rounded-xl border bg-surface",
-          v.tone === "ok"
-            ? "border-green-300 dark:border-emerald-500/40"
-            : "border-amber-300 dark:border-amber-500/40"
-        )}
-      >
-        <div className="flex items-start gap-3 p-5">
-          <span className={cn("mt-2 h-2 w-2 shrink-0 rounded-full", TONE_DOT[v.tone])} />
-          <div>
-            <p className="text-base font-semibold text-fg">{v.headline}</p>
-            <p className="mt-1 text-sm text-fgmuted">{v.detail}</p>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-4 border-t border-line px-5 py-4 sm:grid-cols-4">
-          <Stat label="CPUs free" value={`${pool.idle_cpus ?? 0} / ${pool.total_cpus ?? 0}`} />
-          <Stat
-            label="GPUs free"
-            value={(pool.total_gpus ?? 0) > 0 ? `${pool.idle_gpus ?? 0} / ${pool.total_gpus}` : "—"}
-          />
-          <Stat
-            label="Steps waiting / held"
-            value={demandUp ? `${demand?.idle_jobs ?? 0} / ${demand?.held_jobs ?? 0}` : "—"}
-          />
-          <Stat
-            label="CPUs requested"
-            value={demandUp ? demand?.idle_cpus_requested ?? 0 : "—"}
-          />
-        </div>
-        {pressure.length > 0 && (
-          <ul className="space-y-1 border-t border-amber-300 bg-amber-50 px-5 py-3 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-            {pressure.map((f) => (
-              <li key={f.kind}>
-                <span className="font-medium">{f.title}:</span> {f.detail}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <StatusCard
+        tone={v.tone}
+        headline={v.headline}
+        detail={v.detail}
+        stats={[
+          { label: "CPUs free", value: `${pool.idle_cpus ?? 0} / ${pool.total_cpus ?? 0}` },
+          {
+            label: "GPUs free",
+            value: (pool.total_gpus ?? 0) > 0 ? `${pool.idle_gpus ?? 0} / ${pool.total_gpus}` : "—",
+          },
+          {
+            label: "Steps waiting / held",
+            value: demandUp ? `${demand?.idle_jobs ?? 0} / ${demand?.held_jobs ?? 0}` : "—",
+          },
+          { label: "CPUs requested", value: demandUp ? demand?.idle_cpus_requested ?? 0 : "—" },
+        ]}
+        footer={
+          pressure.length > 0 && (
+            <ul className="space-y-1">
+              {pressure.map((f) => (
+                <li key={f.kind}>
+                  <span className="font-medium">{f.title}:</span> {f.detail}
+                </li>
+              ))}
+            </ul>
+          )
+        }
+      />
 
       <section>
         <SectionHeader
@@ -301,12 +269,21 @@ function OSPoolSection({
             OSPool not reachable{ospool?.error ? ` (${ospool.error})` : ""}.
           </p>
         ) : (
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4 rounded-xl border border-line bg-surface px-5 py-4 sm:grid-cols-4">
-            <Stat label="My CPUs running" value={mine?.cpus ?? 0} />
-            <Stat label="My GPUs running" value={(mine?.gpus ?? 0) > 0 ? mine?.gpus ?? 0 : "—"} />
-            <Stat label="CPUs available" value={ospool.avail_cpus ?? 0} />
-            <Stat label="GPUs available" value={ospool.avail_gpus ?? 0} />
-          </div>
+          <StatusCard
+            tone={(mine?.cpus ?? 0) > 0 ? "ok" : "off"}
+            headline={
+              (mine?.cpus ?? 0) > 0
+                ? `You have ${mine?.cpus.toLocaleString()} CPUs running on the OSPool.`
+                : "Nothing of yours is running on the OSPool right now."
+            }
+            detail={`${(ospool.avail_cpus ?? 0).toLocaleString()} CPUs and ${(ospool.avail_gpus ?? 0).toLocaleString()} GPUs are free there for jobs that can use them.`}
+            stats={[
+              { label: "My CPUs running", value: mine?.cpus ?? 0 },
+              { label: "My GPUs running", value: (mine?.gpus ?? 0) > 0 ? mine?.gpus ?? 0 : "—" },
+              { label: "CPUs available", value: ospool.avail_cpus ?? 0 },
+              { label: "GPUs available", value: ospool.avail_gpus ?? 0 },
+            ]}
+          />
         )}
       </section>
       {hosted && <JobSettingsCard />}
@@ -322,12 +299,14 @@ type SectionId = (typeof SECTIONS)[number];
  *
  * The page used to stack everything (verdict, three grids of numbers, the
  * source picker, the annex, OSPool, job settings) and read as clutter. A
- * section menu down the left shows one at a time. Overview is the default
+ * section menu down the left shows one at a time, and collapses to icons
+ * (persisted in the panel store) for anyone who wants the width back. Overview is the default
  * and carries every capacity number with none of it behind a click, which
  * is what the old "Details" disclosure got wrong.
  *
- * On the hosted deployment "Extra computing" is where a user picks a source
- * (source-picker.tsx) and sees their annex, and the OSPool section holds the
+ * On the hosted deployment "Extra computing" is the sources a user can add
+ * (source-tabs.tsx: their own cluster as an annex, or cloud and testbeds
+ * later), and the OSPool section holds the
  * project name. Under Open OnDemand the cluster is the install, so that
  * section is "Where workflows run" and takes the allocation. Until the
  * status arrives the deployment is unknown, so only Overview is listed:
@@ -338,8 +317,8 @@ type SectionId = (typeof SECTIONS)[number];
  */
 export default function ProvisioningPage() {
   const { data, isLoading, error } = useProvisioningStatus();
-  const { prefs } = useUIPreferences();
-  const updatePrefs = useUpdateUIPreferences();
+  const collapsed = usePanelStore((s) => s.resourcesNavCollapsed);
+  const toggleCollapsed = usePanelStore((s) => s.toggleResourcesNav);
   const [section, setSection] = useState<SectionId>("overview");
 
   useEffect(() => {
@@ -360,10 +339,7 @@ export default function ProvisioningPage() {
   const deployment = data?.deployment;
   const hosted = deployment === "hosted";
   const annex = data?.annex;
-  // An annex that is up or requested is shown whatever the choice: the
-  // choice is what to explain, not what exists.
   const annexLive = !!annex?.available && (!!annex.established || (annex.requests?.pending ?? 0) > 0);
-  const showAnnex = hosted && !!annex && (prefs.resource_source === "annex" || annexLive);
 
   const items: { id: SectionId; label: string; icon: typeof Server; tone?: Tone }[] = [
     { id: "overview", label: "Overview", icon: Activity, tone: data ? poolTone(data) : undefined },
@@ -400,7 +376,10 @@ export default function ProvisioningPage() {
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <nav
           aria-label="Resources sections"
-          className="flex shrink-0 gap-1 overflow-x-auto border-b border-line bg-surface px-3 py-2 md:w-52 md:flex-col md:overflow-visible md:border-b-0 md:border-r md:py-4"
+          className={cn(
+            "flex shrink-0 gap-1 overflow-x-auto border-b border-line bg-surface px-3 py-2 md:flex-col md:overflow-visible md:border-b-0 md:border-r md:py-4",
+            collapsed ? "md:w-[60px] md:px-2" : "md:w-52"
+          )}
         >
           {items.map((it) => {
             const Icon = it.icon;
@@ -411,24 +390,48 @@ export default function ProvisioningPage() {
                 type="button"
                 onClick={() => go(it.id)}
                 aria-current={selected ? "page" : undefined}
+                title={collapsed ? it.label : undefined}
                 className={cn(
-                  "flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors",
+                  "relative flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors",
                   selected
                     ? "bg-pegasus-50 font-medium text-pegasus-700 dark:bg-pegasus-400/10 dark:text-pegasus-300"
                     : "text-fgmuted hover:bg-base hover:text-fg"
                 )}
               >
                 <Icon size={16} aria-hidden="true" className="shrink-0" />
-                <span className="whitespace-nowrap">{it.label}</span>
+                <span className={cn("whitespace-nowrap", collapsed && "md:sr-only")}>{it.label}</span>
                 {it.tone && (
                   <span
                     aria-hidden="true"
-                    className={cn("ml-auto h-1.5 w-1.5 shrink-0 rounded-full", TONE_DOT[it.tone])}
+                    className={cn(
+                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                      TONE_DOT[it.tone],
+                      collapsed ? "ml-auto md:absolute md:right-1.5 md:top-1.5 md:ml-0" : "ml-auto"
+                    )}
                   />
                 )}
               </button>
             );
           })}
+          {/* Collapse is a desktop affordance: below md the menu is already a
+              one-line tab row. Remembered across visits with the rest of the
+              panel state. */}
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? "Expand menu" : "Collapse menu"}
+            title={collapsed ? "Expand menu" : "Collapse menu"}
+            className="mt-auto hidden items-center gap-2.5 rounded-md px-3 py-2 text-xs text-fgsubtle hover:bg-base hover:text-fg md:flex"
+          >
+            {collapsed ? (
+              <ChevronsRight size={16} aria-hidden="true" className="shrink-0" />
+            ) : (
+              <>
+                <ChevronsLeft size={16} aria-hidden="true" className="shrink-0" />
+                Collapse
+              </>
+            )}
+          </button>
         </nav>
 
         <div className="min-w-0 flex-1 overflow-auto">
@@ -447,13 +450,7 @@ export default function ProvisioningPage() {
               deployment === "ood" ? (
                 <ComputeSiteCard />
               ) : (
-                <div className="space-y-6">
-                  <SourcePicker
-                    value={prefs.resource_source}
-                    onChange={(next) => updatePrefs.mutate({ resource_source: next })}
-                  />
-                  {showAnnex && annex && <AnnexPanel annex={annex} />}
-                </div>
+                <SourceTabs annex={annex} />
               )
             ) : (
               <Overview data={data} />

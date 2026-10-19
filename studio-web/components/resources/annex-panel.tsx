@@ -2,8 +2,8 @@
 
 /**
  * The user's HTCondor annex on the hosted deployment (#532, #534): what it
- * is doing right now, and the steps to start one, with the Studio side done
- * by buttons and the cluster side paste-ready.
+ * is doing right now, and a checklist to start one, with the Studio side
+ * done by buttons and the cluster side paste-ready.
  *
  * An annex is a set of nodes the user leases from a Slurm cluster they
  * have an account on (a campus cluster, an ACCESS allocation). The nodes
@@ -12,13 +12,17 @@
  * every job's annex after its owner, so the annex MUST be called by the
  * username, and everything below is rendered with it filled in.
  *
- * Steps 1 (create the bundle) and 5 (shut down) run here, through the API.
- * Step 2 is a download: the user carries the tarball to the cluster
- * however they log in there (Studio cannot, and should not try to: no SSH
- * from the pod, and the cluster's MFA). Step 3 is generated as a paste
- * from a short form, including a ~/.condor/annex_slurm_args block that
- * makes editing hpc.slurm unnecessary. The form is remembered in this
- * browser only; it is a convenience, not state.
+ * The steps are a checklist whose state comes from the polled status, so
+ * a user can see where they are (#544): queued steps tick "run a
+ * workflow", an existing bundle ticks "create", a pending request ticks the
+ * cluster steps, and nodes joining ticks the last. Studio cannot see the
+ * upload itself, so that step goes current alongside the paste. Steps run
+ * here, through the API, are the bundle and the shutdown. The upload is
+ * the user's (no SSH from the pod, and the cluster's MFA). The cluster
+ * command is generated from a short form, including a
+ * ~/.condor/annex_slurm_args block that makes editing hpc.slurm
+ * unnecessary. The form is remembered in this browser only; it is a
+ * convenience, not state.
  *
  * Status comes from the same three queries `htcondor annex status` makes,
  * structured (services/annex.py); the CLI's only output is prose.
@@ -26,17 +30,49 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, Cloud, Copy, Download } from "lucide-react";
+import { Check, Copy, Download } from "lucide-react";
 import * as api from "@/lib/api/client";
 import type { AnnexStatus } from "@/lib/api/client";
+import { AppLink } from "@/components/layout/app-link";
+import { StatusCard, type Tone } from "@/components/resources/status-card";
 import { cn, formatDuration } from "@/lib/utils";
 
-function Stat({ label, value }: { label: string; value: string | number }) {
+type StepState = "done" | "current" | "todo";
+
+function Step({
+  n,
+  state,
+  title,
+  last,
+  children,
+}: {
+  n: number;
+  state: StepState;
+  title: string;
+  last?: boolean;
+  children?: React.ReactNode;
+}) {
   return (
-    <div className="rounded-lg border border-line bg-base p-3">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-fgsubtle">{label}</p>
-      <p className="mt-0.5 text-lg font-semibold text-fg">{value}</p>
-    </div>
+    <li className="relative flex gap-3 pb-6 last:pb-0">
+      {!last && (
+        <span aria-hidden="true" className="absolute left-3 top-7 h-[calc(100%-1.75rem)] w-px bg-line" />
+      )}
+      <span
+        className={cn(
+          "relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums",
+          state === "done" && "bg-emerald-500 text-white",
+          state === "current" && "bg-pegasus-600 text-white ring-4 ring-pegasus-100 dark:ring-pegasus-500/20",
+          state === "todo" && "border border-line bg-surface text-fgsubtle"
+        )}
+      >
+        {state === "done" ? <Check size={13} aria-hidden="true" /> : n}
+        <span className="sr-only">{state === "done" ? " (done)" : state === "current" ? " (next)" : ""}</span>
+      </span>
+      <div className="min-w-0 flex-1 pt-0.5">
+        <p className={cn("text-sm font-medium", state === "todo" ? "text-fgmuted" : "text-fg")}>{title}</p>
+        {children && <div className="mt-1 text-sm text-fgmuted">{children}</div>}
+      </div>
+    </li>
   );
 }
 
@@ -130,13 +166,10 @@ function sbatchLine(f: ClusterForm): string {
   return parts.length ? `#SBATCH ${parts.join(" ")}` : "";
 }
 
-function verdict(a: AnnexStatus): { tone: string; headline: string; detail: string } {
-  const amber = "border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10";
-  const green = "border-green-300 bg-green-50 dark:border-emerald-500/40 dark:bg-emerald-500/10";
-  const plain = "border-line bg-base";
+function verdict(a: AnnexStatus): { tone: Tone; headline: string; detail: string } {
   if (!a.available) {
     return {
-      tone: plain,
+      tone: "off",
       headline: "Annex status is not available.",
       detail: a.error ?? "The access point did not answer.",
     };
@@ -147,7 +180,7 @@ function verdict(a: AnnexStatus): { tone: string; headline: string; detail: stri
     const now = Date.now() / 1000;
     const left = a.oldest_retires_at ? Math.max(0, a.oldest_retires_at - now) : null;
     return {
-      tone: green,
+      tone: "ok",
       headline: `Your annex is up: ${a.nodes} node${a.nodes === 1 ? "" : "s"}, ${a.busy_cpus} of ${a.total_cpus} processors busy.`,
       detail:
         `${j.running} of your ${j.total} queued step${j.total === 1 ? "" : "s"} ${j.running === 1 ? "is" : "are"} running` +
@@ -156,7 +189,7 @@ function verdict(a: AnnexStatus): { tone: string; headline: string; detail: stri
   }
   if (r.pending > 0) {
     return {
-      tone: amber,
+      tone: "warn",
       headline: "Your annex is requested but not up yet.",
       detail:
         `${r.pending} request${r.pending === 1 ? "" : "s"} waiting for the cluster's scheduler. ` +
@@ -164,7 +197,7 @@ function verdict(a: AnnexStatus): { tone: string; headline: string; detail: stri
     };
   }
   return {
-    tone: plain,
+    tone: "off",
     headline: "No annex right now.",
     detail:
       r.retired > 0
@@ -178,7 +211,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
   const name = annex.name || "$USER";
   const v = verdict(annex);
   const live = annex.available && (annex.established || (annex.requests?.pending ?? 0) > 0);
-  // Open the steps when there is nothing to report yet.
+  // Open the checklist when there is nothing running to report.
   const [showHow, setShowHow] = useState(!live);
   const [form, setForm] = useState<ClusterForm>(EMPTY_FORM);
   const [confirmStop, setConfirmStop] = useState(false);
@@ -216,7 +249,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
   // bundle); the mutation's own answer only bridges the gap to the refetch.
   const bundle = annex.bundle ?? create.data?.bundle ?? null;
   // `htcondor annex create` refuses to run while nothing is queued for the
-  // annex (#537), so the button says so instead of relaying that refusal.
+  // annex (#537), so step 1 is a real prerequisite, not advice.
   const queued = annex.jobs?.total ?? 0;
   const needsJobs = annex.available && annex.requires_jobs !== false && queued === 0;
   const sbatch = sbatchLine(form);
@@ -227,28 +260,20 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
     `tar xf annex-${name}.tar && cd annex-${name} && ./annex-setup.sh` +
     (sbatch ? ` && sbatch hpc.slurm` : `\n# edit hpc.slurm (partition, account, walltime, nodes), then:\nsbatch hpc.slurm`);
 
-  return (
-    <section className="rounded-xl border border-line bg-surface p-4">
-      <div className="flex items-start gap-3">
-        <Cloud size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-pegasus-600 dark:text-pegasus-300" />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-fg">Your own resources (annex)</h2>
-          <p className="mt-0.5 text-xs text-fgmuted">
-            Lease nodes from a cluster you have an account on. They join Studio
-            and run only your workflows; when they are gone, Studio&apos;s own pool
-            carries on.
-          </p>
-        </div>
-      </div>
+  const s1: StepState = !needsJobs || live ? "done" : "current";
+  const s2: StepState = bundle || live ? "done" : s1 === "done" ? "current" : "todo";
+  const s34: StepState = live ? "done" : s2 === "done" ? "current" : "todo";
+  const s5: StepState = annex.established ? "done" : live ? "current" : "todo";
 
-      <div className={cn("mt-4 rounded-lg border p-4", v.tone)}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-fg">{v.headline}</p>
-            <p className="mt-1 text-sm text-fgmuted">{v.detail}</p>
-          </div>
-          {live && (
-            <div className="flex shrink-0 items-center gap-2">
+  return (
+    <section className="space-y-4">
+      <StatusCard
+        tone={v.tone}
+        headline={v.headline}
+        detail={v.detail}
+        action={
+          live && (
+            <>
               {confirmStop && (
                 <button
                   type="button"
@@ -271,9 +296,23 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
               >
                 {stop.isPending ? "Shutting down…" : confirmStop ? "Yes, release the nodes" : "Shut down annex"}
               </button>
-            </div>
-          )}
-        </div>
+            </>
+          )
+        }
+        stats={
+          annex.available && (live || (annex.requests?.retired ?? 0) > 0)
+            ? [
+                { label: "Nodes", value: annex.nodes ?? 0 },
+                { label: "CPUs busy / total", value: `${annex.busy_cpus ?? 0} / ${annex.total_cpus ?? 0}` },
+                {
+                  label: "Requests waiting / up / retired",
+                  value: `${annex.requests?.pending ?? 0} / ${annex.requests?.active ?? 0} / ${annex.requests?.retired ?? 0}`,
+                },
+                { label: "Your steps running / queued", value: `${annex.jobs?.running ?? 0} / ${annex.jobs?.total ?? 0}` },
+              ]
+            : undefined
+        }
+      >
         {stop.isError && (
           <p className="mt-2 text-xs text-red-600 dark:text-rose-400">
             Couldn&apos;t shut down: {(stop.error as Error).message}
@@ -284,110 +323,67 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
             Shutdown sent. The nodes leave within a minute or so; the Slurm job on the cluster ends with them.
           </p>
         )}
-      </div>
+      </StatusCard>
 
-      {annex.available && (
-        <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Stat label="Nodes" value={annex.nodes ?? 0} />
-          <Stat label="CPUs busy / total" value={`${annex.busy_cpus ?? 0}/${annex.total_cpus ?? 0}`} />
-          <Stat
-            label="Requests pending / up / retired"
-            value={`${annex.requests?.pending ?? 0} / ${annex.requests?.active ?? 0} / ${annex.requests?.retired ?? 0}`}
-          />
-          <Stat label="Your steps running / queued" value={`${annex.jobs?.running ?? 0} / ${annex.jobs?.total ?? 0}`} />
-        </div>
-      )}
-
-      <div className="mt-4 rounded-md border border-line">
+      <div className="rounded-xl border border-line bg-surface">
         <button
           type="button"
           onClick={() => setShowHow((s) => !s)}
           aria-expanded={showHow}
-          className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-fgmuted hover:text-fg"
+          className="flex w-full items-center justify-between px-4 py-3 text-left"
         >
-          <span>Add an annex from a cluster</span>
-          <span aria-hidden="true">{showHow ? "−" : "+"}</span>
+          <span>
+            <span className="block text-sm font-semibold text-fg">
+              {live ? "How your annex was set up" : "Set up your annex"}
+            </span>
+            <span className="block text-xs text-fgmuted">
+              Five steps, about ten minutes the first time. Studio ticks them off as it sees them happen.
+            </span>
+          </span>
+          <span aria-hidden="true" className="text-fgsubtle">{showHow ? "−" : "+"}</span>
         </button>
         {showHow && (
-          <div className="space-y-4 border-t border-line px-4 py-3 text-sm text-fgmuted">
-            <p>
-              Works with any Slurm cluster you can log in to, for example a
-              campus cluster or an ACCESS allocation. Studio does its part here;
-              the cluster&apos;s part is two pasted commands. Full details are in
-              HTCondor&apos;s{" "}
-              <a
-                href="https://htcondor.readthedocs.io/en/latest/users-manual/bringing-your-own-resources.html"
-                target="_blank"
-                rel="noreferrer"
-                className="underline"
-              >
-                Bringing Your Own Resources
-              </a>{" "}
-              guide; its first step (submitting the job) is already done for
-              you, and the annex is named{" "}
-              <code className="font-mono">{name}</code> because Studio sends
-              your jobs to an annex of that name and no other.
-            </p>
-            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-              <strong>Run your workflow first.</strong> The annex cannot be
-              created until steps are waiting for it, and annex nodes that find
-              nothing to run shut themselves down after a few minutes.
-            </div>
+          <div className="border-t border-line px-4 py-4">
+            <ol>
+              <Step n={1} state={s1} title="Run a workflow">
+                {s1 === "done" ? (
+                  <>Steps are waiting for your annex.</>
+                ) : (
+                  <>
+                    The annex can only be created while your steps are waiting for
+                    it, and nodes that find nothing to run leave after a few
+                    minutes. Start one from{" "}
+                    <AppLink href="/workflows" className="font-medium text-pegasus-600 underline dark:text-pegasus-300">
+                      Run Jobs
+                    </AppLink>
+                    , then come back.
+                  </>
+                )}
+              </Step>
 
-            {/* The cluster, once: fills the commands below. */}
-            <div className="rounded-md border border-line bg-base p-3">
-              <p className="text-xs font-medium text-fg">Your Slurm options (optional, fills in the commands)</p>
-              {(Object.keys(EMPTY_FORM) as (keyof ClusterForm)[]).some((k) => problem(form, k)) && (
-                <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
-                  A value with spaces or punctuation is left out of the commands below.
+              <Step n={2} state={s2} title="Create and download your setup file">
+                <p>
+                  It holds a key that lets nodes join as you for 90 days, so keep it to yourself.
                 </p>
-              )}
-              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                <label className="text-[11px] text-fgsubtle">
-                  Account / project
-                  <input value={form.account} onChange={(e) => setField("account", e.target.value)} placeholder="abc123" spellCheck={false} className={fieldCls} />
-                </label>
-                <label className="text-[11px] text-fgsubtle">
-                  Partition
-                  <input value={form.partition} onChange={(e) => setField("partition", e.target.value)} placeholder="compute" spellCheck={false} className={fieldCls} />
-                </label>
-                <label className="text-[11px] text-fgsubtle">
-                  Walltime
-                  <input value={form.walltime} onChange={(e) => setField("walltime", e.target.value)} placeholder="02:00:00" spellCheck={false} className={fieldCls} />
-                </label>
-                <label className="text-[11px] text-fgsubtle">
-                  Nodes
-                  <input value={form.nodes} onChange={(e) => setField("nodes", e.target.value)} placeholder="1" inputMode="numeric" spellCheck={false} className={fieldCls} />
-                </label>
-              </div>
-            </div>
-
-            <ol className="list-decimal space-y-4 pl-5">
-              <li>
-                <span className="font-medium text-fg">Create the setup bundle.</span>{" "}
-                Studio runs <code className="font-mono">htcondor annex create {name}</code>{" "}
-                for you and gives you the result to download. It holds a key that
-                lets nodes join as you, valid for 90 days, so keep it to yourself.
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     disabled={create.isPending || needsJobs}
                     onClick={() => create.mutate()}
-                    className="rounded-md bg-pegasus-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-pegasus-700 disabled:opacity-50"
+                    className={cn(
+                      "rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50",
+                      bundle
+                        ? "border border-line text-fg hover:bg-base"
+                        : "bg-pegasus-600 text-white hover:bg-pegasus-700"
+                    )}
                   >
-                    {create.isPending ? "Creating…" : bundle ? "Create a new bundle" : "Create bundle"}
+                    {create.isPending ? "Creating…" : bundle ? "Make a new one" : "Create setup file"}
                   </button>
-                  {needsJobs && (
-                    <span className="text-xs text-fgsubtle">
-                      Nothing is queued for your annex yet. Run a workflow first;
-                      this unlocks once its steps are waiting.
-                    </span>
-                  )}
                   {bundle && (
                     <a
                       href={api.annexBundleUrl()}
                       download={bundle.filename}
-                      className="inline-flex items-center gap-1 rounded-md border border-line px-3 py-1.5 text-xs font-medium text-fg hover:bg-base"
+                      className="inline-flex items-center gap-1 rounded-md bg-pegasus-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-pegasus-700"
                     >
                       <Download size={13} aria-hidden="true" /> Download {bundle.filename}
                     </a>
@@ -403,45 +399,90 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     Couldn&apos;t create it: {(create.error as Error).message}
                   </p>
                 )}
-              </li>
-              <li>
-                <span className="font-medium text-fg">Upload the bundle to the cluster.</span>{" "}
-                Download it above, then put{" "}
-                <code className="font-mono">annex-{name}.tar</code> in your home
-                directory on the cluster the way you usually move files there
-                (the cluster&apos;s web portal, <code className="font-mono">scp</code>{" "}
-                from your laptop, Globus).
-              </li>
-              <li>
-                <span className="font-medium text-fg">On the cluster, set up and submit.</span>{" "}
-                Log in to the cluster and paste:
-                <Cmd>{clusterCmd}</Cmd>
-                {sbatch ? (
-                  <p className="mt-1 text-xs text-fgsubtle">
-                    The first part saves your Slurm options in{" "}
-                    <code className="font-mono">~/.condor/annex_slurm_args</code>, which the setup
-                    script puts into <code className="font-mono">hpc.slurm</code>, so you need not edit
-                    it now or next time.
+              </Step>
+
+              <Step n={3} state={s34} title="Copy it to your home directory on the cluster">
+                Use whatever you normally use to move files there: the
+                cluster&apos;s web portal, <code className="font-mono">scp</code>{" "}
+                from your laptop, or Globus.
+              </Step>
+
+              <Step n={4} state={s34} title="Log in to the cluster and paste one command">
+                <div className="rounded-md border border-line bg-base p-3">
+                  <p className="text-xs font-medium text-fg">
+                    Your Slurm options <span className="font-normal text-fgsubtle">(optional, filled into the command)</span>
                   </p>
-                ) : (
+                  {(Object.keys(EMPTY_FORM) as (keyof ClusterForm)[]).some((k) => problem(form, k)) && (
+                    <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+                      A value with spaces or punctuation is left out of the command.
+                    </p>
+                  )}
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <label className="text-[11px] text-fgsubtle">
+                      Account / project
+                      <input value={form.account} onChange={(e) => setField("account", e.target.value)} placeholder="abc123" spellCheck={false} className={fieldCls} />
+                    </label>
+                    <label className="text-[11px] text-fgsubtle">
+                      Partition
+                      <input value={form.partition} onChange={(e) => setField("partition", e.target.value)} placeholder="compute" spellCheck={false} className={fieldCls} />
+                    </label>
+                    <label className="text-[11px] text-fgsubtle">
+                      Walltime
+                      <input value={form.walltime} onChange={(e) => setField("walltime", e.target.value)} placeholder="02:00:00" spellCheck={false} className={fieldCls} />
+                    </label>
+                    <label className="text-[11px] text-fgsubtle">
+                      Nodes
+                      <input value={form.nodes} onChange={(e) => setField("nodes", e.target.value)} placeholder="1" inputMode="numeric" spellCheck={false} className={fieldCls} />
+                    </label>
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <Cmd>{clusterCmd}</Cmd>
+                </div>
+                {sbatch && (
                   <p className="mt-1 text-xs text-fgsubtle">
-                    Fill in the Slurm options above to have them written for you.
+                    Your options are saved on the cluster, so next time you can skip the form.
                   </p>
                 )}
-              </li>
-              <li>
-                <span className="font-medium text-fg">Watch it come up here.</span>{" "}
-                This page refreshes on its own. Once Slurm starts the job, the
-                nodes appear above and your queued steps begin running on them.
-                In the terminal: <code className="font-mono">htcondor annex status {name}</code>.
-              </li>
-              <li>
-                <span className="font-medium text-fg">Shut it down when you are done</span>{" "}
-                with the button above, so it stops using your allocation. Idle
-                nodes also leave on their own after a few minutes, and every
-                annex ends when its Slurm walltime expires.
-              </li>
+              </Step>
+
+              <Step n={5} state={s5} title="Wait for the nodes to join" last>
+                {annex.established ? (
+                  <>Your annex is up and running your steps.</>
+                ) : (
+                  <>
+                    This page refreshes on its own. Once the cluster&apos;s
+                    scheduler starts the job, the nodes appear above and your
+                    waiting steps start on them. Shut the annex down above when you
+                    are done, so it stops using your allocation; it also ends on
+                    its own when idle or when its walltime runs out.
+                  </>
+                )}
+              </Step>
             </ol>
+
+            <details className="mt-5 border-t border-line pt-3 text-xs text-fgsubtle">
+              <summary className="cursor-pointer font-medium text-fgmuted hover:text-fg">
+                How this works
+              </summary>
+              <p className="mt-2">
+                Step 2 runs <code className="font-mono">htcondor annex create {name}</code>{" "}
+                for you. The annex is named <code className="font-mono">{name}</code>{" "}
+                because Studio sends your steps to an annex of that name and no
+                other. To check on it from a terminal:{" "}
+                <code className="font-mono">htcondor annex status {name}</code>. Full
+                details are in HTCondor&apos;s{" "}
+                <a
+                  href="https://htcondor.readthedocs.io/en/latest/users-manual/bringing-your-own-resources.html"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  Bringing Your Own Resources
+                </a>{" "}
+                guide; its first step is already done for you.
+              </p>
+            </details>
           </div>
         )}
       </div>
