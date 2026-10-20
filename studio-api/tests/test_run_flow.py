@@ -418,9 +418,9 @@ def test_plan_uses_the_shared_submit_base(tmp_path, monkeypatch):
     assert SUBMIT_BASE == "submit"
 
 
-def test_plan_carries_this_runs_placement_and_gpus(tmp_path, monkeypatch):
-    """The Run panel's machines and GPU choices reach pegasus-plan as -D
-    properties, before the workflow file (#572)."""
+def test_plan_carries_this_runs_placement(tmp_path, monkeypatch):
+    """The Run panel's machines choice reaches pegasus-plan as a -D
+    property, before the workflow file (#572)."""
     seen: list[list[str]] = []
 
     async def fake_plan_capture(flow, argv, *, project_dir, mode=None):
@@ -433,10 +433,11 @@ def test_plan_carries_this_runs_placement_and_gpus(tmp_path, monkeypatch):
         "with open('workflow.yml', 'w') as fh:\n"
         "    fh.write('pegasus: \"5.0\"\\njobs: []\\n')\n",
     )
-    props = {"pegasus.catalog.site.sites.condorpool.profiles.condor.request_gpus": "1"}
+    props = {"pegasus.catalog.site.sites.condorpool.profiles.condor.requirements": 'TARGET.AnnexName =?= "alice"'}
     _drive(project_dir, plan_properties=props)
 
     argv = seen[0]
-    assert "-Dpegasus.catalog.site.sites.condorpool.profiles.condor.request_gpus=1" in argv
+    flag = '-Dpegasus.catalog.site.sites.condorpool.profiles.condor.requirements=TARGET.AnnexName =?= "alice"'
+    assert flag in argv
     assert argv[-1].endswith("workflow.yml")
-    assert argv.index("-Dpegasus.catalog.site.sites.condorpool.profiles.condor.request_gpus=1") < len(argv) - 1
+    assert argv.index(flag) < len(argv) - 1

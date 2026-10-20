@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type {
   ProjectParams,
   RunFlowSnapshot,
@@ -160,14 +161,21 @@ export function RunFlowPanel({
 }: Props) {
   const [flow, setFlow] = useState<RunFlowSnapshot | null>(null);
   const [placement, setPlacement] = useState<Placement>("any");
-  const [gpus, setGpus] = useState("0");
   const provisioning = useProvisioningStatus().data;
   const hosted = provisioning?.deployment === "hosted";
   const annexName = provisioning?.annex?.name ?? "";
   // The old Resources switch wrote a standing annex-only row (#564); while
   // it is there, "wherever is free" would not be true.
   const legacyPin = useAnnexPin(annexName || "-");
-  const gpuCount = Math.max(0, Math.min(16, Number.parseInt(gpus, 10) || 0));
+  // GPUs are the workflow's to ask for, step by step (#576); the panel only
+  // says when those steps would find no machine with one.
+  const gpuSteps = useQuery({
+    queryKey: ["gpu-steps", projectId],
+    queryFn: () => api.getGpuSteps(projectId),
+    staleTime: 30_000,
+  }).data?.steps ?? [];
+  const gpusAvailable =
+    (provisioning?.pool?.total_gpus ?? 0) + (provisioning?.annex?.total_gpus ?? 0);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [showTechnical, setShowTechnical] = useState(false);
@@ -352,8 +360,11 @@ export function RunFlowPanel({
         value: PLACEMENTS.find((x) => x.value === placement)?.label ?? placement,
       });
     }
-    if (gpuCount > 0) {
-      rows.push({ label: "GPUs", value: `${gpuCount} per step` });
+    if (gpuSteps.length > 0) {
+      rows.push({
+        label: "GPUs",
+        value: `asked for by ${gpuSteps.length === 1 ? gpuSteps[0] : `${gpuSteps.length} steps`}`,
+      });
     }
 
     for (const p of primaryParams) {
@@ -369,7 +380,7 @@ export function RunFlowPanel({
       rows.push({ label: paramLabel(p), value: current });
     }
     return rows;
-  }, [primaryParams, values, sites, defaultSite, hosted, placement, gpuCount]);
+  }, [primaryParams, values, sites, defaultSite, hosted, placement, gpuSteps]);
 
   // ── attach to the server-side flow ──────────────────────────────────────
 
@@ -480,7 +491,6 @@ export function RunFlowPanel({
         site: String(values["site"] ?? defaultSite),
         output_site: String(values["output_site"] ?? "local"),
         ...(hosted ? { placement } : {}),
-        gpus: gpuCount,
       });
       setFlow(snapshot);
       attach();
@@ -690,22 +700,17 @@ export function RunFlowPanel({
               )}
             </div>
           )}
-          <label className="mt-4 flex flex-wrap items-center gap-2 text-xs font-medium text-fg">
-            GPUs per step
-            <input
-              type="number"
-              min={0}
-              max={16}
-              value={gpus}
-              onChange={(e) => setGpus(e.target.value)}
-              className="w-16 rounded-md border border-line bg-base px-2 py-1 text-sm tabular-nums text-fg outline-none focus:border-pegasus-400"
-            />
-            <span className="font-normal text-fgmuted">
-              {gpuCount > 0
-                ? "Each step asks for this many; only machines with GPUs will take them, and containers get GPU access."
-                : "None. Steps that set their own GPU request still get one."}
-            </span>
-          </label>
+          {gpuSteps.length > 0 && provisioning && gpusAvailable === 0 && (
+            <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
+              {gpuSteps.length === 1 ? `${gpuSteps[0]} asks` : `${gpuSteps.length} steps (${gpuSteps.slice(0, 3).join(", ")}${gpuSteps.length > 3 ? ", …" : ""}) ask`}{" "}
+              for a GPU, and no machine in Studio&apos;s pool or your annex has one right now. They
+              will wait until one joins: an annex with GPUs, from{" "}
+              <AppLink href="/provisioning#compute" className="underline">
+                Resources → Extra computing
+              </AppLink>
+              .
+            </p>
+          )}
         </fieldset>
 
         {/* What pressing Run will actually do. A non-specialist has no way to

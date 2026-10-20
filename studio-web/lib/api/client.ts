@@ -635,8 +635,13 @@ export interface RunFlowOptions {
   force_build?: boolean;
   /** Which machines this run's steps may use (#572). */
   placement?: "any" | "annex" | "pool";
-  /** GPUs per step; Pegasus adds --nv for containers. */
-  gpus?: number;
+}
+
+/** The steps a workflow itself says need a GPU (#576). */
+export async function getGpuSteps(projectId: string) {
+  return request<{ project_id: string; steps: string[] }>(
+    `/workflows/projects/${encodeURIComponent(projectId)}/gpu-steps`
+  );
 }
 
 export async function startRunFlow(
