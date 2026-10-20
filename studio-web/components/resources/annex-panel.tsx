@@ -138,6 +138,12 @@ function loadForm(): ClusterForm {
 }
 
 
+// Said beside the disabled button. #544's checklist rewrite kept the
+// condition and dropped the sentence, so the button was simply grey (#574).
+const NEEDS_JOBS =
+  "None of your steps are in the queue right now (between runs, or between stages of one), and " +
+  "HTCondor only creates an annex while some are. Try again while a run is going.";
+
 function verdict(a: AnnexStatus): { tone: Tone | "error"; headline: string; detail: string } {
   if (!a.available) {
     return {
@@ -253,7 +259,10 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
   // upload or the sbatch. "Create" itself makes a pending request, so the
   // cluster steps stay current until nodes join rather than ticking as
   // soon as the file exists (#558).
-  const s1: StepState = waiting > 0 || annex.established ? "done" : "current";
+  // Any step of the user's in the queue, waiting or running, is enough for
+  // `htcondor annex create`, and with "wherever is free first" the pool and
+  // the annex share the work, so a run that is going counts (#574).
+  const s1: StepState = queued > 0 || annex.established ? "done" : "current";
   const s2: StepState = bundle || annex.established ? "done" : queued > 0 ? "current" : "todo";
   const s34: StepState = annex.established ? "done" : bundle ? "current" : "todo";
   const s5: StepState =
@@ -374,31 +383,30 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
           <div className="border-t border-line px-4 py-4">
             <ol>
               <Step n={1} state={s1} title="Run a workflow">
-                {s1 === "done" ? (
-                  <>
-                    {waiting > 0
-                      ? `${waiting} step${waiting === 1 ? " is" : "s are"} waiting for your annex.`
-                      : "Steps are waiting for your annex."}
-                  </>
+                {s1 === "done" && waiting > 0 ? (
+                  <>{`${waiting} step${waiting === 1 ? " is" : "s are"} waiting for your annex.`}</>
+                ) : s1 === "done" && annex.established && queued === 0 ? (
+                  <>Your annex is up. Start a run and its steps can use it.</>
                 ) : queued > 0 ? (
                   <>
-                    Your steps are already running, on Studio&apos;s pool, so an annex
-                    would have nothing to do and its nodes would leave again. Start a
-                    new run with{" "}
-                    <span className="font-medium text-fg">On which machines → Only my annex</span>{" "}
-                    in the Run panel.
+                    A run is going: you can create the setup file now. Its steps run on
+                    Studio&apos;s pool for the moment, and your annex&apos;s nodes share the
+                    rest with the pool when they join. To keep a run for your nodes only,
+                    start it with{" "}
+                    <span className="font-medium text-fg">On which machines → Only my annex</span>.
                   </>
                 ) : (
                   <>
-                    The annex can only be created while your steps are waiting for
-                    it, and nodes that find nothing to run leave after a few
-                    minutes. Start one from{" "}
+                    Start a run from{" "}
                     <AppLink href="/workflows" className="font-medium text-pegasus-600 underline dark:text-pegasus-300">
                       Run Jobs
-                    </AppLink>{" "}
-                    with{" "}
-                    <span className="font-medium text-fg">On which machines → Only my annex</span>, so
-                    Studio&apos;s pool does not take its steps, then come back.
+                    </AppLink>
+                    . HTCondor creates an annex only while some of your steps are queued,
+                    and a node with nothing to run leaves after 5 minutes. With{" "}
+                    <span className="font-medium text-fg">Wherever is free first</span> (the
+                    default) its steps use Studio&apos;s pool and your annex together;{" "}
+                    <span className="font-medium text-fg">Only my annex</span> keeps them for
+                    your nodes.
                   </>
                 )}
               </Step>
@@ -411,6 +419,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                   <button
                     type="button"
                     disabled={create.isPending || needsJobs}
+                    title={needsJobs ? NEEDS_JOBS : undefined}
                     onClick={() => create.mutate()}
                     className={cn(
                       "rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50",
@@ -436,6 +445,12 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     </span>
                   )}
                 </div>
+                {needsJobs && (
+                  <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
+                    {NEEDS_JOBS}
+                    {bundle ? " The setup file you already have still works; you only need a new one if you lost it." : ""}
+                  </p>
+                )}
                 {create.isError && (
                   <p className="mt-1 text-xs text-red-600 dark:text-rose-400">
                     Couldn&apos;t create it: {(create.error as Error).message}
