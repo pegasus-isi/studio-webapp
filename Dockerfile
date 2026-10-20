@@ -135,7 +135,7 @@ RUN ok=0; for i in 1 2 3 4 5; do \
     # Debian would take over the dpkg-managed /usr/bin/python3 symlink.
     && python3 --version \
     # ca-certificates is explicit because -slim does not carry it and every
-    # curl below (get-pip, the repo keys, the Apptainer deb) is https.
+    # curl below (the pip wheel, the repo keys, the Apptainer deb) is https.
     && test -f /etc/ssl/certs/ca-certificates.crt
 
 # nsswitch - for user/group lookups
@@ -144,20 +144,30 @@ COPY docker/nsswitch.conf /etc/nsswitch.conf
 # ---- pip bootstrap ----
 # Wipe all apt-installed Python packages (they lack RECORD files and block
 # pip from upgrading transitive deps like PyJWT, cryptography, etc.).
-# Then bootstrap a clean pip from get-pip.py.
+# Then bootstrap a clean pip from a pinned pip wheel.
 # The glob covers whatever minor version the suite ships, so a suite bump does
 # not silently leave the marker in place and turn every pip install below into
 # an "externally-managed-environment" error.
+#
+# A released wheel, by version and PyPI's sha256, not bootstrap.pypa.io's
+# get-pip.py (#568). get-pip.py is one URL that always serves the newest
+# pip, so its pinned checksum broke every build the day a pip release came
+# out (pip 26.2.2, 2026-10-20, failed the #565 image). A released file never
+# changes, so this stays checksummed (INF-4) without breaking on upstream
+# releases. pip runs straight from its own wheel to install itself, which
+# pip supports; bump both ARGs together, from
+# https://pypi.org/pypi/pip/<version>/json (urls[].digests.sha256).
+ARG PIP_VERSION=26.2.2
+ARG PIP_WHEEL_URL=https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl
+ARG PIP_WHEEL_SHA256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70
 RUN rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED && \
     rm -rf /usr/lib/python3/dist-packages/* && \
-    # sha256-pinned instead of curl|python3 into the root interpreter: a new
-    # upstream get-pip.py fails the checksum loudly (bump the hash on a pip
-    # release) rather than executing unreviewed code at build time.
-    curl -fsSL -o /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py && \
-    echo "fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6  /tmp/get-pip.py" \
-        | sha256sum -c - && \
-    python3 /tmp/get-pip.py && \
-    rm -f /tmp/get-pip.py && \
+    whl=/tmp/pip-${PIP_VERSION}-py3-none-any.whl && \
+    curl -fsSL -o "$whl" "${PIP_WHEEL_URL}" && \
+    echo "${PIP_WHEEL_SHA256}  $whl" | sha256sum -c - && \
+    python3 "$whl/pip" install --no-cache-dir --no-index "$whl" && \
+    rm -f "$whl" && \
+    pip --version && \
     pip install --no-cache-dir setuptools wheel
 
 # ---- JupyterLab + extensions ----
