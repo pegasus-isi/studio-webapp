@@ -71,4 +71,9 @@ describe("cluster presets", () => {
       bridges2: "projects",
     });
   });
+
+  it("carries ACCESS's login notes where it gives one", () => {
+    const by = Object.fromEntries(CLUSTERS.map((c) => [c.id, !!c.loginNote]));
+    expect(by).toEqual({ expanse: true, anvil: false, delta: false, bridges2: true });
+  });
 });

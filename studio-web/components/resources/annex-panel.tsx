@@ -566,6 +566,12 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       HTCondor Annex guide
                     </a>{" "}
                     covers logging in (SSH keys, each cluster&apos;s OnDemand portal) and per-cluster notes.
+                    {chosen?.cluster.loginNote ? (
+                      <>
+                        {" "}
+                        <span className="font-medium text-fgmuted">Logging in:</span> {chosen.cluster.loginNote}
+                      </>
+                    ) : null}
                   </div>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     <label className={LABEL}>

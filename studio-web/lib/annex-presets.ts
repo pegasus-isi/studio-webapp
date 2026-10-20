@@ -38,6 +38,8 @@ export type Cluster = {
    *  From ACCESS's HTCondor Annex guide (ACCESS_ANNEX_GUIDE) where it names
    *  one; otherwise plain Slurm's, which every Slurm cluster answers. */
   accountCommand: string;
+  /** What logging in to the cluster takes, per ACCESS's guide, if notable. */
+  loginNote?: string;
 };
 
 /** ACCESS's own HTCondor Annex guide: SSH keys, OnDemand, per-system notes. */
@@ -60,10 +62,11 @@ export const CLUSTERS: Cluster[] = [
     id: "expanse",
     label: "Expanse (SDSC)",
     accountCommand: "module load sdsc; expanse-client user -p",
+    loginNote: "SSH to Expanse needs MFA; see SDSC's user guide.",
     common: { module: "singularitypro", extra: "", gpuFlag: "--gpus" },
     cpu: {
       values: { partition: "shared", cpus: "8", memory: "16G", gpus: "" },
-      note: "shared gives part of a node; compute is a whole 128-core node. Expanse has no default partition.",
+      note: "shared gives part of a node; compute is a whole 128-core node (the queue ACCESS's annex guide tested). Expanse has no default partition.",
       basis: "tested",
     },
     gpu: {
@@ -79,7 +82,7 @@ export const CLUSTERS: Cluster[] = [
     common: { module: "apptainer", extra: "", gpuFlag: "--gpus-per-node" },
     cpu: {
       values: { partition: "shared", cpus: "8", memory: "16G", gpus: "" },
-      note: "shared gives part of a node; wholenode and wide are whole 128-core nodes.",
+      note: "shared gives part of a node; wholenode and wide are whole 128-core nodes. ACCESS's annex guide tested a queue it calls standard, which HTCondor's own table does not list.",
       basis: "documented",
     },
     gpu: {
@@ -110,10 +113,11 @@ export const CLUSTERS: Cluster[] = [
     id: "bridges2",
     label: "Bridges-2 (PSC)",
     accountCommand: "projects",
+    loginNote: "Your password or SSH key has to be registered with PSC first; see the Bridges-2 user guide.",
     common: { module: "", extra: "", gpuFlag: "--gpus" },
     cpu: {
       values: { partition: "RM-shared", cpus: "8", memory: "", gpus: "" },
-      note: "RM-shared gives part of a node and sets memory from the CPU count (HTCondor's table says not to give one); RM is a whole 128-core node. Singularity is in /usr/bin, so no module.",
+      note: "RM-shared gives part of a node and sets memory from the CPU count (HTCondor's table says not to give one); RM is a whole 128-core node (the queue ACCESS's annex guide tested). Singularity is in /usr/bin, so no module.",
       basis: "documented",
     },
     gpu: {
