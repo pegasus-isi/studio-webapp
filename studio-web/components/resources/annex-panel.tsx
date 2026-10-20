@@ -448,7 +448,12 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                 {needsJobs && (
                   <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
                     {NEEDS_JOBS}
-                    {bundle ? " The setup file you already have still works; you only need a new one if you lost it." : ""}
+                    {/* Only while its request is open: a setup file belongs to one
+                        request, and whether nodes from a file whose request was
+                        closed still join has not been verified (#574). */}
+                    {bundle && (annex.requests?.total ?? 0) > 0
+                      ? " Your current setup file's request is still open, so nodes started from that file should still join."
+                      : ""}
                   </p>
                 )}
                 {create.isError && (
