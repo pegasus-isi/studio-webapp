@@ -43,7 +43,14 @@ import {
   problem,
   type ClusterForm,
 } from "@/lib/annex-command";
-import { CLUSTERS, applyPreset, presetFor, type NodeType } from "@/lib/annex-presets";
+import {
+  ACCESS_ANNEX_GUIDE,
+  CLUSTERS,
+  SLURM_ACCOUNT_COMMAND,
+  applyPreset,
+  presetFor,
+  type NodeType,
+} from "@/lib/annex-presets";
 import { CARD, FIELD, HINT, LABEL, StatusCard, type Tone } from "@/components/resources/status-card";
 import { cn, formatDuration } from "@/lib/utils";
 
@@ -541,6 +548,31 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       You can change any value.
                     </p>
                   )}
+                  <div className={`mt-2 rounded-md border border-line bg-surface px-3 py-2 ${HINT}`}>
+                    <span className="font-medium text-fgmuted">Finding your account:</span> it is the
+                    Slurm account (project) on the cluster, which{" "}
+                    <span className="font-medium text-fgmuted">may not be your ACCESS allocation id</span>{" "}
+                    (an ACCESS project such as <code className="font-mono">TG-ABC123456</code> can have a
+                    local name such as <code className="font-mono">abc123</code>). Log in to the cluster and run{" "}
+                    <code className="font-mono">{chosen?.cluster.accountCommand ?? SLURM_ACCOUNT_COMMAND}</code>
+                    {chosen && chosen.cluster.accountCommand !== SLURM_ACCOUNT_COMMAND ? (
+                      <>
+                        {" "}(or, on any Slurm cluster,{" "}
+                        <code className="font-mono">{SLURM_ACCOUNT_COMMAND}</code>)
+                      </>
+                    ) : null}
+                    . ACCESS&apos;s{" "}
+                    <a href={ACCESS_ANNEX_GUIDE} target="_blank" rel="noreferrer" className="underline">
+                      HTCondor Annex guide
+                    </a>{" "}
+                    covers logging in (SSH keys, each cluster&apos;s OnDemand portal) and per-cluster notes.
+                    {chosen?.cluster.loginNote ? (
+                      <>
+                        {" "}
+                        <span className="font-medium text-fgmuted">Logging in:</span> {chosen.cluster.loginNote}
+                      </>
+                    ) : null}
+                  </div>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     <label className={LABEL}>
                       Account / allocation <span className="text-amber-700 dark:text-amber-400">*</span>
@@ -585,8 +617,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     HTCondor worker on each node. On a shared partition, set CPUs and
                     memory, or the worker gets one core. GPUs need a GPU partition and GPU
                     time on the allocation; workflow steps get one only if they ask for it
-                    (a <code className="font-mono">gpus</code> or <code className="font-mono">request_gpus</code> profile). To find your account on the
-                    cluster: <code className="font-mono">sacctmgr show assoc user=$USER format=account%20</code>.
+                    (a <code className="font-mono">gpus</code> or <code className="font-mono">request_gpus</code> profile).
                     Jobs on annex nodes do not see the cluster&apos;s modules, so a container
                     workflow needs the module that provides Apptainer or Singularity
                     (<code className="font-mono">module avail apptainer singularity</code> lists them);

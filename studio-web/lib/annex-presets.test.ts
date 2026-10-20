@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_FORM, cautions, clusterCommand, sbatchLines } from "@/lib/annex-command";
-import { CLUSTERS, applyPreset, presetFor } from "@/lib/annex-presets";
+import { CLUSTERS, SLURM_ACCOUNT_COMMAND, applyPreset, presetFor } from "@/lib/annex-presets";
 
 describe("cluster presets", () => {
   it("Expanse, CPU only reproduces the options and module the live test ran with", () => {
@@ -60,5 +60,20 @@ describe("cluster presets", () => {
   it("an unknown id clears the preset and leaves the values", () => {
     const f = applyPreset({ ...EMPTY_FORM, partition: "x", cluster: "expanse" }, "other");
     expect([f.cluster, f.nodeType, f.partition]).toEqual(["", "", "x"]);
+  });
+
+  it("every cluster says how to find the account, per ACCESS's guide where it names one", () => {
+    const by = Object.fromEntries(CLUSTERS.map((c) => [c.id, c.accountCommand]));
+    expect(by).toEqual({
+      expanse: "module load sdsc; expanse-client user -p",
+      anvil: "mybalance",
+      delta: SLURM_ACCOUNT_COMMAND,
+      bridges2: "projects",
+    });
+  });
+
+  it("carries ACCESS's login notes where it gives one", () => {
+    const by = Object.fromEntries(CLUSTERS.map((c) => [c.id, !!c.loginNote]));
+    expect(by).toEqual({ expanse: true, anvil: false, delta: false, bridges2: true });
   });
 });

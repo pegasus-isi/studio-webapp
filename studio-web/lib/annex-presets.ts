@@ -34,7 +34,20 @@ export type Cluster = {
   common: Pick<ClusterForm, "module" | "extra" | "gpuFlag">;
   cpu: Variant;
   gpu?: Variant;
+  /** How to find the Slurm account to put in -A, run on the cluster (#582).
+   *  From ACCESS's HTCondor Annex guide (ACCESS_ANNEX_GUIDE) where it names
+   *  one; otherwise plain Slurm's, which every Slurm cluster answers. */
+  accountCommand: string;
+  /** What logging in to the cluster takes, per ACCESS's guide, if notable. */
+  loginNote?: string;
 };
+
+/** ACCESS's own HTCondor Annex guide: SSH keys, OnDemand, per-system notes. */
+export const ACCESS_ANNEX_GUIDE =
+  "https://access-ci.atlassian.net/wiki/spaces/ACCESSdocumentation/pages/564887666/HTCondor+Annex";
+
+/** Any Slurm cluster: the accounts this user may charge. */
+export const SLURM_ACCOUNT_COMMAND = "sacctmgr show assoc user=$USER format=account%30";
 
 /** The view a caller needs of one cluster + node type. */
 export type ClusterPreset = Variant & { cluster: Cluster; nodeType: NodeType };
@@ -48,10 +61,12 @@ export const CLUSTERS: Cluster[] = [
   {
     id: "expanse",
     label: "Expanse (SDSC)",
+    accountCommand: "module load sdsc; expanse-client user -p",
+    loginNote: "SSH to Expanse needs MFA; see SDSC's user guide.",
     common: { module: "singularitypro", extra: "", gpuFlag: "--gpus" },
     cpu: {
       values: { partition: "shared", cpus: "8", memory: "16G", gpus: "" },
-      note: "shared gives part of a node; compute is a whole 128-core node. Expanse has no default partition.",
+      note: "shared gives part of a node; compute is a whole 128-core node (the queue ACCESS's annex guide tested). Expanse has no default partition.",
       basis: "tested",
     },
     gpu: {
@@ -63,10 +78,11 @@ export const CLUSTERS: Cluster[] = [
   {
     id: "anvil",
     label: "Anvil (Purdue)",
+    accountCommand: "mybalance",
     common: { module: "apptainer", extra: "", gpuFlag: "--gpus-per-node" },
     cpu: {
       values: { partition: "shared", cpus: "8", memory: "16G", gpus: "" },
-      note: "shared gives part of a node; wholenode and wide are whole 128-core nodes.",
+      note: "shared gives part of a node; wholenode and wide are whole 128-core nodes. ACCESS's annex guide tested a queue it calls standard, which HTCondor's own table does not list.",
       basis: "documented",
     },
     gpu: {
@@ -78,6 +94,9 @@ export const CLUSTERS: Cluster[] = [
   {
     id: "delta",
     label: "Delta (NCSA)",
+    // ACCESS's guide names no Delta command, and Delta's own docs are behind
+    // a login; plain Slurm's answers there as everywhere.
+    accountCommand: SLURM_ACCOUNT_COMMAND,
     common: { module: "", extra: "--constraint=scratch", gpuFlag: "--gpus-per-node" },
     cpu: {
       values: { partition: "cpu", cpus: "8", memory: "16G", gpus: "" },
@@ -93,10 +112,12 @@ export const CLUSTERS: Cluster[] = [
   {
     id: "bridges2",
     label: "Bridges-2 (PSC)",
+    accountCommand: "projects",
+    loginNote: "Your password or SSH key has to be registered with PSC first; see the Bridges-2 user guide.",
     common: { module: "", extra: "", gpuFlag: "--gpus" },
     cpu: {
       values: { partition: "RM-shared", cpus: "8", memory: "", gpus: "" },
-      note: "RM-shared gives part of a node and sets memory from the CPU count (HTCondor's table says not to give one); RM is a whole 128-core node. Singularity is in /usr/bin, so no module.",
+      note: "RM-shared gives part of a node and sets memory from the CPU count (HTCondor's table says not to give one); RM is a whole 128-core node (the queue ACCESS's annex guide tested). Singularity is in /usr/bin, so no module.",
       basis: "documented",
     },
     gpu: {
