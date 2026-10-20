@@ -369,3 +369,33 @@ def test_summarize_counts_gpus(tmp_path=None):
     s = annex.summarize("alice", [_request("r1")], [gpu, _slot("r1")], [])
     assert s["total_gpus"] == 1 and s["busy_gpus"] == 1
     assert annex.summarize("alice", [_request("r1")], [_slot("r1")], [])["total_gpus"] == 0
+
+
+def test_bundle_request_open_is_its_own_request_not_any(tmp_path, monkeypatch):
+    """A setup file's request is the one running in the file's directory;
+    another open request must not make this file look usable (#574)."""
+    _fake_create(tmp_path, monkeypatch)
+    asyncio.run(annex.create_bundle())
+    bundle_dir_ = str(__import__("pathlib").Path(annex.current_bundle()["path"]).parent)
+    monkeypatch.setattr(annex, "_config", None, raising=False)
+
+    async def config():
+        return {"enabled": True, "collector": "ap:9618", "require_job": True}
+
+    def make_query(dirs):
+        async def run_json(cmd):
+            if cmd[0] == "condor_q" and "hpc_annex_name" in " ".join(cmd):
+                return [{"JobStatus": 2, "Iwd": d, "hpc_annex_request_id": f"r{i}"} for i, d in enumerate(dirs)], None
+            return [], None
+        return run_json
+
+    monkeypatch.setattr(annex, "_condor_config", config)
+    monkeypatch.setattr(annex, "_run_json", make_query([str(tmp_path / "some-other-dir")]))
+    annex._cache["data"] = None
+    s = asyncio.run(annex.get_status(force=True))
+    assert s["bundle"]["request_open"] is False
+    assert "_open_request_dirs" not in s
+
+    monkeypatch.setattr(annex, "_run_json", make_query([bundle_dir_]))
+    s = asyncio.run(annex.get_status(force=True))
+    assert s["bundle"]["request_open"] is True
