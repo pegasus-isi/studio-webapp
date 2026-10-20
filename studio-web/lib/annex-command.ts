@@ -44,6 +44,8 @@ export type ClusterForm = {
   memory: string;
   extra: string;
   module: string;
+  /** The preset last applied (lib/annex-presets.ts), or "" for none. */
+  cluster: string;
 };
 
 /** One hour: long enough for a test or a small run, short on an allocation. */
@@ -58,6 +60,7 @@ export const EMPTY_FORM: ClusterForm = {
   memory: "",
   extra: "",
   module: "",
+  cluster: "",
 };
 
 const SHAPE: Record<keyof ClusterForm, RegExp> = {
@@ -71,6 +74,7 @@ const SHAPE: Record<keyof ClusterForm, RegExp> = {
   extra: /^(\s*--?[A-Za-z][A-Za-z0-9-]*(=[A-Za-z0-9._,:/+-]+)?)+\s*$/,
   // A module name, optionally with a version: singularitypro, apptainer/1.3.
   module: /^[A-Za-z0-9._+-]+(\/[A-Za-z0-9._+-]+)?$/,
+  cluster: /^[a-z0-9-]+$/,
 };
 
 export function valid(f: ClusterForm, k: keyof ClusterForm): string {

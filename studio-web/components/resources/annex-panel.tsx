@@ -43,6 +43,7 @@ import {
   problem,
   type ClusterForm,
 } from "@/lib/annex-command";
+import { PRESETS, applyPreset, presetById } from "@/lib/annex-presets";
 import { CARD, FIELD, HINT, LABEL, StatusCard, type Tone } from "@/components/resources/status-card";
 import { cn, formatDuration } from "@/lib/utils";
 
@@ -205,8 +206,10 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
     if (!live) setConfirmStop(false);
   }, [live]);
   const setField = (k: keyof ClusterForm, value: string) =>
+    update((f) => ({ ...f, [k]: value }));
+  const update = (change: (f: ClusterForm) => ClusterForm) =>
     setForm((f) => {
-      const next = { ...f, [k]: value };
+      const next = change(f);
       try {
         window.localStorage.setItem(FORM_KEY, JSON.stringify(next));
       } catch {
@@ -463,6 +466,30 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                   {(Object.keys(EMPTY_FORM) as (keyof ClusterForm)[]).some((k) => problem(form, k)) && (
                     <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                       A value with spaces or punctuation is left out of the command.
+                    </p>
+                  )}
+                  <label className={`mt-2 ${LABEL}`}>
+                    Cluster
+                    <select
+                      value={form.cluster}
+                      onChange={(e) => update((f) => applyPreset(f, e.target.value))}
+                      className={`${FIELD} max-w-xs`}
+                    >
+                      <option value="">Other (fill in below)</option>
+                      {PRESETS.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {presetById(form.cluster) && (
+                    <p className={`mt-1 ${HINT}`}>
+                      {presetById(form.cluster)!.note}{" "}
+                      {presetById(form.cluster)!.basis === "tested"
+                        ? "Tested end to end with Studio."
+                        : "From HTCondor's annex settings and the cluster's documentation; not yet tested with Studio."}{" "}
+                      You can change any value.
                     </p>
                   )}
                   <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
