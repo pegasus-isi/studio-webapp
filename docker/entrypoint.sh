@@ -298,6 +298,14 @@ render_template() {
                 return 0
             fi
             ;;
+        hub-auth-*.conf.tmpl)
+            # The JupyterHub OAuth gate (#592), live only in hub mode.
+            if [ "${STUDIO_HUB_AUTH}" != "1" ]; then
+                printf '# Not a JupyterHub single-user server (or STUDIO_AUTH_TOKEN gate in use) — hub OAuth gate off.\n' \
+                    > "${dst}"
+                return 0
+            fi
+            ;;
         prefix-*.conf.tmpl)
             # Locations keyed on the literal prefix string, not a regex capture
             # (unlike the /user/[^/]+ locations above them, STUDIO_URL_PREFIX is
@@ -331,12 +339,34 @@ render_template() {
         exit 1
     fi
 }
+# ---- JupyterHub OAuth gate (#592) ----
+# KubeSpawner starts this image as a JupyterHub single-user server and gives
+# it the hub's OAuth client credentials, but the entrypoint runs supervisord
+# instead of jupyterhub-singleuser, so nothing checked them: the hub's proxy
+# authenticates nothing itself, and every /user/<name>/ request reached
+# Studio unauthenticated. Hub mode turns on nginx's per-request check and
+# studio-api's OAuth handlers. It needs the hub's variables, and stays off
+# when the Open OnDemand token gate is in use (that deployment has no hub).
+# STUDIO_HUB_AUTH=0 forces it off, for local experiments with a fake hub env.
+if [ "${STUDIO_HUB_AUTH:-}" != "0" ] \
+   && [ -n "${JUPYTERHUB_API_TOKEN:-}" ] && [ -n "${JUPYTERHUB_CLIENT_ID:-}" ] \
+   && [ -n "${JUPYTERHUB_OAUTH_CALLBACK_URL:-}" ] && [ -n "${JUPYTERHUB_USER:-}" ] \
+   && [ -z "${STUDIO_AUTH_TOKEN}" ]; then
+    STUDIO_HUB_AUTH=1
+else
+    STUDIO_HUB_AUTH=0
+fi
+export STUDIO_HUB_AUTH
+echo "[studio] JupyterHub OAuth gate: $([ "${STUDIO_HUB_AUTH}" = 1 ] && echo on || echo off)"
+
 render_template /opt/pegasus-ai/templates/nginx.conf.tmpl \
                 "${STUDIO_RUNTIME_DIR}/nginx.conf"
 render_template /opt/pegasus-ai/templates/studio-proxy.conf.tmpl \
                 "${STUDIO_RUNTIME_DIR}/studio-proxy.conf"
 render_template /opt/pegasus-ai/templates/prefix-proxy.conf.tmpl \
                 "${STUDIO_RUNTIME_DIR}/prefix-proxy.conf"
+render_template /opt/pegasus-ai/templates/hub-auth-server.conf.tmpl \
+                "${STUDIO_RUNTIME_DIR}/hub-auth-server.conf"
 for gate in gate-map gate-server gate-api-headers gate-jupyter-headers; do
     render_template "/opt/pegasus-ai/templates/${gate}.conf.tmpl" \
                     "${STUDIO_RUNTIME_DIR}/${gate}.conf"

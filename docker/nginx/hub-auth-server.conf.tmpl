@@ -1,0 +1,54 @@
+# JupyterHub OAuth gate, server-level part (#592). Rendered comment-only
+# unless docker/entrypoint.sh decides the pod is a JupyterHub single-user
+# server (the hub's OAuth variables are present and the Open OnDemand token
+# gate is not in use).
+#
+# Under JupyterHub the hub's proxy forwards /user/<name>/* straight to this
+# pod and authenticates nothing itself: the single-user server is supposed to
+# check every request against the hub (jupyterhub-singleuser's HubOAuth).
+# Studio replaces that server with supervisord, so until this gate existed
+# any request that reached the proxy reached Studio, unauthenticated.
+#
+# Every request is checked with a subrequest to studio-api, which verifies a
+# signed session cookie. Without one, nginx hands the request to studio-api's
+# login handler, which sends a page load into the hub's OAuth flow and
+# answers anything else (API, WebSocket, non-GET) with 401. The hub calls back
+# to /user/<name>/oauth_callback, the one path reachable without the cookie.
+#
+# auth_request at server level is inherited by every location, so a location
+# added later is covered without remembering to include anything. The three
+# locations below opt out because they are the gate itself.
+auth_request /_studio_hub_check;
+error_page 401 = @studio_hub_login;
+
+location = /_studio_hub_check {
+    internal;
+    auth_request off;
+    proxy_pass http://studio_api/_hub_auth/check;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header Cookie $http_cookie;
+    proxy_set_header X-Original-URI $request_uri;
+}
+
+location @studio_hub_login {
+    auth_request off;
+    # A variable URI: proxy_pass may not carry a fixed URI in a named location.
+    set $studio_hub_login_uri /_hub_auth/login;
+    proxy_pass http://studio_api$studio_hub_login_uri;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header Cookie $http_cookie;
+    proxy_set_header X-Original-URI $request_uri;
+    proxy_set_header X-Original-Method $request_method;
+    proxy_set_header X-Original-Upgrade $http_upgrade;
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+}
+
+location ~ ^/user/[^/]+/oauth_callback$ {
+    auth_request off;
+    set $studio_hub_callback_uri /_hub_auth/callback;
+    proxy_pass http://studio_api$studio_hub_callback_uri$is_args$args;
+    proxy_set_header Cookie $http_cookie;
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+}

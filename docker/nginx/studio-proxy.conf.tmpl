@@ -35,6 +35,11 @@ server {
     # Comment-only unless STUDIO_AUTH_TOKEN is set.
     include @STUDIO_RUNTIME_DIR@/gate-server.conf;
 
+    # JupyterHub OAuth gate (#592): every request checked against the hub.
+    # Comment-only unless this pod is a JupyterHub single-user server. Before
+    # the /user/ locations below, so its oauth_callback location wins.
+    include @STUDIO_RUNTIME_DIR@/hub-auth-server.conf;
+
     # KubeSpawner/JupyterHub exposes the server below /user/<name>. The browser
     # must keep that prefix, but the internal Studio services route from /.
     location ~ ^/user/[^/]+$ {

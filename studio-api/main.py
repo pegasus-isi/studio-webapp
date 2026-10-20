@@ -20,6 +20,7 @@ from routers import (
     feedback,
     files,
     health,
+    hub_auth,
     jupyter,
     knowledge,
     llm,
@@ -373,6 +374,9 @@ app.add_middleware(InternalSecretMiddleware)
 
 # Register routers
 app.include_router(health.router)
+# JupyterHub OAuth (#592): nginx's per-request check, login and callback.
+# Outside /api, reached only through nginx's gate locations.
+app.include_router(hub_auth.router)
 app.include_router(settings.router)
 app.include_router(llm.router)
 app.include_router(knowledge.router)
