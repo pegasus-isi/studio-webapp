@@ -92,6 +92,9 @@ describe("clusterCommand", () => {
   it("is always ready to run: no 'edit hpc.slurm' fallback", () => {
     const cmd = clusterCommand("kthare10", EMPTY_FORM);
     expect(cmd).toContain("./annex-setup.sh && sbatch hpc.slurm");
+    // Rerunning in an existing folder must not trip over setup's own link.
+    expect(cmd).toContain("cd annex-kthare10 && rm -f condor.tar.gz && ./annex-setup.sh");
+    expect(cmd).not.toContain("rm -rf");
     expect(cmd).not.toContain("edit hpc.slurm");
     expect(cmd.startsWith("mkdir -p ~/.condor && cat > ~/.condor/annex_slurm_args <<'ANNEX_SLURM_ARGS'")).toBe(true);
   });

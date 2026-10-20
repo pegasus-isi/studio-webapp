@@ -27,7 +27,7 @@ def test_summarize_nothing_requested():
     s = annex.summarize("alice", [], [], [])
     assert s["established"] is False
     assert s["nodes"] == 0 and s["total_cpus"] == 0
-    assert s["requests"] == {"total": 0, "pending": 0, "active": 0, "retired": 0, "held": 0}
+    assert s["requests"] == {"total": 0, "pending": 0, "active": 0, "retired": 0, "held": 0, "untracked": 0}
     assert s["jobs"] == {"total": 0, "running": 0, "idle": 0, "held": 0}
 
 
@@ -44,7 +44,7 @@ def test_summarize_states_mirror_upstream():
     assert s["nodes"] == 2
     assert s["total_cpus"] == 16
     assert s["busy_cpus"] == 6
-    assert s["requests"] == {"total": 3, "pending": 1, "active": 1, "retired": 1, "held": 0}
+    assert s["requests"] == {"total": 3, "pending": 1, "active": 1, "retired": 1, "held": 0, "untracked": 0}
     assert s["jobs"] == {"total": 3, "running": 1, "idle": 1, "held": 1}
     assert s["oldest_started_at"] == 900
     assert s["oldest_retires_at"] == 4000
@@ -399,3 +399,13 @@ def test_bundle_request_open_is_its_own_request_not_any(tmp_path, monkeypatch):
     monkeypatch.setattr(annex, "_run_json", make_query([bundle_dir_]))
     s = asyncio.run(annex.get_status(force=True))
     assert s["bundle"]["request_open"] is True
+
+
+def test_summarize_reports_nodes_from_a_closed_request_apart():
+    """A node from a setup file whose request was closed still counts as
+    capacity, but not as an active request (#584)."""
+    s = annex.summarize("alice", [_request("r2", status=2)], [_slot("r-closed")], [])
+    assert s["established"] is True and s["nodes"] == 1 and s["total_cpus"] == 8
+    assert s["requests"]["active"] == 0 and s["requests"]["untracked"] == 1
+    assert s["requests"]["total"] == 1 and s["requests"]["pending"] == 1
+    assert s["untracked_nodes"] == 1

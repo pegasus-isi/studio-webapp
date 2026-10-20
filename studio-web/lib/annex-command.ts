@@ -190,6 +190,9 @@ export function clusterCommand(name: string, f: ClusterForm): string {
     `mkdir -p ~/.condor && cat > ~/.condor/annex_slurm_args <<'ANNEX_SLURM_ARGS'\n` +
     `${sbatchLines(f).join("\n")}\n` +
     `ANNEX_SLURM_ARGS\n` +
-    `tar xf annex-${name}.tar && cd annex-${name} && ./annex-setup.sh && sbatch hpc.slurm`
+    // rm -f condor.tar.gz: annex-setup.sh links it and fails with "File
+    // exists" when run again in the same folder (#584). Only that link goes;
+    // the folder stays, since a running annex's pilot.<jobid> lives in it.
+    `tar xf annex-${name}.tar && cd annex-${name} && rm -f condor.tar.gz && ./annex-setup.sh && sbatch hpc.slurm`
   );
 }
