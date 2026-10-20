@@ -46,6 +46,16 @@ export function useWorkflowEstimate(runId: string, enabled = true) {
   });
 }
 
+/** Running steps well past their usual time; polled only while running (#586). */
+export function useSlowSteps(runId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["workflows", runId, "slow-steps"],
+    queryFn: () => api.getSlowSteps(runId),
+    enabled: !!runId && enabled,
+    refetchInterval: 30_000,
+  });
+}
+
 export function useCancelWorkflow() {
   const qc = useQueryClient();
   return useMutation({

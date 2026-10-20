@@ -887,6 +887,25 @@ export interface RunEstimate {
   parallelism: number;
 }
 
+/** A running step well past its usual time (#586). */
+export interface SlowStep {
+  job_id: string;
+  transformation: string;
+  running_seconds: number;
+  usual_seconds: number;
+  basis: "this run" | "earlier runs";
+  samples: number;
+  host: string | null;
+  /** False: holds a slot, but monitord never saw it start. */
+  started: boolean;
+}
+
+export async function getSlowSteps(runId: string) {
+  return request<{ run_id: string; steps: SlowStep[] }>(
+    `/workflows/${encodeURIComponent(runId)}/slow-steps`
+  );
+}
+
 export async function getWorkflowEstimate(id: string) {
   return request<{ run_id: string; estimate: RunEstimate | null }>(
     `/workflows/${encodeURIComponent(id)}/estimate`

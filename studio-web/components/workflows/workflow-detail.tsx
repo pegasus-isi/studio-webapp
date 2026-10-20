@@ -7,6 +7,7 @@ import {
   useWorkflowEstimate,
   useDeleteWorkflow,
   useCancelWorkflow,
+  useSlowSteps,
 } from "@/lib/hooks/use-workflows";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
@@ -81,6 +82,8 @@ export function WorkflowDetail({ runId }: Props) {
   // Remaining-time estimate (historical-mean heuristic) — running runs only.
   const { data: estimateData } = useWorkflowEstimate(runId, isRunning);
   const estimate = isRunning ? estimateData?.estimate ?? null : null;
+  const { data: slowData } = useSlowSteps(runId, isRunning);
+  const slow = isRunning ? slowData?.steps ?? [] : [];
 
   // Connect to SSE for running workflows
   useEffect(() => {
@@ -227,6 +230,30 @@ export function WorkflowDetail({ runId }: Props) {
             </button>
           </div>
         </div>
+
+        {slow.length > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+            <p className="font-medium">
+              {slow.length === 1 ? "A step is" : `${slow.length} steps are`} taking much longer than usual
+            </p>
+            <ul className="mt-1 space-y-0.5 text-xs">
+              {slow.map((s) => (
+                <li key={s.job_id} className="tabular-nums">
+                  <span className="font-medium">{s.transformation}</span>{" "}
+                  {s.started ? "has been running" : "has held a slot without starting"} for{" "}
+                  {formatDuration(s.running_seconds)}
+                  {s.host ? ` on ${s.host}` : ""}; it usually takes about{" "}
+                  {formatDuration(s.usual_seconds)} ({s.basis}).
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1.5 text-xs">
+              {slow.some((s) => !s.started)
+                ? "A step that holds a slot without starting is usually stuck on that machine. On an annex, ending that node's Slurm job (scancel on the cluster) evicts the step, and HTCondor runs it again on the next node."
+                : "Its log arrives when it finishes. On an annex, the cluster's own job directory shows it sooner."}
+            </p>
+          </div>
+        )}
 
         {/* Progress bar for running/completed workflows */}
         {totalJobs > 0 && (
