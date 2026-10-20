@@ -27,7 +27,7 @@ def test_summarize_nothing_requested():
     s = annex.summarize("alice", [], [], [])
     assert s["established"] is False
     assert s["nodes"] == 0 and s["total_cpus"] == 0
-    assert s["requests"] == {"total": 0, "pending": 0, "active": 0, "retired": 0}
+    assert s["requests"] == {"total": 0, "pending": 0, "active": 0, "retired": 0, "held": 0}
     assert s["jobs"] == {"total": 0, "running": 0, "idle": 0, "held": 0}
 
 
@@ -44,7 +44,7 @@ def test_summarize_states_mirror_upstream():
     assert s["nodes"] == 2
     assert s["total_cpus"] == 16
     assert s["busy_cpus"] == 6
-    assert s["requests"] == {"total": 3, "pending": 1, "active": 1, "retired": 1}
+    assert s["requests"] == {"total": 3, "pending": 1, "active": 1, "retired": 1, "held": 0}
     assert s["jobs"] == {"total": 3, "running": 1, "idle": 1, "held": 1}
     assert s["oldest_started_at"] == 900
     assert s["oldest_retires_at"] == 4000
@@ -144,8 +144,22 @@ def test_deployment_detection(monkeypatch, tmp_path):
 # --- bundle and actions (#534) ---
 
 
-def _fake_create(tmp_path, monkeypatch, rc=0):
-    calls = []
+def _fake_create(tmp_path, monkeypatch, rc=0, queue=None):
+    """`queue` is the schedd's view of the request jobs, as working
+    directories; None means the schedd cannot be asked."""
+    class _Calls(list):
+        pass
+
+    calls = _Calls()
+    in_queue = [] if queue is None else queue
+
+    async def run_json(cmd):
+        calls.append((cmd, None))
+        if queue is False:
+            return None, "schedd down"
+        return [{"Iwd": d} for d in in_queue], None
+
+    monkeypatch.setattr(annex, "_run_json", run_json)
 
     async def run(cmd, timeout, cwd=None):
         calls.append((cmd, cwd))
@@ -160,12 +174,14 @@ def _fake_create(tmp_path, monkeypatch, rc=0):
     monkeypatch.setattr(annex, "annex_name", lambda: "alice")
     monkeypatch.setenv("STUDIO_ANNEX_DIR", str(tmp_path / "annex"))
     monkeypatch.setenv("STUDIO_DEPLOYMENT", "hosted")
+    calls.in_queue = in_queue  # type: ignore[attr-defined]
     return calls
 
 
 def test_create_bundle_keeps_newest_only(tmp_path, monkeypatch):
     calls = _fake_create(tmp_path, monkeypatch)
     first = asyncio.run(annex.create_bundle())
+    # No request job uses the first directory any more, so it can go.
     assert first["ok"] and first["bundle"]["filename"] == "annex-alice.tar"
     # A second create replaces the first (each holds a live token), even
     # within the same second: directories are unique, not timestamps.
@@ -177,7 +193,9 @@ def test_create_bundle_keeps_newest_only(tmp_path, monkeypatch):
     (tmp_path / "annex" / ".staging-x").mkdir()
     (tmp_path / "annex" / ".staging-x" / "annex-alice.tar").write_bytes(b"half")
     assert annex.current_bundle()["path"] == second["bundle"]["path"]
-    assert all(cmd[:3] == ["htcondor", "annex", "create"] for cmd, _ in calls)
+    assert all(
+        cmd[:3] == ["htcondor", "annex", "create"] or cmd[0] == "condor_q" for cmd, _ in calls
+    )
 
 
 def test_create_bundle_failure_leaves_nothing(tmp_path, monkeypatch):
@@ -229,3 +247,84 @@ def test_status_reports_bundle(tmp_path, monkeypatch):
     s = asyncio.run(annex.get_status(force=True))
     assert s["bundle"]["filename"] == "annex-alice.tar"
 
+
+
+# --- the first live annex test (#558) ---
+
+
+def test_create_runs_where_the_bundle_is_published(tmp_path, monkeypatch):
+    """The request job's working directory is where the command ran, and the
+    schedd restarts it there, so that directory must be the published one,
+    never a staging directory renamed afterwards."""
+    calls = _fake_create(tmp_path, monkeypatch)
+    res = asyncio.run(annex.create_bundle())
+    cwd = next(c for cmd, c in calls if cmd[:3] == ["htcondor", "annex", "create"])
+    assert res["bundle"]["path"] == str(__import__("pathlib").Path(cwd) / "annex-alice.tar")
+    assert __import__("pathlib").Path(cwd).is_dir()
+    assert not (__import__("pathlib").Path(cwd) / annex.CREATING).exists()
+
+
+def test_create_keeps_a_directory_a_request_still_runs_in(tmp_path, monkeypatch):
+    calls = _fake_create(tmp_path, monkeypatch)
+    first = asyncio.run(annex.create_bundle())
+    first_dir = str(__import__("pathlib").Path(first["bundle"]["path"]).parent)
+    calls.in_queue.append(first_dir)
+    second = asyncio.run(annex.create_bundle())
+    assert __import__("pathlib").Path(first_dir).is_dir()  # still in use
+    assert annex.current_bundle()["path"] == second["bundle"]["path"]
+
+
+def test_create_deletes_nothing_when_the_schedd_cannot_be_asked(tmp_path, monkeypatch):
+    _fake_create(tmp_path, monkeypatch, queue=False)
+    first = asyncio.run(annex.create_bundle())
+    asyncio.run(annex.create_bundle())
+    assert __import__("pathlib").Path(first["bundle"]["path"]).is_file()
+
+
+def test_unfinished_bundle_is_not_current(tmp_path, monkeypatch):
+    _fake_create(tmp_path, monkeypatch)
+    d = tmp_path / "annex" / "20261020-000000-abcd"
+    d.mkdir(parents=True)
+    (d / "annex-alice.tar").write_bytes(b"half")
+    (d / annex.CREATING).touch()
+    assert annex.current_bundle() is None
+
+
+def test_summarize_reports_a_held_request_and_its_reason():
+    held = _request("r1", status=5)
+    held["HoldReason"] = 'Cannot access initial working directory "/x"'
+    s = annex.summarize("alice", [held], [], [])
+    assert s["requests"]["held"] == 1 and s["requests"]["pending"] == 0
+    assert "initial working directory" in s["hold_reason"]
+    assert s["established"] is False
+
+
+def test_summarize_ignores_removed_and_completed_requests():
+    s = annex.summarize("alice", [_request("r1", status=3), _request("r2", status=4)], [], [])
+    assert s["requests"]["total"] == 0 and s["requests"]["pending"] == 0
+
+
+def test_close_requests_removes_this_annexs_request_jobs(tmp_path, monkeypatch):
+    _fake_create(tmp_path, monkeypatch)
+    seen = []
+
+    async def run(cmd, timeout, cwd=None):
+        seen.append(cmd)
+        return 0, "All jobs matching constraint have been marked for removal"
+
+    monkeypatch.setattr(annex, "_run_text", run)
+    res = asyncio.run(annex.close_requests())
+    assert res["ok"] is True
+    assert seen == [["condor_rm", "-constraint", 'hpc_annex_name == "alice"']]
+
+
+def test_close_endpoint(client, tmp_path, monkeypatch):
+    _fake_create(tmp_path, monkeypatch)
+
+    async def run(cmd, timeout, cwd=None):
+        return 1, "Couldn't find/remove all jobs matching constraint"
+
+    monkeypatch.setattr(annex, "_run_text", run)
+    assert client.post("/api/provisioning/annex/close").json()["ok"] is True
+    monkeypatch.setenv("STUDIO_DEPLOYMENT", "ood")
+    assert client.post("/api/provisioning/annex/close").status_code == 404

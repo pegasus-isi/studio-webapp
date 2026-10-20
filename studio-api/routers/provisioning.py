@@ -91,6 +91,17 @@ async def download_annex_bundle() -> StreamingResponse:
     )
 
 
+@router.post("/annex/close")
+async def close_annex_requests() -> dict:
+    """Remove the annex's leftover request jobs (#558): retired or held
+    requests that no node is left to end."""
+    _hosted_only()
+    result = await annex.close_requests()
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("error", "closing the requests failed"))
+    return result
+
+
 @router.post("/annex/shutdown")
 async def shutdown_annex() -> dict:
     """`htcondor annex shutdown <user>`: release the nodes now."""
