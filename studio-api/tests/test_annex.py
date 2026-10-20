@@ -328,3 +328,34 @@ def test_close_endpoint(client, tmp_path, monkeypatch):
     assert client.post("/api/provisioning/annex/close").json()["ok"] is True
     monkeypatch.setenv("STUDIO_DEPLOYMENT", "ood")
     assert client.post("/api/provisioning/annex/close").status_code == 404
+
+
+def test_shutdown_runs_on_the_access_point(tmp_path, monkeypatch):
+    """Annex nodes are reached through the AP's connection broker, which
+    connects back to the asker; from the pod that never completes (#564)."""
+    from services import remote_exec
+
+    _fake_create(tmp_path, monkeypatch)
+    seen = {}
+
+    async def remote(argv, *, cwd, scratch_dir, timeout=None):
+        seen["argv"] = argv
+        return 0, "Shutting down annex 'alice'"
+
+    async def local(cmd, timeout, cwd=None):
+        raise AssertionError("shutdown must not run in the pod when the AP is reachable")
+
+    monkeypatch.setattr(remote_exec, "available", lambda: True)
+    monkeypatch.setattr(remote_exec, "run_on_submit_host", remote)
+    monkeypatch.setattr(annex, "_run_text", local)
+    assert asyncio.run(annex.shutdown())["ok"] is True
+    assert seen["argv"] == ["htcondor", "annex", "shutdown", "alice"]
+
+
+def test_shutdown_falls_back_to_the_pod(tmp_path, monkeypatch):
+    from services import remote_exec
+
+    calls = _fake_create(tmp_path, monkeypatch)
+    monkeypatch.setattr(remote_exec, "available", lambda: False)
+    assert asyncio.run(annex.shutdown())["ok"] is True
+    assert ["htcondor", "annex", "shutdown", "alice"] in [c for c, _ in calls]

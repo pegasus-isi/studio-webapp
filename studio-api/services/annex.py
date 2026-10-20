@@ -387,18 +387,43 @@ async def create_bundle() -> dict[str, Any]:
 async def shutdown() -> dict[str, Any]:
     """Run `htcondor annex shutdown <user>`: tells the annex's nodes to leave
     and retires its requests. Idle nodes leave on their own as well; this is
-    for when the user is done and wants the allocation back now."""
+    for when the user is done and wants the allocation back now.
+
+    It runs on the access point, not in this pod (#564). Annex nodes sit
+    behind their cluster's firewall and are reached only through the access
+    point's connection broker (CCB): the node connects *back* to whoever
+    asked. From the pod that is a private Kubernetes address the node cannot
+    reach, so the command hung until its timeout ("htcondor timed out after
+    60s") while the node stayed up. From the access point it is reachable.
+    Planning already runs there for a similar reason (services/remote_exec).
+    """
     name = annex_name()
     if not _SAFE_NAME.match(name):
         return {"ok": False, "error": f"unusable annex name {name!r}"}
+    argv = ["htcondor", "annex", "shutdown", name]
     async with _action_lock:
-        rc, out = await _run_text(["htcondor", "annex", "shutdown", name], 60)
+        rc, out = await _on_access_point(argv, 120)
         _cache["data"] = None
         if rc != 0:
             log.warning("annex_shutdown_failed", name=name, rc=rc, output=out[-500:])
             return {"ok": False, "error": _last_line(out, "htcondor annex shutdown failed"), "output": out}
         log.info("annex_shutdown", name=name)
         return {"ok": True, "output": out}
+
+
+async def _on_access_point(argv: list[str], timeout: float) -> tuple[int, str]:
+    """Run argv on the access point when that mechanism exists, else here."""
+    from services import remote_exec
+
+    if remote_exec.available():
+        scratch = Path.home() / ".studio" / "remote"
+        try:
+            return await remote_exec.run_on_submit_host(
+                argv, cwd=str(Path.home()), scratch_dir=str(scratch), timeout=timeout
+            )
+        except remote_exec.RemoteExecUnavailable as e:
+            log.warning("annex_remote_unavailable", error=str(e))
+    return await _run_text(argv, 60)
 
 
 async def close_requests() -> dict[str, Any]:

@@ -18,7 +18,17 @@
  *   per task (srun), and one HTCondor worker per node is what an annex is;
  * - CPUs per node and memory are fields, since a shared partition hands
  *   out part of a node and the worker gets only what Slurm gives it;
- * - anything else a site wants goes in "extra".
+ * - anything else a site wants goes in "extra";
+ * - a container module (e.g. `singularitypro` on Expanse) is written into
+ *   ~/.condor/annex_config on the cluster, which hpc.slurm sources before
+ *   it starts the nodes: it loads the module and hands its folder to every
+ *   job through HTCondor's STARTER_JOB_ENVIRONMENT. Jobs on annex nodes
+ *   do not see the cluster's modules, and Pegasus starts containers itself
+ *   from the job's PATH. Kept on the cluster, so each cluster has its own;
+ *   a Studio-wide PATH (what #558 did) is wrong on every other cluster.
+ *   Verified on Expanse 2026-10-20: eht-m87 run0009's fetch_data found
+ *   /cm/local/apps/singularitypro/3.11/bin/singularity with no PATH in its
+ *   submit file (#564).
  *
  * Every value is the user's own and lands in their own shell, so the
  * shapes below are not a security boundary; they keep a stray newline or
@@ -33,6 +43,7 @@ export type ClusterForm = {
   cpus: string;
   memory: string;
   extra: string;
+  module: string;
 };
 
 /** One hour: long enough for a test or a small run, short on an allocation. */
@@ -46,6 +57,7 @@ export const EMPTY_FORM: ClusterForm = {
   cpus: "",
   memory: "",
   extra: "",
+  module: "",
 };
 
 const SHAPE: Record<keyof ClusterForm, RegExp> = {
@@ -57,6 +69,8 @@ const SHAPE: Record<keyof ClusterForm, RegExp> = {
   memory: /^[0-9]{1,7}[KMGT]?$/i,
   // Options only: dashes, words, =, commas, colons, dots, slashes, spaces.
   extra: /^(\s*--?[A-Za-z][A-Za-z0-9-]*(=[A-Za-z0-9._,:/+-]+)?)+\s*$/,
+  // A module name, optionally with a version: singularitypro, apptainer/1.3.
+  module: /^[A-Za-z0-9._+-]+(\/[A-Za-z0-9._+-]+)?$/,
 };
 
 export function valid(f: ClusterForm, k: keyof ClusterForm): string {
@@ -119,9 +133,27 @@ export function sbatchLines(f: ClusterForm): string[] {
   return lines;
 }
 
+/**
+ * ~/.condor/annex_config for a container module, or "" without one. The
+ * runtime's folder is looked up on the node at start-up, so a module that
+ * puts it somewhere else next year still works; if neither apptainer nor
+ * singularity is found, nothing is exported rather than a PATH of ".".
+ */
+export function annexConfig(f: ClusterForm): string {
+  const mod = valid(f, "module");
+  if (!mod) return "";
+  return [
+    `module load ${mod}`,
+    'R=$(command -v apptainer || command -v singularity) && ' +
+      'export _CONDOR_STARTER_JOB_ENVIRONMENT="PATH=${R%/*}:/usr/local/bin:/usr/bin:/bin"',
+  ].join("\n");
+}
+
 /** The whole paste for the cluster's login node. */
 export function clusterCommand(name: string, f: ClusterForm): string {
+  const config = annexConfig(f);
   return (
+    (config ? `mkdir -p ~/.condor && cat > ~/.condor/annex_config <<'ANNEX_CONFIG'\n${config}\nANNEX_CONFIG\n` : "") +
     `mkdir -p ~/.condor && cat > ~/.condor/annex_slurm_args <<'ANNEX_SLURM_ARGS'\n` +
     `${sbatchLines(f).join("\n")}\n` +
     `ANNEX_SLURM_ARGS\n` +
