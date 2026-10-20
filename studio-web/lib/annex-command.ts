@@ -19,6 +19,12 @@
  * - CPUs per node and memory are fields, since a shared partition hands
  *   out part of a node and the worker gets only what Slurm gives it;
  * - anything else a site wants goes in "extra";
+ * - GPUs per node go out with the flag the cluster expects (#570):
+ *   HTCondor's own per-system fragments use `--gpus` on Expanse and
+ *   Bridges-2 and `--gpus-per-node` on Anvil and Delta; anything else gets
+ *   `--gpus-per-node`, which plain Slurm understands. A typed request
+ *   (Bridges-2's `v100-32:1`) passes through. Pegasus adds Singularity's
+ *   --nv to any step that requests GPUs (PM-1621), so containers see them;
  * - a container module (e.g. `singularitypro` on Expanse) is written into
  *   ~/.condor/annex_config on the cluster, which hpc.slurm sources before
  *   it starts the nodes: it loads the module and hands its folder to every
@@ -44,6 +50,10 @@ export type ClusterForm = {
   memory: string;
   extra: string;
   module: string;
+  /** GPUs per node: a count, or type:count (v100-32:1). */
+  gpus: string;
+  /** How this cluster spells it; set by a preset, never typed. */
+  gpuFlag: string;
   /** The preset last applied (lib/annex-presets.ts), or "" for none. */
   cluster: string;
 };
@@ -60,6 +70,8 @@ export const EMPTY_FORM: ClusterForm = {
   memory: "",
   extra: "",
   module: "",
+  gpus: "",
+  gpuFlag: "",
   cluster: "",
 };
 
@@ -75,6 +87,8 @@ const SHAPE: Record<keyof ClusterForm, RegExp> = {
   // A module name, optionally with a version: singularitypro, apptainer/1.3.
   module: /^[A-Za-z0-9._+-]+(\/[A-Za-z0-9._+-]+)?$/,
   cluster: /^[a-z0-9-]+$/,
+  gpus: /^([A-Za-z0-9_.-]+:)?[0-9]{1,2}$/,
+  gpuFlag: /^--gpus(-per-node)?$/,
 };
 
 export function valid(f: ClusterForm, k: keyof ClusterForm): string {
@@ -103,8 +117,17 @@ export function cautions(f: ClusterForm): string[] {
         `(two fields are minutes:seconds). For hours, use hh:mm:ss, e.g. ${m}:00:00.`
     );
   }
-  if (!valid(f, "partition")) {
+  const partition = valid(f, "partition");
+  if (!partition) {
     out.push("No partition: some clusters, Expanse among them, have no default and refuse the job.");
+  }
+  const gpuPartition = /gpu/i.test(partition);
+  const gpus = valid(f, "gpus");
+  if (gpuPartition && !gpus) {
+    out.push(`${partition} is a GPU partition, but no GPUs are requested: the node would come without one.`);
+  }
+  if (gpus && partition && !gpuPartition) {
+    out.push(`GPUs are requested on ${partition}, which does not look like a GPU partition; most clusters refuse that.`);
   }
   return out;
 }
@@ -131,6 +154,8 @@ export function sbatchLines(f: ClusterForm): string[] {
   parts.push("--ntasks-per-node=1");
   if (cpus) parts.push(`--cpus-per-task=${cpus}`);
   if (memory) parts.push(`--mem=${memory.toUpperCase()}`);
+  const gpus = valid(f, "gpus");
+  if (gpus) parts.push(`${valid(f, "gpuFlag") || "--gpus-per-node"}=${gpus}`);
   const lines = [`#SBATCH ${parts.join(" ")}`];
   const extra = valid(f, "extra");
   if (extra) lines.push(`#SBATCH ${extra.replace(/\s+/g, " ")}`);

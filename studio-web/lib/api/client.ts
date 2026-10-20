@@ -996,6 +996,9 @@ export interface AnnexStatus {
   nodes?: number;
   total_cpus?: number;
   busy_cpus?: number;
+  /** GPUs the annex's nodes advertise, and how many are claimed (#570). */
+  total_gpus?: number;
+  busy_gpus?: number;
   /** held: request jobs on hold (#558); removed or completed ones are left out. */
   requests?: { total: number; pending: number; active: number; retired: number; held?: number };
   /** The first held request's HoldReason, verbatim. */

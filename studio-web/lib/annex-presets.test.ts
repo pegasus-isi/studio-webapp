@@ -17,6 +17,25 @@ describe("cluster presets", () => {
     expect([f.account, f.walltime, f.nodes, f.partition, f.module]).toEqual(["abc", "02:00:00", "2", "shared", "apptainer"]);
   });
 
+  it("GPU presets ask for GPUs with the cluster's own flag", () => {
+    const line = (id: string) => sbatchLines(applyPreset(EMPTY_FORM, id))[0];
+    expect(line("expanse-gpu")).toContain("-p gpu-shared");
+    expect(line("expanse-gpu")).toContain("--gpus=1");
+    expect(line("delta-gpu")).toContain("--gpus-per-node=1");
+    expect(line("bridges2-gpu")).toContain("--gpus=v100-32:1");
+    expect(line("bridges2-gpu")).not.toContain("--cpus-per-task");
+    expect(line("bridges2-gpu")).not.toContain("--mem");
+  });
+
+  it("follows HTCondor's rule that RM-shared takes no memory", () => {
+    expect(sbatchLines(applyPreset(EMPTY_FORM, "bridges2"))[0]).not.toContain("--mem");
+  });
+
+  it("a CPU preset still knows the cluster's GPU flag if GPUs are added by hand", () => {
+    const f = { ...applyPreset(EMPTY_FORM, "expanse"), partition: "gpu-shared", gpus: "2" };
+    expect(sbatchLines(f)[0]).toContain("--gpus=2");
+  });
+
   it("every preset sets a partition and produces valid options", () => {
     for (const p of PRESETS) {
       const f = applyPreset(EMPTY_FORM, p.id);

@@ -359,3 +359,13 @@ def test_shutdown_falls_back_to_the_pod(tmp_path, monkeypatch):
     monkeypatch.setattr(remote_exec, "available", lambda: False)
     assert asyncio.run(annex.shutdown())["ok"] is True
     assert ["htcondor", "annex", "shutdown", "alice"] in [c for c, _ in calls]
+
+
+def test_summarize_counts_gpus(tmp_path=None):
+    """A GPU node's partitionable slot advertises TotalSlotGPUs, and its
+    claimed children ChildGPUs (#570); a CPU node has neither."""
+    gpu = _slot("r1", cpus=10, busy=(2,))
+    gpu.update({"TotalSlotGPUs": 1, "ChildGPUs": [1]})
+    s = annex.summarize("alice", [_request("r1")], [gpu, _slot("r1")], [])
+    assert s["total_gpus"] == 1 and s["busy_gpus"] == 1
+    assert annex.summarize("alice", [_request("r1")], [_slot("r1")], [])["total_gpus"] == 0
