@@ -575,8 +575,8 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     </p>
                   )}
                   <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                    <label className={LABEL}>
-                      Account / allocation <span className="text-amber-700 dark:text-amber-400">*</span>
+                    <div className={LABEL}>
+                      <label htmlFor="annex-account">Account / allocation <span className="text-amber-700 dark:text-amber-400">*</span></label>
                       <HelpPopover label="How to find your account" title="Finding your account">
                         <span className="block">
                           It is the Slurm account (project) on the cluster, which may not be your
@@ -606,8 +606,8 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                           covers SSH keys and each cluster&apos;s OnDemand portal.
                         </span>
                       </HelpPopover>
-                      <input value={form.account} onChange={(e) => setField("account", e.target.value)} placeholder="e.g. abc123" spellCheck={false} className={FIELD} />
-                    </label>
+                      <input id="annex-account" value={form.account} onChange={(e) => setField("account", e.target.value)} placeholder="e.g. abc123" spellCheck={false} className={FIELD} />
+                    </div>
                     <label className={LABEL}>
                       Walltime
                       <input value={form.walltime} onChange={(e) => setField("walltime", e.target.value)} placeholder="hh:mm:ss" spellCheck={false} className={FIELD} />
@@ -620,8 +620,8 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       Nodes
                       <input value={form.nodes} onChange={(e) => setField("nodes", e.target.value)} placeholder="1" inputMode="numeric" spellCheck={false} className={FIELD} />
                     </label>
-                    <label className={LABEL}>
-                      CPUs per node
+                    <div className={LABEL}>
+                      <label htmlFor="annex-cpus">CPUs per node</label>
                       <HelpPopover label="About CPUs per node">
                         <span className="block">
                           An annex runs one HTCondor worker on each node, so the command always
@@ -632,10 +632,10 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                           worker gets one core.
                         </span>
                       </HelpPopover>
-                      <input value={form.cpus} onChange={(e) => setField("cpus", e.target.value)} placeholder="e.g. 8" inputMode="numeric" spellCheck={false} className={FIELD} />
-                    </label>
-                    <label className={LABEL}>
-                      GPUs per node
+                      <input id="annex-cpus" value={form.cpus} onChange={(e) => setField("cpus", e.target.value)} placeholder="e.g. 8" inputMode="numeric" spellCheck={false} className={FIELD} />
+                    </div>
+                    <div className={LABEL}>
+                      <label htmlFor="annex-gpus">GPUs per node</label>
                       <HelpPopover label="About GPUs per node">
                         <span className="block">
                           Needs a GPU partition and GPU time on the allocation. A typed request
@@ -647,15 +647,15 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                           <code className="font-mono">request_gpus</code> profile).
                         </span>
                       </HelpPopover>
-                      <input value={form.gpus} onChange={(e) => setField("gpus", e.target.value)} placeholder="none" spellCheck={false} className={FIELD} />
-                    </label>
+                      <input id="annex-gpus" value={form.gpus} onChange={(e) => setField("gpus", e.target.value)} placeholder="none" spellCheck={false} className={FIELD} />
+                    </div>
                     <label className={LABEL}>
                       Memory per node
                       <input value={form.memory} onChange={(e) => setField("memory", e.target.value)} placeholder="e.g. 16G" spellCheck={false} className={FIELD} />
                     </label>
-                    <label className={`${LABEL} sm:col-span-2`}>
-                      Container module{" "}
-                      <span className="font-normal text-fgsubtle">(only for workflows that run in containers)</span>
+                    <div className={`${LABEL} sm:col-span-2`}>
+                      <label htmlFor="annex-module">Container module{" "}
+                      <span className="font-normal text-fgsubtle">(only for workflows that run in containers)</span></label>
                       <HelpPopover label="About the container module">
                         <span className="block">
                           Jobs on annex nodes do not see the cluster&apos;s modules, so a container
@@ -668,8 +668,8 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                           so each cluster keeps its own.
                         </span>
                       </HelpPopover>
-                      <input value={form.module} onChange={(e) => setField("module", e.target.value)} placeholder="e.g. singularitypro" spellCheck={false} className={`${FIELD} font-mono`} />
-                    </label>
+                      <input id="annex-module" value={form.module} onChange={(e) => setField("module", e.target.value)} placeholder="e.g. singularitypro" spellCheck={false} className={`${FIELD} font-mono`} />
+                    </div>
                     <label className={`${LABEL} sm:col-span-2`}>
                       Other sbatch options
                       <input value={form.extra} onChange={(e) => setField("extra", e.target.value)} placeholder="e.g. --qos=normal" spellCheck={false} className={`${FIELD} font-mono`} />
