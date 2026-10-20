@@ -43,7 +43,7 @@ import {
   problem,
   type ClusterForm,
 } from "@/lib/annex-command";
-import { PRESETS, applyPreset, presetById } from "@/lib/annex-presets";
+import { CLUSTERS, applyPreset, presetFor, type NodeType } from "@/lib/annex-presets";
 import { CARD, FIELD, HINT, LABEL, StatusCard, type Tone } from "@/components/resources/status-card";
 import { cn, formatDuration } from "@/lib/utils";
 
@@ -249,6 +249,9 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
   // annex (#537), so step 1 is a real prerequisite, not advice.
   const queued = annex.jobs?.total ?? 0;
   const needsJobs = annex.available && annex.requires_jobs !== false && queued === 0;
+  const chosen = form.cluster
+    ? presetFor(form.cluster, (form.nodeType || undefined) as NodeType | undefined)
+    : undefined;
   const missing = missingRequired(form);
   const clusterCmd = clusterCommand(name, form);
   const waiting = annex.jobs?.idle ?? 0;
@@ -493,25 +496,46 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       A value with spaces or punctuation is left out of the command.
                     </p>
                   )}
-                  <label className={`mt-2 ${LABEL}`}>
-                    Cluster
-                    <select
-                      value={form.cluster}
-                      onChange={(e) => update((f) => applyPreset(f, e.target.value))}
-                      className={`${FIELD} max-w-xs`}
-                    >
-                      <option value="">Other (fill in below)</option>
-                      {PRESETS.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {presetById(form.cluster) && (
+                  <div className="mt-2 flex flex-wrap items-end gap-3">
+                    <label className={LABEL}>
+                      Cluster
+                      <select
+                        value={chosen?.cluster.id ?? ""}
+                        onChange={(e) => update((f) => applyPreset(f, e.target.value))}
+                        className={`${FIELD} w-56`}
+                      >
+                        <option value="">Other (fill in below)</option>
+                        {CLUSTERS.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {chosen?.cluster.gpu && (
+                      <div role="radiogroup" aria-label="Node type" className="flex rounded-md border border-line p-0.5">
+                        {(["cpu", "gpu"] as const).map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            role="radio"
+                            aria-checked={chosen.nodeType === t}
+                            onClick={() => update((f) => applyPreset(f, chosen.cluster.id, t))}
+                            className={cn(
+                              "rounded px-3 py-1.5 text-xs font-medium transition-colors",
+                              chosen.nodeType === t ? "bg-pegasus-600 text-white" : "text-fgmuted hover:text-fg"
+                            )}
+                          >
+                            {t === "cpu" ? "CPU only" : "With GPUs"}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {chosen && (
                     <p className={`mt-1 ${HINT}`}>
-                      {presetById(form.cluster)!.note}{" "}
-                      {presetById(form.cluster)!.basis === "tested"
+                      {chosen.note}{" "}
+                      {chosen.basis === "tested"
                         ? "Tested end to end with Studio."
                         : "From HTCondor's annex settings and the cluster's documentation; not yet tested with Studio."}{" "}
                       You can change any value.

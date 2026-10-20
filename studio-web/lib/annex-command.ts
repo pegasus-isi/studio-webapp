@@ -56,6 +56,8 @@ export type ClusterForm = {
   gpuFlag: string;
   /** The preset last applied (lib/annex-presets.ts), or "" for none. */
   cluster: string;
+  /** "cpu" or "gpu" for that cluster (#578), or "" for none. */
+  nodeType: string;
 };
 
 /** One hour: long enough for a test or a small run, short on an allocation. */
@@ -73,6 +75,7 @@ export const EMPTY_FORM: ClusterForm = {
   gpus: "",
   gpuFlag: "",
   cluster: "",
+  nodeType: "",
 };
 
 const SHAPE: Record<keyof ClusterForm, RegExp> = {
@@ -87,6 +90,7 @@ const SHAPE: Record<keyof ClusterForm, RegExp> = {
   // A module name, optionally with a version: singularitypro, apptainer/1.3.
   module: /^[A-Za-z0-9._+-]+(\/[A-Za-z0-9._+-]+)?$/,
   cluster: /^[a-z0-9-]+$/,
+  nodeType: /^(cpu|gpu)$/,
   gpus: /^([A-Za-z0-9_.-]+:)?[0-9]{1,2}$/,
   gpuFlag: /^--gpus(-per-node)?$/,
 };
