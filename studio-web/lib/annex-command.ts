@@ -9,7 +9,11 @@
  * task count (its bank_limit plugin), then no memory on the shared
  * partition. So:
  *
- * - account and walltime are asked for, and their absence is said plainly;
+ * - the account is asked for, and its absence is said plainly;
+ * - walltime defaults to DEFAULT_WALLTIME and is always in the command:
+ *   leaving -t out never helps (most clusters refuse the job, Expanse
+ *   among them), and the grey "e.g." placeholder it used to have read
+ *   as a value that was set when it was not;
  * - `--ntasks-per-node=1` is always set: hpc.slurm runs one annex-node.sh
  *   per task (srun), and one HTCondor worker per node is what an annex is;
  * - CPUs per node and memory are fields, since a shared partition hands
@@ -31,10 +35,13 @@ export type ClusterForm = {
   extra: string;
 };
 
+/** One hour: long enough for a test or a small run, short on an allocation. */
+export const DEFAULT_WALLTIME = "01:00:00";
+
 export const EMPTY_FORM: ClusterForm = {
   account: "",
   partition: "",
-  walltime: "",
+  walltime: DEFAULT_WALLTIME,
   nodes: "",
   cpus: "",
   memory: "",
@@ -63,8 +70,8 @@ export function problem(f: ClusterForm, k: keyof ClusterForm): boolean {
 }
 
 /** Fields most clusters insist on and the form cannot guess. */
-export function missingRequired(f: ClusterForm): ("account" | "walltime")[] {
-  return (["account", "walltime"] as const).filter((k) => !valid(f, k));
+export function missingRequired(f: ClusterForm): "account"[] {
+  return valid(f, "account") ? [] : ["account"];
 }
 
 /** The #SBATCH lines for ~/.condor/annex_slurm_args. Never empty: the task
@@ -73,13 +80,13 @@ export function sbatchLines(f: ClusterForm): string[] {
   const parts: string[] = [];
   const account = valid(f, "account");
   const partition = valid(f, "partition");
-  const walltime = valid(f, "walltime");
+  const walltime = valid(f, "walltime") || DEFAULT_WALLTIME;
   const nodes = valid(f, "nodes");
   const cpus = valid(f, "cpus");
   const memory = valid(f, "memory");
   if (account) parts.push(`-A ${account}`);
   if (partition) parts.push(`-p ${partition}`);
-  if (walltime) parts.push(`-t ${walltime}`);
+  parts.push(`-t ${walltime}`);
   parts.push(`--nodes=${nodes || "1"}`);
   parts.push("--ntasks-per-node=1");
   if (cpus) parts.push(`--cpus-per-task=${cpus}`);

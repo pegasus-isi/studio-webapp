@@ -128,6 +128,8 @@ function loadForm(): ClusterForm {
       const v = (parsed as Record<string, unknown>)[k];
       if (typeof v === "string") out[k] = v;
     }
+    // A form saved before walltime had a default kept it blank.
+    if (!out.walltime.trim()) out.walltime = EMPTY_FORM.walltime;
     return out;
   } catch {
     return EMPTY_FORM;
@@ -437,7 +439,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                   </p>
                   {missing.length > 0 && (
                     <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
-                      Add your {missing.join(" and ")}: most clusters refuse a job without them
+                      Add your account: most clusters refuse a job without one
                       (Expanse does).
                     </p>
                   )}
@@ -452,8 +454,8 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       <input value={form.account} onChange={(e) => setField("account", e.target.value)} placeholder="e.g. abc123" spellCheck={false} className={FIELD} />
                     </label>
                     <label className={LABEL}>
-                      Walltime <span className="text-amber-700 dark:text-amber-400">*</span>
-                      <input value={form.walltime} onChange={(e) => setField("walltime", e.target.value)} placeholder="e.g. 01:00:00" spellCheck={false} className={FIELD} />
+                      Walltime
+                      <input value={form.walltime} onChange={(e) => setField("walltime", e.target.value)} placeholder="hh:mm:ss" spellCheck={false} className={FIELD} />
                     </label>
                     <label className={LABEL}>
                       Partition
