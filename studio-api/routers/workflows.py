@@ -1110,6 +1110,25 @@ async def get_jobs(run_id: str) -> dict:
     return {"run_id": run_id, "jobs": jobs}
 
 
+@router.get("/{run_id}/slow-steps")
+async def get_slow_steps(run_id: str) -> dict:
+    """Running steps well past their usual time (#586), from monitord's
+    live job states and the same steps' durations in this and earlier runs."""
+    from services.condor_pool import _run_json
+    from services.slow_steps import queue_query, slow_steps, wf_uuid
+
+    run_dir = await _resolve_run_dir(run_id)
+    loop = asyncio.get_event_loop()
+    uuid = await loop.run_in_executor(None, wf_uuid, run_dir)
+    queue = None
+    if uuid:
+        # None (the schedd could not be asked) falls back to monitord's
+        # EXECUTE times inside slow_steps.
+        queue, _err = await _run_json(queue_query(uuid))
+    steps = await loop.run_in_executor(None, lambda: slow_steps(run_dir, queue=queue))
+    return {"run_id": run_id, "steps": steps}
+
+
 @router.get("/{run_id}/outputs")
 async def get_run_outputs(
     run_id: str,
