@@ -44,12 +44,10 @@ export function HelpPopover({
     <span ref={ref} className="relative inline-block">
       <button
         type="button"
-        // Inside a <label>, a click would also focus the field; the help is
-        // what was asked for.
-        onClick={(e) => {
-          e.preventDefault();
-          setOpen((v) => !v);
-        }}
+        // Keep this outside any <label>: a label takes the first labelable
+        // element inside it as its control, and a button is one, so the
+        // field would lose its name (#590). Pair the label with htmlFor.
+        onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label={label}
         title={label}
