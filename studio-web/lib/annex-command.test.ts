@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_FORM, cautions, clusterCommand, missingRequired, problem, sbatchLines } from "@/lib/annex-command";
+import { EMPTY_FORM, annexConfig, cautions, clusterCommand, missingRequired, problem, sbatchLines } from "@/lib/annex-command";
 
 describe("cautions", () => {
   it("says that 01:00 is one minute, as it was on Expanse", () => {
@@ -55,6 +55,25 @@ describe("walltime", () => {
       );
     }
     expect(sbatchLines({ ...EMPTY_FORM, walltime: "04:00:00" })[0]).toContain("-t 04:00:00");
+  });
+});
+
+describe("annexConfig", () => {
+  it("loads the module and hands its runtime folder to every job, as verified on Expanse", () => {
+    const cfg = annexConfig({ ...EMPTY_FORM, module: "singularitypro" });
+    expect(cfg.split("\n")[0]).toBe("module load singularitypro");
+    expect(cfg).toContain('_CONDOR_STARTER_JOB_ENVIRONMENT="PATH=${R%/*}:/usr/local/bin:/usr/bin:/bin"');
+    expect(cfg).toContain("command -v apptainer || command -v singularity");
+  });
+  it("is empty without a module, and refuses one that is not a module name", () => {
+    expect(annexConfig(EMPTY_FORM)).toBe("");
+    expect(annexConfig({ ...EMPTY_FORM, module: "x; rm -rf ~" })).toBe("");
+    expect(annexConfig({ ...EMPTY_FORM, module: "apptainer/1.3.4" })).toContain("module load apptainer/1.3.4");
+  });
+  it("is written before the Slurm options when set", () => {
+    const cmd = clusterCommand("k", { ...EMPTY_FORM, module: "singularitypro" });
+    expect(cmd.indexOf("annex_config")).toBeLessThan(cmd.indexOf("annex_slurm_args"));
+    expect(clusterCommand("k", EMPTY_FORM)).not.toContain("annex_config");
   });
 });
 

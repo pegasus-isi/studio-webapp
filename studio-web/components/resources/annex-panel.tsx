@@ -29,13 +29,12 @@
  */
 
 import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Download } from "lucide-react";
 import * as api from "@/lib/api/client";
 import type { AnnexStatus } from "@/lib/api/client";
 import { AppLink } from "@/components/layout/app-link";
-import { AnnexOnlyCard } from "@/components/resources/annex-only-card";
-import { pinState } from "@/lib/annex-pin";
+import { AnnexOnlySwitch, useAnnexPin } from "@/components/resources/annex-only-card";
 import {
   EMPTY_FORM,
   cautions,
@@ -217,13 +216,20 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
     });
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["provisioning"] });
+  const pin = useAnnexPin(name);
+  // Done with the annex means done pinning to it: a pin left on makes every
+  // later run wait for nodes that are not coming (#564).
+  const released = () => {
+    refresh();
+    if (pin.on) pin.set(false);
+  };
   const create = useMutation({ mutationFn: () => api.createAnnexBundle(), onSuccess: refresh });
-  const close = useMutation({ mutationFn: () => api.closeAnnexRequests(), onSuccess: refresh });
+  const close = useMutation({ mutationFn: () => api.closeAnnexRequests(), onSuccess: released });
   const stop = useMutation({
     mutationFn: () => api.shutdownAnnex(),
     onSuccess: () => {
       setConfirmStop(false);
-      refresh();
+      released();
     },
   });
 
@@ -249,8 +255,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
   const s34: StepState = annex.established ? "done" : bundle ? "current" : "todo";
   const s5: StepState =
     annex.established ? "done" : bundle && (annex.requests?.pending ?? 0) > 0 ? "current" : "todo";
-  const site = useQuery({ queryKey: ["compute-site"], queryFn: () => api.getComputeSite() }).data;
-  const pinned = site ? pinState(site.overrides, site.site, name).on : false;
+  const pinned = pin.on;
 
   return (
     <section className="space-y-4">
@@ -323,11 +328,16 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
         {stop.isSuccess && (
           <p className="mt-2 text-xs text-fgmuted">
             Shutdown sent. The nodes leave within a minute or so; the Slurm job on the cluster ends with them.
+            Runs go to Studio&apos;s pool again.
           </p>
         )}
       </StatusCard>
 
-      <AnnexOnlyCard name={name} established={!!annex.established} />
+      {!showHow && pin.on && (
+        <p className="text-xs text-fgmuted">
+          Runs go to your annex only (step 1 below). This turns off when you shut the annex down.
+        </p>
+      )}
 
       <div className={CARD}>
         <button
@@ -369,7 +379,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     Your steps are already running, on Studio&apos;s pool, so an annex
                     would have nothing to do and its nodes would leave again. Turn on{" "}
                     <span className="font-medium text-fg">Send runs to your annex only</span>{" "}
-                    above, then start a new run.
+                    below, then start a new run.
                   </>
                 ) : (
                   <>
@@ -377,13 +387,14 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     it, and nodes that find nothing to run leave after a few
                     minutes. Turn on{" "}
                     <span className="font-medium text-fg">Send runs to your annex only</span>{" "}
-                    above first, so Studio&apos;s pool does not take them, then start one from{" "}
+                    below first, so Studio&apos;s pool does not take them, then start one from{" "}
                     <AppLink href="/workflows" className="font-medium text-pegasus-600 underline dark:text-pegasus-300">
                       Run Jobs
                     </AppLink>
                     , then come back.
                   </>
                 )}
+                <AnnexOnlySwitch name={name} established={!!annex.established} />
               </Step>
 
               <Step n={2} state={s2} title="Create and download your setup file">
@@ -480,6 +491,11 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       <input value={form.memory} onChange={(e) => setField("memory", e.target.value)} placeholder="e.g. 16G" spellCheck={false} className={FIELD} />
                     </label>
                     <label className={`${LABEL} sm:col-span-2`}>
+                      Container module{" "}
+                      <span className="font-normal text-fgsubtle">(only for workflows that run in containers)</span>
+                      <input value={form.module} onChange={(e) => setField("module", e.target.value)} placeholder="e.g. singularitypro" spellCheck={false} className={`${FIELD} font-mono`} />
+                    </label>
+                    <label className={`${LABEL} sm:col-span-2`}>
                       Other sbatch options
                       <input value={form.extra} onChange={(e) => setField("extra", e.target.value)} placeholder="e.g. --qos=normal" spellCheck={false} className={`${FIELD} font-mono`} />
                     </label>
@@ -489,6 +505,10 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     HTCondor worker on each node. On a shared partition, set CPUs and
                     memory, or the worker gets one core. To find your account on the
                     cluster: <code className="font-mono">sacctmgr show assoc user=$USER format=account%20</code>.
+                    Jobs on annex nodes do not see the cluster&apos;s modules, so a container
+                    workflow needs the module that provides Apptainer or Singularity
+                    (<code className="font-mono">module avail apptainer singularity</code> lists them);
+                    it is saved on the cluster, so each cluster keeps its own.
                   </p>
                 </div>
                 <div className="mt-2">
@@ -496,8 +516,9 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                 </div>
                 <p className={`mt-1 ${HINT}`}>
                   The first lines save your options in{" "}
-                  <code className="font-mono">~/.condor/annex_slurm_args</code> on the
-                  cluster, which every later setup reads.
+                  <code className="font-mono">~/.condor/annex_slurm_args</code>
+                  {form.module.trim() ? <> and <code className="font-mono">~/.condor/annex_config</code></> : null} on
+                  the cluster, which every later setup reads.
                 </p>
               </Step>
 
@@ -508,9 +529,10 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                   <>
                     This page refreshes on its own. Once the cluster&apos;s
                     scheduler starts the job, the nodes appear above and your
-                    waiting steps start on them. Shut the annex down above when you
-                    are done, so it stops using your allocation; it also ends on
-                    its own when idle or when its walltime runs out.
+                    waiting steps start on them. A node with nothing to run leaves
+                    after 5 minutes, so start the run before the nodes. Shut the
+                    annex down above when you are done, so it stops using your
+                    allocation; it also ends when its walltime runs out.
                   </>
                 )}
               </Step>
