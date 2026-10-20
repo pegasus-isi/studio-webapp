@@ -495,6 +495,15 @@ async def get_status(force: bool = False) -> dict[str, Any]:
                 status.update(await _query(name, config["collector"]))
                 status["requires_jobs"] = bool(config.get("require_job"))
         status["bundle"] = current_bundle()
+        open_dirs = status.pop("_open_request_dirs", None)
+        if status["bundle"]:
+            # A setup file belongs to one request: the one whose working
+            # directory is the file's own directory (#559 stopped renaming
+            # it). Only that request being open says nodes from this file
+            # can join; another open request says nothing about it (#574).
+            # Unknown (status unavailable) is reported as not open.
+            bundle_dir_ = os.path.realpath(os.path.dirname(status["bundle"]["path"]))
+            status["bundle"]["request_open"] = bool(open_dirs) and bundle_dir_ in open_dirs
         if not status["available"]:
             log.debug("annex_unavailable", name=name, error=status.get("error"))
         _cache["ts"] = time.monotonic()
@@ -508,7 +517,7 @@ async def _query(name: str, collector: str) -> dict[str, Any]:
         _run_json([
             "condor_q", "-json",
             "-constraint", f"hpc_annex_name == {quoted}",
-            "-attributes", "JobStatus,HoldReason,hpc_annex_request_id,hpc_annex_name",
+            "-attributes", "JobStatus,HoldReason,Iwd,hpc_annex_request_id,hpc_annex_name",
         ]),
         _run_json([
             "condor_status", "-json", "-pool", collector,
@@ -532,4 +541,12 @@ async def _query(name: str, collector: str) -> dict[str, Any]:
         return {"available": False, "error": req_err or job_err or slot_err}
     summary = summarize(name, requests, slots, jobs)
     summary["available"] = True
+    # Working directories of the requests still open, for get_status to tell
+    # whether the current setup file's own request is one of them. Internal:
+    # popped before the status leaves this module.
+    summary["_open_request_dirs"] = {
+        os.path.realpath(str(ad.get("iwd")))
+        for ad in (_lower_keys(a) for a in requests)
+        if ad.get("iwd") and _state(ad.get("jobstatus")) not in (3, 4)
+    }
     return summary

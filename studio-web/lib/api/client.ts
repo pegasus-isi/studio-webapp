@@ -988,6 +988,9 @@ export interface AnnexBundle {
   path: string;
   size: number;
   created_at: number;
+  /** Whether this file's own request (the one running in its directory) is
+   *  still open on the access point (#574). */
+  request_open?: boolean;
 }
 
 export interface AnnexStatus {
