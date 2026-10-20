@@ -1,4 +1,4 @@
-"""Which machines one run's steps may use, as pegasus-plan properties (#572).
+"""Which machines one run's steps may use, as a pegasus-plan property (#572).
 
 The Run panel's "Where it runs" picks a Pegasus *site*. On the hosted
 deployment one site (Studio's pool, ``compute``) is served by more than one
@@ -15,9 +15,10 @@ key from ~/.pegasusrc while the other keys still merge (verified on the
 hosted pod, 2026-10-20: ``-D...condor.requirements`` replaced the pin,
 ``+ProjectName`` from ~/.pegasusrc stayed). Nothing is written anywhere.
 
-GPUs ride the same way, as ``condor.request_gpus``. Pegasus then adds
-Singularity's ``--nv`` to every containerised step (PM-1621), which the same
-check confirmed in the generated job wrapper.
+GPUs are not set here. #572 had a per-run "GPUs per step", which gave every
+compute step a GPU when typically one or two need one; whether a step needs a
+GPU belongs to the workflow, per job or transformation (#576). The Run panel
+reads that from the workflow instead (services/workflow_gpus.py).
 """
 
 from __future__ import annotations
@@ -25,15 +26,14 @@ from __future__ import annotations
 import re
 
 PLACEMENTS = ("any", "annex", "pool")
-MAX_GPUS = 16
 
 # The site name lands inside a property key; anything odd is refused.
 _SITE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
-def plan_properties(site: str, placement: str, gpus: int, annex_name: str) -> dict[str, str]:
-    """The ``-D`` properties for this run; empty for "anywhere, no GPUs".
+def plan_properties(site: str, placement: str, annex_name: str) -> dict[str, str]:
+    """The ``-D`` properties for this run; empty for "anywhere".
 
     - ``annex``: only the user's annex nodes, which carry ``AnnexName``.
     - ``pool``: only machines with no ``AnnexName``, which is Studio's pool
@@ -46,8 +46,6 @@ def plan_properties(site: str, placement: str, gpus: int, annex_name: str) -> di
         raise ValueError(f"unknown placement {placement!r}")
     if not _SITE.match(site):
         raise ValueError(f"unusable site name {site!r}")
-    if not 0 <= gpus <= MAX_GPUS:
-        raise ValueError(f"gpus must be between 0 and {MAX_GPUS}")
     prefix = f"pegasus.catalog.site.sites.{site}.profiles.condor."
     props: dict[str, str] = {}
     if placement == "annex":
@@ -56,8 +54,6 @@ def plan_properties(site: str, placement: str, gpus: int, annex_name: str) -> di
         props[prefix + "requirements"] = f'TARGET.AnnexName =?= "{annex_name}"'
     elif placement == "pool":
         props[prefix + "requirements"] = "TARGET.AnnexName =?= undefined"
-    if gpus:
-        props[prefix + "request_gpus"] = str(gpus)
     return props
 
 

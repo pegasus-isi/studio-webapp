@@ -90,10 +90,9 @@ class RunFlowRequest(BaseModel):
     # re-run; this is the escape hatch for when the definition changed in a way
     # mtime didn't catch.
     force_build: bool = False
-    # Which machines this run's steps may use, and GPUs per step (#572).
-    # See services/run_placement.py; applied as pegasus-plan -D properties.
+    # Which machines this run's steps may use (#572). See
+    # services/run_placement.py; applied as a pegasus-plan -D property.
     placement: Literal["any", "annex", "pool"] = "any"
-    gpus: int = Field(0, ge=0, le=16)
 
 log = structlog.get_logger()
 
@@ -487,7 +486,7 @@ def _plan_properties(req: RunFlowRequest) -> dict[str, str]:
     from services.run_placement import plan_properties
 
     try:
-        return plan_properties(req.site, req.placement, req.gpus, annex.annex_name())
+        return plan_properties(req.site, req.placement, annex.annex_name())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -524,6 +523,24 @@ async def start_run_flow(project_id: str, req: RunFlowRequest) -> dict:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
     return flow.snapshot()
+
+
+@router.get("/projects/{project_id}/gpu-steps")
+async def get_gpu_steps(project_id: str) -> dict:
+    """Which of this workflow's steps declare that they need a GPU (#576),
+    so the Run panel can say when no machine has one to give them."""
+    from services.workflow_gpus import gpu_steps
+    from services.workflow_submitter import _find_workflow_file
+
+    projects = await discover_projects_async()
+    proj = next((p for p in projects if p["project_id"] == project_id), None)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    loop = asyncio.get_event_loop()
+    steps = await loop.run_in_executor(
+        None, lambda: gpu_steps(proj["project_dir"], _find_workflow_file(proj["project_dir"]))
+    )
+    return {"project_id": project_id, "steps": steps}
 
 
 @router.get("/projects/{project_id}/run-flow")
