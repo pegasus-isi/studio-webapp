@@ -996,7 +996,10 @@ export interface AnnexStatus {
   nodes?: number;
   total_cpus?: number;
   busy_cpus?: number;
-  requests?: { total: number; pending: number; active: number; retired: number };
+  /** held: request jobs on hold (#558); removed or completed ones are left out. */
+  requests?: { total: number; pending: number; active: number; retired: number; held?: number };
+  /** The first held request's HoldReason, verbatim. */
+  hold_reason?: string | null;
   jobs?: { total: number; running: number; idle: number; held: number };
   /** Whether the access point refuses to create an annex with nothing
    *  queued for it (HTCondor's default; HPC_ANNEX_REQUIRE_JOB). */
@@ -1053,6 +1056,13 @@ export function annexBundleUrl() {
 }
 
 /** Run `htcondor annex shutdown <user>`: release the nodes now. */
+/** Remove the annex's leftover request jobs (retired or held), when no node is up (#558). */
+export async function closeAnnexRequests() {
+  return request<{ ok: boolean; output: string }>("/provisioning/annex/close", {
+    method: "POST",
+  });
+}
+
 export async function shutdownAnnex() {
   return request<{ ok: boolean; output: string }>("/provisioning/annex/shutdown", {
     method: "POST",

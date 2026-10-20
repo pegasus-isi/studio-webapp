@@ -14,6 +14,18 @@ import { Plus, X } from "lucide-react";
 import type { SiteOverride } from "@/lib/api/client";
 
 // Suggestions only; any namespace key Pegasus accepts can be typed.
+// What each namespace does, under its row. The first annex test put a job
+// PATH under "dagman", the entry beside "env", where it set nothing the
+// job could see (#558).
+const NS_HINT: Record<string, string> = {
+  env: "an environment variable for the job (PATH, OMP_NUM_THREADS, …)",
+  condor: "a line in the job's HTCondor submit file (requirements, request_memory, …)",
+  pegasus: "a Pegasus setting for jobs on this site",
+  dagman: "a DAGMan setting for the job's node (retry, priority, …), not the job's environment",
+  globus: "a Globus/GRAM setting (rarely needed)",
+  selector: "a Pegasus site-selection hint",
+};
+
 const KEY_HINTS: Record<string, string[]> = {
   condor: ["requirements", "request_memory", "request_cpus", "request_disk", "+ProjectName", "priority"],
   pegasus: ["queue", "project", "runtime", "cores", "nodes", "memory", "glite.arguments", "auxillary.local"],
@@ -119,6 +131,11 @@ export function SiteOverridesEditor({
             >
               <X size={14} aria-hidden="true" />
             </button>
+            {NS_HINT[r.namespace] && (
+              <p className="basis-full pl-[6.75rem] text-xs text-fgsubtle">
+                {r.namespace}: {NS_HINT[r.namespace]}
+              </p>
+            )}
           </div>
         );
       })}

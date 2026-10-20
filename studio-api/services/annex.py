@@ -140,12 +140,26 @@ def summarize(
 ) -> dict[str, Any]:
     """One annex's status from its request jobs, its slots, and the jobs
     targeting it. Keys of every ad are matched case-insensitively."""
-    # request id -> "requested" | "granted" | dict of slot aggregates
+    # request id -> "requested" | "granted" | "held" | dict of slot aggregates
     by_request: dict[str, Any] = {}
+    hold_reason: str | None = None
     for ad in requests:
         ad = _lower_keys(ad)
         rid = str(ad.get("hpc_annex_request_id", ""))
-        by_request[rid] = "granted" if _state(ad.get("jobstatus")) == 1 else "requested"
+        state = _state(ad.get("jobstatus"))
+        if state in (3, 4):
+            # Removed or completed: on its way out of the queue, and not a
+            # request anyone is waiting on. Counting it as pending kept a
+            # removed run's request on the status card (#558).
+            continue
+        if state == 5:
+            # Held. Upstream folds this into "pending", which hid the one
+            # line that says what is wrong (the first live test's request
+            # sat held on a missing working directory, #558).
+            by_request[rid] = "held"
+            hold_reason = hold_reason or (str(ad.get("holdreason") or "") or None)
+            continue
+        by_request[rid] = "granted" if state == 1 else "requested"
 
     oldest_start: int | None = None
     oldest_stop: int | None = None
@@ -168,7 +182,7 @@ def summarize(
             stop = ad.get("daemonstoptime")
             oldest_stop = int(stop) if isinstance(stop, (int, float)) else None
 
-    pending = active = retired = 0
+    pending = active = retired = held_requests = 0
     nodes = total_cpus = busy_cpus = 0
     for value in by_request.values():
         if isinstance(value, dict):
@@ -178,6 +192,8 @@ def summarize(
             busy_cpus += value["busy_cpus"]
         elif value == "granted":
             retired += 1
+        elif value == "held":
+            held_requests += 1
         else:
             pending += 1
 
@@ -202,7 +218,9 @@ def summarize(
             "pending": pending,
             "active": active,
             "retired": retired,
+            "held": held_requests,
         },
+        "hold_reason": hold_reason,
         "jobs": {"total": len(jobs), "running": running, "idle": idle, "held": held},
         "oldest_started_at": oldest_start,
         "oldest_retires_at": oldest_stop,
@@ -219,14 +237,22 @@ def bundle_dir() -> Path:
     return Path(os.environ.get("STUDIO_ANNEX_DIR") or Path.home() / ".studio" / "annex")
 
 
+# Marks a bundle directory whose `htcondor annex create` has not finished.
+CREATING = ".creating"
+
+
 def current_bundle() -> dict[str, Any] | None:
     """The newest tarball `htcondor annex create` left, or None."""
     root = bundle_dir()
     try:
-        # Published directories only: a create in progress works in a
-        # dot-prefixed staging directory the glob does not match.
+        # Finished directories only: a create in progress marks its
+        # directory with CREATING until the tarball is complete.
         tars = sorted(
-            (p for p in root.glob("[!.]*/annex-*.tar") if p.is_file()),
+            (
+                p
+                for p in root.glob("[!.]*/annex-*.tar")
+                if p.is_file() and not (p.parent / CREATING).exists()
+            ),
             key=lambda p: p.stat().st_mtime,
         )
     except OSError:
@@ -276,14 +302,52 @@ def _last_line(text: str, fallback: str) -> str:
     return lines[-1][:300] if lines else fallback
 
 
-async def create_bundle() -> dict[str, Any]:
-    """Run `htcondor annex create <user>` in a fresh directory and keep its
-    tarball, dropping any older one (each holds a live token).
+async def _request_dirs(name: str) -> set[str] | None:
+    """Working directories of this annex's request jobs still in the queue,
+    or None when the schedd cannot be asked (then nothing is deleted)."""
+    ads, _err = await _run_json([
+        "condor_q", "-json",
+        "-constraint", f'hpc_annex_name == "{name}"',
+        "-attributes", "Iwd",
+    ])
+    if ads is None:
+        return None
+    dirs: set[str] = set()
+    for ad in ads:
+        iwd = _lower_keys(ad).get("iwd")
+        if iwd:
+            dirs.add(os.path.realpath(str(iwd)))
+    return dirs
 
-    The command also submits one annex *request* job to the schedd, which
-    is what the status page then shows as pending until the cluster's nodes
-    arrive, so a bundle that is never submitted shows up as a request that
-    never joins; that is upstream's model and the retired count absorbs it.
+
+async def _prune(root: Path, keep: Path, name: str) -> None:
+    """Drop old bundle directories, but never one a request job still runs
+    in: the schedd restarts a request (a local-universe job) in its working
+    directory, and a missing one holds it."""
+    in_use = await _request_dirs(name)
+    if in_use is None:
+        return
+    for old in root.iterdir():
+        if old == keep or os.path.realpath(old) in in_use:
+            continue
+        if old.is_symlink():
+            old.unlink(missing_ok=True)
+        else:
+            shutil.rmtree(old, ignore_errors=True)
+
+
+async def create_bundle() -> dict[str, Any]:
+    """Run `htcondor annex create <user>` and keep its tarball.
+
+    The command also submits one annex *request* job to the schedd, a
+    local-universe job whose working directory is the directory the
+    command ran in, and the schedd restarts it there. So the command runs
+    in the directory the bundle is published from, and that directory is
+    never renamed or deleted while the request lives. Studio used to stage
+    in a temporary directory and rename it on success, and the first live
+    annex test's request went on hold on the next restart: "Cannot access
+    initial working directory" (#558). A CREATING marker keeps the
+    directory out of current_bundle() until the tarball is complete.
     """
     name = annex_name()
     if not _SAFE_NAME.match(name):
@@ -295,11 +359,9 @@ async def create_bundle() -> dict[str, Any]:
             os.chmod(root, 0o700)
         except OSError as e:
             return {"ok": False, "error": f"cannot create {root}: {e}"}
-        # A private, exclusively created staging directory, dot-prefixed so
-        # current_bundle() never sees a tarball still being written; moved
-        # into place (one rename) only once the command succeeded.
         try:
-            work = Path(tempfile.mkdtemp(prefix=".staging-", dir=root))
+            work = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%d-%H%M%S-"), dir=root))
+            (work / CREATING).touch()
         except OSError as e:
             return {"ok": False, "error": f"cannot create a working directory: {e}"}
         rc, out = await _run_text(["htcondor", "annex", "create", name], 120, cwd=str(work))
@@ -315,15 +377,10 @@ async def create_bundle() -> dict[str, Any]:
                     "the annex can be created once its steps are waiting."
                 )
             return {"ok": False, "error": error, "output": out}
-        published = root / f"{time.strftime('%Y%m%d-%H%M%S')}-{work.name[len('.staging-'):]}"
-        work.rename(published)
-        # Older bundles go now; a download already in flight keeps reading
-        # its open file (the route opens before it streams).
-        for old in root.iterdir():
-            if old != published and not old.name.startswith("."):
-                shutil.rmtree(old, ignore_errors=True)
+        (work / CREATING).unlink(missing_ok=True)
+        await _prune(root, work, name)
         _cache["data"] = None  # the request job is new
-        log.info("annex_bundle_created", name=name, path=str(published / tar.name))
+        log.info("annex_bundle_created", name=name, path=str(tar))
         return {"ok": True, "bundle": current_bundle(), "output": out}
 
 
@@ -341,6 +398,31 @@ async def shutdown() -> dict[str, Any]:
             log.warning("annex_shutdown_failed", name=name, rc=rc, output=out[-500:])
             return {"ok": False, "error": _last_line(out, "htcondor annex shutdown failed"), "output": out}
         log.info("annex_shutdown", name=name)
+        return {"ok": True, "output": out}
+
+
+async def close_requests() -> dict[str, Any]:
+    """Remove this annex's request jobs from the queue.
+
+    A request whose nodes have all left stays in the queue as "granted"
+    (Studio counts it as retired), and one that went on hold stays held,
+    and neither has a button that ends it: `htcondor annex shutdown` talks
+    to nodes, and there are none (#558). The page offers this only when no
+    node is up.
+    """
+    name = annex_name()
+    if not _SAFE_NAME.match(name):
+        return {"ok": False, "error": f"unusable annex name {name!r}"}
+    async with _action_lock:
+        rc, out = await _run_text(
+            ["condor_rm", "-constraint", f'hpc_annex_name == "{name}"'], 60
+        )
+        _cache["data"] = None
+        # condor_rm exits non-zero when nothing matched; that is done, too.
+        if rc != 0 and "matching" not in out.lower():
+            log.warning("annex_close_failed", name=name, rc=rc, output=out[-500:])
+            return {"ok": False, "error": _last_line(out, "condor_rm failed"), "output": out}
+        log.info("annex_requests_closed", name=name)
         return {"ok": True, "output": out}
 
 
@@ -392,7 +474,7 @@ async def _query(name: str, collector: str) -> dict[str, Any]:
         _run_json([
             "condor_q", "-json",
             "-constraint", f"hpc_annex_name == {quoted}",
-            "-attributes", "JobStatus,hpc_annex_request_id,hpc_annex_name",
+            "-attributes", "JobStatus,HoldReason,hpc_annex_request_id,hpc_annex_name",
         ]),
         _run_json([
             "condor_status", "-json", "-pool", collector,

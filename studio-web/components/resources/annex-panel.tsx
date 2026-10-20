@@ -29,11 +29,20 @@
  */
 
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Download } from "lucide-react";
 import * as api from "@/lib/api/client";
 import type { AnnexStatus } from "@/lib/api/client";
 import { AppLink } from "@/components/layout/app-link";
+import { AnnexOnlyCard } from "@/components/resources/annex-only-card";
+import { pinState } from "@/lib/annex-pin";
+import {
+  EMPTY_FORM,
+  clusterCommand,
+  missingRequired,
+  problem,
+  type ClusterForm,
+} from "@/lib/annex-command";
 import { CARD, FIELD, HINT, LABEL, StatusCard, type Tone } from "@/components/resources/status-card";
 import { cn, formatDuration } from "@/lib/utils";
 
@@ -107,13 +116,6 @@ function Cmd({ children }: { children: string }) {
 }
 
 
-type ClusterForm = {
-  partition: string;
-  account: string;
-  walltime: string;
-  nodes: string;
-};
-const EMPTY_FORM: ClusterForm = { partition: "", account: "", walltime: "", nodes: "" };
 const FORM_KEY = "studio.annex.cluster";
 
 function loadForm(): ClusterForm {
@@ -132,39 +134,8 @@ function loadForm(): ClusterForm {
   }
 }
 
-/**
- * What each field may contain once it is pasted into a shell. The values
- * are the user's own and go into the user's own terminal, so this is not
- * a security boundary; it is what keeps a stray newline or quote (typed,
- * or left in storage) from breaking the heredoc.
- */
-const SHAPE: Record<keyof ClusterForm, RegExp> = {
-  partition: /^[A-Za-z0-9._-]+$/,
-  account: /^[A-Za-z0-9._-]+$/,
-  walltime: /^[0-9]{1,3}(-[0-9]{1,2})?(:[0-9]{1,2}){0,2}$/,
-  nodes: /^[0-9]{1,5}$/,
-};
-const valid = (f: ClusterForm, k: keyof ClusterForm) => {
-  const v = f[k].trim();
-  return v && SHAPE[k].test(v) ? v : "";
-};
-const problem = (f: ClusterForm, k: keyof ClusterForm) => !!f[k].trim() && !valid(f, k);
 
-/** The #SBATCH line for ~/.condor/annex_slurm_args, or "" when nothing is set. */
-function sbatchLine(f: ClusterForm): string {
-  const parts: string[] = [];
-  const account = valid(f, "account");
-  const partition = valid(f, "partition");
-  const walltime = valid(f, "walltime");
-  const nodes = valid(f, "nodes");
-  if (account) parts.push(`-A ${account}`);
-  if (partition) parts.push(`-p ${partition}`);
-  if (walltime) parts.push(`-t ${walltime}`);
-  if (nodes) parts.push(`--nodes=${nodes}`);
-  return parts.length ? `#SBATCH ${parts.join(" ")}` : "";
-}
-
-function verdict(a: AnnexStatus): { tone: Tone; headline: string; detail: string } {
+function verdict(a: AnnexStatus): { tone: Tone | "error"; headline: string; detail: string } {
   if (!a.available) {
     return {
       tone: "off",
@@ -172,7 +143,7 @@ function verdict(a: AnnexStatus): { tone: Tone; headline: string; detail: string
       detail: a.error ?? "The access point did not answer.",
     };
   }
-  const r = a.requests ?? { total: 0, pending: 0, active: 0, retired: 0 };
+  const r = a.requests ?? { total: 0, pending: 0, active: 0, retired: 0, held: 0 };
   const j = a.jobs ?? { total: 0, running: 0, idle: 0, held: 0 };
   if (a.established) {
     const now = Date.now() / 1000;
@@ -183,6 +154,15 @@ function verdict(a: AnnexStatus): { tone: Tone; headline: string; detail: string
       detail:
         `${j.running} of your ${j.total} queued step${j.total === 1 ? "" : "s"} ${j.running === 1 ? "is" : "are"} running` +
         (left != null ? `; the oldest part of the annex retires in ${formatDuration(left)}.` : "."),
+    };
+  }
+  if ((r.held ?? 0) > 0 && r.pending === 0) {
+    return {
+      tone: "error",
+      headline: "Your annex request is on hold.",
+      detail:
+        (a.hold_reason ? `HTCondor says: ${a.hold_reason} ` : "") +
+        "Close it, then create a new setup file.",
     };
   }
   if (r.pending > 0) {
@@ -235,6 +215,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["provisioning"] });
   const create = useMutation({ mutationFn: () => api.createAnnexBundle(), onSuccess: refresh });
+  const close = useMutation({ mutationFn: () => api.closeAnnexRequests(), onSuccess: refresh });
   const stop = useMutation({
     mutationFn: () => api.shutdownAnnex(),
     onSuccess: () => {
@@ -250,27 +231,42 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
   // annex (#537), so step 1 is a real prerequisite, not advice.
   const queued = annex.jobs?.total ?? 0;
   const needsJobs = annex.available && annex.requires_jobs !== false && queued === 0;
-  const sbatch = sbatchLine(form);
-  const clusterCmd =
-    (sbatch
-      ? `mkdir -p ~/.condor && cat > ~/.condor/annex_slurm_args <<'ANNEX_SLURM_ARGS'\n${sbatch}\nANNEX_SLURM_ARGS\n`
-      : "") +
-    `tar xf annex-${name}.tar && cd annex-${name} && ./annex-setup.sh` +
-    (sbatch ? ` && sbatch hpc.slurm` : `\n# edit hpc.slurm (partition, account, walltime, nodes), then:\nsbatch hpc.slurm`);
+  const missing = missingRequired(form);
+  const clusterCmd = clusterCommand(name, form);
+  const waiting = annex.jobs?.idle ?? 0;
+  // Leftover requests no node is left to end: granted-and-retired, or held.
+  const leftovers = (annex.requests?.retired ?? 0) + (annex.requests?.held ?? 0);
 
-  const s1: StepState = !needsJobs || live ? "done" : "current";
-  const s2: StepState = bundle || live ? "done" : s1 === "done" ? "current" : "todo";
-  const s34: StepState = live ? "done" : s2 === "done" ? "current" : "todo";
-  const s5: StepState = annex.established ? "done" : live ? "current" : "todo";
+  // Studio sees the queue, the request and the nodes; it cannot see the
+  // upload or the sbatch. "Create" itself makes a pending request, so the
+  // cluster steps stay current until nodes join rather than ticking as
+  // soon as the file exists (#558).
+  const s1: StepState = waiting > 0 || annex.established ? "done" : "current";
+  const s2: StepState = bundle || annex.established ? "done" : queued > 0 ? "current" : "todo";
+  const s34: StepState = annex.established ? "done" : bundle ? "current" : "todo";
+  const s5: StepState =
+    annex.established ? "done" : bundle && (annex.requests?.pending ?? 0) > 0 ? "current" : "todo";
+  const site = useQuery({ queryKey: ["compute-site"], queryFn: () => api.getComputeSite() }).data;
+  const pinned = site ? pinState(site.overrides, site.site, name).on : false;
 
   return (
     <section className="space-y-4">
       <StatusCard
-        tone={v.tone}
+        tone={v.tone === "error" ? "warn" : v.tone}
         headline={v.headline}
         detail={v.detail}
         action={
-          live && (
+          !live && leftovers > 0 ? (
+            <button
+              type="button"
+              disabled={close.isPending}
+              onClick={() => close.mutate()}
+              className="rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-fg hover:bg-base disabled:opacity-50"
+              title="Removes this annex's old request jobs from the access point's queue"
+            >
+              {close.isPending ? "Closing…" : `Close ${leftovers === 1 ? "old request" : `${leftovers} old requests`}`}
+            </button>
+          ) : live && (
             <>
               {confirmStop && (
                 <button
@@ -303,7 +299,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                 { label: "Nodes", value: annex.nodes ?? 0 },
                 { label: "CPUs busy / total", value: `${annex.busy_cpus ?? 0} / ${annex.total_cpus ?? 0}` },
                 {
-                  label: "Requests waiting / up / retired",
+                  label: "Requests waiting / up / done",
                   value: `${annex.requests?.pending ?? 0} / ${annex.requests?.active ?? 0} / ${annex.requests?.retired ?? 0}`,
                 },
                 { label: "Your steps running / queued", value: `${annex.jobs?.running ?? 0} / ${annex.jobs?.total ?? 0}` },
@@ -311,6 +307,11 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
             : undefined
         }
       >
+        {close.isError && (
+          <p className="mt-2 text-xs text-red-600 dark:text-rose-400">
+            Couldn&apos;t close the requests: {(close.error as Error).message}
+          </p>
+        )}
         {stop.isError && (
           <p className="mt-2 text-xs text-red-600 dark:text-rose-400">
             Couldn&apos;t shut down: {(stop.error as Error).message}
@@ -322,6 +323,8 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
           </p>
         )}
       </StatusCard>
+
+      <AnnexOnlyCard name={name} established={!!annex.established} />
 
       <div className={CARD}>
         <button
@@ -345,12 +348,33 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
             <ol>
               <Step n={1} state={s1} title="Run a workflow">
                 {s1 === "done" ? (
-                  <>Steps are waiting for your annex.</>
+                  <>
+                    {waiting > 0
+                      ? `${waiting} step${waiting === 1 ? " is" : "s are"} waiting for your annex.`
+                      : "Steps are waiting for your annex."}
+                  </>
+                ) : pinned ? (
+                  <>
+                    Runs go to your annex only now. Start a new run from{" "}
+                    <AppLink href="/workflows" className="font-medium text-pegasus-600 underline dark:text-pegasus-300">
+                      Run Jobs
+                    </AppLink>
+                    {queued > 0 ? "; steps already running elsewhere were planned before the switch." : "."}
+                  </>
+                ) : queued > 0 ? (
+                  <>
+                    Your steps are already running, on Studio&apos;s pool, so an annex
+                    would have nothing to do and its nodes would leave again. Turn on{" "}
+                    <span className="font-medium text-fg">Send runs to your annex only</span>{" "}
+                    above, then start a new run.
+                  </>
                 ) : (
                   <>
                     The annex can only be created while your steps are waiting for
                     it, and nodes that find nothing to run leave after a few
-                    minutes. Start one from{" "}
+                    minutes. Turn on{" "}
+                    <span className="font-medium text-fg">Send runs to your annex only</span>{" "}
+                    above first, so Studio&apos;s pool does not take them, then start one from{" "}
                     <AppLink href="/workflows" className="font-medium text-pegasus-600 underline dark:text-pegasus-300">
                       Run Jobs
                     </AppLink>
@@ -408,8 +432,15 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
               <Step n={4} state={s34} title="Log in to the cluster and paste one command">
                 <div className="rounded-md border border-line bg-base p-3">
                   <p className="text-xs font-medium text-fg">
-                    Your Slurm options <span className="font-normal text-fgsubtle">(optional, filled into the command)</span>
+                    Your Slurm options{" "}
+                    <span className="font-normal text-fgsubtle">(filled into the command)</span>
                   </p>
+                  {missing.length > 0 && (
+                    <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                      Add your {missing.join(" and ")}: most clusters refuse a job without them
+                      (Expanse does).
+                    </p>
+                  )}
                   {(Object.keys(EMPTY_FORM) as (keyof ClusterForm)[]).some((k) => problem(form, k)) && (
                     <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                       A value with spaces or punctuation is left out of the command.
@@ -417,31 +448,49 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                   )}
                   <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     <label className={LABEL}>
-                      Account / project
-                      <input value={form.account} onChange={(e) => setField("account", e.target.value)} placeholder="abc123" spellCheck={false} className={FIELD} />
+                      Account / allocation <span className="text-amber-700 dark:text-amber-400">*</span>
+                      <input value={form.account} onChange={(e) => setField("account", e.target.value)} placeholder="e.g. abc123" spellCheck={false} className={FIELD} />
+                    </label>
+                    <label className={LABEL}>
+                      Walltime <span className="text-amber-700 dark:text-amber-400">*</span>
+                      <input value={form.walltime} onChange={(e) => setField("walltime", e.target.value)} placeholder="e.g. 01:00:00" spellCheck={false} className={FIELD} />
                     </label>
                     <label className={LABEL}>
                       Partition
-                      <input value={form.partition} onChange={(e) => setField("partition", e.target.value)} placeholder="compute" spellCheck={false} className={FIELD} />
-                    </label>
-                    <label className={LABEL}>
-                      Walltime
-                      <input value={form.walltime} onChange={(e) => setField("walltime", e.target.value)} placeholder="02:00:00" spellCheck={false} className={FIELD} />
+                      <input value={form.partition} onChange={(e) => setField("partition", e.target.value)} placeholder="e.g. shared" spellCheck={false} className={FIELD} />
                     </label>
                     <label className={LABEL}>
                       Nodes
                       <input value={form.nodes} onChange={(e) => setField("nodes", e.target.value)} placeholder="1" inputMode="numeric" spellCheck={false} className={FIELD} />
                     </label>
+                    <label className={LABEL}>
+                      CPUs per node
+                      <input value={form.cpus} onChange={(e) => setField("cpus", e.target.value)} placeholder="e.g. 8" inputMode="numeric" spellCheck={false} className={FIELD} />
+                    </label>
+                    <label className={LABEL}>
+                      Memory per node
+                      <input value={form.memory} onChange={(e) => setField("memory", e.target.value)} placeholder="e.g. 16G" spellCheck={false} className={FIELD} />
+                    </label>
+                    <label className={`${LABEL} sm:col-span-2`}>
+                      Other sbatch options
+                      <input value={form.extra} onChange={(e) => setField("extra", e.target.value)} placeholder="e.g. --qos=normal" spellCheck={false} className={`${FIELD} font-mono`} />
+                    </label>
                   </div>
+                  <p className={`mt-2 ${HINT}`}>
+                    The command always asks for one task per node: an annex runs one
+                    HTCondor worker on each node. On a shared partition, set CPUs and
+                    memory, or the worker gets one core. To find your account on the
+                    cluster: <code className="font-mono">sacctmgr show assoc user=$USER format=account%20</code>.
+                  </p>
                 </div>
                 <div className="mt-2">
                   <Cmd>{clusterCmd}</Cmd>
                 </div>
-                {sbatch && (
-                  <p className={`mt-1 ${HINT}`}>
-                    Your options are saved on the cluster, so next time you can skip the form.
-                  </p>
-                )}
+                <p className={`mt-1 ${HINT}`}>
+                  The first lines save your options in{" "}
+                  <code className="font-mono">~/.condor/annex_slurm_args</code> on the
+                  cluster, which every later setup reads.
+                </p>
               </Step>
 
               <Step n={5} state={s5} title="Wait for the nodes to join" last>
