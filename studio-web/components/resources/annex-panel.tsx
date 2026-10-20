@@ -53,6 +53,7 @@ import {
 } from "@/lib/annex-presets";
 import { CARD, FIELD, HINT, LABEL, StatusCard, type Tone } from "@/components/resources/status-card";
 import { cn, formatDuration } from "@/lib/utils";
+import { HelpPopover } from "@/components/ui/help-popover";
 
 type StepState = "done" | "current" | "todo";
 
@@ -573,34 +574,38 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       You can change any value.
                     </p>
                   )}
-                  <div className={`mt-2 rounded-md border border-line bg-surface px-3 py-2 ${HINT}`}>
-                    <span className="font-medium text-fgmuted">Finding your account:</span> it is the
-                    Slurm account (project) on the cluster, which{" "}
-                    <span className="font-medium text-fgmuted">may not be your ACCESS allocation id</span>{" "}
-                    (an ACCESS project such as <code className="font-mono">TG-ABC123456</code> can have a
-                    local name such as <code className="font-mono">abc123</code>). Log in to the cluster and run{" "}
-                    <code className="font-mono">{chosen?.cluster.accountCommand ?? SLURM_ACCOUNT_COMMAND}</code>
-                    {chosen && chosen.cluster.accountCommand !== SLURM_ACCOUNT_COMMAND ? (
-                      <>
-                        {" "}(or, on any Slurm cluster,{" "}
-                        <code className="font-mono">{SLURM_ACCOUNT_COMMAND}</code>)
-                      </>
-                    ) : null}
-                    . ACCESS&apos;s{" "}
-                    <a href={ACCESS_ANNEX_GUIDE} target="_blank" rel="noreferrer" className="underline">
-                      HTCondor Annex guide
-                    </a>{" "}
-                    covers logging in (SSH keys, each cluster&apos;s OnDemand portal) and per-cluster notes.
-                    {chosen?.cluster.loginNote ? (
-                      <>
-                        {" "}
-                        <span className="font-medium text-fgmuted">Logging in:</span> {chosen.cluster.loginNote}
-                      </>
-                    ) : null}
-                  </div>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     <label className={LABEL}>
                       Account / allocation <span className="text-amber-700 dark:text-amber-400">*</span>
+                      <HelpPopover label="How to find your account" title="Finding your account">
+                        <span className="block">
+                          It is the Slurm account (project) on the cluster, which may not be your
+                          ACCESS allocation id: <code className="font-mono">TG-ABC123456</code> can be{" "}
+                          <code className="font-mono">abc123</code> there.
+                        </span>
+                        <span className="block">
+                          On the cluster, run{" "}
+                          <code className="break-all font-mono text-fg">
+                            {chosen?.cluster.accountCommand ?? SLURM_ACCOUNT_COMMAND}
+                          </code>
+                          {chosen && chosen.cluster.accountCommand !== SLURM_ACCOUNT_COMMAND ? (
+                            <>
+                              {" "}(any Slurm cluster:{" "}
+                              <code className="break-all font-mono">{SLURM_ACCOUNT_COMMAND}</code>)
+                            </>
+                          ) : null}
+                          .
+                        </span>
+                        {chosen?.cluster.loginNote ? (
+                          <span className="block">Logging in: {chosen.cluster.loginNote}</span>
+                        ) : null}
+                        <span className="block">
+                          <a href={ACCESS_ANNEX_GUIDE} target="_blank" rel="noreferrer" className="underline">
+                            ACCESS&apos;s HTCondor Annex guide
+                          </a>{" "}
+                          covers SSH keys and each cluster&apos;s OnDemand portal.
+                        </span>
+                      </HelpPopover>
                       <input value={form.account} onChange={(e) => setField("account", e.target.value)} placeholder="e.g. abc123" spellCheck={false} className={FIELD} />
                     </label>
                     <label className={LABEL}>
@@ -617,10 +622,31 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     </label>
                     <label className={LABEL}>
                       CPUs per node
+                      <HelpPopover label="About CPUs per node">
+                        <span className="block">
+                          An annex runs one HTCondor worker on each node, so the command always
+                          asks for one task per node, and that task gets this many CPUs.
+                        </span>
+                        <span className="block">
+                          On a shared (part-of-a-node) partition, set CPUs and memory, or the
+                          worker gets one core.
+                        </span>
+                      </HelpPopover>
                       <input value={form.cpus} onChange={(e) => setField("cpus", e.target.value)} placeholder="e.g. 8" inputMode="numeric" spellCheck={false} className={FIELD} />
                     </label>
                     <label className={LABEL}>
                       GPUs per node
+                      <HelpPopover label="About GPUs per node">
+                        <span className="block">
+                          Needs a GPU partition and GPU time on the allocation. A typed request
+                          such as <code className="font-mono">v100-32:1</code> also works.
+                        </span>
+                        <span className="block">
+                          Workflow steps get a GPU only if they ask for one (a{" "}
+                          <code className="font-mono">gpus</code> or{" "}
+                          <code className="font-mono">request_gpus</code> profile).
+                        </span>
+                      </HelpPopover>
                       <input value={form.gpus} onChange={(e) => setField("gpus", e.target.value)} placeholder="none" spellCheck={false} className={FIELD} />
                     </label>
                     <label className={LABEL}>
@@ -630,6 +656,18 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     <label className={`${LABEL} sm:col-span-2`}>
                       Container module{" "}
                       <span className="font-normal text-fgsubtle">(only for workflows that run in containers)</span>
+                      <HelpPopover label="About the container module">
+                        <span className="block">
+                          Jobs on annex nodes do not see the cluster&apos;s modules, so a container
+                          workflow needs the module that provides Apptainer or Singularity.{" "}
+                          <code className="font-mono">module avail apptainer singularity</code> on
+                          the cluster lists them.
+                        </span>
+                        <span className="block">
+                          It is saved on the cluster (<code className="font-mono">~/.condor/annex_config</code>),
+                          so each cluster keeps its own.
+                        </span>
+                      </HelpPopover>
                       <input value={form.module} onChange={(e) => setField("module", e.target.value)} placeholder="e.g. singularitypro" spellCheck={false} className={`${FIELD} font-mono`} />
                     </label>
                     <label className={`${LABEL} sm:col-span-2`}>
@@ -637,17 +675,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       <input value={form.extra} onChange={(e) => setField("extra", e.target.value)} placeholder="e.g. --qos=normal" spellCheck={false} className={`${FIELD} font-mono`} />
                     </label>
                   </div>
-                  <p className={`mt-2 ${HINT}`}>
-                    The command always asks for one task per node: an annex runs one
-                    HTCondor worker on each node. On a shared partition, set CPUs and
-                    memory, or the worker gets one core. GPUs need a GPU partition and GPU
-                    time on the allocation; workflow steps get one only if they ask for it
-                    (a <code className="font-mono">gpus</code> or <code className="font-mono">request_gpus</code> profile).
-                    Jobs on annex nodes do not see the cluster&apos;s modules, so a container
-                    workflow needs the module that provides Apptainer or Singularity
-                    (<code className="font-mono">module avail apptainer singularity</code> lists them);
-                    it is saved on the cluster, so each cluster keeps its own.
-                  </p>
+
                 </div>
                 <div className="mt-2">
                   <Cmd>{clusterCmd}</Cmd>
