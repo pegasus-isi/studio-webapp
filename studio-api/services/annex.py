@@ -161,6 +161,13 @@ def summarize(
             continue
         by_request[rid] = "granted" if state == 1 else "requested"
 
+    # Requests the queue knows about. A node whose request is not among them
+    # came from a setup file whose request was closed or removed: it can
+    # still join with the file's token, but in the first live test (#584)
+    # such a node took a step and then sat on it for 40 minutes, while a node
+    # from a fresh setup file ran the same step in 14 seconds. So it counts
+    # toward capacity but not as an active request, and is reported apart.
+    known = set(by_request)
     oldest_start: int | None = None
     oldest_stop: int | None = None
     for ad in slots:
@@ -168,7 +175,10 @@ def summarize(
         rid = str(ad.get("hpc_annex_request_id", "None"))
         agg = by_request.get(rid)
         if not isinstance(agg, dict):
-            agg = by_request[rid] = {"nodes": 0, "total_cpus": 0, "busy_cpus": 0, "total_gpus": 0, "busy_gpus": 0}
+            agg = by_request[rid] = {
+                "nodes": 0, "total_cpus": 0, "busy_cpus": 0, "total_gpus": 0, "busy_gpus": 0,
+                "untracked": rid not in known,
+            }
         # Partitionable slots only: each is one node, and its children are
         # the busy part. Static slots never come from an annex.
         if ad.get("partitionableslot"):
@@ -187,11 +197,15 @@ def summarize(
             stop = ad.get("daemonstoptime")
             oldest_stop = int(stop) if isinstance(stop, (int, float)) else None
 
-    pending = active = retired = held_requests = 0
+    pending = active = retired = held_requests = untracked = untracked_nodes = 0
     nodes = total_cpus = busy_cpus = total_gpus = busy_gpus = 0
     for value in by_request.values():
         if isinstance(value, dict):
-            active += 1
+            if value.get("untracked"):
+                untracked += 1
+                untracked_nodes += value["nodes"]
+            else:
+                active += 1
             nodes += value["nodes"]
             total_cpus += value["total_cpus"]
             busy_cpus += value["busy_cpus"]
@@ -223,12 +237,15 @@ def summarize(
         "total_gpus": total_gpus,
         "busy_gpus": busy_gpus,
         "requests": {
-            "total": len(by_request),
+            "total": len(by_request) - untracked,
             "pending": pending,
             "active": active,
             "retired": retired,
             "held": held_requests,
+            # Nodes from setup files whose request is gone (see above).
+            "untracked": untracked,
         },
+        "untracked_nodes": untracked_nodes,
         "hold_reason": hold_reason,
         "jobs": {"total": len(jobs), "running": running, "idle": idle, "held": held},
         "oldest_started_at": oldest_start,

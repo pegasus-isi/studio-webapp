@@ -169,7 +169,10 @@ function verdict(a: AnnexStatus): { tone: Tone | "error"; headline: string; deta
       headline: `Your annex is up: ${a.nodes} node${a.nodes === 1 ? "" : "s"}, ${a.busy_cpus} of ${a.total_cpus} processors busy.`,
       detail:
         `${j.running} of your ${j.total} queued step${j.total === 1 ? "" : "s"} ${j.running === 1 ? "is" : "are"} running` +
-        (left != null ? `; the oldest part of the annex retires in ${formatDuration(left)}.` : "."),
+        (left != null ? `; the oldest part of the annex retires in ${formatDuration(left)}.` : ".") +
+        ((a.untracked_nodes ?? 0) > 0
+          ? ` ${a.untracked_nodes} node${a.untracked_nodes === 1 ? " comes" : "s come"} from a setup file whose request was closed, and may not run your steps; make a new setup file for the next nodes.`
+          : ""),
     };
   }
   if ((r.held ?? 0) > 0 && r.pending === 0) {
@@ -259,6 +262,9 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
   const chosen = form.cluster
     ? presetFor(form.cluster, (form.nodeType || undefined) as NodeType | undefined)
     : undefined;
+  // A setup file whose own request is gone (#584). Only said when the status
+  // could be read: unknown is not "closed".
+  const stale = !!bundle && annex.available && bundle.request_open === false;
   const missing = missingRequired(form);
   const clusterCmd = clusterCommand(name, form);
   const waiting = annex.jobs?.idle ?? 0;
@@ -331,8 +337,10 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                   ? [{ label: "GPUs busy / total", value: `${annex.busy_gpus ?? 0} / ${annex.total_gpus}` }]
                   : []),
                 {
-                  label: "Requests waiting / up / done",
-                  value: `${annex.requests?.pending ?? 0} / ${annex.requests?.active ?? 0} / ${annex.requests?.retired ?? 0}`,
+                  label: (annex.requests?.untracked ?? 0) > 0 ? "Requests waiting / up / done (+ closed)" : "Requests waiting / up / done",
+                  value:
+                    `${annex.requests?.pending ?? 0} / ${annex.requests?.active ?? 0} / ${annex.requests?.retired ?? 0}` +
+                    ((annex.requests?.untracked ?? 0) > 0 ? ` + ${annex.requests?.untracked}` : ""),
                 },
                 { label: "Your steps running / queued", value: `${annex.jobs?.running ?? 0} / ${annex.jobs?.total ?? 0}` },
               ]
@@ -369,6 +377,16 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
           >
             Remove the old setting
           </button>
+        </p>
+      )}
+
+      {stale && !showHow && (
+        <p className="text-xs text-amber-700 dark:text-amber-400">
+          Your setup file&apos;s request was closed. Make a new one before your next annex:{" "}
+          <button type="button" onClick={() => setShowHow(true)} className="font-medium underline">
+            open step 2
+          </button>
+          .
         </p>
       )}
 
@@ -433,7 +451,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     onClick={() => create.mutate()}
                     className={cn(
                       "rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50",
-                      bundle
+                      bundle && !stale
                         ? "border border-line text-fg hover:bg-base"
                         : "bg-pegasus-600 text-white hover:bg-pegasus-700"
                     )}
@@ -455,6 +473,13 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     </span>
                   )}
                 </div>
+                {stale && (
+                  <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
+                    This setup file&apos;s request was closed. Nodes started from it can still
+                    join, but one did not run its step in the first test, so make a new one
+                    (and copy it to the cluster again) before your next annex.
+                  </p>
+                )}
                 {needsJobs && (
                   <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
                     {NEEDS_JOBS}

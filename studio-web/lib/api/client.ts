@@ -1012,7 +1012,9 @@ export interface AnnexStatus {
   total_gpus?: number;
   busy_gpus?: number;
   /** held: request jobs on hold (#558); removed or completed ones are left out. */
-  requests?: { total: number; pending: number; active: number; retired: number; held?: number };
+  requests?: { total: number; pending: number; active: number; retired: number; held?: number; untracked?: number };
+  /** Nodes from setup files whose request is gone (#584): capacity, but unreliable. */
+  untracked_nodes?: number;
   /** The first held request's HoldReason, verbatim. */
   hold_reason?: string | null;
   jobs?: { total: number; running: number; idle: number; held: number };
