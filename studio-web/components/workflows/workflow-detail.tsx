@@ -10,6 +10,7 @@ import {
 } from "@/lib/hooks/use-workflows";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { useActionToast } from "@/lib/hooks/use-action-toast";
+import { WhereItRan } from "@/components/workflows/where-it-ran";
 import { OutputsPanel } from "@/components/workflows/outputs-panel";
 import { FailureCards } from "@/components/workflows/failure-cards";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -317,12 +318,15 @@ export function WorkflowDetail({ runId }: Props) {
         {isLoading ? (
           <p className="text-sm text-fgmuted">Loading jobs...</p>
         ) : data?.jobs && data.jobs.length > 0 ? (
+          <>
+          <WhereItRan jobs={data.jobs} />
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line text-left text-xs font-medium text-fgmuted">
                 <th className="pb-2 pr-4">Job ID</th>
                 <th className="pb-2 pr-4">Transformation</th>
                 <th className="pb-2 pr-4">Site</th>
+                <th className="pb-2 pr-4">Ran on</th>
                 <th className="pb-2 pr-4">Status</th>
                 <th className="pb-2 pr-4 text-right">Duration</th>
                 <th className="pb-2 text-right">Exit code</th>
@@ -336,6 +340,9 @@ export function WorkflowDetail({ runId }: Props) {
                   </td>
                   <td className="py-2 pr-4">{String(job.transformation ?? "")}</td>
                   <td className="py-2 pr-4">{String(job.site ?? "\u2014")}</td>
+                  <td className="py-2 pr-4 font-mono text-xs text-fgmuted">
+                    {job.host ? String(job.host) : "\u2014"}
+                  </td>
                   <td className="py-2 pr-4">
                     <span
                       className={cn(
@@ -356,6 +363,7 @@ export function WorkflowDetail({ runId }: Props) {
               ))}
             </tbody>
           </table>
+          </>
         ) : (
           <p className="text-sm text-fgmuted">
             No job data available. The workflow may not have a stampede database yet.

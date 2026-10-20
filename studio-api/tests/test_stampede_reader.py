@@ -193,3 +193,58 @@ def test_get_workflow_jobs_enriches_jsonl_from_stampede(tmp_path):
     assert compute["duration"] == 12.3           # enriched from stampede
     assert compute["stderr"] and "boom" in compute["stderr"]  # enriched
     assert compute["transformation"] == "summarize_csv"        # enriched
+
+
+def _add_hosts(run_dir: str, hosts: dict[int, str]) -> None:
+    """Give the minimal DB the real schema's host link: job_instance.host_id
+    plus a host table, as monitord writes them from kickstart records."""
+    con = sqlite3.connect(os.path.join(run_dir, "csv_summary-0.stampede.db"))
+    con.executescript(
+        """
+        ALTER TABLE job_instance ADD COLUMN host_id INTEGER;
+        CREATE TABLE host (host_id INTEGER, wf_id INTEGER, site TEXT,
+            hostname TEXT, ip TEXT, uname TEXT, total_memory INTEGER);
+        """
+    )
+    for n, (inst, hostname) in enumerate(hosts.items(), start=1):
+        con.execute("INSERT INTO host VALUES (?,1,'compute',?,'',NULL,NULL)", (n, hostname))
+        con.execute("UPDATE job_instance SET host_id=? WHERE job_instance_id=?", (n, inst))
+    con.commit()
+    con.close()
+
+
+def test_job_details_include_the_host_a_job_ran_on(tmp_path):
+    from services.stampede_reader import read_stampede_job_details
+
+    run_dir = str(tmp_path / "run0011")
+    _make_stampede_db(run_dir)
+    _add_hosts(run_dir, {101: "exp-1-19.expanse.sdsc.edu"})
+    details = read_stampede_job_details(run_dir)
+
+    assert details["summarize_csv_x"]["host"] == "exp-1-19.expanse.sdsc.edu"
+    # Never ran, so no instance and no host.
+    assert details["cleanup_a"]["host"] is None
+
+
+def test_missing_host_table_leaves_the_other_details_intact(tmp_path):
+    """Older and hand-built databases have no host table; the lookup must
+    degrade to no host, not to no details."""
+    from services.stampede_reader import read_stampede_job_details
+
+    run_dir = str(tmp_path / "run0012")
+    _make_stampede_db(run_dir)
+    compute = read_stampede_job_details(run_dir)["summarize_csv_x"]
+    assert compute["host"] is None
+    assert compute["site"] == "condorpool"
+    assert compute["duration"] == 12.3
+
+
+def test_get_workflow_jobs_carries_the_host(tmp_path):
+    from services.workflow_monitor import get_workflow_jobs
+
+    run_dir = str(tmp_path / "run0013")
+    _make_stampede_db(run_dir)
+    _add_hosts(run_dir, {101: "exp-1-17.expanse.sdsc.edu"})
+    jobs = asyncio.run(get_workflow_jobs(run_dir))
+    compute = next(j for j in jobs if j["job_id"] == "summarize_csv_x")
+    assert compute["host"] == "exp-1-17.expanse.sdsc.edu"

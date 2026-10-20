@@ -217,6 +217,29 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
     return events
 
 
+def _hosts(con: sqlite3.Connection) -> dict[Any, str]:
+    """job_instance_id -> the hostname the job last ran on (#556).
+
+    monitord fills `host` from each job's kickstart record, so this is the
+    machine the step actually executed on: a Studio pool EP, an annex node
+    on the user's cluster, an OSPool slot, or the access point itself for
+    Pegasus's own local jobs. Read separately because older or hand-built
+    databases (the tests' among them) have no host table, and missing hosts
+    must not cost the rest of the details.
+    """
+    try:
+        return {
+            r["job_instance_id"]: r["hostname"]
+            for r in con.execute(
+                "SELECT ji.job_instance_id, h.hostname FROM job_instance ji "
+                "JOIN host h ON ji.host_id = h.host_id "
+                "WHERE h.hostname IS NOT NULL"
+            )
+        }
+    except sqlite3.Error:
+        return {}
+
+
 def read_stampede_job_details(run_dir: str) -> dict[str, dict[str, Any]]:
     """Per-job extras keyed by exec_job_id, read straight from the stampede DB.
 
@@ -252,6 +275,7 @@ def read_stampede_job_details(run_dir: str) -> dict[str, dict[str, Any]]:
             "remote_duration FROM invocation"
         ):
             inv_by_inst.setdefault(r["job_instance_id"], r)
+        host_by_inst = _hosts(con)
 
         for jr in con.execute("SELECT job_id, exec_job_id FROM job"):
             detail: dict[str, Any] = {
@@ -260,6 +284,7 @@ def read_stampede_job_details(run_dir: str) -> dict[str, dict[str, Any]]:
                 "duration": None,
                 "stderr": None,
                 "maxrss": None,
+                "host": None,
             }
             inst = inst_by_job.get(jr["job_id"])
             if inst is not None:
@@ -280,6 +305,7 @@ def read_stampede_job_details(run_dir: str) -> dict[str, dict[str, Any]]:
                     "duration": duration,
                     "stderr": stderr,
                     "maxrss": inv["maxrss"] if inv else None,
+                    "host": host_by_inst.get(inst["job_instance_id"]),
                     "transformation": task_tx.get(jr["job_id"])
                     or (inv["transformation"] if inv else None),
                 })
