@@ -36,6 +36,35 @@ import {
   type ParamValues,
 } from "@/components/workflows/param-field";
 import { TONE_TEXT } from "@/lib/tone";
+import { useProvisioningStatus } from "@/lib/hooks/use-dashboard";
+import { useAnnexPin } from "@/components/resources/annex-pin-legacy";
+
+type Placement = "any" | "annex" | "pool";
+
+/**
+ * Which machines this run's steps may use (#572). One Pegasus site on the
+ * hosted deployment is served by Studio's pool, the user's annex and, for
+ * steps with a project name, the OSPool. The choice is sent with this run
+ * and applied as pegasus-plan -D properties; nothing is saved, so nothing
+ * can be left on (services/run_placement.py).
+ */
+const PLACEMENTS: { value: Placement; label: string; detail: string }[] = [
+  {
+    value: "any",
+    label: "Wherever is free first",
+    detail: "Studio's pool or your annex, whichever has room. The usual choice.",
+  },
+  {
+    value: "annex",
+    label: "Only my annex",
+    detail: "Your nodes on your own cluster. Steps wait until they join: start the run, then the nodes.",
+  },
+  {
+    value: "pool",
+    label: "Only Studio's pool",
+    detail: "Never your annex, even when it is up.",
+  },
+];
 
 interface Props {
   projectId: string;
@@ -130,6 +159,15 @@ export function RunFlowPanel({
   embedded = false,
 }: Props) {
   const [flow, setFlow] = useState<RunFlowSnapshot | null>(null);
+  const [placement, setPlacement] = useState<Placement>("any");
+  const [gpus, setGpus] = useState("0");
+  const provisioning = useProvisioningStatus().data;
+  const hosted = provisioning?.deployment === "hosted";
+  const annexName = provisioning?.annex?.name ?? "";
+  // The old Resources switch wrote a standing annex-only row (#564); while
+  // it is there, "wherever is free" would not be true.
+  const legacyPin = useAnnexPin(annexName || "-");
+  const gpuCount = Math.max(0, Math.min(16, Number.parseInt(gpus, 10) || 0));
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [showTechnical, setShowTechnical] = useState(false);
@@ -308,6 +346,15 @@ export function RunFlowPanel({
     const siteLabel =
       sites.find((s) => s.value === site)?.label ?? site;
     rows.push({ label: "Where it runs", value: siteLabel });
+    if (hosted && placement !== "any") {
+      rows.push({
+        label: "Machines",
+        value: PLACEMENTS.find((x) => x.value === placement)?.label ?? placement,
+      });
+    }
+    if (gpuCount > 0) {
+      rows.push({ label: "GPUs", value: `${gpuCount} per step` });
+    }
 
     for (const p of primaryParams) {
       if (p.is_flag) {
@@ -322,7 +369,7 @@ export function RunFlowPanel({
       rows.push({ label: paramLabel(p), value: current });
     }
     return rows;
-  }, [primaryParams, values, sites, defaultSite]);
+  }, [primaryParams, values, sites, defaultSite, hosted, placement, gpuCount]);
 
   // ── attach to the server-side flow ──────────────────────────────────────
 
@@ -432,6 +479,8 @@ export function RunFlowPanel({
         args: buildArgs(allGenParams, values),
         site: String(values["site"] ?? defaultSite),
         output_site: String(values["output_site"] ?? "local"),
+        ...(hosted ? { placement } : {}),
+        gpus: gpuCount,
       });
       setFlow(snapshot);
       attach();
@@ -594,6 +643,69 @@ export function RunFlowPanel({
               </div>
             </details>
           )}
+          {hosted && (
+            <div className="mt-4">
+              <p className="text-xs font-medium text-fg">On which machines</p>
+              <div role="radiogroup" aria-label="On which machines" className="mt-1.5 grid gap-1.5 sm:grid-cols-3">
+                {PLACEMENTS.map((p) => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={placement === p.value}
+                    onClick={() => setPlacement(p.value)}
+                    className={cn(
+                      "rounded-xl border bg-surface p-2.5 text-left transition-colors",
+                      placement === p.value
+                        ? "border-pegasus-500 ring-1 ring-pegasus-500"
+                        : "border-line hover:border-pegasus-300"
+                    )}
+                  >
+                    <span className="block text-sm font-medium text-fg">{p.label}</span>
+                    <span className="mt-0.5 block text-xs text-fgmuted">{p.detail}</span>
+                  </button>
+                ))}
+              </div>
+              {placement === "annex" && !provisioning?.annex?.established && (
+                <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
+                  No annex is up yet. Set one up under{" "}
+                  <AppLink href="/provisioning#compute" className="underline">
+                    Resources → Extra computing
+                  </AppLink>{" "}
+                  once this run is waiting.
+                </p>
+              )}
+              {legacyPin.ready && legacyPin.on && (
+                <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
+                  An older setting still sends every run to your annex only, whatever you pick here.{" "}
+                  <button
+                    type="button"
+                    onClick={() => legacyPin.set(false)}
+                    disabled={legacyPin.saving}
+                    className="font-medium underline disabled:opacity-50"
+                  >
+                    Remove it
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
+          <label className="mt-4 flex flex-wrap items-center gap-2 text-xs font-medium text-fg">
+            GPUs per step
+            <input
+              type="number"
+              min={0}
+              max={16}
+              value={gpus}
+              onChange={(e) => setGpus(e.target.value)}
+              className="w-16 rounded-md border border-line bg-base px-2 py-1 text-sm tabular-nums text-fg outline-none focus:border-pegasus-400"
+            />
+            <span className="font-normal text-fgmuted">
+              {gpuCount > 0
+                ? "Each step asks for this many; only machines with GPUs will take them, and containers get GPU access."
+                : "None. Steps that set their own GPU request still get one."}
+            </span>
+          </label>
         </fieldset>
 
         {/* What pressing Run will actually do. A non-specialist has no way to

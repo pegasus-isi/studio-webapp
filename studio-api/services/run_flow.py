@@ -464,6 +464,7 @@ class RunFlowManager:
         site: str,
         output_site: str,
         force_build: bool = False,
+        plan_properties: dict[str, str] | None = None,
     ) -> RunFlow:
         """Begin a flow as a background task and return it immediately.
 
@@ -496,6 +497,7 @@ class RunFlowManager:
                 site=site,
                 output_site=output_site,
                 force_build=force_build,
+                plan_properties=plan_properties or {},
             )
         )
         log.info(
@@ -520,6 +522,7 @@ async def _execute(
     site: str,
     output_site: str,
     force_build: bool,
+    plan_properties: dict[str, str] | None = None,
 ) -> None:
     """Run the stages in order, stopping at the first failure.
 
@@ -668,6 +671,7 @@ async def _execute(
             site=site,
             output_site=output_site,
             plan_mode=plan_mode,
+            plan_properties=plan_properties,
         ):
             return
 
@@ -953,6 +957,7 @@ async def _run_plan(
     site: str,
     output_site: str,
     plan_mode: str | None = None,
+    plan_properties: dict[str, str] | None = None,
 ) -> bool:
     from services.workflow_submitter import SUBMIT_BASE, _find_workflow_file
 
@@ -973,6 +978,11 @@ async def _run_plan(
     output_dir = plan_output_dir(project_dir, output_site)
     if output_dir:
         argv += ["--output-dir", output_dir]
+    if plan_properties:
+        from services.run_placement import plan_args
+
+        argv += plan_args(plan_properties)
+        flow._line("plan", "This run: " + ", ".join(f"{k.rsplit('.', 1)[-1]} = {v}" for k, v in sorted(plan_properties.items())))
     argv.append(wf_file)
     code, output = await _plan_capture(
         flow, argv, project_dir=project_dir, mode=plan_mode

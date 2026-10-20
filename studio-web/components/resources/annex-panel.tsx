@@ -34,7 +34,7 @@ import { Check, Copy, Download } from "lucide-react";
 import * as api from "@/lib/api/client";
 import type { AnnexStatus } from "@/lib/api/client";
 import { AppLink } from "@/components/layout/app-link";
-import { AnnexOnlySwitch, useAnnexPin } from "@/components/resources/annex-only-card";
+import { useAnnexPin } from "@/components/resources/annex-pin-legacy";
 import {
   EMPTY_FORM,
   cautions,
@@ -258,7 +258,6 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
   const s34: StepState = annex.established ? "done" : bundle ? "current" : "todo";
   const s5: StepState =
     annex.established ? "done" : bundle && (annex.requests?.pending ?? 0) > 0 ? "current" : "todo";
-  const pinned = pin.on;
 
   return (
     <section className="space-y-4">
@@ -339,9 +338,18 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
         )}
       </StatusCard>
 
-      {!showHow && pin.on && (
-        <p className="text-xs text-fgmuted">
-          Runs go to your annex only (step 1 below). This turns off when you shut the annex down.
+      {pin.on && (
+        <p className="text-xs text-amber-700 dark:text-amber-400">
+          An older setting sends every run to your annex only, so runs wait when no
+          annex is up. Runs now choose this one at a time (Run → On which machines).{" "}
+          <button
+            type="button"
+            onClick={() => pin.set(false)}
+            disabled={pin.saving}
+            className="font-medium underline disabled:opacity-50"
+          >
+            Remove the old setting
+          </button>
         </p>
       )}
 
@@ -372,35 +380,27 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       ? `${waiting} step${waiting === 1 ? " is" : "s are"} waiting for your annex.`
                       : "Steps are waiting for your annex."}
                   </>
-                ) : pinned ? (
-                  <>
-                    Runs go to your annex only now. Start a new run from{" "}
-                    <AppLink href="/workflows" className="font-medium text-pegasus-600 underline dark:text-pegasus-300">
-                      Run Jobs
-                    </AppLink>
-                    {queued > 0 ? "; steps already running elsewhere were planned before the switch." : "."}
-                  </>
                 ) : queued > 0 ? (
                   <>
                     Your steps are already running, on Studio&apos;s pool, so an annex
-                    would have nothing to do and its nodes would leave again. Turn on{" "}
-                    <span className="font-medium text-fg">Send runs to your annex only</span>{" "}
-                    below, then start a new run.
+                    would have nothing to do and its nodes would leave again. Start a
+                    new run with{" "}
+                    <span className="font-medium text-fg">On which machines → Only my annex</span>{" "}
+                    in the Run panel.
                   </>
                 ) : (
                   <>
                     The annex can only be created while your steps are waiting for
                     it, and nodes that find nothing to run leave after a few
-                    minutes. Turn on{" "}
-                    <span className="font-medium text-fg">Send runs to your annex only</span>{" "}
-                    below first, so Studio&apos;s pool does not take them, then start one from{" "}
+                    minutes. Start one from{" "}
                     <AppLink href="/workflows" className="font-medium text-pegasus-600 underline dark:text-pegasus-300">
                       Run Jobs
-                    </AppLink>
-                    , then come back.
+                    </AppLink>{" "}
+                    with{" "}
+                    <span className="font-medium text-fg">On which machines → Only my annex</span>, so
+                    Studio&apos;s pool does not take its steps, then come back.
                   </>
                 )}
-                <AnnexOnlySwitch name={name} established={!!annex.established} />
               </Step>
 
               <Step n={2} state={s2} title="Create and download your setup file">

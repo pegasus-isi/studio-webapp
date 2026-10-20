@@ -633,6 +633,10 @@ export interface RunFlowOptions {
   site?: string;
   output_site?: string;
   force_build?: boolean;
+  /** Which machines this run's steps may use (#572). */
+  placement?: "any" | "annex" | "pool";
+  /** GPUs per step; Pegasus adds --nv for containers. */
+  gpus?: number;
 }
 
 export async function startRunFlow(

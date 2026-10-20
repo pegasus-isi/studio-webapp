@@ -90,6 +90,10 @@ class RunFlowRequest(BaseModel):
     # re-run; this is the escape hatch for when the definition changed in a way
     # mtime didn't catch.
     force_build: bool = False
+    # Which machines this run's steps may use, and GPUs per step (#572).
+    # See services/run_placement.py; applied as pegasus-plan -D properties.
+    placement: Literal["any", "annex", "pool"] = "any"
+    gpus: int = Field(0, ge=0, le=16)
 
 log = structlog.get_logger()
 
@@ -478,6 +482,16 @@ async def build_project_image(
 # individually, and nothing here changes their behaviour.
 
 
+def _plan_properties(req: RunFlowRequest) -> dict[str, str]:
+    from services import annex
+    from services.run_placement import plan_properties
+
+    try:
+        return plan_properties(req.site, req.placement, req.gpus, annex.annex_name())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.post("/projects/{project_id}/run-flow")
 async def start_run_flow(project_id: str, req: RunFlowRequest) -> dict:
     """Start the whole prepare-and-run sequence as one background flow.
@@ -503,6 +517,7 @@ async def start_run_flow(project_id: str, req: RunFlowRequest) -> dict:
             site=req.site,
             output_site=req.output_site,
             force_build=req.force_build,
+            plan_properties=_plan_properties(req),
         )
     except RuntimeError as e:
         # 409, not 400: the request is well-formed, the project is just busy.
