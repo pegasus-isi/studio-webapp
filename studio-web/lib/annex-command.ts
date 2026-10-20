@@ -69,6 +69,28 @@ export function problem(f: ClusterForm, k: keyof ClusterForm): boolean {
   return !!(f[k] ?? "").trim() && !valid(f, k);
 }
 
+/**
+ * Things that are valid Slurm but probably not what was meant, said
+ * before the job is refused or cut short. Both happened on Expanse:
+ * `-t 01:00` is one *minute* (two fields are minutes:seconds), and
+ * Expanse has no default partition ("Invalid partition name specified").
+ */
+export function cautions(f: ClusterForm): string[] {
+  const out: string[] = [];
+  const t = valid(f, "walltime");
+  if (t && /^[0-9]+:[0-9]+$/.test(t)) {
+    const [m, sec] = t.split(":");
+    out.push(
+      `Walltime ${t} is ${Number(m)} minute${Number(m) === 1 ? "" : "s"} ${Number(sec)} seconds to Slurm ` +
+        `(two fields are minutes:seconds). For hours, use hh:mm:ss, e.g. ${m}:00:00.`
+    );
+  }
+  if (!valid(f, "partition")) {
+    out.push("No partition: some clusters, Expanse among them, have no default and refuse the job.");
+  }
+  return out;
+}
+
 /** Fields most clusters insist on and the form cannot guess. */
 export function missingRequired(f: ClusterForm): "account"[] {
   return valid(f, "account") ? [] : ["account"];

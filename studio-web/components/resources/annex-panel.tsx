@@ -38,6 +38,7 @@ import { AnnexOnlyCard } from "@/components/resources/annex-only-card";
 import { pinState } from "@/lib/annex-pin";
 import {
   EMPTY_FORM,
+  cautions,
   clusterCommand,
   missingRequired,
   problem,
@@ -443,6 +444,11 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       (Expanse does).
                     </p>
                   )}
+                  {cautions(form).map((c) => (
+                    <p key={c} className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                      {c}
+                    </p>
+                  ))}
                   {(Object.keys(EMPTY_FORM) as (keyof ClusterForm)[]).some((k) => problem(form, k)) && (
                     <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                       A value with spaces or punctuation is left out of the command.
