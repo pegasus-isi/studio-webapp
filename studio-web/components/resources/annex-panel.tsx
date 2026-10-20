@@ -309,6 +309,9 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
             ? [
                 { label: "Nodes", value: annex.nodes ?? 0 },
                 { label: "CPUs busy / total", value: `${annex.busy_cpus ?? 0} / ${annex.total_cpus ?? 0}` },
+                ...((annex.total_gpus ?? 0) > 0
+                  ? [{ label: "GPUs busy / total", value: `${annex.busy_gpus ?? 0} / ${annex.total_gpus}` }]
+                  : []),
                 {
                   label: "Requests waiting / up / done",
                   value: `${annex.requests?.pending ?? 0} / ${annex.requests?.active ?? 0} / ${annex.requests?.retired ?? 0}`,
@@ -514,6 +517,10 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       <input value={form.cpus} onChange={(e) => setField("cpus", e.target.value)} placeholder="e.g. 8" inputMode="numeric" spellCheck={false} className={FIELD} />
                     </label>
                     <label className={LABEL}>
+                      GPUs per node
+                      <input value={form.gpus} onChange={(e) => setField("gpus", e.target.value)} placeholder="none" spellCheck={false} className={FIELD} />
+                    </label>
+                    <label className={LABEL}>
                       Memory per node
                       <input value={form.memory} onChange={(e) => setField("memory", e.target.value)} placeholder="e.g. 16G" spellCheck={false} className={FIELD} />
                     </label>
@@ -530,7 +537,9 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                   <p className={`mt-2 ${HINT}`}>
                     The command always asks for one task per node: an annex runs one
                     HTCondor worker on each node. On a shared partition, set CPUs and
-                    memory, or the worker gets one core. To find your account on the
+                    memory, or the worker gets one core. GPUs need a GPU partition and GPU
+                    time on the allocation; workflow steps get one only if they ask for it
+                    (a <code className="font-mono">gpus</code> or <code className="font-mono">request_gpus</code> profile). To find your account on the
                     cluster: <code className="font-mono">sacctmgr show assoc user=$USER format=account%20</code>.
                     Jobs on annex nodes do not see the cluster&apos;s modules, so a container
                     workflow needs the module that provides Apptainer or Singularity

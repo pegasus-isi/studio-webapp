@@ -168,7 +168,7 @@ def summarize(
         rid = str(ad.get("hpc_annex_request_id", "None"))
         agg = by_request.get(rid)
         if not isinstance(agg, dict):
-            agg = by_request[rid] = {"nodes": 0, "total_cpus": 0, "busy_cpus": 0}
+            agg = by_request[rid] = {"nodes": 0, "total_cpus": 0, "busy_cpus": 0, "total_gpus": 0, "busy_gpus": 0}
         # Partitionable slots only: each is one node, and its children are
         # the busy part. Static slots never come from an annex.
         if ad.get("partitionableslot"):
@@ -176,6 +176,11 @@ def summarize(
             agg["total_cpus"] += _num(ad.get("totalslotcpus"))
             children = ad.get("childcpus") or []
             agg["busy_cpus"] += sum(_num(c) for c in children) if isinstance(children, list) else 0
+            # GPUs the same way (#570): the partitionable slot's total, and
+            # its claimed children's. Absent on a node without GPUs.
+            agg["total_gpus"] += _num(ad.get("totalslotgpus"))
+            gpu_children = ad.get("childgpus") or []
+            agg["busy_gpus"] += sum(_num(g) for g in gpu_children) if isinstance(gpu_children, list) else 0
         start = ad.get("daemonstarttime")
         if isinstance(start, (int, float)) and (oldest_start is None or start < oldest_start):
             oldest_start = int(start)
@@ -183,13 +188,15 @@ def summarize(
             oldest_stop = int(stop) if isinstance(stop, (int, float)) else None
 
     pending = active = retired = held_requests = 0
-    nodes = total_cpus = busy_cpus = 0
+    nodes = total_cpus = busy_cpus = total_gpus = busy_gpus = 0
     for value in by_request.values():
         if isinstance(value, dict):
             active += 1
             nodes += value["nodes"]
             total_cpus += value["total_cpus"]
             busy_cpus += value["busy_cpus"]
+            total_gpus += value["total_gpus"]
+            busy_gpus += value["busy_gpus"]
         elif value == "granted":
             retired += 1
         elif value == "held":
@@ -213,6 +220,8 @@ def summarize(
         "nodes": nodes,
         "total_cpus": total_cpus,
         "busy_cpus": busy_cpus,
+        "total_gpus": total_gpus,
+        "busy_gpus": busy_gpus,
         "requests": {
             "total": len(by_request),
             "pending": pending,
@@ -505,7 +514,7 @@ async def _query(name: str, collector: str) -> dict[str, Any]:
             "condor_status", "-json", "-pool", collector,
             "-constraint", f"AnnexName == {quoted}",
             "-attributes",
-            "Name,PartitionableSlot,TotalSlotCpus,ChildCpus,"
+            "Name,PartitionableSlot,TotalSlotCpus,ChildCpus,TotalSlotGPUs,ChildGPUs,"
             "DaemonStartTime,DaemonStopTime,hpc_annex_request_id",
         ]),
         _run_json([

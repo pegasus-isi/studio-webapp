@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_FORM, annexConfig, cautions, clusterCommand, missingRequired, problem, sbatchLines } from "@/lib/annex-command";
 
+describe("gpu cautions", () => {
+  it("warns about a GPU partition with no GPUs, and GPUs on a CPU partition", () => {
+    expect(cautions({ ...EMPTY_FORM, partition: "gpu-shared" })[0]).toContain("no GPUs are requested");
+    expect(cautions({ ...EMPTY_FORM, partition: "shared", gpus: "1" })[0]).toContain("does not look like a GPU partition");
+    expect(cautions({ ...EMPTY_FORM, partition: "gpu-shared", gpus: "1" })).toEqual([]);
+  });
+  it("defaults to plain Slurm's --gpus-per-node without a preset", () => {
+    expect(sbatchLines({ ...EMPTY_FORM, partition: "gpu", gpus: "2" })[0]).toContain("--gpus-per-node=2");
+  });
+});
+
 describe("cautions", () => {
   it("says that 01:00 is one minute, as it was on Expanse", () => {
     const c = cautions({ ...EMPTY_FORM, walltime: "01:00", partition: "shared" });
