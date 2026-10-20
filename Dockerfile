@@ -560,6 +560,17 @@ RUN STUDIO_RUNTIME_DIR=/tmp/nginx-validate-gate \
     && nginx -t -c /tmp/nginx-validate-gate/nginx.conf \
     && rm -rf /tmp/nginx-validate-gate
 
+# And once more in JupyterHub mode, where the OAuth gate fragment is live
+# (#592). Its auth_request, named location and callback location are parsed
+# nowhere else.
+RUN STUDIO_RUNTIME_DIR=/tmp/nginx-validate-hub \
+    JUPYTERHUB_API_TOKEN=buildtime JUPYTERHUB_CLIENT_ID=jupyterhub-user-build \
+    JUPYTERHUB_OAUTH_CALLBACK_URL=/user/build/oauth_callback JUPYTERHUB_USER=build \
+    /usr/local/bin/entrypoint.sh --render-only \
+    && grep -q "auth_request /_studio_hub_check" /tmp/nginx-validate-hub/hub-auth-server.conf \
+    && nginx -t -c /tmp/nginx-validate-hub/nginx.conf \
+    && rm -rf /tmp/nginx-validate-hub
+
 # ---- Runtime workspace configuration ----
 # STUDIO_WORKSPACE_DIR: where the app stores the SQLite DB, tool configs, and
 # workflow projects.  Defaults to $HOME/work (KubeSpawner sets $HOME).
