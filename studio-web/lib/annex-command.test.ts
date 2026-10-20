@@ -3,7 +3,7 @@ import { EMPTY_FORM, clusterCommand, missingRequired, problem, sbatchLines } fro
 
 describe("sbatchLines", () => {
   it("always asks for one task per node, the one thing every annex needs", () => {
-    expect(sbatchLines(EMPTY_FORM)).toEqual(["#SBATCH --nodes=1 --ntasks-per-node=1"]);
+    expect(sbatchLines(EMPTY_FORM)).toEqual(["#SBATCH -t 01:00:00 --nodes=1 --ntasks-per-node=1"]);
   });
 
   it("produces the options Expanse accepted in the first live test", () => {
@@ -28,9 +28,20 @@ describe("sbatchLines", () => {
 });
 
 describe("missingRequired", () => {
-  it("names the account and walltime Expanse refused the job without", () => {
-    expect(missingRequired(EMPTY_FORM)).toEqual(["account", "walltime"]);
-    expect(missingRequired({ ...EMPTY_FORM, account: "nca128", walltime: "1:00:00" })).toEqual([]);
+  it("names the account; walltime has a default", () => {
+    expect(missingRequired(EMPTY_FORM)).toEqual(["account"]);
+    expect(missingRequired({ ...EMPTY_FORM, account: "nca128" })).toEqual([]);
+  });
+});
+
+describe("walltime", () => {
+  it("is always in the command, falling back to the default when cleared or invalid", () => {
+    for (const walltime of ["", "soon"]) {
+      expect(sbatchLines({ ...EMPTY_FORM, account: "TG-CIS240483", walltime })[0]).toBe(
+        "#SBATCH -A TG-CIS240483 -t 01:00:00 --nodes=1 --ntasks-per-node=1"
+      );
+    }
+    expect(sbatchLines({ ...EMPTY_FORM, walltime: "04:00:00" })[0]).toContain("-t 04:00:00");
   });
 });
 
