@@ -181,6 +181,7 @@ def jobs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "site": None,
                 "duration": None,
                 "stderr": None,
+                "host": None,
             }
             roster[jid] = entry
             order.append(jid)

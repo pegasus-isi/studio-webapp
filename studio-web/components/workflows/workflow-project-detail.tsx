@@ -37,6 +37,7 @@ import { apiUrl } from "@/lib/urls";
 import { usePaneSize } from "@/lib/hooks/use-pane-size";
 import { cn, formatDuration, statusColor } from "@/lib/utils";
 import { TONE_TEXT } from "@/lib/tone";
+import { WhereItRan } from "@/components/workflows/where-it-ran";
 
 // Generate, Build and Plan are steps toward Run, which is the one filled
 // action. They used to be grey, sky and yellow, and yellow read as a
@@ -1052,11 +1053,14 @@ function RunJobsPanel({
       {isLoading ? (
         <p className="text-xs text-fgmuted">Loading jobs...</p>
       ) : data?.jobs && data.jobs.length > 0 ? (
+        <>
+        <WhereItRan jobs={data.jobs} compact />
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-line text-left text-xs font-medium text-fgmuted">
               <th className="pb-1 pr-3">Job</th>
               <th className="pb-1 pr-3">Status</th>
+              <th className="pb-1 pr-3">Ran on</th>
               <th className="pb-1 pr-3 text-right">Duration</th>
               <th className="pb-1 text-right">Exit</th>
             </tr>
@@ -1077,6 +1081,9 @@ function RunJobsPanel({
                     {String(job.status ?? "")}
                   </span>
                 </td>
+                <td className="max-w-[12rem] truncate py-1 pr-3 font-mono text-fgmuted" title={job.host ? String(job.host) : undefined}>
+                  {job.host ? String(job.host) : "\u2014"}
+                </td>
                 <td className="py-1 pr-3 text-right">
                   {job.duration != null ? formatDuration(Number(job.duration)) : "\u2014"}
                 </td>
@@ -1087,6 +1094,7 @@ function RunJobsPanel({
             ))}
           </tbody>
         </table>
+        </>
       ) : (
         <p className="text-xs text-fgmuted">No job data available.</p>
       )}

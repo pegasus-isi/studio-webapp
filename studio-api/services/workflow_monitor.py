@@ -75,7 +75,7 @@ async def get_workflow_jobs(run_dir: str) -> list[dict[str, Any]]:
             d = details.get(j.get("job_id"))
             if not d:
                 continue
-            for key in ("site", "duration", "stderr", "transformation", "maxrss"):
+            for key in ("site", "duration", "stderr", "transformation", "maxrss", "host"):
                 if j.get(key) in (None, "") and d.get(key) is not None:
                     j[key] = d[key]
     return jobs
