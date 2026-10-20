@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_FORM, clusterCommand, missingRequired, problem, sbatchLines } from "@/lib/annex-command";
+import { EMPTY_FORM, cautions, clusterCommand, missingRequired, problem, sbatchLines } from "@/lib/annex-command";
+
+describe("cautions", () => {
+  it("says that 01:00 is one minute, as it was on Expanse", () => {
+    const c = cautions({ ...EMPTY_FORM, walltime: "01:00", partition: "shared" });
+    expect(c).toHaveLength(1);
+    expect(c[0]).toContain("1 minute 0 seconds");
+    expect(c[0]).toContain("01:00:00");
+  });
+  it("warns about a missing partition and is quiet when both are fine", () => {
+    expect(cautions(EMPTY_FORM)[0]).toContain("No partition");
+    expect(cautions({ ...EMPTY_FORM, partition: "shared" })).toEqual([]);
+  });
+});
 
 describe("sbatchLines", () => {
   it("always asks for one task per node, the one thing every annex needs", () => {
