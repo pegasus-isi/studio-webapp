@@ -527,21 +527,10 @@ export function DashboardView() {
             }
           />
 
-          {/* Welcome */}
+          {/* Welcome. No logo tile above it (#580): the top bar already
+              shows the logo and wordmark, and the heading names the product. */}
           <div className="flex flex-col items-center text-center">
-            <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-surface shadow-sm">
-              <img
-                src="pegasus-ai-logo-light.png"
-                alt=""
-                className="block h-8 w-auto dark:hidden"
-              />
-              <img
-                src="pegasus-ai-logo-dark.png"
-                alt=""
-                className="hidden h-8 w-auto dark:block"
-              />
-            </span>
-            <h1 className="mt-5 text-3xl font-semibold tracking-tight text-fg">
+            <h1 className="text-3xl font-semibold tracking-tight text-fg">
               Welcome to{" "}
               <span className="text-pegasus-600 dark:text-pegasus-300">
                 PegasusAI Studio
