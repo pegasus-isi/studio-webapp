@@ -17,7 +17,15 @@ c.ServerApp.ip = _os_port.environ.get("STUDIO_BIND_ADDR", "127.0.0.1")
 # jupyter started without the wrapper still lands on the session's port.
 c.ServerApp.port = int(_os_port.environ.get("STUDIO_JUPYTER_PORT") or 8889)
 c.ServerApp.base_url = "/jupyter/"
-c.ServerApp.token = ""
+# Empty unless the session token gate is on (#218), when the entrypoint mints
+# one and nginx injects it as an Authorization header, so the browser flow is
+# unchanged. An empty token is safe only while nothing else shares this network
+# namespace. Read from the environment, never the command line, which every
+# local user can see (#598). Both traits: jupyter_server 2 moved the token to
+# IdentityProvider and still forwards a ServerApp.token it finds in config.
+_token = _os_port.environ.get("STUDIO_JUPYTER_TOKEN", "")
+c.IdentityProvider.token = _token
+c.ServerApp.token = _token
 c.ServerApp.password = ""
 c.ServerApp.open_browser = False
 c.ServerApp.allow_origin = "*"

@@ -24,11 +24,13 @@ elif [ -n "${STUDIO_URL_PREFIX:-}" ]; then
     BASE_URL="${STUDIO_URL_PREFIX%/}/jupyter/"
 fi
 
-# --ServerApp.token is empty unless the session token gate is on. An empty
-# token is safe only while nothing else shares this network namespace; on a
-# shared host it means any local user reaching this port gets terminals as us.
-# With the gate on, the entrypoint mints a real token and the proxy injects it
-# as an Authorization header, so the browser flow is unchanged.
+# The token is NOT passed here. It used to be (--ServerApp.token=...), and a
+# command line is readable by every user on the host through /proc/<pid>/
+# cmdline and `ps`. On Open OnDemand that host is shared and Apptainer gives
+# this server the host network, so a local user who read the token could open
+# terminals as us on 127.0.0.1:<port>, past nginx. jupyter_server_config.py
+# reads it from STUDIO_JUPYTER_TOKEN instead: a process's environment is
+# readable only by its owner.
 #
 # Keep every argument below on its own `\`-continued line with NO comments
 # between them: a comment line inside a continuation ends the command, and the
@@ -39,5 +41,4 @@ exec jupyter lab \
     --ip=127.0.0.1 \
     --port="${STUDIO_JUPYTER_PORT:-8889}" \
     --ServerApp.base_url="${BASE_URL}" \
-    --ServerApp.root_dir="${ROOT}" \
-    --ServerApp.token="${STUDIO_JUPYTER_TOKEN:-}"
+    --ServerApp.root_dir="${ROOT}"
