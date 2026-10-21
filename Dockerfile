@@ -247,10 +247,17 @@ COPY docker/pegasus/pegasus.properties /etc/pegasus/pegasus.properties
 # ---- Pegasus ----
 # Python minor version of the HTCondor access point, which trixie matches.
 ARG AP_PYTHON=3.13
-RUN curl -fsSL https://download.pegasus.isi.edu/pegasus/gpg.txt \
+# The development channel publishes every 6.0.0.dev0 build under the same
+# version, so nothing in this file changes when a broken nightly is replaced
+# by a fixed one. Bump this date to pull the channel's current build: it is
+# part of the RUN below, so it also invalidates any cached copy of this layer.
+ARG PEGASUS_REFRESH=2026-10-21
+RUN echo "pegasus channel refresh: ${PEGASUS_REFRESH}" && \
+    curl -fsSL https://download.pegasus.isi.edu/pegasus/gpg.txt \
          -o /etc/apt/trusted.gpg.d/pegasus.asc && \
     echo "deb [arch=amd64, trusted=yes] https://download.pegasus.isi.edu/pegasus/development/6.0/debian/ ${DEBIAN_SUITE} main" >/etc/apt/sources.list.d/pegasus.list && \
     apt-get update && \
+    apt-cache show pegasus | grep -m1 '^SHA256:' && \
     apt-get install -y pegasus && \
     rm -rf /var/lib/apt/lists/* && \
     pegasus-version && \
