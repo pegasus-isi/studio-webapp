@@ -665,6 +665,34 @@ async def _execute(
             ):
                 return
 
+        # After generate (generators write pegasus.properties and the
+        # catalogs), before the plan: a workflow that needs the workers to see
+        # this workspace fails every job on a pool that has no shared
+        # filesystem, with an error naming neither cause (#520).
+        from services import shared_fs
+
+        fs_problem = await loop.run_in_executor(
+            None,
+            lambda: shared_fs.problem(
+                project_dir, site, plan_properties=plan_properties
+            ),
+        )
+        if fs_problem:
+            flow._begin("plan")
+            flow._fail("plan", fs_problem)
+            # _fail classified the text; this cause and action are exact.
+            flow.failure = Failure(
+                stage="plan",
+                cause=fs_problem,
+                action=(
+                    "Pick a cluster under \u201cWhere it runs\u201d, or ask the "
+                    "assistant to make the workflow stage its inputs."
+                ),
+                technical=f"pegasus-plan -s {site}: not run, shared-filesystem check",
+            )
+            log.warning("run_flow_blocked_shared_fs", flow_id=flow.flow_id, site=site)
+            return
+
         if not await _run_plan(
             flow,
             project_dir=project_dir,
