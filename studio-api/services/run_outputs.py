@@ -21,6 +21,7 @@ for a directory named `output`.
 
 from __future__ import annotations
 
+import mimetypes
 import os
 from datetime import datetime, timezone
 from collections.abc import Sequence
@@ -83,23 +84,49 @@ def can_preview(kind: str, size: int) -> tuple[bool, bool]:
     return (True, True) if kind in _PARTIAL_KINDS else (False, False)
 
 
-#: Files a browser would run scripts from if opened as a page (#470).
-_ACTIVE_EXT = _HTML_EXT | {".svg", ".xhtml", ".xml"}
+#: Types a browser renders without ever running a script from the file, so
+#: they may be served inline as themselves with no sandbox. Everything else is
+#: sandboxed. PDF is here because Chrome refuses to show a PDF under a CSP
+#: sandbox, and its viewer runs the document's scripts in its own isolation.
+_INERT_INLINE_TYPES = frozenset({
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp",
+    "application/pdf",
+})
+
+
+def serve_media_type(path: str) -> str:
+    """The Content-Type to serve a workflow file inline with.
+
+    Chosen here, never left to FileResponse, because Starlette guesses from
+    the whole name: `report.html.gz` comes back `text/html` with no
+    Content-Encoding, so the browser renders the plain HTML inside, and
+    nothing that looked at the last extension saw it coming. A compressed
+    file is bytes to the browser, not the document it unpacks to.
+    """
+    media, encoding = mimetypes.guess_type(path)
+    if encoding:
+        return "application/octet-stream"
+    return media or "text/plain"
 
 
 def serve_headers(path: str) -> dict[str, str]:
     """Extra response headers for serving a workflow file inline.
 
     Workflow outputs are untrusted and served from Studio's own origin, where
-    the gateway cookie rides along on every request. An HTML or SVG output
-    opened as a page would otherwise run its scripts as Studio. The CSP
-    `sandbox` directive gives the document an opaque origin — scripts still
-    run, so interactive reports work, but they cannot read Studio's cookies or
-    responses, and their writes are refused as cross-origin. `nosniff` stops a
-    browser second-guessing the type into something executable.
+    the session cookie rides along on every request. A document opened as a
+    page would otherwise run its scripts as Studio. The CSP `sandbox`
+    directive gives it an opaque origin: scripts still run, so interactive
+    reports work, but they cannot read Studio's cookies or responses, and
+    their writes are refused as cross-origin.
+
+    This is an allowlist (#470 was a list of dangerous extensions, and
+    `.xsl`, `.rdf`, `.html.gz` and whatever /etc/mime.types adds all got
+    past it): only types that cannot run a script go unsandboxed. Text,
+    tables and JSON are read by the page with fetch(), which the sandbox
+    does not touch. `nosniff` stops a browser second-guessing the type.
     """
     headers = {"X-Content-Type-Options": "nosniff"}
-    if os.path.splitext(path)[1].lower() in _ACTIVE_EXT:
+    if serve_media_type(path) not in _INERT_INLINE_TYPES:
         headers["Content-Security-Policy"] = "sandbox allow-scripts"
     return headers
 
