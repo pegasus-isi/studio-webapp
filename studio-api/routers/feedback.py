@@ -11,6 +11,7 @@ into chat.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated
 
 import structlog
@@ -20,6 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/feedback", tags=["feedback"])
+
+_pending: set[asyncio.Task] = set()
 
 # Ids are OpenCode's opaque strings ("ses_…", "msg_…"); model/agent are short
 # names. The caps only stop a broken or hostile client from parking megabytes
@@ -83,4 +86,14 @@ async def rate_message(body: MessageFeedbackRequest) -> MessageFeedbackResponse:
             agent=agent,
         )
     log.info("message_feedback", rating=body.rating, model=model, agent=agent)
+    # To the cluster's telemetry, in the background: the vote is already
+    # stored, and a slow or absent collector must not hold up the click.
+    from services import rating_telemetry
+
+    task = asyncio.create_task(rating_telemetry.export_vote(
+        db, session_id=body.session_id, message_id=body.message_id,
+        rating=body.rating, model=model, agent=agent,
+    ))
+    _pending.add(task)  # the loop holds tasks weakly; keep it until done
+    task.add_done_callback(_pending.discard)
     return MessageFeedbackResponse(ok=True)

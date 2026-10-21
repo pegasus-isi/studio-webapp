@@ -302,6 +302,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     prune_task = asyncio.create_task(_prune_terminals())
 
+    # Chat reply ratings to the collector, if there is one (Grafana gauge).
+    from services import rating_telemetry
+
+    rating_task = asyncio.create_task(rating_telemetry.run_forever(db))
+
     # Start the notification engine: watches workflow runs for state changes /
     # failures and fans alerts out to subscribers (SSE). Other code raises
     # alerts via `engine.notify(...)`.
@@ -322,6 +327,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Cleanup terminal sessions and running tool processes
     await notification_engine.stop()
     prune_task.cancel()
+    rating_task.cancel()
     knowledge_task.cancel()
     for s in terminal_sessions.list_sessions():
         terminal_sessions.kill(s["id"])
