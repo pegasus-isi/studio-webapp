@@ -346,7 +346,7 @@ function ApprovalCard({
           <line x1="12" y1="9" x2="12" y2="13" />
           <line x1="12" y1="17" x2="12.01" y2="17" />
         </svg>
-        Approve shell command?
+        {req.name === "write_file" ? "Approve writing this file?" : "Approve shell command?"}
       </div>
       {/* Full contrast, deliberately. This is the command you are about to
           authorise — the one string in the app that must not be rendered in a

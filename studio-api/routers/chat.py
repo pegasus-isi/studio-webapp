@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 
 from llm.model_limits import FLOOR_MAX_TOKENS, anthropic_max_tokens
 from models import ChatHistoryResponse, ChatMessage
-from workspace import is_protected, workflows_dir, workspace_root
+from workspace import data_dir, is_protected, workflows_dir, workspace_root
 
 log = structlog.get_logger()
 
@@ -469,16 +469,43 @@ async def _execute_tool(
 
 
 # Tools that run arbitrary shell and so require per-turn approval (SEC-4).
-# File tools (read/write/list/create) are confined to the workspace by
-# _safe_path, so they stay auto-approved to keep the prompt from firing on
-# every step.
 _APPROVAL_REQUIRED_TOOLS = {"run_command"}
+
+
+def _write_needs_approval(name: str, arguments: dict[str, Any]) -> bool:
+    """Whether a file write needs the same approval as a shell command.
+
+    The workspace is $HOME, so "inside the workspace" includes files that run
+    later on their own: ~/.bashrc (every Studio terminal sources it),
+    ~/.npm-global/bin (first on PATH), ~/opencode.json (whose permission block
+    can switch this very gate off). A write there is a deferred shell command,
+    and a prompt injection in anything the model reads could ask for one.
+    Writes go through unprompted only under ~/workflows and ~/data, where the
+    assistant does its actual work, and not into a .git directory there,
+    whose hooks run on the user's next commit.
+    """
+    if name != "write_file":
+        return False
+    try:
+        resolved = _safe_path(str(arguments.get("path", "")))
+    except ValueError:
+        return False  # refused by _execute_tool anyway
+    root = os.path.realpath(WORKSPACE_ROOT)
+    for base in (workflows_dir(root), data_dir(root)):
+        base = os.path.realpath(base)
+        if resolved.startswith(base + os.sep):
+            return ".git" in resolved[len(base):].split(os.sep)
+    return True
 
 
 def _permission_summary(name: str, arguments: dict[str, Any]) -> str:
     """Human-readable one-liner for the approval card."""
     if name == "run_command":
         return str(arguments.get("command", "")).strip()
+    if name == "write_file":
+        content = str(arguments.get("content", ""))
+        head = content[:400] + ("\n…" if len(content) > 400 else "")
+        return f"{arguments.get('path', '')}\n\n{head}"
     return json.dumps(arguments)[:300]
 
 
@@ -499,7 +526,9 @@ async def _run_tool_gated(
     """
     from services import chat_permissions
 
-    gated = require_approval and name in _APPROVAL_REQUIRED_TOOLS
+    gated = require_approval and (
+        name in _APPROVAL_REQUIRED_TOOLS or _write_needs_approval(name, arguments)
+    )
     if gated:
         yield {"permission_request": {
             "id": arguments.get("_call_id", ""),
@@ -515,7 +544,8 @@ async def _run_tool_gated(
                 if decision == "timeout"
                 else "denied by the user"
             )
-            result = f"Command not run — {reason}."
+            what = "File not written" if name == "write_file" else "Command not run"
+            result = f"{what} — {reason}."
             yield {"tool_call": {
                 "id": arguments["_call_id"], "name": name,
                 "arguments": _public_args(arguments),

@@ -285,7 +285,8 @@ def test_permission_defaults_to_asking_for_bash(tmp_path, monkeypatch):
     config = json.loads(
         (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
     )
-    assert config["permission"] == {"bash": "ask"}
+    assert config["permission"]["bash"] == "ask"
+    assert config["permission"]["edit"]["*"] == "ask"
 
 
 def test_permission_allows_bash_when_command_approval_is_disabled(
@@ -474,5 +475,58 @@ def test_nothing_configured_names_no_default_model(tmp_path, monkeypatch):
     assert "model" not in cfg
     assert list(cfg["provider"]) == ["custom-az"]
     assert "gateway" not in json.dumps(cfg["provider"])
-    assert cfg["permission"] == {"bash": "ask"}
+    assert cfg["permission"]["bash"] == "ask"
     assert "pegasus" in cfg["mcp"]
+
+
+def _opencode_decides(rules: dict, relpath: str) -> str:
+    """OpenCode 1.18.29's evaluation (permission/index.ts + util/wildcard.ts):
+    rules in config order, `*` is `.*` (crosses "/"), the last match wins."""
+    import re
+
+    action = "ask"
+    for pattern, value in rules.items():
+        rx = re.escape(pattern).replace(r"\*", ".*").replace(r"\?", ".")
+        if re.fullmatch(rx, relpath, flags=re.S):
+            action = value
+    return action
+
+
+def test_edits_outside_workflows_and_data_ask(tmp_path, monkeypatch):
+    """A write to a file that runs later on its own is a deferred shell
+    command, so it must ask like one (~/.bashrc, ~/opencode.json, PATH)."""
+    from knowledge.opencode import OpenCodeAdapter
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("STUDIO_WORKSPACE_DIR", raising=False)
+    OpenCodeAdapter().update_llm_config(
+        str(tmp_path), {"provider": "gateway", "model": "default", "base_url": "u"},
+    )
+    cfg = json.loads((tmp_path / ".config" / "opencode" / "opencode.json").read_text())
+    rules = cfg["permission"]["edit"]
+    home = os.path.realpath(str(tmp_path)).strip("/")
+    # Non-git home: OpenCode's worktree is "/", paths are relative to it.
+    for rel in (".bashrc", ".profile", "opencode.json", ".npm-global/bin/ls",
+                ".opencode/x.json", ".claude/settings.json", ".pegasusrc",
+                "workflows/r/.git/hooks/pre-commit", "workflowsx/a"):
+        assert _opencode_decides(rules, f"{home}/{rel}") == "ask", rel
+        assert _opencode_decides(rules, rel) == "ask", rel  # home as a git repo
+    for rel in ("workflows/r/workflow_generator.py", "workflows/r/bin/a.sh", "data/in.csv"):
+        assert _opencode_decides(rules, f"{home}/{rel}") == "allow", rel
+        assert _opencode_decides(rules, rel) == "allow", rel
+
+
+def test_no_edit_rules_when_command_approval_is_off(tmp_path, monkeypatch):
+    """With bash allowed, gating edits would protect nothing."""
+    from knowledge.opencode import OpenCodeAdapter
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    OpenCodeAdapter().update_llm_config(
+        str(tmp_path),
+        {"provider": "gateway", "model": "default", "base_url": "u",
+         "require_command_approval": False},
+    )
+    cfg = json.loads((tmp_path / ".config" / "opencode" / "opencode.json").read_text())
+    assert cfg["permission"] == {"bash": "allow"}

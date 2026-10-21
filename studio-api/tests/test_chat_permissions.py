@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import pytest
 
@@ -192,9 +193,8 @@ def test_ungated_tool_runs_without_prompt():
     assert "nogate" in final
 
 
-def test_file_tools_are_never_gated():
-    """Only shell commands are gated; file tools stay auto-approved even with
-    approval on (they are workspace-confined)."""
+def test_reading_tools_are_never_gated():
+    """Listing and reading stay auto-approved even with approval on."""
     from routers import chat
 
     async def go():
@@ -211,3 +211,68 @@ def test_file_tools_are_never_gated():
     events = asyncio.run(go())
     kinds = [next(iter(e)) for e in events]
     assert "permission_request" not in kinds
+
+
+def _collect(name, args, *, require_approval=True):
+    from routers import chat
+
+    async def go():
+        return [ev async for ev in chat._run_tool_gated(
+            name, {**args, "_call_id": "c"}, request_id="r",
+            require_approval=require_approval,
+        )]
+
+    return asyncio.run(go())
+
+
+def test_writes_where_the_assistant_works_are_not_gated(tmp_path, monkeypatch):
+    from routers import chat
+
+    monkeypatch.setattr(chat, "WORKSPACE_ROOT", str(tmp_path))
+    for rel in ("workflows/r/workflow_generator.py", "data/in.csv"):
+        events = _collect("write_file", {"path": rel, "content": "x"})
+        assert not any("permission_request" in e for e in events), rel
+        assert (tmp_path / rel).read_text() == "x"
+
+
+def test_writes_to_files_that_run_later_are_gated(tmp_path, monkeypatch):
+    """~/.bashrc, ~/opencode.json, PATH dirs, a repo's git hooks: each is a
+    deferred shell command, so each asks like one, and a denial writes nothing."""
+    from routers import chat
+
+    monkeypatch.setattr(chat, "WORKSPACE_ROOT", str(tmp_path))
+    for rel in (".bashrc", "opencode.json", ".npm-global/bin/ls",
+                "workflows/r/.git/hooks/pre-commit", "notes.txt"):
+        assert chat._write_needs_approval("write_file", {"path": rel}), rel
+
+    async def go():
+        agen = chat._run_tool_gated(
+            "write_file", {"path": ".bashrc", "content": "evil", "_call_id": "w1"},
+            request_id="rw1", require_approval=True,
+        )
+        return await _drive(agen, "rw1", "w1", "deny")
+
+    events = asyncio.run(go())
+    req = next(e["permission_request"] for e in events if "permission_request" in e)
+    assert req["name"] == "write_file" and ".bashrc" in req["summary"]
+    assert not (tmp_path / ".bashrc").exists()
+    final = next(e["_final_result"] for e in events if "_final_result" in e)
+    assert final.startswith("File not written")
+
+
+def test_a_symlink_out_of_workflows_is_gated(tmp_path, monkeypatch):
+    from routers import chat
+
+    monkeypatch.setattr(chat, "WORKSPACE_ROOT", str(tmp_path))
+    (tmp_path / "workflows" / "r").mkdir(parents=True)
+    (tmp_path / ".bashrc").write_text("")
+    os.symlink(tmp_path / ".bashrc", tmp_path / "workflows" / "r" / "rc")
+    assert chat._write_needs_approval("write_file", {"path": "workflows/r/rc"})
+
+
+def test_writes_are_not_gated_when_approval_is_off(tmp_path, monkeypatch):
+    from routers import chat
+
+    monkeypatch.setattr(chat, "WORKSPACE_ROOT", str(tmp_path))
+    events = _collect("write_file", {"path": ".bashrc", "content": "x"}, require_approval=False)
+    assert not any("permission_request" in e for e in events)
