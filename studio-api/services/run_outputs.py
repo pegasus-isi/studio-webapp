@@ -29,6 +29,8 @@ from typing import Any
 
 import structlog
 
+from workspace import is_protected
+
 log = structlog.get_logger()
 
 # Conventional storage directory names, in preference order. Used only when the
@@ -405,4 +407,10 @@ def safe_output_path(output_dir: str, relative: str) -> str:
     resolved = os.path.realpath(os.path.join(root, relative))
     if resolved != root and not resolved.startswith(root + os.sep):
         raise ValueError("path escapes the output directory")
+    # Staying inside the output directory is not enough on its own: where that
+    # directory is comes from the workflow's site catalog, which a cloned repo
+    # writes, and a storage dir of $HOME puts .ssh, .condor (the pool token)
+    # and .studio (the settings DB) "inside" it. Same boundary as the file API.
+    if is_protected(resolved):
+        raise ValueError("that directory holds credentials")
     return resolved
