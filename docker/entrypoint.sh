@@ -272,6 +272,17 @@ mkdir -p "${STUDIO_RUNTIME_DIR}"
 # it is ours to lock down: on a shared host /tmp is world-readable, and the
 # rendered configs name every port this session is using.
 chmod 700 "${STUDIO_RUNTIME_DIR}" 2>/dev/null || true
+# The name is predictable, so on a shared /tmp another user can create it
+# first: mkdir -p then succeeds on their directory, the chmod fails quietly,
+# and the rendered configs, secrets included, land where they can read them.
+# Refuse anything that isn't a real directory we own with no access for
+# anyone else.
+if [ -L "${STUDIO_RUNTIME_DIR}" ] || [ ! -O "${STUDIO_RUNTIME_DIR}" ] \
+        || [ "$(ls -ld "${STUDIO_RUNTIME_DIR}" | cut -c5-10)" != "------" ]; then
+    echo "[studio] FATAL: ${STUDIO_RUNTIME_DIR} is not a private directory owned by $(id -un)." \
+         "Remove it or set STUDIO_RUNTIME_DIR elsewhere." >&2
+    exit 1
+fi
 
 # Nginx temp dirs must exist before nginx starts (non-root can't create them
 # under /var/lib/nginx, so the rendered config points them at the runtime dir).
@@ -319,17 +330,30 @@ render_template() {
             fi
             ;;
     esac
-    sed -e "s|@STUDIO_PORT@|${STUDIO_PORT}|g" \
-        -e "s|@STUDIO_AUTH_TOKEN@|${STUDIO_AUTH_TOKEN}|g" \
-        -e "s|@STUDIO_URL_PREFIX@|${STUDIO_URL_PREFIX}|g" \
-        -e "s|@STUDIO_JUPYTER_TOKEN@|${STUDIO_JUPYTER_TOKEN}|g" \
-        -e "s|@STUDIO_INTERNAL_SECRET@|${STUDIO_INTERNAL_SECRET}|g" \
-        -e "s|@STUDIO_API_PORT@|${STUDIO_API_PORT}|g" \
-        -e "s|@STUDIO_WEB_PORT@|${STUDIO_WEB_PORT}|g" \
-        -e "s|@STUDIO_JUPYTER_PORT@|${STUDIO_JUPYTER_PORT}|g" \
-        -e "s|@STUDIO_OPENCODE_PORT@|${STUDIO_OPENCODE_PORT}|g" \
-        -e "s|@STUDIO_RUNTIME_DIR@|${STUDIO_RUNTIME_DIR}|g" \
-        "${src}" > "${dst}"
+    # Substituted in bash, not with sed: three of these values are secrets, and
+    # a sed expression is a command-line argument, readable by every local
+    # user through /proc/<pid>/cmdline for as long as sed runs. Parameter
+    # expansion never leaves this process. bash 5.2's patsub_replacement would
+    # read a `&` in a value as "the match", so it is off for the loop (quoting
+    # the replacement instead works on 5.2 but leaves the quotes in on 3.2).
+    _rt_patsub=0
+    if shopt -q patsub_replacement 2>/dev/null; then
+        _rt_patsub=1
+        shopt -u patsub_replacement
+    fi
+    _rt_text="$(cat "${src}"; printf x)"; _rt_text="${_rt_text%x}"
+    for _rt_name in STUDIO_PORT STUDIO_AUTH_TOKEN STUDIO_URL_PREFIX \
+                    STUDIO_JUPYTER_TOKEN STUDIO_INTERNAL_SECRET STUDIO_API_PORT \
+                    STUDIO_WEB_PORT STUDIO_JUPYTER_PORT STUDIO_OPENCODE_PORT \
+                    STUDIO_RUNTIME_DIR; do
+        _rt_value="${!_rt_name:-}"
+        _rt_text="${_rt_text//"@${_rt_name}@"/${_rt_value}}"
+    done
+    printf '%s' "${_rt_text}" > "${dst}"
+    if [ "${_rt_patsub}" = 1 ]; then
+        shopt -s patsub_replacement
+    fi
+    unset _rt_text _rt_name _rt_value _rt_patsub
     # A placeholder left behind means a template gained one that this function
     # does not substitute. nginx would fail on the literal with a parse error
     # naming a line, not a cause, so say it here instead.

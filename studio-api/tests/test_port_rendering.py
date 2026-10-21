@@ -8,7 +8,7 @@ the second would lose.
 
 These tests run the *real* `render_template` out of `docker/entrypoint.sh`
 against the *real* templates, rather than reimplementing the substitution. A
-test that reimplemented it would pass while the entrypoint's own sed list drifts
+test that reimplemented it would pass while the entrypoint's own substitution list drifts
 away from the placeholders the templates use, which is precisely the failure
 worth catching: nginx reports an unsubstituted `@STUDIO_API_PORT@` as a parse
 error naming a line number, not a cause.
@@ -130,7 +130,7 @@ def test_no_placeholder_survives(tmp_path, template):
 
 
 def test_every_template_placeholder_is_substituted():
-    """The renderer's sed list must cover what the templates actually use.
+    """The renderer's substitution list must cover what the templates actually use.
 
     This is the drift the runtime guard catches loudly and late; catching it
     here means a template gaining a placeholder fails in CI instead of on a
@@ -138,7 +138,9 @@ def test_every_template_placeholder_is_substituted():
     """
     with open(_ENTRYPOINT, encoding="utf-8") as fh:
         script = fh.read()
-    substituted = set(re.findall(r"s\|(@STUDIO_[A-Z_]+@)\|", script))
+    loop = re.search(r"for _rt_name in (.*?); do", script, re.DOTALL)
+    assert loop, "render_template's substitution list not found"
+    substituted = {f"@{n}@" for n in re.findall(r"STUDIO_[A-Z_]+", loop.group(1))}
 
     used: set[str] = set()
     for name in os.listdir(_TEMPLATES):
