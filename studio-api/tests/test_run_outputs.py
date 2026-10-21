@@ -431,3 +431,30 @@ def test_project_file_endpoint_sandboxes_xml_types(client, monkeypatch, tmp_path
     png = client.get(url, params={"path": "plot.png"})
     assert png.headers["content-type"] == "image/png"
     assert "content-security-policy" not in png.headers
+
+
+def test_safe_output_path_refuses_credential_dirs_under_a_home_output_dir(tmp_path, monkeypatch):
+    # A site catalog whose storage dir is $HOME makes the whole home "inside"
+    # the output dir; the protected dirs must still be out of reach (#602).
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("STUDIO_WORKSPACE_DIR", raising=False)
+    (tmp_path / ".ssh").mkdir()
+    (tmp_path / ".ssh" / "id_rsa").write_text("key")
+    (tmp_path / ".condor" / "tokens.d").mkdir(parents=True)
+    (tmp_path / "plot.png").write_bytes(b"x")
+    for rel in (".ssh/id_rsa", ".condor/tokens.d", ".studio/studio.db"):
+        with pytest.raises(ValueError):
+            ro.safe_output_path(str(tmp_path), rel)
+    assert ro.safe_output_path(str(tmp_path), "plot.png").endswith("plot.png")
+
+
+def test_safe_output_path_refuses_a_symlink_into_a_credential_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("STUDIO_WORKSPACE_DIR", raising=False)
+    (tmp_path / ".ssh").mkdir()
+    (tmp_path / ".ssh" / "id_rsa").write_text("key")
+    out = tmp_path / "workflows" / "w" / "output"
+    out.mkdir(parents=True)
+    os.symlink(tmp_path / ".ssh" / "id_rsa", out / "result.txt")
+    with pytest.raises(ValueError):
+        ro.safe_output_path(str(tmp_path), "workflows/w/output/result.txt")
