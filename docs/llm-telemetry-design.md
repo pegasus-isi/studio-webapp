@@ -128,6 +128,32 @@ containers neither fetch the plugin from npm nor retry an endpoint that is
 never coming up. It is set in one place: `singleuser.extraEnv` in
 studio-system's jupyterhub HelmRelease.
 
+## 4a. Reply ratings
+
+A 👍/👎 on a reply is stored in the user's own `studio.db`
+(`message_feedback`, no text). `services/rating_telemetry.py` sends it to the
+same collector, the same two ways the engine's data goes:
+
+* **Gauge `studio.chat.reply_ratings`** (Prometheus
+  `studio_chat_reply_ratings{rating, model, agent, enduser_id}`), always when
+  a collector exists. The current count of rated replies, read from the DB
+  and re-sent every minute by studio-api: the collector's Prometheus exporter
+  forgets a series after five minutes of silence, and the DB, unlike an
+  in-process counter, survives a restart. A gauge because a changed or
+  cleared vote lowers it. Query it with `max_over_time(...[$__range])` so a
+  stopped server's last count still counts.
+* **A span `chat.reply_rating` per vote**, only for users who opted in to
+  sharing chat text. Langfuse cannot create a score over OTLP, and its score
+  API needs the project keys, which are never in a pod. It does map
+  `session.id`, which the engine's spans set to OpenCode's session id, so the
+  rating span lands in the same Langfuse session as the turns it rates, with
+  `studio.rating` (1/-1) and `studio.message_id` as attributes. It holds no
+  text, but follows the traces' consent rule, so Langfuse still holds data
+  only for users who opted in.
+
+A real Langfuse *score* (filterable in its score views) would need a small
+relay holding the project keys, cluster-side; not built.
+
 ## 5. Cost
 
 The plugin exports `opencode.cost.usage`, and for us it will be close to

@@ -911,6 +911,15 @@ class Database:
             row = await cursor.fetchone()
         return dict(row) if row else None
 
+    async def message_feedback_counts(self) -> list[dict[str, Any]]:
+        """[{rating, model, agent, n}] over every rated reply, for telemetry."""
+        async with self.db.execute(
+            "SELECT rating, model, agent, COUNT(*) AS n FROM message_feedback"
+            " GROUP BY rating, model, agent"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
     async def prune_chat_messages(self, max_rows: int = 5000) -> int:
         """Cap total stored chat messages, deleting the oldest beyond `max_rows`.
         Returns the number deleted. Keeps the table from growing unbounded on a
