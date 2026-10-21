@@ -346,13 +346,36 @@ def test_html_is_its_own_kind_with_the_render_ceiling(tmp_path):
 
 
 def test_active_files_are_served_sandboxed():
-    for name in ("r.html", "r.HTM", "plot.svg"):
+    for name in ("r.html", "r.HTM", "plot.svg", "data.csv", "notes.txt", "x.json"):
         h = ro.serve_headers(name)
-        assert h["Content-Security-Policy"] == "sandbox allow-scripts"
+        assert h["Content-Security-Policy"] == "sandbox allow-scripts", name
         assert h["X-Content-Type-Options"] == "nosniff"
-    plain = ro.serve_headers("data.csv")
-    assert "Content-Security-Policy" not in plain
-    assert plain["X-Content-Type-Options"] == "nosniff"
+
+
+def test_only_inert_types_go_unsandboxed():
+    for name in ("plot.png", "p.JPG", "a.gif", "a.webp", "a.bmp", "paper.pdf"):
+        h = ro.serve_headers(name)
+        assert "Content-Security-Policy" not in h, name
+        assert h["X-Content-Type-Options"] == "nosniff"
+
+
+def test_names_that_slipped_past_the_extension_list_are_sandboxed():
+    # Compound names Starlette types by the inner extension, XML-typed single
+    # extensions where an XHTML-namespaced script runs, and unknown names.
+    for name in (
+        "report.html.gz", "report.html.bz2", "report.html.xz", "plot.svg.gz",
+        "plot.svgz", "style.xsl", "graph.rdf", "page.xht", "page.xhtml",
+        "page.shtml", "feed.rss", "noext", "x.weird",
+    ):
+        h = ro.serve_headers(name)
+        assert h["Content-Security-Policy"] == "sandbox allow-scripts", name
+
+
+def test_compressed_files_are_served_as_bytes_not_their_inner_type():
+    assert ro.serve_media_type("report.html.gz") == "application/octet-stream"
+    assert ro.serve_media_type("plot.svg.gz") == "application/octet-stream"
+    assert ro.serve_media_type("plot.png") == "image/png"
+    assert ro.serve_media_type("noext") == "text/plain"
 
 
 def test_output_endpoint_sends_the_sandbox(client, monkeypatch, tmp_path):
@@ -371,3 +394,40 @@ def test_output_endpoint_sends_the_sandbox(client, monkeypatch, tmp_path):
     assert res.status_code == 200
     assert res.headers["content-security-policy"] == "sandbox allow-scripts"
     assert res.headers["x-content-type-options"] == "nosniff"
+
+
+def test_output_endpoint_sandboxes_a_compressed_page(client, monkeypatch, tmp_path):
+    import routers.workflows as wf
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "report.html.gz").write_text("<script>fetch('/api/x')</script>")
+
+    async def _resolve(run_id):
+        return str(tmp_path)
+
+    monkeypatch.setattr(wf, "_resolve_run_dir", _resolve)
+    monkeypatch.setattr(ro, "resolve_output_dir", lambda *a, **k: (str(out), "catalog"))
+    res = client.get("/api/workflows/r1/outputs/file", params={"path": "report.html.gz"})
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("application/octet-stream")
+    assert res.headers["content-security-policy"] == "sandbox allow-scripts"
+
+
+def test_project_file_endpoint_sandboxes_xml_types(client, monkeypatch, tmp_path):
+    import routers.workflows as wf
+
+    (tmp_path / "style.xsl").write_text('<x:html xmlns:x="http://www.w3.org/1999/xhtml"><x:script>1</x:script></x:html>')
+    (tmp_path / "plot.png").write_bytes(b"\x89PNG\r\n")
+
+    async def _proj(project_id):
+        return {"project_dir": str(tmp_path)}
+
+    monkeypatch.setattr(wf, "_project_or_404", _proj)
+    url = "/api/workflows/projects/p/files/content"
+    res = client.get(url, params={"path": "style.xsl"})
+    assert res.status_code == 200
+    assert res.headers["content-security-policy"] == "sandbox allow-scripts"
+    png = client.get(url, params={"path": "plot.png"})
+    assert png.headers["content-type"] == "image/png"
+    assert "content-security-policy" not in png.headers

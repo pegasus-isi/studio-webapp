@@ -1205,6 +1205,7 @@ async def get_run_output_file(
         resolved,
         filename=os.path.basename(resolved) if download else None,
         content_disposition_type="attachment" if download else "inline",
+        media_type=run_outputs.serve_media_type(resolved),
         headers=run_outputs.serve_headers(resolved),
     )
 
@@ -1233,7 +1234,11 @@ def _too_large_or_head(resolved: str, download: bool, head: bool):
         return Response(
             content=run_outputs.read_head(resolved),
             media_type="text/plain; charset=utf-8",
-            headers={"X-Preview-Partial": "1", "X-File-Size": str(size)},
+            headers={
+                "X-Preview-Partial": "1", "X-File-Size": str(size),
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "sandbox allow-scripts",
+            },
         )
     raise HTTPException(
         status_code=413,
@@ -1267,6 +1272,7 @@ def _serve_file(base: str | None, path: str, download: bool, head: bool = False)
         resolved,
         filename=os.path.basename(resolved) if download else None,
         content_disposition_type="attachment" if download else "inline",
+        media_type=run_outputs.serve_media_type(resolved),
         headers=run_outputs.serve_headers(resolved),
     )
 
