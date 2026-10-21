@@ -89,6 +89,28 @@ def _migrate_legacy_db(new_path: str) -> bool:
     log.info("db_migrated", src=_LEGACY_DB_PATH, dst=new_path)
     return True
 
+
+def _make_private_dir(path: str) -> None:
+    """Create the DB directory 0700. It holds settings, chat history and the
+    saved LLM keys (encrypted only when STUDIO_SECRET_KEY is set), and homes
+    are 0755, so a default-mode directory is readable by every account that
+    mounts the home."""
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+
+
+def _make_private_files(db_path: str) -> None:
+    """0600 on the DB and its -wal/-shm (SQLite gives those the DB's mode)."""
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.chmod(db_path + suffix, 0o600)
+        except OSError:
+            pass
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tool_installations (
     tool_id         TEXT PRIMARY KEY,
@@ -278,7 +300,7 @@ class Database:
         self._db: aiosqlite.Connection | None = None
 
     async def connect(self) -> None:
-        os.makedirs(os.path.dirname(self._path), exist_ok=True)
+        _make_private_dir(os.path.dirname(self._path))
         _migrate_legacy_db(self._path)
         last_err: Exception | None = None
         for attempt in range(1, _CONNECT_ATTEMPTS + 1):
@@ -291,6 +313,7 @@ class Database:
                 await self._db.executescript(_SCHEMA)
                 await self._migrate()
                 await self._db.commit()
+                _make_private_files(self._path)
                 log.info("database_connected", path=self._path)
                 return
             except Exception as e:  # noqa: BLE001 — retry any connect/migrate error

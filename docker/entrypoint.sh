@@ -609,6 +609,34 @@ if ! grep -qs '^pegasus\.catalog\.site\.repo\.file' "${PEGASUSRC}"; then
     chmod 600 "${PEGASUSRC}" 2>/dev/null || true
 fi
 
+# ---- Private state ----
+# Homes are created 0755 and the umask is 022, so every file Studio and the AI
+# tools write is readable by any other account that can reach the home: other
+# users' local-universe jobs on the access point, which mounts every home. That
+# includes the saved LLM keys (opencode.json, codex config.toml, crush.json),
+# the settings DB, and the chat engines' session stores. New writes are made
+# 0600 by the adapters and db.py; this pass fixes what existing homes already
+# have, on every start, so nobody has to remember to.
+#
+# Directories, not files: a 0700 directory protects whatever is written into
+# it later, whatever mode the writer picked. Symlinks are skipped so this
+# never chmods something outside the home.
+for _priv in "${STUDIO_DIR}" \
+             "${HOME}/.config/opencode" "${HOME}/.config/crush" \
+             "${HOME}/.codex" "${HOME}/.claude" \
+             "${HOME}/.local/share/opencode" "${HOME}/.local/share/crush"; do
+    if [ -d "${_priv}" ] && [ ! -L "${_priv}" ]; then
+        chmod 700 "${_priv}" 2>/dev/null || true
+    fi
+done
+for _priv in "${STUDIO_DIR}"/studio.db "${STUDIO_DIR}"/studio.db-wal \
+             "${STUDIO_DIR}"/studio.db-shm "${HOME}/.pegasusrc"; do
+    if [ -f "${_priv}" ] && [ ! -L "${_priv}" ]; then
+        chmod 600 "${_priv}" 2>/dev/null || true
+    fi
+done
+unset _priv
+
 # ---- OpenCode server password ----
 # The chat panel is a client of `opencode serve` (#367), which runs on loopback
 # with the user's full file and shell authority. Basic auth is the only thing

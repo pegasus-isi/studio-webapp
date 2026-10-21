@@ -23,6 +23,7 @@ from knowledge.common import (
     remove_if_unmodified,
     remove_generated_context_file,
     rmdir_if_empty,
+    write_private,
     unlink_if_links_into,
 )
 from llm.providers import PROVIDERS, provider_type
@@ -515,16 +516,13 @@ class OpenCodeAdapter(KnowledgeAdapter):
                     record_generated_file(path)
                     log.info("opencode_config_unchanged", path=path)
                     continue
-                os.makedirs(os.path.dirname(path), exist_ok=True)
                 # Written via a temp file and renamed, because the engine reads
                 # this file at startup and the propagator that writes it runs
                 # under a hard timeout in the entrypoint. A SIGTERM between
                 # truncate and flush would otherwise leave a half-written
-                # config for a starting engine to read.
-                tmp = f"{path}.{os.getpid()}.tmp"
-                with open(tmp, "w") as f:
-                    f.write(blob)
-                os.replace(tmp, path)
+                # config for a starting engine to read. 0600: it holds the
+                # providers' API keys.
+                write_private(path, blob)
                 record_generated_file(path)
                 self.config_changed = True
                 log.info("opencode_config_written", path=path)

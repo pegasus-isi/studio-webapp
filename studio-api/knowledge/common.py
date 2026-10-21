@@ -758,6 +758,30 @@ def _sha256(path: str) -> str | None:
         return None
 
 
+
+def write_private(path: str, text: str) -> None:
+    """Write a config file that holds a credential: 0600, in a 0700 directory.
+
+    Homes are 0755 and the umask is 022, so a plain open() leaves an API key
+    readable by every account that mounts the home (on the hosted service,
+    other users' jobs on the access point). Created 0600 from the start
+    rather than chmod'd after, so there is no window, and via a temp file and
+    a rename so a reader never sees half a file.
+    """
+    directory = os.path.dirname(path)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(directory, 0o700)
+    except OSError:
+        pass
+    tmp = f"{path}.{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.chmod(tmp, 0o600)  # O_CREAT's mode does nothing if tmp already existed
+    os.replace(tmp, path)
+
+
 def record_generated_file(path: str) -> None:
     """Remember the content Studio just wrote to ``path``.
 
