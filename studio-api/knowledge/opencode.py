@@ -26,6 +26,8 @@ from knowledge.common import (
     unlink_if_links_into,
 )
 from llm.providers import PROVIDERS, provider_type
+from workspace import DATA_SUBDIR, WORKFLOWS_SUBDIR
+from workspace import workspace_root as _workspace_root
 
 log = structlog.get_logger()
 
@@ -241,6 +243,36 @@ def _looks_like_our_config(text: str) -> bool:
     return isinstance(docs, dict) and docs.get("url") == "https://gitmcp.io/pegasus-isi/pegasus"
 
 
+
+def _edit_rules() -> dict[str, str]:
+    """OpenCode `edit` rules: free under ~/workflows and ~/data, asked elsewhere.
+
+    The engine runs rooted at $HOME, so its file tools can write anywhere in
+    the home, including files that run later on their own: ~/.bashrc (every
+    Studio terminal sources it), ~/.npm-global/bin (first on PATH), and
+    ~/opencode.json, whose `permission` block OpenCode reads from the project
+    root and which Studio never rewrites, so one write there would turn the
+    bash gate off for good. Gating only bash left all of that one prompt
+    injection away. Writes where the assistant does its work stay unprompted,
+    so building a workflow doesn't ask at every file.
+
+    OpenCode (1.18.29) matches an edit against the path relative to the
+    project's worktree. $HOME is not a git repo, so the worktree is "/" and
+    ~/workflows/x is matched as "home/<user>/workflows/x"; if a home ever is a
+    repo the same file is "workflows/x". Both forms are listed. The last
+    matching rule wins, so the catch-all comes first and .git (a hook there
+    runs on the user's next commit) comes last.
+    """
+    root = os.path.realpath(_workspace_root()).strip("/")
+    rules = {"*": "ask"}
+    for sub in (WORKFLOWS_SUBDIR, DATA_SUBDIR):
+        rules[f"{sub}/*"] = "allow"
+        if root:
+            rules[f"{root}/{sub}/*"] = "allow"
+    rules["*/.git/*"] = "ask"
+    return rules
+
+
 class OpenCodeAdapter(KnowledgeAdapter):
     """Translates canonical knowledge into OpenCode's native format.
 
@@ -374,11 +406,11 @@ class OpenCodeAdapter(KnowledgeAdapter):
         # permission rules. The builtin loop implemented this itself
         # (services/chat_permissions.py, a per-turn future resolved by an
         # endpoint); OpenCode has a permission system, so the setting becomes
-        # configuration rather than a second implementation. Only bash is
-        # gated: file reads and writes inside the workspace were never gated in
-        # Studio and turning them into prompts would make the panel unusable.
+        # configuration rather than a second implementation.
         require_approval = llm_config.get("require_command_approval", True)
-        permission = {"bash": "ask" if require_approval else "allow"}
+        permission: dict[str, Any] = {"bash": "ask" if require_approval else "allow"}
+        if require_approval:
+            permission["edit"] = _edit_rules()
 
         config = {
             "$schema": "https://opencode.ai/config.json",
