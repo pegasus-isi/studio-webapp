@@ -104,7 +104,19 @@ Three things are true of this deployment that are not (yet) true of K8s:
   users' sessions on one shared compute node — so every listener has to be
   configurable (`STUDIO_ALLOC_PORTS=1`, see Runtime Architecture above) and
   the front proxy port needs its own isolation, which is what the session
-  token gate (#218, `STUDIO_AUTH_TOKEN`) is for.
+  token gate (#218, `STUDIO_AUTH_TOKEN`) is for. Behind the proxy, studio-api
+  refuses any request without the proxy-stamped `X-Studio-Internal` secret,
+  and JupyterLab requires its token. The one upstream left reachable by other
+  local users on loopback is studio-web (Next.js), deliberately (#229). It
+  serves the UI shell (HTML, JS, CSS) and nothing else: every byte of user
+  data comes from `/api`, which 403s without the secret, and the `/api` and
+  `/ws` rewrites in `next.config.ts` exist only in dev, so Next never
+  forwards a request onward. studio-web does hold the secret, because
+  `lib/server/ui-prefs.ts` calls studio-api on loopback for the app-root
+  redirect, so what a local user can learn through it is that one bit (show
+  the welcome page or not). Gating Next as well would widen `middleware.ts`
+  to every route on the K8s path, more risk than that bit is worth. If a
+  server component ever starts returning user data, gate it.
 - **The URL isn't served at the app root.** Open OnDemand's own reverse proxy
   assigns each session a path like `/node/compute-1/20153` (`STUDIO_URL_PREFIX`),
   a different shape from KubeSpawner's `/user/<name>` convention that the nginx
