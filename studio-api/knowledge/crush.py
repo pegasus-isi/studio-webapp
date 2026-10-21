@@ -25,6 +25,7 @@ from knowledge.common import (
     remove_if_unmodified,
     remove_generated_context_file,
     rmdir_if_empty,
+    write_private,
 )
 from llm.providers import PROVIDERS, provider_type
 
@@ -215,10 +216,8 @@ class CrushAdapter(KnowledgeAdapter):
 
         config_path = os.path.join(global_dir, "crush.json")
         try:
-            os.makedirs(global_dir, exist_ok=True)
-            with open(config_path, "w") as f:
-                json.dump(config, f, indent=2)
-                f.write("\n")
+            # 0600: it holds the providers' API keys.
+            write_private(config_path, json.dumps(config, indent=2) + "\n")
             record_generated_file(config_path)
             log.info(
                 "crush_config_written",

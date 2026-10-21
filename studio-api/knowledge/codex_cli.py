@@ -26,6 +26,7 @@ from knowledge.common import (
     remove_if_unmodified,
     remove_generated_context_file,
     rmdir_if_empty,
+    write_private,
     unlink_if_links_into,
 )
 from llm.providers import PROVIDERS
@@ -319,8 +320,8 @@ class CodexCLIAdapter(KnowledgeAdapter):
         )
 
         config_path = os.path.join(codex_dir, "config.toml")
-        with open(config_path, "w") as f:
-            f.write(config_toml)
+        # 0600: it holds bearer tokens (experimental_bearer_token).
+        write_private(config_path, config_toml)
         record_generated_file(config_path)
 
         log.info(
