@@ -302,6 +302,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     prune_task = asyncio.create_task(_prune_terminals())
 
+    # "Everywhere else" as the default for every workflow on the hosted
+    # deployment, in ~/.pegasusrc, so a terminal pegasus-plan keeps jobs off
+    # the annex unless the workflow opts in (services/run_placement.py).
+    try:
+        from services import run_placement, site_config
+
+        if site_config.deployment() == "hosted":
+            run_placement.ensure_default()
+    except Exception as e:  # noqa: BLE001 — never block startup
+        log.warning("placement_default_failed", error=str(e))
+
     # Chat reply ratings to the collector, if there is one (Grafana gauge).
     from services import rating_telemetry
 

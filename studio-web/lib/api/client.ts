@@ -633,8 +633,32 @@ export interface RunFlowOptions {
   site?: string;
   output_site?: string;
   force_build?: boolean;
-  /** Which machines this run's steps may use (#572). */
-  placement?: "any" | "annex" | "pool";
+  /** Which machines this workflow's steps may use, recorded in its
+   *  pegasus.properties (services/run_placement.py). */
+  placement?: Placement;
+}
+
+export type Placement = "annex" | "elsewhere";
+
+export interface PlacementState {
+  /** null when the workflow sets its own requirements (`foreign`). */
+  placement: Placement | null;
+  /** "workflow": its pegasus.properties decides; "default": everywhere else. */
+  source: "workflow" | "default";
+  foreign: string | null;
+}
+
+export async function getPlacement(projectId: string, site: string) {
+  return request<PlacementState>(
+    `/workflows/projects/${encodeURIComponent(projectId)}/placement?site=${encodeURIComponent(site)}`
+  );
+}
+
+export async function setPlacement(projectId: string, site: string, placement: Placement) {
+  return request<PlacementState>(
+    `/workflows/projects/${encodeURIComponent(projectId)}/placement`,
+    { method: "PUT", body: JSON.stringify({ site, placement }) }
+  );
 }
 
 /** The steps a workflow itself says need a GPU (#576). */
