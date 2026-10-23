@@ -90,9 +90,11 @@ class RunFlowRequest(BaseModel):
     # re-run; this is the escape hatch for when the definition changed in a way
     # mtime didn't catch.
     force_build: bool = False
-    # Which machines this run's steps may use (#572). See
-    # services/run_placement.py; applied as a pegasus-plan -D property.
-    placement: Literal["any", "annex", "pool"] = "any"
+    # Which machines this workflow's steps may use: "annex" or "elsewhere"
+    # (services/run_placement.py), recorded in the project's
+    # pegasus.properties. None leaves the workflow's setting as it is.
+    # "any"/"pool" are older clients' values and mean "elsewhere".
+    placement: Literal["annex", "elsewhere", "any", "pool"] | None = None
 
 log = structlog.get_logger()
 
@@ -481,12 +483,16 @@ async def build_project_image(
 # individually, and nothing here changes their behaviour.
 
 
-def _plan_properties(req: RunFlowRequest) -> dict[str, str]:
-    from services import annex
-    from services.run_placement import plan_properties
+def _placement(req: RunFlowRequest) -> str | None:
+    """The placement to record, on the hosted deployment only (elsewhere
+    there is no annex, and nothing to choose between)."""
+    from services import run_placement, site_config
 
+    if req.placement is None or site_config.deployment() != "hosted":
+        return None
     try:
-        return plan_properties(req.site, req.placement, annex.annex_name())
+        run_placement.requirements_key(req.site)
+        return run_placement.normalise(req.placement)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -516,13 +522,65 @@ async def start_run_flow(project_id: str, req: RunFlowRequest) -> dict:
             site=req.site,
             output_site=req.output_site,
             force_build=req.force_build,
-            plan_properties=_plan_properties(req),
+            placement=_placement(req),
         )
     except RuntimeError as e:
         # 409, not 400: the request is well-formed, the project is just busy.
         raise HTTPException(status_code=409, detail=str(e)) from e
 
     return flow.snapshot()
+
+
+class PlacementRequest(BaseModel):
+    site: str
+    placement: Literal["annex", "elsewhere", "any", "pool"]
+
+
+async def _project_dir_or_404(project_id: str) -> str:
+    projects = await discover_projects_async()
+    proj = next((p for p in projects if p["project_id"] == project_id), None)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    return proj["project_dir"]
+
+
+@router.get("/projects/{project_id}/placement")
+async def get_placement(project_id: str, site: str = Query("compute")) -> dict:
+    """Which machines this workflow's steps may use, from its
+    pegasus.properties (services/run_placement.py)."""
+    from services import run_placement, site_config
+
+    project_dir = await _project_dir_or_404(project_id)
+    if site_config.deployment() == "hosted":
+        # Idempotent: puts "everywhere else" back as the user-wide default if
+        # it is missing (a fresh home, or the old annex pin just removed).
+        try:
+            run_placement.ensure_default()
+        except OSError as e:
+            log.warning("placement_default_failed", error=str(e))
+    try:
+        return run_placement.project_placement(project_dir, site)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.put("/projects/{project_id}/placement")
+async def set_placement(project_id: str, req: PlacementRequest) -> dict:
+    """Record the choice in the workflow's pegasus.properties, so the Run
+    button and a terminal pegasus-plan agree. 409 when the workflow sets its
+    own requirements for that site, which Studio leaves alone."""
+    from services import run_placement
+
+    project_dir = await _project_dir_or_404(project_id)
+    try:
+        run_placement.requirements_key(req.site)
+        placement = run_placement.normalise(req.placement)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        return run_placement.set_project_placement(project_dir, req.site, placement)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @router.get("/projects/{project_id}/gpu-steps")

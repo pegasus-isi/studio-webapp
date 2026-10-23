@@ -418,9 +418,8 @@ def test_plan_uses_the_shared_submit_base(tmp_path, monkeypatch):
     assert SUBMIT_BASE == "submit"
 
 
-def test_plan_carries_this_runs_placement(tmp_path, monkeypatch):
-    """The Run panel's machines choice reaches pegasus-plan as a -D
-    property, before the workflow file (#572)."""
+def test_plan_carries_per_run_properties(tmp_path, monkeypatch):
+    """Per-run properties reach pegasus-plan as -D, before the workflow file."""
     seen: list[list[str]] = []
 
     async def fake_plan_capture(flow, argv, *, project_dir, mode=None):
@@ -441,3 +440,33 @@ def test_plan_carries_this_runs_placement(tmp_path, monkeypatch):
     assert flag in argv
     assert argv[-1].endswith("workflow.yml")
     assert argv.index(flag) < len(argv) - 1
+
+
+def test_placement_is_recorded_in_the_workflow_and_survives_generate(tmp_path, monkeypatch):
+    """The machines choice goes into the project's pegasus.properties, where a
+    terminal pegasus-plan reads it too, and is put back when the generator
+    rewrites that file."""
+    seen: list[list[str]] = []
+
+    async def fake_plan_capture(flow, argv, *, project_dir, mode=None):
+        seen.append(list(argv))
+        return 1, "stubbed planner"
+
+    monkeypatch.setattr(rf, "_plan_capture", fake_plan_capture)
+    project_dir = _project(
+        tmp_path,
+        "with open('workflow.yml', 'w') as fh:\n"
+        "    fh.write('pegasus: \"5.0\"\\njobs: []\\n')\n"
+        "open('pegasus.properties', 'w').write('pegasus.mode = development\\n')\n",
+    )
+    flow = _drive(project_dir, site="condorpool", placement="annex")
+
+    text = open(os.path.join(project_dir, "pegasus.properties")).read()
+    assert "pegasus.mode = development" in text
+    assert (
+        "pegasus.catalog.site.sites.condorpool.profiles.condor.requirements"
+        " = TARGET.AnnexName =?= MY.Owner"
+    ) in text
+    assert not any(a.startswith("-D") and "requirements" in a for a in seen[0])
+    lines = [e["line"] for e in flow._events if e.get("type") == "line"]
+    assert any("rewrote pegasus.properties" in l for l in lines)

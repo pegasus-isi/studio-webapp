@@ -465,6 +465,7 @@ class RunFlowManager:
         output_site: str,
         force_build: bool = False,
         plan_properties: dict[str, str] | None = None,
+        placement: str | None = None,
     ) -> RunFlow:
         """Begin a flow as a background task and return it immediately.
 
@@ -498,6 +499,7 @@ class RunFlowManager:
                 output_site=output_site,
                 force_build=force_build,
                 plan_properties=plan_properties or {},
+                placement=placement,
             )
         )
         log.info(
@@ -513,6 +515,37 @@ manager = RunFlowManager()
 # ── execution ─────────────────────────────────────────────────────────────
 
 
+def _apply_placement(
+    flow: RunFlow, project_dir: str, site: str, placement: str, *, after_generate: bool = False
+) -> None:
+    """Record this run's placement in the workflow, saying so in the log.
+
+    Never fails the run: a workflow that sets its own requirements keeps
+    them, and that is reported rather than overridden.
+    """
+    from services import run_placement as rp
+
+    try:
+        before = rp.project_placement(project_dir, site)
+        state = rp.set_project_placement(project_dir, site, placement)
+    except ValueError as e:
+        if not after_generate:
+            flow._line("plan", str(e))
+        return
+    except OSError as e:
+        flow._line("plan", f"Could not record where this workflow runs: {e}")
+        return
+    if after_generate and before["placement"] != state["placement"]:
+        flow._line(
+            "plan",
+            "The generator rewrote pegasus.properties; Studio put back "
+            "\u201cOnly my annex\u201d for this workflow.",
+        )
+    elif not after_generate:
+        where = "only your annex" if state["placement"] == rp.ANNEX else "everywhere except your annex"
+        flow._line("plan", f"Steps run on {where} (this workflow's pegasus.properties).")
+
+
 async def _execute(
     flow: RunFlow,
     *,
@@ -523,6 +556,7 @@ async def _execute(
     output_site: str,
     force_build: bool,
     plan_properties: dict[str, str] | None = None,
+    placement: str | None = None,
 ) -> None:
     """Run the stages in order, stopping at the first failure.
 
@@ -652,12 +686,20 @@ async def _execute(
             params = (await introspect_generator(project_dir)).get("params") or []
             generator_args = xs.sync_site_arg(generator_args, params, site)
 
+        # Which machines (services/run_placement.py): written into the
+        # project's pegasus.properties so a terminal pegasus-plan agrees with
+        # this run, and checked again after Generate, which may rewrite it.
+        if placement:
+            _apply_placement(flow, project_dir, site, placement)
+
         if any(s.key == "generate" for s in flow.stages):
             if not await _run_generate(
                 flow, project_dir=project_dir,
                 generator_file=generator_file or "", args=generator_args,
             ):
                 return
+            if placement:
+                _apply_placement(flow, project_dir, site, placement, after_generate=True)
 
         if any(s.key == "build" for s in flow.stages):
             if not await _run_build(

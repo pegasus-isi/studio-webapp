@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   ProjectParams,
   RunFlowSnapshot,
@@ -40,30 +40,25 @@ import { TONE_TEXT } from "@/lib/tone";
 import { useProvisioningStatus } from "@/lib/hooks/use-dashboard";
 import { useAnnexPin } from "@/components/resources/annex-pin-legacy";
 
-type Placement = "any" | "annex" | "pool";
+type Placement = api.Placement;
 
 /**
- * Which machines this run's steps may use (#572). One Pegasus site on the
- * hosted deployment is served by Studio's pool, the user's annex and, for
- * steps with a project name, the OSPool. The choice is sent with this run
- * and applied as pegasus-plan -D properties; nothing is saved, so nothing
- * can be left on (services/run_placement.py).
+ * Which machines this workflow's steps may use. One Pegasus site on the
+ * hosted deployment is served by Studio's pool, the OSPool (for steps with a
+ * project name) and the user's annex. The choice is per workflow and lives
+ * in its pegasus.properties, so a pegasus-plan from a terminal does the same
+ * as Run (services/run_placement.py). Saved as soon as it is clicked.
  */
 const PLACEMENTS: { value: Placement; label: string; detail: string }[] = [
   {
-    value: "any",
-    label: "Wherever is free first",
-    detail: "Studio's pool or your annex, whichever has room. The usual choice.",
+    value: "elsewhere",
+    label: "Everywhere else",
+    detail: "Studio's pool and the OSPool. Never your annex.",
   },
   {
     value: "annex",
     label: "Only my annex",
     detail: "Your nodes on your own cluster. Steps wait until they join: start the run, then the nodes.",
-  },
-  {
-    value: "pool",
-    label: "Only Studio's pool",
-    detail: "Never your annex, even when it is up.",
   },
 ];
 
@@ -160,7 +155,6 @@ export function RunFlowPanel({
   embedded = false,
 }: Props) {
   const [flow, setFlow] = useState<RunFlowSnapshot | null>(null);
-  const [placement, setPlacement] = useState<Placement>("any");
   const provisioning = useProvisioningStatus().data;
   const hosted = provisioning?.deployment === "hosted";
   const annexName = provisioning?.annex?.name ?? "";
@@ -225,6 +219,32 @@ export function RunFlowPanel({
   const primarySites = useMemo(() => sites.filter((s) => !s.advanced), [sites]);
   const advancedSites = useMemo(() => sites.filter((s) => s.advanced), [sites]);
   const chosenSite = String(values["site"] ?? defaultSite);
+  // The workflow's own choice, from its pegasus.properties.
+  const qc = useQueryClient();
+  const placementKey = ["placement", projectId, chosenSite];
+  const placementQuery = useQuery({
+    queryKey: placementKey,
+    queryFn: () => api.getPlacement(projectId, chosenSite),
+    enabled: hosted && !!chosenSite,
+    staleTime: 10_000,
+  });
+  const placementState = placementQuery.data;
+  const placement: Placement = placementState?.placement ?? "elsewhere";
+  const placementForeign = placementState?.foreign ?? null;
+  const savePlacement = useMutation({
+    mutationFn: (p: Placement) => api.setPlacement(projectId, chosenSite, p),
+    onMutate: (p: Placement) => {
+      const prev = qc.getQueryData<api.PlacementState>(placementKey);
+      qc.setQueryData<api.PlacementState>(placementKey, {
+        placement: p, source: p === "annex" ? "workflow" : "default", foreign: null,
+      });
+      return { prev };
+    },
+    onError: (_e, _p, ctx) => {
+      if (ctx?.prev) qc.setQueryData(placementKey, ctx.prev);
+    },
+    onSuccess: (fresh) => qc.setQueryData(placementKey, fresh),
+  });
   const chosenIsAdvanced = advancedSites.some((s) => s.value === chosenSite);
   // A cluster whose catalog wants allocation details that are not set is
   // shown, so the user sees what they chose on Resources, but cannot be run
@@ -354,10 +374,12 @@ export function RunFlowPanel({
     const siteLabel =
       sites.find((s) => s.value === site)?.label ?? site;
     rows.push({ label: "Where it runs", value: siteLabel });
-    if (hosted && placement !== "any") {
+    if (hosted) {
       rows.push({
         label: "Machines",
-        value: PLACEMENTS.find((x) => x.value === placement)?.label ?? placement,
+        value: placementForeign
+          ? "set by the workflow"
+          : PLACEMENTS.find((x) => x.value === placement)?.label ?? placement,
       });
     }
     if (gpuSteps.length > 0) {
@@ -380,7 +402,7 @@ export function RunFlowPanel({
       rows.push({ label: paramLabel(p), value: current });
     }
     return rows;
-  }, [primaryParams, values, sites, defaultSite, hosted, placement, gpuSteps]);
+  }, [primaryParams, values, sites, defaultSite, hosted, placement, placementForeign, gpuSteps]);
 
   // ── attach to the server-side flow ──────────────────────────────────────
 
@@ -490,7 +512,7 @@ export function RunFlowPanel({
         args: buildArgs(allGenParams, values),
         site: String(values["site"] ?? defaultSite),
         output_site: String(values["output_site"] ?? "local"),
-        ...(hosted ? { placement } : {}),
+        ...(hosted && !placementForeign ? { placement } : {}),
       });
       setFlow(snapshot);
       attach();
@@ -656,17 +678,18 @@ export function RunFlowPanel({
           {hosted && (
             <div className="mt-4">
               <p className="text-xs font-medium text-fg">On which machines</p>
-              <div role="radiogroup" aria-label="On which machines" className="mt-1.5 grid gap-1.5 sm:grid-cols-3">
+              <div role="radiogroup" aria-label="On which machines" className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
                 {PLACEMENTS.map((p) => (
                   <button
                     key={p.value}
                     type="button"
                     role="radio"
-                    aria-checked={placement === p.value}
-                    onClick={() => setPlacement(p.value)}
+                    aria-checked={!placementForeign && placement === p.value}
+                    disabled={!!placementForeign || savePlacement.isPending}
+                    onClick={() => savePlacement.mutate(p.value)}
                     className={cn(
                       "rounded-xl border bg-surface p-2.5 text-left transition-colors",
-                      placement === p.value
+                      !placementForeign && placement === p.value
                         ? "border-pegasus-500 ring-1 ring-pegasus-500"
                         : "border-line hover:border-pegasus-300"
                     )}
@@ -676,7 +699,25 @@ export function RunFlowPanel({
                   </button>
                 ))}
               </div>
-              {placement === "annex" && !provisioning?.annex?.established && (
+              {placementForeign && (
+                <p className="mt-1.5 text-xs text-fgmuted">
+                  This workflow&apos;s pegasus.properties chooses its machines itself (
+                  <code className="font-mono">{placementForeign}</code>), so Studio leaves it alone.
+                </p>
+              )}
+              {!placementForeign && (
+                <p className="mt-1.5 text-xs text-fgmuted">
+                  {placementState?.source === "workflow"
+                    ? "Saved in this workflow\u2019s pegasus.properties, so running it from a terminal does the same."
+                    : "The default for every workflow. Choosing \u201cOnly my annex\u201d saves it in this workflow\u2019s pegasus.properties."}
+                </p>
+              )}
+              {savePlacement.error && (
+                <p className="mt-1.5 text-xs text-rose-600 dark:text-rose-400">
+                  Couldn&apos;t save: {(savePlacement.error as Error).message}
+                </p>
+              )}
+              {placement === "annex" && !placementForeign && !provisioning?.annex?.established && (
                 <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
                   No annex is up yet. Set one up under{" "}
                   <AppLink href="/provisioning#compute" className="underline">
@@ -685,12 +726,18 @@ export function RunFlowPanel({
                   once this run is waiting.
                 </p>
               )}
-              {legacyPin.ready && legacyPin.on && (
+              {legacyPin.ready && legacyPin.on && placement === "elsewhere" && placementState?.source === "default" && (
                 <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
-                  An older setting still sends every run to your annex only, whatever you pick here.{" "}
+                  An older setting in ~/.pegasusrc sends every workflow that doesn\u2019t choose to your annex only, so \u201cEverywhere else\u201d isn\u2019t true here yet.{" "}
                   <button
                     type="button"
-                    onClick={() => legacyPin.set(false)}
+                    onClick={() =>
+                      legacyPin.set(false, {
+                        // The default row takes the old pin's place (the
+                        // placement GET writes it when it is missing).
+                        onSuccess: () => qc.invalidateQueries({ queryKey: ["placement", projectId] }),
+                      })
+                    }
                     disabled={legacyPin.saving}
                     className="font-medium underline disabled:opacity-50"
                   >
