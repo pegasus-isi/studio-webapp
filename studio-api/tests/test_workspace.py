@@ -179,10 +179,43 @@ def test_the_chat_file_tools_refuse_one_too(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="credentials"):
         chat._safe_path(os.path.join(root, ".ssh", "id_rsa"))
 
+    # Only the knowledge root is exempt from the protected .local tree.
+    with pytest.raises(ValueError, match="credentials"):
+        chat._safe_path(".local/share/opencode/auth.json")
+
     # Still the ordinary case, unchanged.
     assert chat._safe_path("workflows/a/workflow_generator.py") == os.path.join(
         root, "workflows", "a", "workflow_generator.py"
     )
+    assert chat._safe_path(
+        "workflows/a/workflow_generator.py", write=True
+    ) == os.path.join(root, "workflows", "a", "workflow_generator.py")
+
+
+def test_chat_file_tools_can_read_but_not_write_the_knowledge_tree(
+    monkeypatch, tmp_path
+):
+    """Skills need their references and templates, but the checkout is not the
+    user's workspace: reads are allowed, writes are not."""
+    from routers import chat
+
+    root = os.path.realpath(str(tmp_path / "home"))
+    os.makedirs(root)
+    monkeypatch.setattr(chat, "WORKSPACE_ROOT", root)
+
+    knowledge = os.path.join(
+        root, ".local", "share", "pegasus-ai", "marketplace",
+        "plugins", "pegasus-ai",
+    )
+    os.makedirs(os.path.join(knowledge, "references"))
+    guide = os.path.join(knowledge, "references", "PEGASUS.md")
+    with open(guide, "w") as f:
+        f.write("# guide\n")
+    monkeypatch.setenv("KNOWLEDGE_ROOT", knowledge)
+
+    assert chat._safe_path(guide) == guide
+    with pytest.raises(ValueError, match="read-only"):
+        chat._safe_path(guide, write=True)
 
 
 def test_config_left_in_the_old_workspace_is_still_pruned(tmp_path, monkeypatch):

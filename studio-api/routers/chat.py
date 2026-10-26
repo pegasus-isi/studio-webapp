@@ -27,6 +27,7 @@ log = structlog.get_logger()
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 from knowledge import layout
+from knowledge.common import build_paths_appendix
 
 # Active streaming clients tracked by request_id
 _active_clients: dict[str, httpx.AsyncClient] = {}
@@ -382,8 +383,13 @@ _CMD_TIMEOUT = 300
 
 # --- Tool execution ---
 
-def _safe_path(path: str) -> str:
-    """Resolve and validate path inside workspace."""
+def _safe_path(path: str, *, write: bool = False) -> str:
+    """Resolve and validate a path for the chat file tools.
+
+    Reads are allowed in the workspace and in the read-only Pegasus knowledge
+    tree (skills, references, templates). Writes are workspace-only. Credential
+    directories are never readable or writable.
+    """
     if not path:
         return WORKSPACE_ROOT
     p = path.strip()
@@ -391,12 +397,24 @@ def _safe_path(path: str) -> str:
         path = os.path.join(WORKSPACE_ROOT, p)
     resolved = os.path.realpath(os.path.expanduser(path))
     root = os.path.realpath(WORKSPACE_ROOT)
-    if not resolved.startswith(root + os.sep) and resolved != root:
+    knowledge = os.path.realpath(layout.knowledge_root())
+
+    in_workspace = resolved == root or resolved.startswith(root + os.sep)
+    in_knowledge = resolved == knowledge or resolved.startswith(knowledge + os.sep)
+
+    if in_knowledge:
+        if write:
+            raise ValueError("Access denied: the Pegasus knowledge tree is read-only")
+        return resolved
+
+    if not in_workspace:
         raise ValueError(f"Access denied: path must be inside {WORKSPACE_ROOT}")
+
     if is_protected(resolved, root):
         # Reading is denied as well as writing: an assistant that can read the
         # Condor token or the settings DB can put either in a message.
         raise ValueError("Access denied: that directory holds credentials")
+
     return resolved
 
 
@@ -417,7 +435,7 @@ async def _execute_tool(
 
     try:
         if name == "write_file":
-            path = _safe_path(arguments["path"])
+            path = _safe_path(arguments["path"], write=True)
             content = arguments["content"]
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
@@ -441,7 +459,7 @@ async def _execute_tool(
             return "\n".join(result) if result else "(empty directory)"
 
         elif name == "create_directory":
-            path = _safe_path(arguments["path"])
+            path = _safe_path(arguments["path"], write=True)
             os.makedirs(path, exist_ok=True)
             return f"Created directory: {path}"
 
@@ -564,10 +582,26 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
     if shared:
         parts.append(shared)
 
+    # File tools may read the knowledge tree, so name it. Writes remain
+    # workspace-only in _safe_path.
+    paths = build_paths_appendix()
+    if paths:
+        parts.append(paths)
+
     parts.append(
         "\n\n## Tool Use Instructions\n\n"
-        "You have access to tools for file operations and shell commands. "
-        "Use them to help the user create, run, and debug Pegasus workflows.\n\n"
+        "You have access to the tools listed in your tool definitions. Use "
+        "them to help the user create, modify, and debug Pegasus workflows. "
+        "Do not invent tool names; if a tool is not listed, it is not "
+        "available.\n\n"
+        "File tools can read and write the user's visible workspace "
+        "(workflows/, data/, and visible files under HOME). They may also read "
+        "the Pegasus knowledge tree named in the context, but must never write "
+        "to it. Credential directories are off limits.\n\n"
+        "Do not run or submit a workflow unless the user explicitly asks you "
+        "to in this turn. `pegasus-plan` without `--submit` is validation and "
+        "is allowed; `--submit`, `pegasus-run`, and `plan_submit()` are "
+        "submissions. The 'Confirm shell commands' approval still applies.\n\n"
         "For workflow questions, prefer the structured Pegasus tools over "
         "shelling out: list_workflow_projects, list_workflow_runs, "
         "get_run_status, get_run_jobs, diagnose_run (the right first call for "

@@ -611,6 +611,33 @@ def test_chat_system_prompt_uses_the_resolved_tree(monkeypatch, tmp_path):
     assert "PERSONA BODY" in prompt
     # And it says not to emit a tool-call object, which is what went wrong.
     assert "no interactive question tool" in prompt
+    # The knowledge tree is named for read-only access.
+    assert "## Where the Pegasus knowledge base lives" in prompt
+    assert str(root / "references" / "PEGASUS.md") in prompt
+    assert "Do not invent tool names" in prompt
+    assert "Do not run or submit" in prompt
+    assert "must never write" in prompt
+
+
+def test_slash_command_injects_skill_body(monkeypatch, tmp_path):
+    """SKILL.md is read on demand, which is why the system prompt does not need
+    to carry the skills list."""
+    from routers.chat import _process_slash_command
+
+    root = tmp_path / "checkout"
+    skill = root / "skills" / "pegasus-help"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: pegasus-help\ndescription: Help\n---\nBODY TEXT\n"
+    )
+    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
+
+    message, skill_name = _process_slash_command("/pegasus-help show me")
+
+    assert skill_name == "pegasus-help"
+    assert "[Using /pegasus-help skill]" in message
+    assert "BODY TEXT" in message
+    assert "User request: show me" in message
 
 
 def test_declared_deliverables_reach_the_always_on_context(monkeypatch, tmp_path):

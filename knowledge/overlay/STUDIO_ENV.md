@@ -144,11 +144,52 @@ The Studio-specific part is only *where* to verify:
 ls -R $HOME/workflows/<workflow-name>
 ```
 
+## Editing an existing workflow
+
+Before changing anything, identify the project's source of truth and its
+generated outputs. In a scaffolded project the generator (usually
+`workflow_generator.py`) is the source; `workflow.yml`, catalogs, and `submit/`
+are generated. If there is no generator, the hand-maintained workflow
+definition is the source. Change the source, regenerate anything produced from
+it, and never patch a generated file as the fix.
+
+A parameter or step change is a cross-cutting change. Search the project for
+the old name, flag, key, or call site, then update every place that produces,
+consumes, or documents it. That normally includes:
+
+- the workflow definition or generator, including its argument definitions;
+- every wrapper or script that receives the argument;
+- any project config or parameter file that supplies the value;
+- manual/test scripts and docs that show the old invocation;
+- notebooks, container definitions, or dependency files only if the change
+  reaches them.
+
+Do not assume a fixed file list. Use the project's actual structure and let the
+search results decide what must change.
+
+Keep interfaces consistent. If a wrapper's CLI changes, update every caller —
+especially the generator's argument list — in the same turn. Do not add
+`parse_known_args`, `**kwargs`, or an "allow old arguments" shim to hide a
+mismatch; that leaves the new option unused and the old flag silently ignored.
+A transformation or job definition that names a wrapper is not evidence that
+the wrapper receives the new arguments; check the argument list and the
+wrapper's parser.
+
+For large files, read in chunks and make targeted edits; do not rewrite a large
+file from a truncated read.
+
+Verify from the source of truth: run the generator's `--help`, compile or
+syntax-check changed scripts, exercise the manual/test path or a small input
+inside the image, regenerate, and plan without `--submit`. Search again for the
+old flag/key to confirm no source file still uses it. Report the files you
+changed and what you verified. Do not submit unless the user explicitly asks.
+
 ## Planning and running here
 
 **Prefer the user's Run button.** On the Analyses page, **Run** generates,
 builds the image if it is stale, plans and submits — and it does three things a
-hand-typed `pegasus-plan` does not:
+hand-typed `pegasus-plan` does not. The chat does not press Run for the user;
+tell them to use it.
 
 - sets the generator's `-e/--execution-site-name` to the site chosen under
   "Where it runs". The generator registers every transformation on that site,
@@ -160,7 +201,7 @@ hand-typed `pegasus-plan` does not:
 - checks the site exists before planning, instead of failing halfway through.
 
 When you plan from a terminal yourself — to test a fix, or to check a workflow
-you just wrote before reporting it done — do the same by hand, from the
+you just wrote before reporting it done — plan it without submitting, from the
 project directory. **Every plan you make uses this site, including a quick
 validation plan.** Not `condorpool` by habit: on a cluster whose site
 catalog defines `compute` (a Slurm partition, say), `condorpool` may have no
@@ -171,14 +212,23 @@ make, and a submitted one sits idle forever.
 SITE=$(grep -qs '^pegasus\.catalog\.site\.repo\.file' ~/.pegasusrc && echo compute || echo condorpool)
 python3 workflow_generator.py -e "$SITE" [workflow options]
 pegasus-plan --dir submit -s "$SITE" -o local \
-    --output-dir "$PWD/output" --submit "$PWD/workflow.yml"
+    --output-dir "$PWD/output" "$PWD/workflow.yml"
 ```
+
+That plan is validation: it writes a plan and submits nothing. Never add
+`--submit`, and never run `pegasus-run` or `plan_submit()`, unless the user
+explicitly asks you to run or submit this workflow in this turn. If they do,
+use the same command with `--submit` (or plan first, then
+`pegasus-run <run-dir>`); the "Confirm shell commands" approval still applies.
+If the portable guide shows `--submit` or `plan_submit()`, that is API
+documentation, not an instruction to submit here.
 
 The site is `compute` whenever `~/.pegasusrc` names a site catalog — Studio's
 own pool and every published cluster catalog call their site that — and
 Pegasus's built-in `condorpool` only when none is named. Whatever it is, use
 the **same** name for `-e` and `-s`, and when you report a plan to the user,
-say which site it was for and that it is the one their Run will use.
+say which site it was for, that it is planned rather than running, and that it
+is the one their Run will use.
 
 **Clusters and allocations are the user's choice, made once, on the Resources
 page** ("Where your workflows run"): a hosted site catalog and the allocation
@@ -332,8 +382,4 @@ with `apptainer inspect <sif>` before referencing it from a workflow.
 
 ## Tooling available here
 
-- **MCP servers**: `pegasus-docs` (Pegasus WMS documentation and source) and
-  `kiso-docs` (Kiso experiment configuration and deployment). Use them to look up
-  API details, configuration properties and catalog formats rather than guessing.
 - **Pegasus, HTCondor and Apptainer** are installed and on `PATH`.
-- Skills and specialist subagents are listed below; invoke them by name.
