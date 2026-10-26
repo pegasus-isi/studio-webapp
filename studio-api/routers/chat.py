@@ -202,7 +202,7 @@ def _transport_error_message(
     )
 
 # Context-window management. The frontend re-sends the whole conversation each
-# turn, and tool results (especially read_file, up to 100KB) can be large. Bound
+# turn, and tool results (read_file chunks, search output) can be large. Bound
 # both so a long session doesn't blow past the model's context and 400.
 _MAX_HISTORY_MESSAGES = 40         # most-recent turns fed back to the model
 _MAX_TOOL_RESULT_CHARS = 16000     # per tool result fed back to the model
@@ -302,14 +302,112 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "read_file",
-            "description": "Read a file from the workspace (max 100KB).",
+            "name": "edit_file",
+            "description": (
+                "Replace an exact string in a workspace file. Fails if "
+                "old_string is missing or matches more than once unless "
+                "replace_all is true. Read the file first."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File path relative to the workspace root"},
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to the workspace root",
+                    },
+                    "old_string": {
+                        "type": "string",
+                        "description": "Exact text to replace, including whitespace",
+                    },
+                    "new_string": {
+                        "type": "string",
+                        "description": "Replacement text",
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "Replace every occurrence (default false)",
+                    },
+                },
+                "required": ["path", "old_string", "new_string"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": (
+                "Read a chunk of a text file. Use offset/limit for large "
+                "files; the result starts with the line range and total "
+                "line count."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "File path relative to the workspace root, or an "
+                            "absolute path inside it or the read-only "
+                            "knowledge tree"
+                        ),
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "1-based line to start at (default 1)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum lines to return (default 2000, max 2000)"
+                        ),
+                    },
                 },
                 "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search",
+            "description": (
+                "Search files for a literal string or regular expression. "
+                "Returns matching path:line:text entries, capped at "
+                "max_results."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Text or regular expression to find",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "File or directory to search, relative to the "
+                            "workspace root (default: workspace root)"
+                        ),
+                    },
+                    "regex": {
+                        "type": "boolean",
+                        "description": (
+                            "Treat query as a regular expression (default false)"
+                        ),
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "Match case exactly (default false)",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum matches to return (default 50, max 200)"
+                        ),
+                    },
+                },
+                "required": ["query"],
             },
         },
     },
@@ -376,7 +474,21 @@ TOOL_DEFINITIONS_ANTHROPIC = [
 
 WORKSPACE_ROOT = workspace_root()
 
-_MAX_READ_BYTES = 100 * 1024
+_MAX_READ_LINES = 2000
+_MAX_READ_CHUNK_CHARS = 12000
+_MAX_READ_FILE_BYTES = 10 * 1024 * 1024
+
+_DEFAULT_SEARCH_RESULTS = 50
+_MAX_SEARCH_RESULTS = 200
+_MAX_SEARCH_OUTPUT_CHARS = 12000
+_MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024
+_MAX_SEARCH_LINE_CHARS = 300
+_SEARCH_SKIP_DIRS = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv",
+    ".mypy_cache", ".pytest_cache", ".cache", ".conda", ".npm",
+    ".cargo", ".rustup", ".Trash",
+}
+
 _MAX_OUTPUT_BYTES = 8 * 1024
 _CMD_TIMEOUT = 300
 
@@ -418,6 +530,21 @@ def _safe_path(path: str, *, write: bool = False) -> str:
     return resolved
 
 
+def _display_path(path: str) -> str:
+    """Workspace-relative when possible, absolute for the knowledge tree."""
+    rel = os.path.relpath(path, WORKSPACE_ROOT)
+    return path if rel.startswith(".." + os.sep) else rel
+
+
+def _searchable(path: str) -> bool:
+    """Use the same rules as the file tools: workspace or read-only knowledge."""
+    try:
+        _safe_path(path)
+    except ValueError:
+        return False
+    return True
+
+
 async def _execute_tool(
     name: str,
     arguments: dict[str, Any],
@@ -442,10 +569,228 @@ async def _execute_tool(
                 f.write(content)
             return f"Wrote {len(content)} bytes to {path}"
 
+        elif name == "edit_file":
+            path = _safe_path(arguments["path"], write=True)
+            if not os.path.isfile(path):
+                return f"Error: not a file: {_display_path(path)}"
+
+            old = arguments["old_string"]
+            new = arguments["new_string"]
+            if old == "":
+                return "Error: old_string must not be empty"
+            if old == new:
+                return "Error: old_string and new_string are identical"
+
+            replace_all = bool(arguments.get("replace_all", False))
+
+            with open(path, "rb") as probe:
+                if b"\x00" in probe.read(4096):
+                    return "Error: not a text file"
+
+            with open(path, "r", encoding="utf-8", newline="") as f:
+                text = f.read()
+
+            count = text.count(old)
+            if count == 0:
+                return (
+                    "Error: old_string was not found; read the file again and "
+                    "use the exact text"
+                )
+            if count > 1 and not replace_all:
+                return (
+                    f"Error: old_string occurs {count} times; add more context "
+                    "or set replace_all to true"
+                )
+
+            updated = text.replace(old, new, -1 if replace_all else 1)
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(updated)
+
+            replaced = count if replace_all else 1
+            return f"Replaced {replaced} occurrence(s) in {_display_path(path)}"
+
         elif name == "read_file":
             path = _safe_path(arguments["path"])
-            with open(path) as f:
-                return f.read(_MAX_READ_BYTES)
+            if not os.path.isfile(path):
+                return f"Error: not a file: {_display_path(path)}"
+            if os.path.getsize(path) > _MAX_READ_FILE_BYTES:
+                return (
+                    f"Error: file is larger than {_MAX_READ_FILE_BYTES} bytes; "
+                    "use search to locate the relevant section"
+                )
+
+            try:
+                with open(path, "rb") as probe:
+                    if b"\x00" in probe.read(4096):
+                        return "Error: not a text file"
+                offset = int(arguments.get("offset", 1))
+                limit = int(arguments.get("limit", _MAX_READ_LINES))
+            except (TypeError, ValueError):
+                return "Error: offset and limit must be integers"
+
+            if offset < 1:
+                return "Error: offset must be >= 1"
+            if limit < 1:
+                return "Error: limit must be >= 1"
+            limit = min(limit, _MAX_READ_LINES)
+
+            with open(
+                path, "r", encoding="utf-8", errors="replace", newline=""
+            ) as f:
+                lines = f.readlines()
+            total = len(lines)
+
+            if total == 0:
+                return f"[file: {_display_path(path)}; empty]"
+            if offset > total:
+                return (
+                    f"Error: offset {offset} is beyond end of file "
+                    f"({total} lines)"
+                )
+
+            selected = lines[offset - 1:offset - 1 + limit]
+            kept: list[str] = []
+            used = 0
+            for line in selected:
+                if kept and used + len(line) > _MAX_READ_CHUNK_CHARS:
+                    break
+                kept.append(line[:_MAX_READ_CHUNK_CHARS])
+                used += len(kept[-1])
+                if len(line) > _MAX_READ_CHUNK_CHARS:
+                    break
+
+            end = offset + len(kept) - 1
+            header = (
+                f"[file: {_display_path(path)}; lines {offset}-{end} "
+                f"of {total}]"
+            )
+            if end < offset + limit - 1 and end < total:
+                header += (
+                    f"\n[... chunk capped at {_MAX_READ_CHUNK_CHARS} chars ...]"
+                )
+            if end < total:
+                header += f"\n[... use offset={end + 1} to continue ...]"
+
+            return f"{header}\n{''.join(kept)}"
+
+        elif name == "search":
+            query = arguments["query"]
+            if not query:
+                return "Error: search query must not be empty"
+
+            try:
+                max_results = int(
+                    arguments.get("max_results", _DEFAULT_SEARCH_RESULTS)
+                )
+            except (TypeError, ValueError):
+                return "Error: max_results must be an integer"
+            max_results = max(1, min(max_results, _MAX_SEARCH_RESULTS))
+
+            start = _safe_path(arguments.get("path", ""))
+            if os.path.isfile(start):
+                candidates = [start]
+            elif os.path.isdir(start):
+                candidates = []
+                for dirpath, dirnames, filenames in os.walk(start):
+                    dirnames[:] = [
+                        d for d in dirnames
+                        if d not in _SEARCH_SKIP_DIRS
+                        and _searchable(os.path.join(dirpath, d))
+                    ]
+                    for filename in filenames:
+                        full = os.path.join(dirpath, filename)
+                        if _searchable(full):
+                            candidates.append(full)
+            else:
+                return f"Error: path not found: {_display_path(start)}"
+
+            if arguments.get("regex"):
+                try:
+                    pattern = re.compile(
+                        query,
+                        0 if arguments.get("case_sensitive") else re.IGNORECASE,
+                    )
+                except re.error as e:
+                    return f"Error: invalid regular expression: {e}"
+                needle = None
+            else:
+                pattern = None
+                needle = (
+                    query
+                    if arguments.get("case_sensitive")
+                    else query.lower()
+                )
+
+            results: list[str] = []
+            used_chars = 0
+            truncated = False
+
+            for full in candidates:
+                try:
+                    if os.path.getsize(full) > _MAX_SEARCH_FILE_BYTES:
+                        continue
+                    with open(full, "rb") as probe:
+                        if b"\x00" in probe.read(4096):
+                            continue
+
+                    with open(
+                        full, "r", encoding="utf-8", errors="replace"
+                    ) as f:
+                        for lineno, line in enumerate(f, 1):
+                            if pattern is not None:
+                                matched = pattern.search(line) is not None
+                            else:
+                                hay = (
+                                    line
+                                    if arguments.get("case_sensitive")
+                                    else line.lower()
+                                )
+                                matched = needle in hay
+
+                            if not matched:
+                                continue
+
+                            snippet = line.rstrip("\r\n")
+                            if len(snippet) > _MAX_SEARCH_LINE_CHARS:
+                                snippet = (
+                                    snippet[:_MAX_SEARCH_LINE_CHARS] + "…"
+                                )
+                            entry = (
+                                f"{_display_path(full)}:{lineno}: {snippet}"
+                            )
+
+                            if (
+                                used_chars + len(entry) + 1
+                                > _MAX_SEARCH_OUTPUT_CHARS
+                            ):
+                                truncated = True
+                                break
+
+                            results.append(entry)
+                            used_chars += len(entry) + 1
+
+                            if len(results) >= max_results:
+                                truncated = True
+                                break
+                except (OSError, UnicodeError):
+                    continue
+
+                if truncated:
+                    break
+
+            if not results:
+                return (
+                    f"No matches for {query!r} under "
+                    f"{_display_path(start)}"
+                )
+
+            out = "\n".join(results)
+            if truncated:
+                out += (
+                    f"\n[... stopped after {len(results)} matches; narrow the "
+                    "search with path, regex, or more context ...]"
+                )
+            return out
 
         elif name == "list_directory":
             path = _safe_path(arguments.get("path", ""))
@@ -497,6 +842,11 @@ async def _execute_tool(
 # _safe_path, so they stay auto-approved to keep the prompt from firing on
 # every step.
 _APPROVAL_REQUIRED_TOOLS = {"run_command"}
+
+# Auto-approved read tools suppressed for one model round after a denied shell
+# verification. Approval-required tools are deliberately absent: a later
+# run_command must prompt again.
+_DENIAL_SUPPRESSED_TOOLS = {"list_directory", "read_file", "search"}
 
 
 def _permission_summary(name: str, arguments: dict[str, Any]) -> str:
@@ -598,6 +948,10 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
         "(workflows/, data/, and visible files under HOME). They may also read "
         "the Pegasus knowledge tree named in the context, but must never write "
         "to it. Credential directories are off limits.\n\n"
+        "Use search to locate a symbol, flag, or configuration key before "
+        "editing. Use read_file with offset/limit for large files, and "
+        "edit_file for exact replacements; do not rewrite a whole file from a "
+        "partial read.\n\n"
         "Do not run or submit a workflow unless the user explicitly asks you "
         "to in this turn. `pegasus-plan` without `--submit` is validation and "
         "is allowed; `--submit`, `pegasus-run`, and `plan_submit()` are "
@@ -1595,17 +1949,20 @@ async def chat_stream(request: Request) -> StreamingResponse:
                 tot_out += usage.get("output", 0) or 0
 
                 tool_calls = result.get("tool_calls", [])
-                # B: graceful-close after deny — suppress auto-approved listings
+                # B: graceful-close after deny — suppress auto-approved reads
                 if pending_deny_close:
                     orig_len = len(tool_calls)
-                    filtered = [tc for tc in tool_calls if tc.get("name") not in ("list_directory", "read_file")]
+                    filtered = [
+                        tc for tc in tool_calls
+                        if tc.get("name") not in _DENIAL_SUPPRESSED_TOOLS
+                    ]
                     if len(filtered) < orig_len:
                         for tc in tool_calls:
-                            if tc.get("name") in ("list_directory", "read_file"):
+                            if tc.get("name") in _DENIAL_SUPPRESSED_TOOLS:
                                 conv_messages.append({
                                     "role": "tool",
                                     "tool_call_id": tc["id"],
-                                    "content": "Listing skipped — verification was denied.",
+                                    "content": "Read/search skipped — verification was denied.",
                                 })
                     tool_calls = filtered
                     pending_deny_close = False
@@ -1675,7 +2032,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                             tool_results.append({
                                 "type": "tool_result",
                                 "tool_use_id": tc["id"],
-                                "content": "Shell verification was denied — do not retry shell or file listings; summarize what was written and ask if the user wants verification.",
+                                "content": "Shell verification was denied — do not retry shell or file reads; summarize what was written and ask if the user wants verification.",
                             })
                         else:
                             tool_results.append({
@@ -1722,7 +2079,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                             conv_messages.append({
                                 "role": "tool",
                                 "tool_call_id": tc["id"],
-                                "content": "Shell verification was denied — do not retry shell or file listings; summarize what was written and ask if the user wants verification.",
+                                "content": "Shell verification was denied — do not retry shell or file reads; summarize what was written and ask if the user wants verification.",
                             })
                         else:
                             conv_messages.append({

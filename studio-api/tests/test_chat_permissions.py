@@ -211,3 +211,46 @@ def test_file_tools_are_never_gated():
     events = asyncio.run(go())
     kinds = [next(iter(e)) for e in events]
     assert "permission_request" not in kinds
+
+
+def test_denial_suppression_excludes_approval_tools():
+    """A denied shell command must not remove the next approval prompt."""
+    from routers import chat
+
+    assert chat._DENIAL_SUPPRESSED_TOOLS.isdisjoint(
+        chat._APPROVAL_REQUIRED_TOOLS
+    )
+
+
+def test_gated_tool_prompts_again_after_a_denial():
+    """Denying one shell command does not disable later gated calls."""
+    import os
+
+    from routers import chat
+
+    os.makedirs(chat.WORKSPACE_ROOT, exist_ok=True)
+
+    async def go():
+        first = chat._run_tool_gated(
+            "run_command",
+            {"command": "echo first", "_call_id": "cidA"},
+            request_id="ridA",
+            require_approval=True,
+        )
+        events1 = await _drive(first, "ridA", "cidA", "deny")
+
+        second = chat._run_tool_gated(
+            "run_command",
+            {"command": "echo second", "_call_id": "cidB"},
+            request_id="ridB",
+            require_approval=True,
+        )
+        events2 = await _drive(second, "ridB", "cidB", "approve")
+        return events1, events2
+
+    events1, events2 = asyncio.run(go())
+    kinds1 = [next(iter(e)) for e in events1]
+    kinds2 = [next(iter(e)) for e in events2]
+
+    assert "permission_request" in kinds1
+    assert "permission_request" in kinds2
