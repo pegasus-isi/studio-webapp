@@ -38,6 +38,13 @@ const safeLocalStorage = {
   },
 };
 
+export type PendingApproval = {
+  id: string;
+  name: string;
+  summary: string;
+  kind?: "submit" | "command";
+};
+
 export interface ChatMsg {
   id: string;
   role: "user" | "assistant" | "system";
@@ -46,7 +53,7 @@ export interface ChatMsg {
   toolResults?: { id: string; name: string; result: string }[];
   // Shell commands awaiting the user's Approve/Deny (SEC-4). Removed once the
   // user decides; the tool_call/tool_result that follow render normally.
-  pendingApprovals?: { id: string; name: string; summary: string }[];
+  pendingApprovals?: PendingApproval[];
   // Transient turn notices (currently the tool-limit message). Live-only:
   // stripped on reload because the persisted assistant content already
   // contains the same message.
@@ -99,10 +106,7 @@ interface ChatStore {
     result: { id: string; name: string; result: string },
     convId?: string
   ) => void;
-  addPermissionRequest: (
-    req: { id: string; name: string; summary: string },
-    convId?: string
-  ) => void;
+  addPermissionRequest: (req: PendingApproval, convId?: string) => void;
   addNotice: (
     notice: { kind: string; message: string },
     convId?: string

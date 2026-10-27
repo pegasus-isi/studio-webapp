@@ -162,7 +162,11 @@ def test_gated_approval_executes():
         return await _drive(agen, "rid2", "cid2", "approve")
 
     events = asyncio.run(go())
+    permission = next(
+        e["permission_request"] for e in events if "permission_request" in e
+    )
     final = next(e["_final_result"] for e in events if "_final_result" in e)
+    assert permission["kind"] == "command"
     assert "approved-ok" in final
 
 
@@ -254,3 +258,153 @@ def test_gated_tool_prompts_again_after_a_denial():
 
     assert "permission_request" in kinds1
     assert "permission_request" in kinds2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pegasus-plan --submit workflow.yml",
+        "pegasus-plan -s compute -o local --submit wf.yml",
+        "pegasus-run /runs/run0001",
+        "python -c 'plan_submit()'",
+        "wf.plan(submit=True)",
+        "PEGASUS-RUN /runs/run0001",
+    ],
+)
+def test_submit_commands_are_flagged(command):
+    from routers import chat
+
+    assert chat._requires_submit_approval(
+        "run_command", {"command": command}
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pegasus-plan -s compute -o local wf.yml",
+        "pegasus-status -l",
+        "echo submit",
+        "grep submit README.md",
+        "pegasus-plan --no-submit wf.yml",
+        "echo pegasus-runner",
+    ],
+)
+def test_non_submit_commands_are_not_flagged(command):
+    from routers import chat
+
+    assert not chat._requires_submit_approval(
+        "run_command", {"command": command}
+    )
+
+
+def test_non_shell_tools_are_not_flagged():
+    from routers import chat
+
+    assert not chat._requires_submit_approval(
+        "write_file", {"path": "x", "content": "--submit"}
+    )
+
+
+def test_submit_command_gated_when_setting_off(monkeypatch):
+    """Turning off routine confirmation must not allow an implicit submit."""
+    from routers import chat
+
+    ran = []
+
+    async def fake_execute(name, args):
+        ran.append((name, args))
+        return "SHOULD NOT RUN"
+
+    monkeypatch.setattr(chat, "_execute_tool", fake_execute)
+
+    async def go():
+        agen = chat._run_tool_gated(
+            "run_command",
+            {
+                "command": "pegasus-plan --submit workflow.yml",
+                "_call_id": "cidSubmit",
+            },
+            request_id="ridSubmit",
+            require_approval=False,
+        )
+        return await _drive(agen, "ridSubmit", "cidSubmit", "deny")
+
+    events = asyncio.run(go())
+    kinds = [next(iter(e)) for e in events]
+    permission = next(
+        e["permission_request"] for e in events if "permission_request" in e
+    )
+
+    assert "permission_request" in kinds
+    assert permission["kind"] == "submit"
+    assert ran == []
+    final = next(e["_final_result"] for e in events if "_final_result" in e)
+    assert "denied" in final.lower()
+
+
+def test_forced_submit_approval_executes_when_approved(monkeypatch):
+    from routers import chat
+
+    ran = []
+
+    async def fake_execute(name, args, scope=None):
+        ran.append((name, args))
+        return "APPROVED"
+
+    monkeypatch.setattr(chat, "_execute_tool", fake_execute)
+
+    async def go():
+        agen = chat._run_tool_gated(
+            "run_command",
+            {"command": "pegasus-run /runs/run1", "_call_id": "cidRun"},
+            request_id="ridRun",
+            require_approval=False,
+        )
+        return await _drive(agen, "ridRun", "cidRun", "approve")
+
+    events = asyncio.run(go())
+    permission = next(
+        e["permission_request"] for e in events if "permission_request" in e
+    )
+    final = next(e["_final_result"] for e in events if "_final_result" in e)
+
+    assert permission["kind"] == "submit"
+    assert final == "APPROVED"
+    assert ran
+
+
+def test_validation_plan_still_ungated_when_setting_off(monkeypatch):
+    from routers import chat
+
+    ran = []
+
+    async def fake_execute(name, args, scope=None):
+        ran.append((name, args))
+        return "VALIDATION"
+
+    monkeypatch.setattr(chat, "_execute_tool", fake_execute)
+
+    async def go():
+        events = []
+        async for ev in chat._run_tool_gated(
+            "run_command",
+            {
+                "command": (
+                    "pegasus-plan -s compute -o local workflow.yml"
+                ),
+                "_call_id": "cidValidate",
+            },
+            request_id="ridValidate",
+            require_approval=False,
+        ):
+            events.append(ev)
+        return events
+
+    events = asyncio.run(go())
+    kinds = [next(iter(e)) for e in events]
+    final = next(e["_final_result"] for e in events if "_final_result" in e)
+
+    assert "permission_request" not in kinds
+    assert final == "VALIDATION"
+    assert ran

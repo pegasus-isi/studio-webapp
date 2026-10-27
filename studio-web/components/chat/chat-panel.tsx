@@ -1,6 +1,11 @@
 "use client";
 
-import { useChatStore, genId, type ChatMsg } from "@/lib/stores/chat-store";
+import {
+  useChatStore,
+  genId,
+  type ChatMsg,
+  type PendingApproval,
+} from "@/lib/stores/chat-store";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { useConsumeChatStream } from "@/lib/hooks/use-chat-stream";
@@ -404,11 +409,7 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
   );
 }
 
-function ApprovalCard({
-  req,
-}: {
-  req: { id: string; name: string; summary: string };
-}) {
+function ApprovalCard({ req }: { req: PendingApproval }) {
   const requestId = useChatStore((s) => s.requestId);
   const clearPermissionRequest = useChatStore((s) => s.clearPermissionRequest);
   const [busy, setBusy] = useState<null | "approve" | "deny">(null);
@@ -437,7 +438,9 @@ function ApprovalCard({
           <line x1="12" y1="9" x2="12" y2="13" />
           <line x1="12" y1="17" x2="12.01" y2="17" />
         </svg>
-        Approve shell command?
+        {req.kind === "submit"
+          ? "Approve workflow submission?"
+          : "Approve shell command?"}
       </div>
       {/* Full contrast, deliberately. This is the command you are about to
           authorise — the one string in the app that must not be rendered in a

@@ -1010,6 +1010,27 @@ _APPROVAL_REQUIRED_TOOLS = {"run_command"}
 # run_command must prompt again.
 _DENIAL_SUPPRESSED_TOOLS = {"list_directory", "read_file", "search"}
 
+_SUBMIT_COMMAND_RE = re.compile(
+    r"(?<![\w-])--submit\b"
+    r"|\bpegasus-run\b"
+    r"|\bplan_submit\s*\("
+    r"|\bsubmit\s*=\s*True\b",
+    re.IGNORECASE,
+)
+
+
+def _requires_submit_approval(name: str, arguments: dict[str, Any]) -> bool:
+    """True for a shell command that submits a Pegasus workflow.
+
+    This is a guardrail, not a sandbox: it inspects the command string, so a
+    script that submits internally is not detected.
+    """
+    if name != "run_command":
+        return False
+    return bool(
+        _SUBMIT_COMMAND_RE.search(str(arguments.get("command", "")))
+    )
+
 
 def _permission_summary(name: str, arguments: dict[str, Any]) -> str:
     """Human-readable one-liner for the approval card."""
@@ -1035,12 +1056,22 @@ async def _run_tool_gated(
     """
     from services import chat_permissions
 
-    gated = require_approval and name in _APPROVAL_REQUIRED_TOOLS
+    is_submit = _requires_submit_approval(name, arguments)
+    gated = name in _APPROVAL_REQUIRED_TOOLS and (
+        require_approval or is_submit
+    )
+    if is_submit and not require_approval:
+        log.info(
+            "chat_submit_approval_forced",
+            request_id=request_id,
+            call_id=arguments.get("_call_id", ""),
+        )
     if gated:
         yield {"permission_request": {
             "id": arguments.get("_call_id", ""),
             "name": name,
             "summary": _permission_summary(name, arguments),
+            "kind": "submit" if is_submit else "command",
         }}
         decision = await chat_permissions.await_decision(
             request_id, arguments["_call_id"]
@@ -1211,7 +1242,8 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
         "Do not run or submit a workflow unless the user explicitly asks you "
         "to in this turn. `pegasus-plan` without `--submit` is validation and "
         "is allowed; `--submit`, `pegasus-run`, and `plan_submit()` are "
-        "submissions. The 'Confirm shell commands' approval still applies.\n\n"
+        "submissions. Submit commands always require approval, even when "
+        "routine shell confirmation is off.\n\n"
         "For workflow questions, prefer the structured Pegasus tools over "
         "shelling out: list_workflow_projects, list_workflow_runs, "
         "get_run_status, get_run_jobs, diagnose_run (the right first call for "

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { useChatStore } from "@/lib/stores/chat-store";
 
-describe("chat store notices", () => {
+describe("chat store stream state", () => {
   beforeEach(() => {
     useChatStore.setState({
       conversations: [{ id: "c-test", title: "Test", createdAt: 0 }],
@@ -31,5 +31,26 @@ describe("chat store notices", () => {
         message: "Tool limit reached: stopped after 2 tool calls.",
       },
     ]);
+  });
+
+  it("keeps the submission kind on a pending approval", () => {
+    const store = useChatStore.getState();
+
+    store.addMessage({ id: "u2", role: "user", content: "run it" });
+    store.addMessage({ id: "a2", role: "assistant", content: "" });
+    store.addPermissionRequest({
+      id: "p1",
+      name: "run_command",
+      summary: "pegasus-run /runs/run1",
+      kind: "submit",
+    });
+
+    const last = useChatStore.getState().messages.at(-1);
+    expect(last?.pendingApprovals?.[0]).toEqual({
+      id: "p1",
+      name: "run_command",
+      summary: "pegasus-run /runs/run1",
+      kind: "submit",
+    });
   });
 });
