@@ -297,3 +297,128 @@ def test_chat_feedback_validation(client):
     assert client.post(
         "/api/chat/feedback", json={"message_id": 999999, "value": 1}
     ).status_code == 404
+
+
+def test_chat_stream_surfaces_tool_limit(client, monkeypatch):
+    import routers.chat as chat
+
+    async def fake_exec(name, arguments, scope=None):
+        return "ok"
+
+    async def fake_dispatch(*args, **kwargs):
+        yield {
+            "type": "result",
+            "result": {
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc1",
+                    "name": "edit_blocks",
+                    "arguments": {
+                        "edits": [{
+                            "path": "workflows/demo/config.yml",
+                            "old_string": "a",
+                            "new_string": "b",
+                        }]
+                    },
+                }],
+                "usage": {},
+            },
+        }
+
+    monkeypatch.setattr(chat, "_MAX_TOOL_ROUNDS", 2)
+    monkeypatch.setattr(chat, "_execute_tool", fake_exec)
+    monkeypatch.setattr(chat, "_openai_dispatch", fake_dispatch)
+
+    resp = client.post(
+        "/api/chat/stream",
+        json={
+            "messages": [{"role": "user", "content": "loop"}],
+            "conversation_id": "conv-limit",
+        },
+    )
+
+    assert resp.status_code == 200
+    text = resp.text
+    assert '"kind": "tool_limit"' in text
+    assert '"content": "Tool limit reached' in text
+    assert "stopped after 2 tool calls" in text.lower()
+    assert "workflows/demo/config.yml" in text
+    assert "[DONE]" in text
+
+    history = client.get(
+        "/api/chat/history?conversation_id=conv-limit"
+    ).json()["messages"]
+    assert history[-1]["role"] == "assistant"
+    assert "tool limit reached" in history[-1]["content"].lower()
+
+
+def test_tool_budget_hint_warns_and_detects_repeats(monkeypatch):
+    from collections import deque
+
+    import routers.chat as chat
+
+    monkeypatch.setattr(chat, "_MAX_TOOL_ROUNDS", 12)
+    recent = deque(maxlen=8)
+    tc = {"name": "search", "arguments": {"query": "x"}}
+
+    assert "10 rounds left" in chat._tool_budget_hint(1, tc, recent)
+    assert chat._tool_budget_hint(2, tc, recent) == ""
+    assert "repeated 3 times" in chat._tool_budget_hint(3, tc, recent)
+
+
+def test_tool_changed_paths_extracts_edit_blocks():
+    import routers.chat as chat
+
+    assert chat._tool_changed_paths({
+        "name": "edit_blocks",
+        "arguments": {"edits": [
+            {"path": "a.py"},
+            {"path": "b.yml"},
+        ]},
+    }) == ["a.py", "b.yml"]
+
+    assert chat._tool_changed_paths({
+        "name": "write_file",
+        "arguments": {"path": "c.sh"},
+    }) == ["c.sh"]
+
+
+def test_builtin_prompt_is_workflow_generic():
+    from routers import chat
+
+    prompt = chat._load_system_prompt("general")
+    assert "regex: true" in prompt
+    assert "some[-_]name" in prompt
+    assert "config key" in prompt
+    assert "command-line flag" in prompt
+    assert "changing one form does not change the others" in prompt
+
+    for forbidden in ("max_trees", "n_estimators", "train_rf"):
+        assert forbidden not in prompt
+
+
+def test_search_schema_mentions_separator_variants():
+    from routers import chat
+
+    search = next(
+        t for t in chat.TOOL_DEFINITIONS
+        if t["function"]["name"] == "search"
+    )
+    assert "[-_]" in search["function"]["description"]
+
+
+def test_overlay_is_workflow_generic():
+    from pathlib import Path
+
+    text = (
+        Path(__file__).resolve().parents[2]
+        / "knowledge"
+        / "overlay"
+        / "STUDIO_ENV.md"
+    ).read_text()
+
+    flat = " ".join(text.split())
+    assert "some[-_]name" in flat
+    assert "changing one form does not change the others" in flat
+    for forbidden in ("max_trees", "n_estimators", "train_rf"):
+        assert forbidden not in text

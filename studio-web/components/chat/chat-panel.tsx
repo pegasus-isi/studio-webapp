@@ -323,6 +323,19 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
           <ChatMarkdown content={msg.content} />
         ) : null}
 
+        {/* Transient turn notices (e.g. the tool-limit message). */}
+        {msg.notices?.map((n, i) => (
+          <div
+            key={`${n.kind}-${i}`}
+            role="status"
+            className="mt-2 rounded border border-amber-500/50 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-400"
+          >
+            <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {n.message}
+            </div>
+          </div>
+        ))}
+
         {/* Transient error for this turn (shown, but never sent to the model). */}
         {msg.error && (
           <div className="mt-2 flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1.5 text-xs text-rose-600 dark:text-rose-400">

@@ -154,8 +154,12 @@ definition is the source. Change the source, regenerate anything produced from
 it, and never patch a generated file as the fix.
 
 A parameter or step change is a cross-cutting change. Search the project for
-the old name, flag, key, or call site, then update every place that produces,
-consumes, or documents it. That normally includes:
+the old name, flag, key, call site, and every spelling of it. The same
+parameter can appear as a config key (`some_name`), a command-line flag
+(`--some-name`), and a wrapper argument (`args.some_name`). Search both
+separators with a regex such as `some[-_]name`; changing one form does not
+change the others. Then update every place that produces, consumes, or
+documents it. That normally includes:
 
 - the workflow definition or generator, including its argument definitions;
 - every wrapper or script that receives the argument;
@@ -174,6 +178,12 @@ mismatch; that leaves the new option unused and the old flag silently ignored.
 A transformation or job definition that names a wrapper is not evidence that
 the wrapper receives the new arguments; check the argument list and the
 wrapper's parser.
+
+For related changes, make one coordinated edit rather than a loop of
+locate-and-replace calls. Replace whole functions, config sections, or shell
+blocks, not individual tokens. Read the exact range before editing; a
+zero-result search is not proof that no change is needed — read the source
+range. Do not include line-number prefixes in the text you match.
 
 For large files, read in chunks and make targeted edits; do not rewrite a large
 file from a truncated read.

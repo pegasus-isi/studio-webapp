@@ -23,6 +23,7 @@ export function useConsumeChatStream() {
   const addToolCall = useChatStore((s) => s.addToolCall);
   const addToolResult = useChatStore((s) => s.addToolResult);
   const addPermissionRequest = useChatStore((s) => s.addPermissionRequest);
+  const addNotice = useChatStore((s) => s.addNotice);
   const clearPermissionRequest = useChatStore((s) => s.clearPermissionRequest);
   const setLastMeta = useChatStore((s) => s.setLastMeta);
   const setLastServerId = useChatStore((s) => s.setLastServerId);
@@ -49,7 +50,9 @@ export function useConsumeChatStream() {
 
           try {
             const event = JSON.parse(data);
-            if (event.content) {
+            if (event.notice) {
+              addNotice(event.notice, convId);
+            } else if (event.content) {
               appendToLast(event.content, convId);
             } else if (event.permission_request) {
               addPermissionRequest(event.permission_request, convId);
@@ -88,6 +91,7 @@ export function useConsumeChatStream() {
       addToolResult,
       addPermissionRequest,
       clearPermissionRequest,
+      addNotice,
       setLastMeta,
       setLastServerId,
       setLastError,

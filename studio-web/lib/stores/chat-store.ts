@@ -47,6 +47,10 @@ export interface ChatMsg {
   // Shell commands awaiting the user's Approve/Deny (SEC-4). Removed once the
   // user decides; the tool_call/tool_result that follow render normally.
   pendingApprovals?: { id: string; name: string; summary: string }[];
+  // Transient turn notices (currently the tool-limit message). Live-only:
+  // stripped on reload because the persisted assistant content already
+  // contains the same message.
+  notices?: { kind: string; message: string }[];
   // Transient error for this turn (connection/stream failure). Kept separate
   // from `content` so it's shown to the user but never re-sent to the model.
   error?: string;
@@ -97,6 +101,10 @@ interface ChatStore {
   ) => void;
   addPermissionRequest: (
     req: { id: string; name: string; summary: string },
+    convId?: string
+  ) => void;
+  addNotice: (
+    notice: { kind: string; message: string },
     convId?: string
   ) => void;
   clearPermissionRequest: (callId: string, convId?: string) => void;
@@ -257,6 +265,14 @@ export const useChatStore = create<ChatStore>()(
           }))
         ),
 
+      addNotice: (notice, convId) =>
+        set((s) =>
+          _mutateLastAssistant(s, convId, (m) => ({
+            ...m,
+            notices: [...(m.notices || []), notice],
+          }))
+        ),
+
       clearPermissionRequest: (callId, convId) =>
         set((s) => {
           const cid = convId ?? s.activeId;
@@ -402,7 +418,13 @@ export const useChatStore = create<ChatStore>()(
           // user isn't shown buttons that can't resolve anything.
           for (const cid of Object.keys(state.messagesById)) {
             state.messagesById[cid] = state.messagesById[cid].map((m) =>
-              m.pendingApprovals ? { ...m, pendingApprovals: undefined } : m
+              m.pendingApprovals || m.notices
+                ? {
+                    ...m,
+                    pendingApprovals: undefined,
+                    notices: undefined,
+                  }
+                : m
             );
           }
           state.messages = state.messagesById[state.activeId] || [];

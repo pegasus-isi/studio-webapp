@@ -11,6 +11,7 @@ import json
 import os
 import re
 import uuid
+from collections import deque
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -78,8 +79,16 @@ def _is_responses_model(model: str) -> bool:
     m = (model or "").lower().split("/")[-1]  # drop any "provider/" prefix
     return any(m.startswith(p) for p in _RESPONSES_MODEL_PREFIXES)
 
-# Max tool-calling rounds
-_MAX_TOOL_ROUNDS = 50
+def _env_positive_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+# Max tool-calling rounds. Overridable for testing and for unusually large
+# edit tasks; the default stays at 50.
+_MAX_TOOL_ROUNDS = _env_positive_int("STUDIO_CHAT_MAX_TOOL_ROUNDS", 50)
 
 # Transient transport failures (proxy connection resets, read timeouts) talking
 # to the LLM endpoint. On a long multi-round agent session an external proxy
@@ -288,12 +297,33 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write content to a file in the workspace. Creates parent directories.",
+            "description": (
+                "Write content to a file in the workspace. Creates parent "
+                "directories. For an existing file larger than the read chunk "
+                "(16 KB), set overwrite: true to replace it; otherwise use "
+                "edit_blocks or edit_file for partial changes."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File path relative to the workspace root"},
-                    "content": {"type": "string", "description": "Content to write"},
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "File path relative to the workspace root"
+                        ),
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write",
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": (
+                            "Set true only to replace an existing file larger "
+                            "than the read chunk. Partial changes should use "
+                            "edit_blocks/edit_file."
+                        ),
+                    },
                 },
                 "required": ["path", "content"],
             },
@@ -304,9 +334,11 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "edit_file",
             "description": (
-                "Replace an exact string in a workspace file. Fails if "
+                "Replace an exact block of text in a workspace file. "
+                "old_string and new_string may span multiple lines. Fails if "
                 "old_string is missing or matches more than once unless "
-                "replace_all is true. Read the file first."
+                "replace_all is true. Read the exact range first; for several "
+                "blocks or files, use edit_blocks."
             ),
             "parameters": {
                 "type": "object",
@@ -335,11 +367,67 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "edit_blocks",
+            "description": (
+                "Edit one or more existing files with block replacements in one "
+                "call. Each old_string/new_string may be a whole function, YAML "
+                "section, or shell block; they are not limited to one line. Use "
+                "this for cross-file changes: put the generator, config, wrapper, "
+                "run script, and docs in one call instead of looping over "
+                "search/edit. Edits are applied in order. All blocks are "
+                "validated first; if any fails, no file is written. old_string "
+                "must match uniquely unless replace_all is true. Read the exact "
+                "range first."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "edits": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "description": (
+                                        "Existing file, relative to the workspace root"
+                                    ),
+                                },
+                                "old_string": {
+                                    "type": "string",
+                                    "description": (
+                                        "Exact block to replace, including whitespace"
+                                    ),
+                                },
+                                "new_string": {
+                                    "type": "string",
+                                    "description": "Replacement block",
+                                },
+                                "replace_all": {
+                                    "type": "boolean",
+                                    "description": (
+                                        "Replace every occurrence (default false)"
+                                    ),
+                                },
+                            },
+                            "required": ["path", "old_string", "new_string"],
+                        },
+                    },
+                },
+                "required": ["edits"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "read_file",
             "description": (
-                "Read a chunk of a text file. Use offset/limit for large "
-                "files; the result starts with the line range and total "
-                "line count."
+                "Read a chunk of a text file. Use offset/limit for large files; "
+                "prefer one larger read over many small slices. The result "
+                "starts with the line range and total line count. Set "
+                "line_numbers to prefix each line with its 1-based number."
             ),
             "parameters": {
                 "type": "object",
@@ -362,6 +450,14 @@ TOOL_DEFINITIONS = [
                             "Maximum lines to return (default 2000, max 2000)"
                         ),
                     },
+                    "line_numbers": {
+                        "type": "boolean",
+                        "description": (
+                            "Prefix each line with its 1-based number (default "
+                            "false). Do not include the prefix in edit_blocks "
+                            "old_string."
+                        ),
+                    },
                 },
                 "required": ["path"],
             },
@@ -374,7 +470,10 @@ TOOL_DEFINITIONS = [
             "description": (
                 "Search files for a literal string or regular expression. "
                 "Returns matching path:line:text entries, capped at "
-                "max_results."
+                "max_results. Use files_only to return paths only. Prefer a "
+                "regex to search several aliases at once. For a two-word "
+                "parameter, use `[-_]` in the regex to cover config-key "
+                "(`some_name`) and command-line (`--some-name`) spellings."
             ),
             "parameters": {
                 "type": "object",
@@ -404,6 +503,13 @@ TOOL_DEFINITIONS = [
                         "type": "integer",
                         "description": (
                             "Maximum matches to return (default 50, max 200)"
+                        ),
+                    },
+                    "files_only": {
+                        "type": "boolean",
+                        "description": (
+                            "Return only matching file paths, not line matches. "
+                            "Useful before planning an edit_blocks call."
                         ),
                     },
                 },
@@ -459,6 +565,7 @@ TOOL_DEFINITIONS = [
 # chat-scope argument defaulting — defined in services/chat_tools.py so they
 # stay unit-testable away from the streaming loop.
 from services import chat_tools as _chat_tools
+from services import chat_edit as _chat_edit
 
 TOOL_DEFINITIONS += _chat_tools.TOOL_DEFINITIONS
 
@@ -484,8 +591,8 @@ _MAX_SEARCH_OUTPUT_CHARS = 12000
 _MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024
 _MAX_SEARCH_LINE_CHARS = 300
 _SEARCH_SKIP_DIRS = {
-    ".git", "node_modules", "__pycache__", ".venv", "venv",
-    ".mypy_cache", ".pytest_cache", ".cache", ".conda", ".npm",
+    ".git", ".ipynb_checkpoints", "node_modules", "__pycache__", ".venv",
+    "venv", ".mypy_cache", ".pytest_cache", ".cache", ".conda", ".npm",
     ".cargo", ".rustup", ".Trash",
 }
 
@@ -564,6 +671,24 @@ async def _execute_tool(
         if name == "write_file":
             path = _safe_path(arguments["path"], write=True)
             content = arguments["content"]
+
+            if os.path.isdir(path):
+                return f"Error: not a file: {_display_path(path)}"
+
+            if (
+                os.path.exists(path)
+                and os.path.getsize(path) > _MAX_TOOL_RESULT_CHARS
+                and not arguments.get("overwrite")
+            ):
+                size = os.path.getsize(path)
+                return (
+                    f"Error: {_display_path(path)} is {size} bytes, larger "
+                    f"than the {_MAX_TOOL_RESULT_CHARS}-byte read chunk, so a "
+                    "full rewrite may drop content you did not see. Use "
+                    "edit_blocks/edit_file for partial changes, or set "
+                    "overwrite: true to replace the whole file."
+                )
+
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
                 f.write(content)
@@ -608,6 +733,13 @@ async def _execute_tool(
 
             replaced = count if replace_all else 1
             return f"Replaced {replaced} occurrence(s) in {_display_path(path)}"
+
+        elif name == "edit_blocks":
+            return _chat_edit.apply_edits(
+                arguments.get("edits"),
+                resolve_path=lambda path: _safe_path(path, write=True),
+                display_path=_display_path,
+            )
 
         elif name == "read_file":
             path = _safe_path(arguments["path"])
@@ -671,7 +803,15 @@ async def _execute_tool(
             if end < total:
                 header += f"\n[... use offset={end + 1} to continue ...]"
 
-            return f"{header}\n{''.join(kept)}"
+            line_numbers = bool(arguments.get("line_numbers", False))
+            if line_numbers:
+                body = "".join(
+                    f"{offset + i}: {line}" for i, line in enumerate(kept)
+                )
+            else:
+                body = "".join(kept)
+
+            return f"{header}\n{body}"
 
         elif name == "search":
             query = arguments["query"]
@@ -685,6 +825,7 @@ async def _execute_tool(
             except (TypeError, ValueError):
                 return "Error: max_results must be an integer"
             max_results = max(1, min(max_results, _MAX_SEARCH_RESULTS))
+            files_only = bool(arguments.get("files_only", False))
 
             start = _safe_path(arguments.get("path", ""))
             if os.path.isfile(start):
@@ -722,6 +863,7 @@ async def _execute_tool(
                 )
 
             results: list[str] = []
+            matched_files: set[str] = set()
             used_chars = 0
             truncated = False
 
@@ -750,14 +892,21 @@ async def _execute_tool(
                             if not matched:
                                 continue
 
+                            display = _display_path(full)
+
+                            if files_only:
+                                matched_files.add(display)
+                                results.append(display)
+                                if len(results) >= max_results:
+                                    truncated = True
+                                break
+
                             snippet = line.rstrip("\r\n")
                             if len(snippet) > _MAX_SEARCH_LINE_CHARS:
                                 snippet = (
                                     snippet[:_MAX_SEARCH_LINE_CHARS] + "…"
                                 )
-                            entry = (
-                                f"{_display_path(full)}:{lineno}: {snippet}"
-                            )
+                            entry = f"{display}:{lineno}: {snippet}"
 
                             if (
                                 used_chars + len(entry) + 1
@@ -767,6 +916,7 @@ async def _execute_tool(
                                 break
 
                             results.append(entry)
+                            matched_files.add(display)
                             used_chars += len(entry) + 1
 
                             if len(results) >= max_results:
@@ -784,7 +934,19 @@ async def _execute_tool(
                     f"{_display_path(start)}"
                 )
 
-            out = "\n".join(results)
+            if files_only:
+                out = "\n".join(results)
+                if truncated:
+                    out += (
+                        f"\n[... stopped after {len(results)} files; narrow "
+                        "the search with path or a more specific regex ...]"
+                    )
+                return out
+
+            out = (
+                f"{len(results)} match(es) in {len(matched_files)} file(s):\n"
+                + "\n".join(results)
+            )
             if truncated:
                 out += (
                     f"\n[... stopped after {len(results)} matches; narrow the "
@@ -918,6 +1080,87 @@ def _public_args(arguments: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in arguments.items() if k != "_call_id"}
 
 
+_FILE_MUTATING_TOOLS = {"edit_file", "edit_blocks", "write_file"}
+
+
+def _tool_changed_paths(tc: dict[str, Any]) -> list[str]:
+    """Paths a file-mutating tool call will change, as written by the model."""
+    name = tc.get("name", "")
+    args = tc.get("arguments") or {}
+    paths: list[str] = []
+
+    if name == "edit_blocks":
+        edits = args.get("edits")
+        if isinstance(edits, list):
+            for edit in edits:
+                if isinstance(edit, dict):
+                    path = edit.get("path")
+                    if isinstance(path, str) and path:
+                        paths.append(path)
+    elif name in {"edit_file", "write_file"}:
+        path = args.get("path")
+        if isinstance(path, str) and path:
+            paths.append(path)
+
+    return paths
+
+
+def _tool_budget_hint(
+    round_index: int,
+    tc: dict[str, Any],
+    recent: deque[str],
+) -> str:
+    """A short reminder appended to a tool result, not to the user message."""
+    hints: list[str] = []
+    rounds_left = _MAX_TOOL_ROUNDS - round_index - 1
+
+    if rounds_left in (10, 5):
+        hints.append(
+            f"[Tool budget: {rounds_left} rounds left. Prioritize the "
+            "source-of-truth change, use edit_blocks for related blocks, "
+            "and finish with a summary.]"
+        )
+
+    signature = json.dumps(
+        [tc.get("name"), tc.get("arguments", {})],
+        sort_keys=True,
+        default=str,
+    )
+    recent.append(signature)
+    if recent.count(signature) >= 3:
+        hints.append(
+            "[This exact call was repeated 3 times. Read the file or use "
+            "edit_blocks instead of searching again.]"
+        )
+
+    return "\n\n".join(hints)
+
+
+def _tool_limit_message(
+    limit: int,
+    calls: int,
+    changed: set[str],
+) -> str:
+    files = sorted(changed)
+    shown = ", ".join(files[:8])
+    if len(files) > 8:
+        shown += f" and {len(files) - 8} more"
+
+    parts = [
+        f"Tool limit reached: stopped after {calls} tool calls "
+        f"(limit {limit} rounds). This turn may be incomplete."
+    ]
+    if files:
+        parts.append(f"Files changed: {shown}.")
+    else:
+        parts.append(
+            "No file edits were recorded by the file tools; shell commands "
+            "may also have changed files."
+        )
+    parts.append('Review the changes, then reply "continue" to resume.')
+    return "\n\n".join(parts)
+
+
 # --- System prompt ---
 
 def _load_system_prompt(agent_id: str | None = None) -> str:
@@ -949,9 +1192,22 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
         "the Pegasus knowledge tree named in the context, but must never write "
         "to it. Credential directories are off limits.\n\n"
         "Use search to locate a symbol, flag, or configuration key before "
-        "editing. Use read_file with offset/limit for large files, and "
-        "edit_file for exact replacements; do not rewrite a whole file from a "
-        "partial read.\n\n"
+        "editing. Set regex: true and cover every spelling of the name: the "
+        "config key, the command-line flag, the argument variable, and any "
+        "documentation. For example, a two-word parameter may be `some_name` "
+        "in config, `--some-name` on the command line, and `args.some_name` "
+        "in a wrapper; `some[-_]name` finds both. A literal search for one "
+        "spelling will not find the other. A zero-result search is a reason "
+        "to read the source range, not proof that no change is needed. When "
+        "renaming a parameter, update every layer to the new spelling; "
+        "changing one form does not change the others. Use read_file with "
+        "offset/limit for large files and prefer one larger read over many "
+        "small slices. Use edit_file for one small replacement. For several "
+        "related blocks or files — generator, config, wrapper, run script, "
+        "docs — use one edit_blocks call with whole blocks, not a loop of "
+        "search/edit. Use write_file only for a new file or a deliberate "
+        "full rewrite; an existing file larger than the read chunk requires "
+        "overwrite: true. Do not rewrite a whole file from a partial read.\n\n"
         "Do not run or submit a workflow unless the user explicitly asks you "
         "to in this turn. `pegasus-plan` without `--submit` is validation and "
         "is allowed; `--submit`, `pegasus-run`, and `plan_submit()` are "
@@ -1846,8 +2102,10 @@ async def chat_stream(request: Request) -> StreamingResponse:
             # Names of tools invoked this turn, saved alongside the assistant msg.
             tools_used: list[str] = []
             pending_deny_close = False
+            changed_paths: set[str] = set()
+            recent_calls: deque[str] = deque(maxlen=8)
 
-            for _ in range(_MAX_TOOL_ROUNDS):
+            for round_index in range(_MAX_TOOL_ROUNDS):
                 if request_id not in _active_clients:
                     return
 
@@ -2027,6 +2285,13 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                 tool_result = ev["_final_result"]
                             else:
                                 yield f"data: {json.dumps(ev)}\n\n"
+
+                        hint = _tool_budget_hint(
+                            round_index, tc, recent_calls
+                        )
+                        if hint:
+                            tool_result += "\n\n" + hint
+
                         if "denied by the user" in tool_result or "timed out" in tool_result:
                             pending_deny_close = True
                             tool_results.append({
@@ -2035,6 +2300,11 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                 "content": "Shell verification was denied — do not retry shell or file reads; summarize what was written and ask if the user wants verification.",
                             })
                         else:
+                            if (
+                                not tool_result.startswith("Error")
+                                and tc.get("name") in _FILE_MUTATING_TOOLS
+                            ):
+                                changed_paths.update(_tool_changed_paths(tc))
                             tool_results.append({
                                 "type": "tool_result",
                                 "tool_use_id": tc["id"],
@@ -2074,6 +2344,13 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                 tool_result = ev["_final_result"]
                             else:
                                 yield f"data: {json.dumps(ev)}\n\n"
+
+                        hint = _tool_budget_hint(
+                            round_index, tc, recent_calls
+                        )
+                        if hint:
+                            tool_result += "\n\n" + hint
+
                         if "denied by the user" in tool_result or "timed out" in tool_result:
                             pending_deny_close = True
                             conv_messages.append({
@@ -2082,24 +2359,37 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                 "content": "Shell verification was denied — do not retry shell or file reads; summarize what was written and ask if the user wants verification.",
                             })
                         else:
+                            if (
+                                not tool_result.startswith("Error")
+                                and tc.get("name") in _FILE_MUTATING_TOOLS
+                            ):
+                                changed_paths.update(_tool_changed_paths(tc))
                             conv_messages.append({
                                 "role": "tool",
                                 "tool_call_id": tc["id"],
                                 "content": _clip_tool_result(tool_result),
                             })
 
-            # Reached the tool-round cap without a final text answer — tell the
-            # user instead of ending on a silent spinner, and persist the notice
-            # so the saved history reflects the truncated turn.
-            notice = (
-                f"\n\n_[Response stopped: reached the maximum of "
-                f"{_MAX_TOOL_ROUNDS} tool-calling rounds.]_"
+            # Reached the tool-round cap without a final text answer. Emit both
+            # a notice event (for the explicit UI alert) and a content event
+            # (so the current frontend still shows the message before Step 6).
+            limit_message = _tool_limit_message(
+                _MAX_TOOL_ROUNDS, tool_count, changed_paths
             )
-            yield f"data: {json.dumps({'content': notice})}\n\n"
+            notice_payload = {
+                "content": limit_message,
+                "notice": {
+                    "kind": "tool_limit",
+                    "message": limit_message,
+                    "tool_calls": tool_count,
+                    "changed_files": sorted(changed_paths),
+                },
+            }
+            yield f"data: {json.dumps(notice_payload)}\n\n"
             yield _meta_event()
             try:
                 msg_id = await db.add_chat_message(
-                    "assistant", notice.strip(), agent_id=agent_id,
+                    "assistant", limit_message, agent_id=agent_id,
                     tool_calls=tools_used or None,
                     conversation_id=conversation_id,
                     request_id=request_id,
