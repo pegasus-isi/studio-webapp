@@ -73,6 +73,7 @@ export interface ChatMsg {
     outputTokens?: number;
     toolCalls?: number;
     durationS?: number;
+    changedFiles?: string[];
   };
 }
 

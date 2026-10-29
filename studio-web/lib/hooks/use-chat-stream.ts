@@ -71,6 +71,7 @@ export function useConsumeChatStream() {
                   outputTokens: event.meta.output_tokens,
                   toolCalls: event.meta.tool_calls,
                   durationS: event.meta.duration_s,
+                  changedFiles: event.meta.changed_files,
                 },
                 convId
               );

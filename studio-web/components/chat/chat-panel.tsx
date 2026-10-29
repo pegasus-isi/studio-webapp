@@ -11,6 +11,7 @@ import { usePanelStore } from "@/lib/stores/panel-store";
 import { useConsumeChatStream } from "@/lib/hooks/use-chat-stream";
 import { apiUrl } from "@/lib/urls";
 import { ChatMarkdown } from "@/components/chat/markdown";
+import { ToolActivityList } from "@/components/chat/tool-activity";
 import * as api from "@/lib/api/client";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -358,47 +359,17 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
           </div>
         )}
 
-        {/* Tool calls */}
-        {msg.toolCalls && msg.toolCalls.length > 0 && (
-          <div className="mt-2 space-y-1 border-t border-line pt-2">
-            {msg.toolCalls.map((tc) => (
-              <div
-                key={tc.id}
-                className="rounded border border-line bg-muted px-2 py-1 text-xs text-fgmuted"
-              >
-                <span className="font-mono font-medium text-fg">{tc.name}</span>
-                <span className="ml-1">called</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Tool results */}
-        {msg.toolResults && msg.toolResults.length > 0 && (
-          <div className="mt-2 space-y-1 border-t border-line pt-2">
-            {msg.toolResults.map((tr) => (
-              <details
-                key={tr.id}
-                className="rounded border border-line bg-muted text-xs"
-              >
-                <summary className="cursor-pointer px-2 py-1 text-fgmuted">
-                  <span className="font-mono font-medium text-fg">
-                    {tr.name}
-                  </span>{" "}
-                  result
-                </summary>
-                <pre className="max-h-40 overflow-auto px-2 pb-1 text-fgmuted">
-                  {tr.result}
-                </pre>
-              </details>
-            ))}
-          </div>
-        )}
+        <ToolActivityList msg={msg} />
 
         {/* Per-turn metadata footer (tokens, tool calls, duration) */}
-        {!isUser && meta && (meta.tokens || meta.durationS) ? (
+        {!isUser && meta && (meta.tokens || meta.durationS || meta.changedFiles?.length) ? (
           <div className="mt-2 border-t border-line pt-1.5 text-xs text-fgmuted">
             {formatMeta(meta)}
+            {meta.changedFiles?.length ? (
+              <div className="mt-0.5 text-[10px] text-fgsubtle">
+                Files changed: {formatChangedFiles(meta.changedFiles)}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -524,6 +495,13 @@ function FeedbackButtons({ msg }: { msg: ChatMsg }) {
       </button>
     </div>
   );
+}
+
+function formatChangedFiles(files: string[]): string {
+  const shown = files.slice(0, 4).join(", ");
+  return files.length > 4
+    ? `${shown} and ${files.length - 4} more`
+    : shown;
 }
 
 function formatMeta(meta: NonNullable<ChatMsg["meta"]>): string {
