@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveChatActivity,
   latestToolActivity,
   mergeToolActivity,
   toolActivityTarget,
@@ -61,5 +62,65 @@ describe("tool activity", () => {
       "6",
       "7",
     ]);
+  });
+});
+
+describe("chat activity", () => {
+  it("shows thinking before the first assistant message", () => {
+    expect(
+      deriveChatActivity(true, [{ role: "user", content: "hi" }])
+    ).toBe("thinking");
+  });
+
+  it("shows tools while a tool call is running", () => {
+    expect(
+      deriveChatActivity(true, [
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "1" }],
+          toolResults: [],
+        },
+      ])
+    ).toBe("tools");
+  });
+
+  it("shows thinking after tools finish without text", () => {
+    expect(
+      deriveChatActivity(true, [
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "1" }],
+          toolResults: [{ id: "1" }],
+        },
+      ])
+    ).toBe("thinking");
+  });
+
+  it("does not show an indicator while text is available", () => {
+    expect(
+      deriveChatActivity(true, [
+        { role: "assistant", content: "Here is the answer" },
+      ])
+    ).toBeNull();
+  });
+
+  it("shows approval when a command is waiting", () => {
+    expect(
+      deriveChatActivity(true, [
+        {
+          role: "assistant",
+          content: "",
+          pendingApprovals: [{ id: "a1" }],
+        },
+      ])
+    ).toBe("approval");
+  });
+
+  it("shows nothing when the turn is over", () => {
+    expect(
+      deriveChatActivity(false, [{ role: "assistant", content: "" }])
+    ).toBeNull();
   });
 });

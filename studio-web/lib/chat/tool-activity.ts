@@ -99,3 +99,38 @@ export function latestToolActivity(
 ): ToolActivity[] {
   return limit > 0 ? entries.slice(-limit) : entries;
 }
+
+
+export type ChatActivity = "thinking" | "tools" | "approval" | null;
+
+type ActivityMessage = {
+  role: string;
+  content: string;
+  toolCalls?: { id: string }[];
+  toolResults?: { id: string }[];
+  pendingApprovals?: unknown[];
+};
+
+export function deriveChatActivity(
+  isStreaming: boolean,
+  messages: ReadonlyArray<ActivityMessage>
+): ChatActivity {
+  if (!isStreaming) return null;
+
+  const last = messages[messages.length - 1];
+  if (!last || last.role === "user") return "thinking";
+  if (last.role !== "assistant") return null;
+
+  if ((last.pendingApprovals?.length ?? 0) > 0) return "approval";
+
+  const completed = new Set(
+    (last.toolResults ?? []).map((result) => result.id)
+  );
+  const running = (last.toolCalls ?? []).some(
+    (call) => !completed.has(call.id)
+  );
+  if (running) return "tools";
+
+  if (!last.content.trim()) return "thinking";
+  return null;
+}

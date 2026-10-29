@@ -28,7 +28,7 @@ export default function StudioLayout({
           <Sidebar />
           <div className="flex flex-1 flex-col overflow-hidden">
             <div className="flex flex-1 overflow-hidden">
-              <main className="flex-1 overflow-auto bg-base">{children}</main>
+              <main className="flex-1 min-w-0 overflow-auto bg-base">{children}</main>
               <GlobalChatPanel />
             </div>
             <GlobalTerminalPanel />

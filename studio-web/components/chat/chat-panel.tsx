@@ -12,6 +12,10 @@ import { useConsumeChatStream } from "@/lib/hooks/use-chat-stream";
 import { apiUrl } from "@/lib/urls";
 import { ChatMarkdown } from "@/components/chat/markdown";
 import { ToolActivityList } from "@/components/chat/tool-activity";
+import {
+  deriveChatActivity,
+  type ChatActivity,
+} from "@/lib/chat/tool-activity";
 import * as api from "@/lib/api/client";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -123,11 +127,17 @@ export function ChatPanel() {
     };
   }, [activeId, messagesCount, isStreaming, loadHistory]);
 
-  // Show a "thinking" indicator while streaming but before the assistant's
-  // first token (no assistant message yet — the model is reasoning / a tool
-  // is running). Once content arrives, the last message is the assistant's.
-  const last = messages[messages.length - 1];
-  const showThinking = isStreaming && (!last || last.role === "user");
+  // Show what the turn is doing: thinking, using tools, or waiting for
+  // approval. Text in the transcript is its own cue, so the indicator hides
+  // once content is available. The first Thinking has no assistant message to
+  // attach to, so it stays a standalone indicator; once the assistant message
+  // exists the cue moves to the top of that bubble.
+  const activity = deriveChatActivity(isStreaming, messages);
+  const currentAssistant =
+    messages[messages.length - 1]?.role === "assistant"
+      ? messages[messages.length - 1]
+      : null;
+  const showStandaloneActivity = Boolean(activity && !currentAssistant);
 
   // Keep isAtBottom in sync with manual scroll — respected at end-of-turn
   const handleScroll = () => {
@@ -250,11 +260,16 @@ export function ChatPanel() {
                   else msgRefs.current.delete(msg.id);
                 }}
               >
-                <MessageBubble msg={msg} />
+                <MessageBubble
+                  msg={msg}
+                  activity={msg.id === currentAssistant?.id ? activity : null}
+                />
               </div>
             )
           )}
-          {showThinking && <ThinkingIndicator />}
+          {showStandaloneActivity && activity && (
+            <ActivityIndicator mode={activity} />
+          )}
           <div ref={bottomRef} />
         </div>
       )}
@@ -279,14 +294,73 @@ function ContextDivider({ label }: { label: string }) {
   );
 }
 
-function ThinkingIndicator() {
+function ActivityIndicator({
+  mode,
+  compact = false,
+}: {
+  mode: Exclude<ChatActivity, null>;
+  compact?: boolean;
+}) {
+  const label =
+    mode === "tools"
+      ? "Using tools"
+      : mode === "approval"
+        ? "Waiting for approval"
+        : "Thinking";
+  const approval = mode === "approval";
+
+  if (compact) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className={cn(
+          "mb-2 flex items-center gap-1.5 text-xs",
+          approval
+            ? "text-amber-700 dark:text-amber-400"
+            : "text-fgmuted"
+        )}
+      >
+        <span>{label}</span>
+        <span className="flex gap-1">
+          {[0, 150, 300].map((d) => (
+            <span
+              key={d}
+              className={cn(
+                "inline-block h-1.5 w-1.5 animate-bounce rounded-full",
+                approval ? "bg-amber-500/70" : "bg-fgsubtle"
+              )}
+              style={{ animationDelay: `${d}ms` }}
+            />
+          ))}
+        </span>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex justify-start">
+    <div className="flex justify-start" role="status" aria-live="polite">
       <div className="mr-2 mt-1 shrink-0">
         <PegasusLogo size={24} />
       </div>
-      <div className="flex items-center gap-1 rounded-lg border border-line bg-surface px-4 py-3">
-        <span className="text-xs text-fgmuted">Thinking</span>
+      <div
+        className={cn(
+          "flex items-center gap-1 rounded-lg border px-4 py-3",
+          approval
+            ? "border-amber-500/50 bg-amber-500/10"
+            : "border-line bg-surface"
+        )}
+      >
+        <span
+          className={cn(
+            "text-xs",
+            approval
+              ? "text-amber-700 dark:text-amber-400"
+              : "text-fgmuted"
+          )}
+        >
+          {label}
+        </span>
         <span className="flex gap-1">
           {[0, 150, 300].map((d) => (
             <span
@@ -301,9 +375,28 @@ function ThinkingIndicator() {
   );
 }
 
-function MessageBubble({ msg }: { msg: ChatMsg }) {
+function MessageBubble({
+  msg,
+  activity,
+}: {
+  msg: ChatMsg;
+  activity: ChatActivity;
+}) {
   const isUser = msg.role === "user";
   const meta = msg.meta;
+  const approvalsRef = useRef<HTMLDivElement>(null);
+  const approvalCount = msg.pendingApprovals?.length ?? 0;
+  const prevApprovalCount = useRef(0);
+
+  useEffect(() => {
+    if (approvalCount > 0 && prevApprovalCount.current === 0) {
+      approvalsRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+    prevApprovalCount.current = approvalCount;
+  }, [approvalCount]);
 
   return (
     <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
@@ -319,6 +412,8 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
             : "bg-surface border border-line text-fg"
         )}
       >
+        {activity && <ActivityIndicator mode={activity} compact />}
+
         {/* Main content: render assistant output as markdown (code blocks,
             lists, tables); keep user text verbatim so it isn't reformatted. */}
         {isUser ? (
@@ -352,7 +447,11 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
 
         {/* Pending shell-command approvals (SEC-4) */}
         {msg.pendingApprovals && msg.pendingApprovals.length > 0 && (
-          <div className="mt-2 space-y-2 border-t border-line pt-2">
+          <div
+            ref={approvalsRef}
+            role="alert"
+            className="mt-2 space-y-2 border-t border-line pt-2"
+          >
             {msg.pendingApprovals.map((p) => (
               <ApprovalCard key={p.id} req={p} />
             ))}

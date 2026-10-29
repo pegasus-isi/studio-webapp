@@ -172,6 +172,16 @@ export function ResizablePane({
           dragging && "bg-pegasus-400/60"
         )}
       />
+
+      {/* A transparent overlay keeps an iframe (JupyterLab, file previews)
+          from swallowing mousemove when the pointer crosses it. Without it,
+          dragging toward an iframe freezes at the iframe edge. */}
+      {dragging && (
+        <div
+          aria-hidden="true"
+          className="fixed inset-0 z-[55] cursor-col-resize"
+        />
+      )}
     </div>
   );
 }
