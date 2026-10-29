@@ -74,6 +74,32 @@ const components: Components = {
   pre({ children }) {
     return <>{children}</>;
   },
+  table({ children }) {
+    return (
+      <div className="my-2 overflow-x-auto rounded-lg border border-line">
+        <table className="w-full min-w-[420px] border-collapse text-xs">
+          {children}
+        </table>
+      </div>
+    );
+  },
+  thead({ children }) {
+    return <thead className="bg-muted text-left">{children}</thead>;
+  },
+  th({ children }) {
+    return (
+      <th className="border-b border-line px-2 py-1 font-semibold text-fg">
+        {children}
+      </th>
+    );
+  },
+  td({ children }) {
+    return (
+      <td className="border-b border-line/60 px-2 py-1 align-top text-fgmuted">
+        {children}
+      </td>
+    );
+  },
   a({ href, children, ...props }) {
     return (
       <a

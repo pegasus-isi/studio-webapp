@@ -413,3 +413,53 @@ def test_validation_plan_still_ungated_when_setting_off(monkeypatch):
     assert "permission_request" not in kinds
     assert final == "VALIDATION"
     assert ran
+
+
+def test_missing_workflow_path_gets_lookup_hint(monkeypatch):
+    from routers import chat
+
+    async def fake_execute(name, arguments, scope=None):
+        return "Error: not a file: workflows/sensor-summary/readme.md"
+
+    monkeypatch.setattr(chat, "_execute_tool", fake_execute)
+
+    async def go():
+        events = []
+        async for ev in chat._run_tool_gated(
+            "read_file",
+            {
+                "path": "workflows/sensor-summary/readme.md",
+                "_call_id": "cidHint",
+            },
+            request_id="ridHint",
+            require_approval=False,
+        ):
+            events.append(ev)
+        return events
+
+    final = _final_text(asyncio.run(go()), chat)
+    assert "list_workflow_projects" in final
+    assert "-workflow" in final
+
+
+def test_non_workflow_path_gets_no_lookup_hint(monkeypatch):
+    from routers import chat
+
+    async def fake_execute(name, arguments, scope=None):
+        return "Error: not a file: data/missing.csv"
+
+    monkeypatch.setattr(chat, "_execute_tool", fake_execute)
+
+    async def go():
+        events = []
+        async for ev in chat._run_tool_gated(
+            "read_file",
+            {"path": "data/missing.csv", "_call_id": "cidNoHint"},
+            request_id="ridNoHint",
+            require_approval=False,
+        ):
+            events.append(ev)
+        return events
+
+    final = _final_text(asyncio.run(go()), chat)
+    assert "list_workflow_projects" not in final

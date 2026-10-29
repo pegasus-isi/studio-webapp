@@ -375,6 +375,9 @@ def test_builtin_prompt_is_workflow_generic():
     assert "config key" in prompt
     assert "command-line flag" in prompt
     assert "changing one form does not change the others" in prompt
+    assert "For an EXISTING workflow" in prompt
+    assert "list_workflow_projects" in prompt
+    assert "never append -workflow" in prompt.lower()
 
     for forbidden in ("max_trees", "n_estimators", "train_rf"):
         assert forbidden not in prompt
@@ -403,6 +406,9 @@ def test_overlay_is_workflow_generic():
     flat = " ".join(text.split())
     assert "some[-_]name" in flat
     assert "changing one form does not change the others" in flat
+    assert "do not use Markdown tables" in flat
+    assert "Never append or remove" in flat
+    assert "list_workflow_projects" in flat
     for forbidden in ("max_trees", "n_estimators", "train_rf"):
         assert forbidden not in text
 

@@ -40,8 +40,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "list_workflow_projects",
             "description": (
-                "List the user's Pegasus workflow projects (name, directory,"
-                " status, runs)."
+                "List the user's Pegasus workflow projects with their actual"
+                " directory names. Use this to resolve an existing workflow"
+                " before reading or editing it. Match by project_id /"
+                " project_dir; do not assume a `-workflow` suffix."
             ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },

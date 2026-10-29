@@ -1196,8 +1196,12 @@ async def _run_tool_gated(
         "id": arguments["_call_id"], "name": name,
         "arguments": _public_args(arguments),
     }}
-    raw = await _execute_tool(name, _public_args(arguments), scope)
+    public_args = _public_args(arguments)
+    raw = await _execute_tool(name, public_args, scope)
     outcome = raw if isinstance(raw, ToolOutcome) else ToolOutcome(text=raw)
+    hint = _workflow_lookup_hint(name, public_args, outcome.text)
+    if hint:
+        outcome.text = f"{outcome.text}\n\n{hint}"
     yield {"tool_result": {
         "id": arguments["_call_id"], "name": name,
         "result": _clip_ui_result(outcome.text),
@@ -1208,6 +1212,71 @@ async def _run_tool_gated(
 def _public_args(arguments: dict[str, Any]) -> dict[str, Any]:
     """Arguments minus the internal ``_call_id`` marker."""
     return {k: v for k, v in arguments.items() if k != "_call_id"}
+
+
+_WORKFLOW_LOOKUP_HINT = (
+    "If you are looking for an existing workflow, call "
+    "list_workflow_projects instead of guessing a `-workflow` suffix."
+)
+
+_PATH_TOOL_NAMES = {
+    "read_file",
+    "list_directory",
+    "search",
+    "edit_file",
+    "edit_blocks",
+    "write_file",
+}
+
+_PATH_ERROR_MARKERS = (
+    "not a file",
+    "not an existing file",
+    "no such file",
+    "path not found",
+)
+
+
+def _tool_paths(name: str, arguments: dict[str, Any]) -> list[str]:
+    if name == "edit_blocks":
+        edits = arguments.get("edits")
+        if not isinstance(edits, list):
+            return []
+        return [
+            edit["path"]
+            for edit in edits
+            if isinstance(edit, dict) and isinstance(edit.get("path"), str)
+        ]
+    path = arguments.get("path")
+    return [path] if isinstance(path, str) else []
+
+
+def _is_workflow_path(path: str) -> bool:
+    p = path.replace("\\", "/").strip()
+    if p.startswith("./"):
+        p = p[2:]
+    if p.startswith("workflows/") or p == "workflows":
+        return True
+    if p.startswith("~/workflows/") or p.startswith("$HOME/workflows/"):
+        return True
+    root = workflows_dir(WORKSPACE_ROOT).replace("\\", "/").rstrip("/")
+    return p == root or p.startswith(root + "/")
+
+
+def _workflow_lookup_hint(
+    name: str,
+    arguments: dict[str, Any],
+    result: str,
+) -> str:
+    if name not in _PATH_TOOL_NAMES:
+        return ""
+    if "list_workflow_projects" in result:
+        return ""
+    text = result.lower()
+    if not any(marker in text for marker in _PATH_ERROR_MARKERS):
+        return ""
+    if not any(_is_workflow_path(path) for path in _tool_paths(name, arguments)):
+        return ""
+    return _WORKFLOW_LOOKUP_HINT
 
 
 def _record_tool_outcome(
@@ -1346,14 +1415,19 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
         "get_run_status, get_run_jobs, diagnose_run (the right first call for "
         "'why did it fail?'), and list_run_outputs. When the chat has an "
         "Active Context, their run_id/project_id default to it — call them "
-        "with no arguments.\n\n"
+        "with no arguments. When the user names an existing workflow, call "
+        "list_workflow_projects first and use the actual project_id/project_dir; "
+        "never append -workflow as a lookup guess.\n\n"
         "You have no interactive question tool. To ask something, write the "
         "question as ordinary prose and wait for the reply — never emit a "
         "tool-call object as your message.\n\n"
         "WORKSPACE RULES:\n"
         f"- Each workflow goes in its own directory under "
         f"{workflows_dir(WORKSPACE_ROOT)}\n"
-        "- Use kebab-case directory names (e.g., csv-summary-workflow/)\n"
+        "- For a NEW workflow, use a kebab-case directory; default to "
+        "`<name>-workflow` unless the user chooses a different name.\n"
+        "- For an EXISTING workflow, use its exact directory name. Never add or "
+        "remove `-workflow` as a lookup guess; call list_workflow_projects first.\n"
     )
 
     # Agent persona
