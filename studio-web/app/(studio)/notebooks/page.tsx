@@ -84,7 +84,7 @@ export default function NotebooksPage() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface px-4 py-2">
-        <h1 className="text-sm font-semibold text-fg">Notebooks</h1>
+        <h1 className="text-sm font-semibold text-fg">Developer Space</h1>
         <span className="truncate text-xs text-fgsubtle">
           {path || "JupyterLab, in the same workspace as your analyses"}
         </span>

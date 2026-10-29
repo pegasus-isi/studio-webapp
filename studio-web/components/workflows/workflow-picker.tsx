@@ -50,7 +50,7 @@ export function WorkflowPicker({
   return (
     <div className="flex min-w-0 items-center gap-2">
       <label className="min-w-0">
-        <span className="sr-only">Analysis</span>
+        <span className="sr-only">Workflow</span>
         <select
           value={value}
           disabled={empty}
@@ -64,11 +64,11 @@ export function WorkflowPicker({
             {isLoading
               ? "Loading…"
               : empty
-                ? "No analyses yet"
-                : "Choose an analysis…"}
+                ? "No workflows yet"
+                : "Choose a workflow…"}
           </option>
           {projects.length > 0 && (
-            <optgroup label="Analyses">
+            <optgroup label="Workflows">
               {projects.map((p) => (
                 <option key={p.project_id} value={`p:${p.project_id}`}>
                   {p.name}
@@ -77,7 +77,7 @@ export function WorkflowPicker({
             </optgroup>
           )}
           {standaloneRuns.length > 0 && (
-            <optgroup label="Runs outside an analysis">
+            <optgroup label="Runs outside a workflow">
               {standaloneRuns.map((r) => (
                 <option key={r.run_id} value={`r:${r.run_id}`}>
                   {r.name}

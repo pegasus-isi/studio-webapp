@@ -36,7 +36,7 @@ const FEATURES = [
     grad: "from-violet-500/[0.12] to-violet-500/[0.02]", border: "border-violet-500/20", num_c: "text-violet-400/20",
   },
   {
-    num: "03", label: "Notebooks", title: "Integrated computational environment",
+    num: "03", label: "Developer Space", title: "Integrated computational environment",
     bullets: ["Browser-based Jupyter notebooks with zero configuration", "Immediate access to your workflow inputs, outputs, and data", "Python, R, and Julia kernels available on demand", "AI assistant embedded alongside your code for in-context help"],
     grad: "from-emerald-500/[0.12] to-emerald-500/[0.02]", border: "border-emerald-500/20", num_c: "text-emerald-400/20",
   },

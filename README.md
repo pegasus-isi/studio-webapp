@@ -120,10 +120,10 @@ icon rail**. Every rail cell carries a short label under its glyph.
 | View (rail label) | Route | Purpose |
 |------------------|-------|---------|
 | Home | `/` | Welcome, four ways in, a gallery of openers that hand a prompt to the assistant, and a strip naming anything that needs attention |
-| Analyses | `/workflows` | Discover projects and runs; set up and run a workflow (collapsible), watch the graph, read results, diagnose failures |
+| Workflows | `/workflows` | Discover projects and runs; set up and run a workflow (collapsible), watch the graph, read results, diagnose failures |
 | Data | `/data` | Drag-and-drop your own input files into the workspace; copy a path to paste into a run |
 | Examples | `/marketplace` | Browse workflows sourced live from GitHub (PegasusHub registry + curated Pegasus-ISI list), filter by subject/source, and "Add" (git-clone) one into the workspace |
-| Notebooks | `/notebooks` | JupyterLab, framed in Studio, with "Open in new tab" and Reload. `?path=` opens a specific folder |
+| Developer Space | `/notebooks` | JupyterLab, framed in Studio, with "Open in new tab" and Reload. `?path=` opens a specific folder |
 | Resources | `/provisioning` | **Where your workflows run**: pick a hosted site catalog (the cluster you have an allocation on) and enter the allocation fields that catalog uses, saved to `~/.pegasusrc` (#468), plus optional per-cluster site settings (profiles such as a condor `requirements` or a Slurm queue) layered over the catalog, with a read-only view of the merged site (#478). Then whether there is capacity to run now, with HTCondor pool inventory, workflow demand, pressure findings and an OSPool (OSG) panel under Details. Always in the rail; only Terminal sits behind **More** |
 | Settings | `/settings` | Notifications, Pegasus Options (Simplified Run, welcome page & tour, scan roots), Chat (engine, command approval, chat-text sharing), Feedback & privacy; LLM providers and **Tools** under Advanced |
 | PegasusAI Chat | (resizable slide-in panel + `/chat`) | The assistant, on the OpenCode engine by default (the builtin loop stays selectable), with Pegasus tools over MCP; per-turn approval before shell commands run |

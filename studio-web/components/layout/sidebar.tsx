@@ -123,7 +123,7 @@ interface NavItem {
 const PRIMARY_NAV: NavItem[] = [
   // "/home", not "/" — see app/(studio)/home/page.tsx (#292).
   { href: "/home", label: "Home", icon: "home", tour: "nav-home" },
-  { href: "/workflows", label: "Analyses", icon: "analyses", tour: "nav-analyses" },
+  { href: "/workflows", label: "Workflows", icon: "analyses", tour: "nav-analyses" },
   // Next to analyses because "add my data" and "run my analysis" are two
   // halves of one task (#241, Phase 2).
   { href: "/data", label: "Data", icon: "data", tour: "nav-data" },
@@ -132,13 +132,13 @@ const PRIMARY_NAV: NavItem[] = [
   // the cluster catalog and allocation, which a user has to be able to find,
   // so it is no longer behind "More".
   { href: "/provisioning", label: "Resources", icon: "compute", tour: "nav-resources" },
-  // Notebooks is a Studio page that frames JupyterLab, not a link out of the
+  // Developer Space is a Studio page that frames JupyterLab, not a link out of the
   // app: leaving Studio to open a notebook cost you the rail, the assistant
   // and your analyses. The page keeps an "Open in new tab" button for when
   // that is what you actually want.
   {
     href: "/notebooks",
-    label: "Notebooks",
+    label: "Developer Space",
     icon: "notebooks",
     tour: "nav-notebooks",
   },
@@ -173,9 +173,11 @@ export function Sidebar() {
         : "text-fgsubtle hover:bg-muted hover:text-fg"
     );
 
-  // Short enough to sit under a 18px glyph in a 72px rail without wrapping.
+  // Workflows fits on one line; Developer Space wraps to two in the 72px rail.
   const cellLabel = (label: string) => (
-    <span className="text-[9.5px] font-semibold leading-none">{label}</span>
+    <span className="max-w-full text-center text-[9.5px] font-semibold leading-[1.1]">
+      {label}
+    </span>
   );
 
   const renderItem = (item: NavItem) => {

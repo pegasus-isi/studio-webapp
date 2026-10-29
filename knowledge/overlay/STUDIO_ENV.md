@@ -24,7 +24,7 @@ This is the location the `pegasus-scaffold`, `pegasus-wrapper` and
 laid out and say that the environment names the place; this is where it is
 named. Where the two could seem to differ, this section wins.
 
-Nowhere else. The **Analyses** page (what the UI calls it; the route is `/workflows`) lists the immediate children of
+Nowhere else. The **Workflows** page (the route is `/workflows`) lists the immediate children of
 `$HOME/workflows/` and nothing deeper or elsewhere, so a project written to
 `$HOME/<name>/` or any other path **does not appear in the UI at all** — no
 Generate, Plan, Run or Build buttons for it, even though the files are on disk
@@ -36,7 +36,7 @@ under `$HOME`": one directory is scanned.
 Your file tools take a path **relative to `$HOME`**, and they do **not** expand
 `~` or `$HOME`. Pass `workflows/<name>/workflow_generator.py`, not
 `~/workflows/…` or `$HOME/workflows/…` — those create a directory literally
-named `~` or `$HOME` under the workspace, which the Analyses page never looks
+named `~` or `$HOME` under the workspace, which the Workflows page never looks
 in. A real absolute path works too: expand `$HOME` yourself rather than guessing
 the home directory's name.
 
@@ -113,7 +113,7 @@ To check a step yourself, build the image by hand first (`apptainer build
 exists, `python3 -m py_compile bin/<step>.py` catches syntax errors without
 importing anything.
 
-**What to tell the user is different: Run.** The Analyses page shows one
+**What to tell the user is different: Run.** The Workflows page shows one
 button by default, **Run**, and Run builds the software environment itself
 when it is missing or stale. There is a Build Image button, but only in the
 Advanced view, so "click Build Image, then Run" sends most users looking for
@@ -196,7 +196,7 @@ changed and what you verified. Do not submit unless the user explicitly asks.
 
 ## Planning and running here
 
-**Prefer the user's Run button.** On the Analyses page, **Run** generates,
+**Prefer the user's Run button.** On the Workflows page, **Run** generates,
 builds the image if it is stale, plans and submits — and it does three things a
 hand-typed `pegasus-plan` does not. The chat does not press Run for the user;
 tell them to use it.

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The step navigator in the top bar: Ask AI → Run Jobs → Notebooks → Resources.
+ * The step navigator in the top bar: Home → Run Workflows → Developer Space → Resources.
  *
  * The rail lists every place in Studio; this shows the *order* a first-time
  * user is expected to take through it, and where they are on that path. Steps
@@ -17,10 +17,10 @@ import { stripAppBasePath } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
 const STEPS = [
-  { label: "Ask AI",    href: "/home",         also: ["/"] },
-  { label: "Run Jobs",  href: "/workflows",    also: [] },
-  { label: "Notebooks", href: "/notebooks",    also: [] },
-  { label: "Resources", href: "/provisioning", also: [] },
+  { label: "Home",            href: "/home",         also: ["/"] },
+  { label: "Run Workflows",   href: "/workflows",    also: [] },
+  { label: "Developer Space", href: "/notebooks",    also: [] },
+  { label: "Resources",       href: "/provisioning", also: [] },
 ] as const;
 
 export function StepNav() {

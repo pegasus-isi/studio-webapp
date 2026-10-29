@@ -192,7 +192,7 @@ Primary routes:
 | `/workflows` | Workflows | Workflow projects, runs, actions, and details |
 | `/marketplace` | Marketplace | Browse workflows sourced live from GitHub (PegasusHub registry + curated Pegasus-ISI); "Add" git-clones one into the workspace |
 | `/provisioning` | Resources | Pool inventory, workflow demand, pressure findings, OSPool capacity (read-only) |
-| `/notebooks` | Notebooks | Opens JupyterLab at `/jupyter/lab` |
+| `/notebooks` | Developer Space | Opens JupyterLab at `/jupyter/lab` |
 | `/settings` | Settings | LLM providers, chat engine + shell-command approval, Tools (install + launch AI tools / bash terminal), container registry |
 
 A chrome-less `/chat` page renders the same chat for embedding into JupyterLab

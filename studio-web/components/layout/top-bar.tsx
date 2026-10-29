@@ -6,7 +6,8 @@
  * Full width above the rail, carrying what belongs to the whole app rather
  * than to a page. Identity stays on the rail — always visible, and it costs
  * the content area nothing — so this is the wordmark, the step navigator
- * (where you are on the Ask → Run → Notebooks → Resources path) and search.
+ * (where you are on the Home → Run Workflows → Developer Space → Resources path)
+ * and search.
  */
 
 import { useEffect, useState } from "react";
@@ -83,7 +84,7 @@ export function TopBar() {
             <circle cx="11" cy="11" r="7" />
             <path d="M20 20l-3.5-3.5" />
           </svg>
-          <span className="truncate">Search analyses, examples…</span>
+          <span className="truncate">Search workflows, examples…</span>
           <kbd className="ml-auto shrink-0 rounded border border-line px-1 font-mono text-[10px]">
             {mac ? "⌘K" : "Ctrl K"}
           </kbd>

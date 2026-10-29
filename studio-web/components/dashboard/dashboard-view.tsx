@@ -151,9 +151,9 @@ const OPENERS: {
   icon: React.ReactNode;
 }[] = [
   {
-    title: "Run one analysis over many files",
+    title: "Run one workflow over many files",
     prompt:
-      "I have a folder of input files and I want to run the same analysis on every one of them. Help me build a workflow that does that.",
+      "I have a folder of input files and I want to run the same workflow on every one of them. Help me set that up.",
     tone: "sky",
     icon: I.files,
   },
@@ -289,23 +289,23 @@ function AttentionStrip({
 const WALKTHROUGH: TourStep[] = [
   {
     anchor: "nav-analyses",
-    title: "Analyses",
+    title: "Workflows",
     body: "Everything you have built, and every run of it. The graph of the steps and the files a run produced both live here.",
   },
   {
     anchor: "nav-data",
     title: "Data",
-    body: "Your own input files. Drag them in here and an analysis can use them — no copying to a server yourself.",
+    body: "Your own input files. Drag them in here and a workflow can use them — no copying to a server yourself.",
   },
   {
     anchor: "nav-examples",
     title: "Examples",
-    body: "Ready-made analyses from the Pegasus community. Add one and it becomes yours to run and edit.",
+    body: "Ready-made workflows from the Pegasus community. Add one and it becomes yours to run and edit.",
   },
   {
     anchor: "nav-resources",
     title: "Resources",
-    body: "Where your analyses run and whether there is room. If you have an allocation on a cluster, choose it here once and every analysis can use it.",
+    body: "Where your workflows run and whether there is room. If you have an allocation on a cluster, choose it here once and every workflow can use it.",
   },
   {
     anchor: "nav-chat",
@@ -320,7 +320,7 @@ const WALKTHROUGH: TourStep[] = [
   {
     anchor: "search",
     title: "Find anything",
-    body: "Press ⌘K anywhere to jump to an analysis, an example, or a page.",
+    body: "Press ⌘K anywhere to jump to a workflow, an example, or a page.",
   },
   {
     anchor: "home-openers",
@@ -455,7 +455,7 @@ export function DashboardView() {
             <button
               onClick={() =>
                 send(
-                  "Help me build a new Pegasus workflow. Ask me what the analysis needs to do."
+                  "Help me build a new Pegasus workflow. Ask me what the workflow needs to do."
                 )
               }
               className={actionClass}
@@ -481,7 +481,7 @@ export function DashboardView() {
               <Tile tone="mint">
                 <Icon d={I.scale} />
               </Tile>
-              <span className={actionLabel}>My analyses</span>
+              <span className={actionLabel}>My workflows</span>
             </AppLink>
           </div>
 

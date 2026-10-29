@@ -20,13 +20,13 @@ interface Hit {
   key: string;
   title: string;
   detail: string;
-  group: "Analyses" | "Examples" | "Go to";
+  group: "Workflows" | "Examples" | "Go to";
   href: string;
 }
 
 const DESTINATIONS: Hit[] = [
   { key: "go-home", title: "Home", detail: "Ask the assistant", group: "Go to", href: "/home" },
-  { key: "go-wf", title: "Analyses", detail: "Your workflows and runs", group: "Go to", href: "/workflows" },
+  { key: "go-wf", title: "Workflows", detail: "Your workflows and runs", group: "Go to", href: "/workflows" },
   { key: "go-data", title: "Data", detail: "Files in your workspace", group: "Go to", href: "/data" },
   { key: "go-mkt", title: "Examples", detail: "Ready-made workflows", group: "Go to", href: "/marketplace" },
   { key: "go-res", title: "Resources", detail: "Pool capacity", group: "Go to", href: "/provisioning" },
@@ -74,7 +74,7 @@ export function CommandPalette({
           p.runs.length > 0
             ? `${p.runs.length} run${p.runs.length !== 1 ? "s" : ""} · ${p.status}`
             : p.status,
-        group: "Analyses" as const,
+        group: "Workflows" as const,
         href: `/workflows?project=${encodeURIComponent(p.project_id)}`,
       })),
       ...(marketplace.data?.workflows ?? []).map((w) => ({
@@ -157,8 +157,8 @@ export function CommandPalette({
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search analyses, examples, or jump to a page"
-            aria-label="Search analyses, examples, or jump to a page"
+            placeholder="Search workflows, examples, or jump to a page"
+            aria-label="Search workflows, examples, or jump to a page"
             className="w-full border-0 bg-transparent text-sm text-fg outline-none placeholder:text-fgsubtle"
           />
           <kbd className="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-fgsubtle">
