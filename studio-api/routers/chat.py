@@ -12,6 +12,7 @@ import os
 import re
 import uuid
 from collections import deque
+from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -73,6 +74,18 @@ _RESPONSES_MODEL_PREFIXES = ("gpt-5", "o1", "o1-", "o3", "o4")
 PEGASUS_BOT_SERVER_URL = os.environ.get("PEGASUS_BOT_SERVER_URL", "").rstrip("/")
 _PEGASUS_BOT_CHAT_ENABLED = os.environ.get("PEGASUS_BOT_CHAT_ROUTE", "") == "1"
 
+# The bot rejects an empty completion with this detail marker. Studio retries
+# once on it, then surfaces a visible error instead of an empty assistant turn.
+_BOT_EMPTY_RESPONSE_MARKER = "EMPTY_MODEL_RESPONSE"
+_EMPTY_RESPONSE_MESSAGE = (
+    "The model returned an empty response after a retry. Please try again."
+)
+
+
+def _is_empty_bot_result(data: dict) -> bool:
+    """True when a bot reply has neither text nor tool calls."""
+    return not (data.get("response") or "").strip() and not (data.get("tool_calls") or [])
+
 
 def _is_responses_model(model: str) -> bool:
     """Heuristic: True if the model id implies a Responses-only endpoint."""
@@ -97,6 +110,10 @@ _MAX_TOOL_ROUNDS = _env_positive_int("STUDIO_CHAT_MAX_TOOL_ROUNDS", 50)
 # generation (e.g. scaffolding a whole workflow).
 _MAX_STREAM_RETRIES = 2
 _STREAM_RETRY_DELAY_S = 1.5
+
+# After an edit failure, force at most this many repair rounds before allowing
+# the model to answer with a visible failure notice.
+_MAX_EDIT_REPAIR_ROUNDS = 2
 
 # How often to emit an SSE comment while a round is in flight but silent.
 # nginx caps the /api/ location at proxy_read_timeout (300s here), and an
@@ -370,14 +387,13 @@ TOOL_DEFINITIONS = [
             "name": "edit_blocks",
             "description": (
                 "Edit one or more existing files with block replacements in one "
-                "call. Each old_string/new_string may be a whole function, YAML "
-                "section, or shell block; they are not limited to one line. Use "
-                "this for cross-file changes: put the generator, config, wrapper, "
-                "run script, and docs in one call instead of looping over "
-                "search/edit. Edits are applied in order. All blocks are "
-                "validated first; if any fails, no file is written. old_string "
-                "must match uniquely unless replace_all is true. Read the exact "
-                "range first."
+                "call. Each file is applied atomically: if any edit for a file "
+                "fails, that file is not written, but edits to other files still "
+                "apply. Edits are applied in order. No-op edits are skipped with "
+                "a warning. new_string must be the final text, not a unified "
+                "diff. The result lists applied, skipped, and failed files. "
+                "old_string must match uniquely unless replace_all is true. Read "
+                "the exact range first."
             ),
             "parameters": {
                 "type": "object",
@@ -566,6 +582,7 @@ TOOL_DEFINITIONS = [
 # stay unit-testable away from the streaming loop.
 from services import chat_tools as _chat_tools
 from services import chat_edit as _chat_edit
+from services import chat_verify as _chat_verify
 
 TOOL_DEFINITIONS += _chat_tools.TOOL_DEFINITIONS
 
@@ -652,12 +669,24 @@ def _searchable(path: str) -> bool:
     return True
 
 
+@dataclass
+class ToolOutcome:
+    """A tool result plus the paths the agent loop must reconcile."""
+
+    text: str
+    applied_paths: list[str] = field(default_factory=list)
+    failed_paths: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    verification_failed_paths: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
 async def _execute_tool(
     name: str,
     arguments: dict[str, Any],
     scope: dict[str, Any] | None = None,
-) -> str:
-    """Execute a tool and return result string. `scope` is the chat's active
+) -> str | ToolOutcome:
+    """Execute a tool and return its result. `scope` is the chat's active
     workflow/run context; the Pegasus tools default their ids from it."""
     import asyncio
     import shutil
@@ -671,9 +700,13 @@ async def _execute_tool(
         if name == "write_file":
             path = _safe_path(arguments["path"], write=True)
             content = arguments["content"]
+            display = _display_path(path)
 
             if os.path.isdir(path):
-                return f"Error: not a file: {_display_path(path)}"
+                return ToolOutcome(
+                    text=f"Error: not a file: {display}",
+                    failed_paths=[display],
+                )
 
             if (
                 os.path.exists(path)
@@ -681,64 +714,129 @@ async def _execute_tool(
                 and not arguments.get("overwrite")
             ):
                 size = os.path.getsize(path)
-                return (
-                    f"Error: {_display_path(path)} is {size} bytes, larger "
-                    f"than the {_MAX_TOOL_RESULT_CHARS}-byte read chunk, so a "
-                    "full rewrite may drop content you did not see. Use "
-                    "edit_blocks/edit_file for partial changes, or set "
-                    "overwrite: true to replace the whole file."
+                return ToolOutcome(
+                    text=(
+                        f"Error: {display} is {size} bytes, larger than the "
+                        f"{_MAX_TOOL_RESULT_CHARS}-byte read chunk, so a full "
+                        "rewrite may drop content you did not see. Use "
+                        "edit_blocks/edit_file for partial changes, or set "
+                        "overwrite: true to replace the whole file."
+                    ),
+                    failed_paths=[display],
                 )
 
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
                 f.write(content)
-            return f"Wrote {len(content)} bytes to {path}"
+
+            issues = _chat_verify.verify_file(path)
+            text = f"Wrote {len(content)} bytes to {path}"
+            if issues is not None:
+                text += _chat_verify.format_verification(display, issues)
+
+            return ToolOutcome(
+                text=text,
+                applied_paths=[display],
+                verification_failed_paths=(
+                    [display] if _chat_verify.has_errors(issues) else []
+                ),
+                warnings=_chat_verify.warnings(issues),
+            )
 
         elif name == "edit_file":
             path = _safe_path(arguments["path"], write=True)
+            display = _display_path(path)
             if not os.path.isfile(path):
-                return f"Error: not a file: {_display_path(path)}"
+                return ToolOutcome(
+                    text=f"Error: not a file: {display}",
+                    failed_paths=[display],
+                )
 
             old = arguments["old_string"]
             new = arguments["new_string"]
             if old == "":
-                return "Error: old_string must not be empty"
+                return ToolOutcome(
+                    text="Error: old_string must not be empty",
+                    failed_paths=[display],
+                )
             if old == new:
-                return "Error: old_string and new_string are identical"
+                return ToolOutcome(
+                    text=(
+                        "Warning: old_string and new_string are identical; "
+                        "nothing was changed."
+                    ),
+                    skipped=[display],
+                )
+            if _chat_edit._looks_like_diff(new, old):
+                return ToolOutcome(
+                    text=(
+                        "Error: new_string looks like a unified diff; "
+                        "pass the final text without leading + or - markers"
+                    ),
+                    failed_paths=[display],
+                )
 
             replace_all = bool(arguments.get("replace_all", False))
 
             with open(path, "rb") as probe:
                 if b"\x00" in probe.read(4096):
-                    return "Error: not a text file"
+                    return ToolOutcome(
+                        text="Error: not a text file",
+                        failed_paths=[display],
+                    )
 
             with open(path, "r", encoding="utf-8", newline="") as f:
                 text = f.read()
 
             count = text.count(old)
             if count == 0:
-                return (
-                    "Error: old_string was not found; read the file again and "
-                    "use the exact text"
+                return ToolOutcome(
+                    text=(
+                        "Error: old_string was not found; read the file again "
+                        "and use the exact text"
+                    ),
+                    failed_paths=[display],
                 )
             if count > 1 and not replace_all:
-                return (
-                    f"Error: old_string occurs {count} times; add more context "
-                    "or set replace_all to true"
+                return ToolOutcome(
+                    text=(
+                        f"Error: old_string occurs {count} times; add more "
+                        "context or set replace_all to true"
+                    ),
+                    failed_paths=[display],
                 )
 
             updated = text.replace(old, new, -1 if replace_all else 1)
             with open(path, "w", encoding="utf-8", newline="") as f:
                 f.write(updated)
 
-            replaced = count if replace_all else 1
-            return f"Replaced {replaced} occurrence(s) in {_display_path(path)}"
+            issues = _chat_verify.verify_file(path)
+            result = f"Replaced {count if replace_all else 1} occurrence(s) in {display}"
+            if issues is not None:
+                result += _chat_verify.format_verification(display, issues)
+
+            return ToolOutcome(
+                text=result,
+                applied_paths=[display],
+                verification_failed_paths=(
+                    [display] if _chat_verify.has_errors(issues) else []
+                ),
+                warnings=_chat_verify.warnings(issues),
+            )
 
         elif name == "edit_blocks":
-            return _chat_edit.apply_edits(
+            outcome = _chat_edit.apply_edits(
                 arguments.get("edits"),
                 resolve_path=lambda path: _safe_path(path, write=True),
                 display_path=_display_path,
+            )
+            return ToolOutcome(
+                text=outcome.text,
+                applied_paths=outcome.applied,
+                failed_paths=outcome.failed,
+                skipped=outcome.skipped,
+                verification_failed_paths=outcome.verification_failed,
+                warnings=outcome.warnings,
             )
 
         elif name == "read_file":
@@ -1091,19 +1189,20 @@ async def _run_tool_gated(
                 "id": arguments["_call_id"], "name": name,
                 "result": result,
             }}
-            yield {"_final_result": result}
+            yield {"_final_result": ToolOutcome(text=result)}
             return
 
     yield {"tool_call": {
         "id": arguments["_call_id"], "name": name,
         "arguments": _public_args(arguments),
     }}
-    result = await _execute_tool(name, _public_args(arguments), scope)
+    raw = await _execute_tool(name, _public_args(arguments), scope)
+    outcome = raw if isinstance(raw, ToolOutcome) else ToolOutcome(text=raw)
     yield {"tool_result": {
         "id": arguments["_call_id"], "name": name,
-        "result": _clip_ui_result(result),
+        "result": _clip_ui_result(outcome.text),
     }}
-    yield {"_final_result": result}
+    yield {"_final_result": outcome}
 
 
 def _public_args(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1111,29 +1210,23 @@ def _public_args(arguments: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in arguments.items() if k != "_call_id"}
 
 
-_FILE_MUTATING_TOOLS = {"edit_file", "edit_blocks", "write_file"}
-
-
-def _tool_changed_paths(tc: dict[str, Any]) -> list[str]:
-    """Paths a file-mutating tool call will change, as written by the model."""
-    name = tc.get("name", "")
-    args = tc.get("arguments") or {}
-    paths: list[str] = []
-
-    if name == "edit_blocks":
-        edits = args.get("edits")
-        if isinstance(edits, list):
-            for edit in edits:
-                if isinstance(edit, dict):
-                    path = edit.get("path")
-                    if isinstance(path, str) and path:
-                        paths.append(path)
-    elif name in {"edit_file", "write_file"}:
-        path = args.get("path")
-        if isinstance(path, str) and path:
-            paths.append(path)
-
-    return paths
+def _record_tool_outcome(
+    outcome: ToolOutcome,
+    changed: set[str],
+    unresolved: set[str],
+) -> None:
+    """Fold a tool outcome into the turn's changed/unresolved path sets."""
+    if outcome.applied_paths:
+        changed.update(outcome.applied_paths)
+        clean = [
+            path
+            for path in outcome.applied_paths
+            if path not in outcome.failed_paths
+            and path not in outcome.verification_failed_paths
+        ]
+        unresolved.difference_update(clean)
+    unresolved.update(outcome.failed_paths)
+    unresolved.update(outcome.verification_failed_paths)
 
 
 def _tool_budget_hint(
@@ -1236,9 +1329,13 @@ def _load_system_prompt(agent_id: str | None = None) -> str:
         "small slices. Use edit_file for one small replacement. For several "
         "related blocks or files — generator, config, wrapper, run script, "
         "docs — use one edit_blocks call with whole blocks, not a loop of "
-        "search/edit. Use write_file only for a new file or a deliberate "
-        "full rewrite; an existing file larger than the read chunk requires "
-        "overwrite: true. Do not rewrite a whole file from a partial read.\n\n"
+        "search/edit. If edit_blocks reports a failed file, that file was not "
+        "written; retry it before summarizing. After any edit, verify the "
+        "changed range with read_file or search and rely on the syntax check "
+        "when available. `ls` only proves a file exists. Use write_file only "
+        "for a new file or a deliberate full rewrite; an existing file larger "
+        "than the read chunk requires overwrite: true. Do not rewrite a whole "
+        "file from a partial read.\n\n"
         "Do not run or submit a workflow unless the user explicitly asks you "
         "to in this turn. `pegasus-plan` without `--submit` is validation and "
         "is allowed; `--submit`, `pegasus-run`, and `plan_submit()` are "
@@ -1341,21 +1438,43 @@ async def _pegasus_chat_stream(
         "display_text": display_text,
     }
 
-    async def _do_post():
-        resp = await client.post(f"{bot_base_url}/chat", json=body, timeout=120.0)
+    async def _do_post() -> httpx.Response:
+        return await client.post(f"{bot_base_url}/chat", json=body, timeout=120.0)
+
+    data: dict = {}
+    for attempt in range(2):
+        task = asyncio.create_task(_do_post())
+        while not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=15)
+            except asyncio.TimeoutError:
+                yield {"type": "__heartbeat__"}
+        resp = task.result()
+
+        # The bot rejects an empty completion with this marker. A plain 502 is
+        # a real upstream failure and must not be retried as if it were empty.
+        if resp.status_code == 502 and _BOT_EMPTY_RESPONSE_MARKER in resp.text:
+            if attempt == 0:
+                yield {"type": "__heartbeat__"}
+                continue
+            raise RuntimeError(_EMPTY_RESPONSE_MESSAGE)
+
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
 
-    task = asyncio.create_task(_do_post())
-    while not task.done():
-        try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=15)
-        except asyncio.TimeoutError:
-            yield {"type": "__heartbeat__"}
-    data = task.result()
+        if data.get("status_code") != 200 or data.get("status") != "successful":
+            raise RuntimeError(
+                data.get("detail") or data.get("response") or "bot server error"
+            )
 
-    if data.get("status_code") != 200 or data.get("status") != "successful":
-        raise RuntimeError(data.get("detail") or data.get("response") or "bot server error")
+        # Defense for an older bot build that still returns 200 with an empty
+        # result instead of the 502 marker above.
+        if _is_empty_bot_result(data):
+            if attempt == 0:
+                yield {"type": "__heartbeat__"}
+                continue
+            raise RuntimeError(_EMPTY_RESPONSE_MESSAGE)
+        break
 
     tool_calls = []
     for tc in data.get("tool_calls") or []:
@@ -2089,6 +2208,9 @@ async def chat_stream(request: Request) -> StreamingResponse:
         tot_in = 0
         tot_out = 0
         tool_count = 0
+        changed_paths: set[str] = set()
+        unresolved_edit_paths: set[str] = set()
+        edit_repair_rounds = 0
 
         def _meta_event() -> str:
             return "data: " + json.dumps({"meta": {
@@ -2097,6 +2219,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                 "tokens": tot_in + tot_out,
                 "tool_calls": tool_count,
                 "duration_s": round(time.monotonic() - t0, 1),
+                "changed_files": sorted(changed_paths),
             }}) + "\n\n"
 
         client_gone = False
@@ -2134,7 +2257,6 @@ async def chat_stream(request: Request) -> StreamingResponse:
             # Names of tools invoked this turn, saved alongside the assistant msg.
             tools_used: list[str] = []
             pending_deny_close = False
-            changed_paths: set[str] = set()
             recent_calls: deque[str] = deque(maxlen=8)
 
             for round_index in range(_MAX_TOOL_ROUNDS):
@@ -2183,6 +2305,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                     # nothing has been streamed to the client yet — retrying after
                     # tokens were emitted would duplicate them.
                     retry = 0
+                    empty_retried = False
                     while True:
                         try:
                             if is_anthropic:
@@ -2210,6 +2333,16 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                     yield f"data: {json.dumps({'content': ev['text']})}\n\n"
                                 elif ev["type"] == "result":
                                     result = ev["result"]
+                            if (
+                                result is not None
+                                and not result.get("tool_calls")
+                                and not (result.get("content") or "").strip()
+                                and not emitted_text
+                                and not empty_retried
+                            ):
+                                empty_retried = True
+                                yield ": retrying\n\n"
+                                continue
                             break  # stream completed cleanly
                         except httpx.HTTPStatusError as e:
                             status = e.response.status_code if e.response is not None else "?"
@@ -2270,6 +2403,32 @@ async def chat_stream(request: Request) -> StreamingResponse:
                         yield f"data: {json.dumps({'content': notice})}\n\n"
                         final_text += notice
 
+                    if unresolved_edit_paths and edit_repair_rounds < _MAX_EDIT_REPAIR_ROUNDS:
+                        edit_repair_rounds += 1
+                        files = ", ".join(sorted(unresolved_edit_paths)[:8])
+                        if len(unresolved_edit_paths) > 8:
+                            files += f" and {len(unresolved_edit_paths) - 8} more"
+                        conv_messages.append({
+                            "role": "user",
+                            "content": (
+                                "These files still have unresolved edit failures: "
+                                f"{files}. Do not claim they were changed. Re-read "
+                                "the exact current text and retry the failed edits, "
+                                "or state plainly which files could not be changed."
+                            ),
+                        })
+                        continue
+
+                    if unresolved_edit_paths:
+                        files = ", ".join(sorted(unresolved_edit_paths)[:8])
+                        if len(unresolved_edit_paths) > 8:
+                            files += f" and {len(unresolved_edit_paths) - 8} more"
+                        yield f"data: {json.dumps({'notice': {'kind': 'edit_failure', 'message': f'Some edits could not be applied: {files}'}})}\n\n"
+
+                    if not final_text.strip() and not emitted_text:
+                        yield f"data: {json.dumps({'error': _EMPTY_RESPONSE_MESSAGE})}\n\n"
+                        return
+
                     # Per-turn usage/timing footer and persist the full text
                     # (with the tools used this turn) scoped to the conversation.
                     yield _meta_event()
@@ -2306,7 +2465,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
                     tool_results = []
                     for tc in tool_calls:
                         gated_args = {**tc["arguments"], "_call_id": tc["id"]}
-                        tool_result = ""
+                        outcome: ToolOutcome | None = None
                         async for ev in _run_tool_gated(
                             tc["name"], gated_args,
                             request_id=request_id,
@@ -2314,9 +2473,15 @@ async def chat_stream(request: Request) -> StreamingResponse:
                             scope=tool_scope,
                         ):
                             if "_final_result" in ev:
-                                tool_result = ev["_final_result"]
+                                outcome = ev["_final_result"]
                             else:
                                 yield f"data: {json.dumps(ev)}\n\n"
+
+                        assert outcome is not None
+                        _record_tool_outcome(
+                            outcome, changed_paths, unresolved_edit_paths
+                        )
+                        tool_result = outcome.text
 
                         hint = _tool_budget_hint(
                             round_index, tc, recent_calls
@@ -2332,11 +2497,6 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                 "content": "Shell verification was denied — do not retry shell or file reads; summarize what was written and ask if the user wants verification.",
                             })
                         else:
-                            if (
-                                not tool_result.startswith("Error")
-                                and tc.get("name") in _FILE_MUTATING_TOOLS
-                            ):
-                                changed_paths.update(_tool_changed_paths(tc))
                             tool_results.append({
                                 "type": "tool_result",
                                 "tool_use_id": tc["id"],
@@ -2365,7 +2525,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
 
                     for tc in tool_calls:
                         gated_args = {**tc["arguments"], "_call_id": tc["id"]}
-                        tool_result = ""
+                        outcome: ToolOutcome | None = None
                         async for ev in _run_tool_gated(
                             tc["name"], gated_args,
                             request_id=request_id,
@@ -2373,9 +2533,15 @@ async def chat_stream(request: Request) -> StreamingResponse:
                             scope=tool_scope,
                         ):
                             if "_final_result" in ev:
-                                tool_result = ev["_final_result"]
+                                outcome = ev["_final_result"]
                             else:
                                 yield f"data: {json.dumps(ev)}\n\n"
+
+                        assert outcome is not None
+                        _record_tool_outcome(
+                            outcome, changed_paths, unresolved_edit_paths
+                        )
+                        tool_result = outcome.text
 
                         hint = _tool_budget_hint(
                             round_index, tc, recent_calls
@@ -2391,11 +2557,6 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                 "content": "Shell verification was denied — do not retry shell or file reads; summarize what was written and ask if the user wants verification.",
                             })
                         else:
-                            if (
-                                not tool_result.startswith("Error")
-                                and tc.get("name") in _FILE_MUTATING_TOOLS
-                            ):
-                                changed_paths.update(_tool_changed_paths(tc))
                             conv_messages.append({
                                 "role": "tool",
                                 "tool_call_id": tc["id"],

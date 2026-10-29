@@ -9,8 +9,13 @@ import pytest
 from routers import chat
 
 
-def _exec(name, arguments):
+def _exec_outcome(name, arguments):
     return asyncio.run(chat._execute_tool(name, arguments))
+
+
+def _exec(name, arguments):
+    out = _exec_outcome(name, arguments)
+    return out.text if isinstance(out, chat.ToolOutcome) else out
 
 
 @pytest.fixture
@@ -669,3 +674,122 @@ def test_file_tools_are_registered_and_ungated():
         assert name in names
     for name in ("search", "edit_file", "edit_blocks", "write_file"):
         assert name not in chat._APPROVAL_REQUIRED_TOOLS
+
+
+def test_edit_blocks_partial_apply_is_per_file(workspace):
+    good = _workflow(workspace, "good.py")
+    bad = _workflow(workspace, "bad.py")
+    good.write_text("alpha\n")
+    bad.write_text("keep\n")
+
+    out = _exec("edit_blocks", {"edits": [
+        {
+            "path": "workflows/a/good.py",
+            "old_string": "alpha",
+            "new_string": "beta",
+        },
+        {
+            "path": "workflows/a/bad.py",
+            "old_string": "missing",
+            "new_string": "x",
+        },
+    ]})
+
+    assert "Edited 1 file(s)" in out
+    assert "Failed 1 file(s)" in out
+    assert "Nothing was written for the failed file(s)." in out
+    assert good.read_text() == "beta\n"
+    assert bad.read_text() == "keep\n"
+
+
+def test_edit_blocks_skips_noop_without_losing_other_edits(workspace):
+    wf = _workflow(workspace)
+    wf.write_text("alpha\nbeta\n")
+
+    out = _exec("edit_blocks", {"edits": [
+        {
+            "path": "workflows/a/wf.py",
+            "old_string": "alpha",
+            "new_string": "alpha",
+        },
+        {
+            "path": "workflows/a/wf.py",
+            "old_string": "beta",
+            "new_string": "gamma",
+        },
+    ]})
+
+    assert "Skipped 1 edit(s)" in out
+    assert "Edited 1 file(s)" in out
+    assert wf.read_text() == "alpha\ngamma\n"
+
+
+def test_edit_blocks_rejects_diff_shaped_new_string(workspace):
+    wf = _workflow(workspace)
+    wf.write_text("alpha\n")
+
+    out = _exec("edit_blocks", {"edits": [{
+        "path": "workflows/a/wf.py",
+        "old_string": "alpha\n",
+        "new_string": "+alpha\n+beta\n",
+    }]})
+
+    assert out.startswith("Error: no files were changed.")
+    assert "unified diff" in out
+    assert wf.read_text() == "alpha\n"
+
+
+def test_edit_blocks_reports_every_failure(workspace):
+    wf = _workflow(workspace)
+    wf.write_text("keep\n")
+
+    out = _exec("edit_blocks", {"edits": [
+        {
+            "path": "workflows/a/wf.py",
+            "old_string": "missing-one",
+            "new_string": "x",
+        },
+        {
+            "path": "workflows/a/wf.py",
+            "old_string": "missing-two",
+            "new_string": "y",
+        },
+    ]})
+
+    assert "edit 1" in out
+    assert "edit 2" in out
+    assert wf.read_text() == "keep\n"
+
+
+def test_edit_blocks_verification_failure_is_reported(workspace):
+    wf = _workflow(workspace)
+    wf.write_text("value = 1\n")
+
+    out = _exec("edit_blocks", {"edits": [{
+        "path": "workflows/a/wf.py",
+        "old_string": "value = 1\n",
+        "new_string": "value = )\n",
+    }]})
+
+    assert "Verification failed" in out
+    assert "Python syntax error" in out
+
+
+def test_edit_blocks_argparse_warning_is_reported(workspace):
+    wf = _workflow(workspace)
+    wf.write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--max-trees', type=int)\n"
+        "args = p.parse_args()\n"
+        "print(args.max_trees)\n"
+    )
+
+    out = _exec("edit_blocks", {"edits": [{
+        "path": "workflows/a/wf.py",
+        "old_string": "print(args.max_trees)\n",
+        "new_string": "print(args.max_trees, args.algorithm)\n",
+    }]})
+
+    assert "Verification warning" in out
+    assert "algorithm" in out

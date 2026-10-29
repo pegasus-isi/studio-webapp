@@ -102,6 +102,11 @@ def test_permission_endpoint_noop_when_nothing_waiting(client):
 # --- builtin gated tool flow ---
 
 
+def _final_text(events, chat):
+    out = next(e["_final_result"] for e in events if "_final_result" in e)
+    return out.text if isinstance(out, chat.ToolOutcome) else out
+
+
 async def _drive(agen, request_id, call_id, decision, *, delay=0.02):
     """Consume a _run_tool_gated generator while resolving its prompt."""
     collected = []
@@ -141,7 +146,7 @@ def test_gated_denial_skips_execution(tmp_path, monkeypatch):
     kinds = [next(iter(e)) for e in events]
     assert "permission_request" in kinds
     assert ran == []  # denied -> never executed
-    final = next(e["_final_result"] for e in events if "_final_result" in e)
+    final = _final_text(events, chat)
     assert "denied" in final.lower()
 
 
@@ -165,7 +170,7 @@ def test_gated_approval_executes():
     permission = next(
         e["permission_request"] for e in events if "permission_request" in e
     )
-    final = next(e["_final_result"] for e in events if "_final_result" in e)
+    final = _final_text(events, chat)
     assert permission["kind"] == "command"
     assert "approved-ok" in final
 
@@ -192,7 +197,7 @@ def test_ungated_tool_runs_without_prompt():
     events = asyncio.run(go())
     kinds = [next(iter(e)) for e in events]
     assert "permission_request" not in kinds
-    final = next(e["_final_result"] for e in events if "_final_result" in e)
+    final = _final_text(events, chat)
     assert "nogate" in final
 
 
@@ -339,7 +344,7 @@ def test_submit_command_gated_when_setting_off(monkeypatch):
     assert "permission_request" in kinds
     assert permission["kind"] == "submit"
     assert ran == []
-    final = next(e["_final_result"] for e in events if "_final_result" in e)
+    final = _final_text(events, chat)
     assert "denied" in final.lower()
 
 
@@ -367,7 +372,7 @@ def test_forced_submit_approval_executes_when_approved(monkeypatch):
     permission = next(
         e["permission_request"] for e in events if "permission_request" in e
     )
-    final = next(e["_final_result"] for e in events if "_final_result" in e)
+    final = _final_text(events, chat)
 
     assert permission["kind"] == "submit"
     assert final == "APPROVED"
@@ -403,7 +408,7 @@ def test_validation_plan_still_ungated_when_setting_off(monkeypatch):
 
     events = asyncio.run(go())
     kinds = [next(iter(e)) for e in events]
-    final = next(e["_final_result"] for e in events if "_final_result" in e)
+    final = _final_text(events, chat)
 
     assert "permission_request" not in kinds
     assert final == "VALIDATION"

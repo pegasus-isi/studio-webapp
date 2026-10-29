@@ -366,23 +366,6 @@ def test_tool_budget_hint_warns_and_detects_repeats(monkeypatch):
     assert "repeated 3 times" in chat._tool_budget_hint(3, tc, recent)
 
 
-def test_tool_changed_paths_extracts_edit_blocks():
-    import routers.chat as chat
-
-    assert chat._tool_changed_paths({
-        "name": "edit_blocks",
-        "arguments": {"edits": [
-            {"path": "a.py"},
-            {"path": "b.yml"},
-        ]},
-    }) == ["a.py", "b.yml"]
-
-    assert chat._tool_changed_paths({
-        "name": "write_file",
-        "arguments": {"path": "c.sh"},
-    }) == ["c.sh"]
-
-
 def test_builtin_prompt_is_workflow_generic():
     from routers import chat
 
@@ -422,3 +405,184 @@ def test_overlay_is_workflow_generic():
     assert "changing one form does not change the others" in flat
     for forbidden in ("max_trees", "n_estimators", "train_rf"):
         assert forbidden not in text
+
+
+def test_chat_stream_retries_empty_completion_once(client, monkeypatch):
+    """An empty final round is retried once before anything is persisted."""
+    import routers.chat as chat
+
+    monkeypatch.setattr(chat, "_PEGASUS_BOT_CHAT_ENABLED", False)
+    monkeypatch.setattr(chat, "PEGASUS_BOT_SERVER_URL", "")
+    calls = {"n": 0}
+
+    async def fake_dispatch(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            yield {
+                "type": "result",
+                "result": {"content": "", "tool_calls": [], "usage": {}},
+            }
+        else:
+            yield {"type": "text", "text": "ok"}
+            yield {
+                "type": "result",
+                "result": {"content": "ok", "tool_calls": [], "usage": {}},
+            }
+
+    monkeypatch.setattr(chat, "_openai_dispatch", fake_dispatch)
+    resp = client.post(
+        "/api/chat/stream",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert calls["n"] == 2
+    assert '"content": "ok"' in resp.text
+    assert '"error"' not in resp.text
+
+
+def test_chat_stream_surfaces_empty_after_retry(client, monkeypatch):
+    """A repeated empty completion becomes a visible error, not an empty row."""
+    import routers.chat as chat
+
+    monkeypatch.setattr(chat, "_PEGASUS_BOT_CHAT_ENABLED", False)
+    monkeypatch.setattr(chat, "PEGASUS_BOT_SERVER_URL", "")
+    calls = {"n": 0}
+
+    async def always_empty(*a, **k):
+        calls["n"] += 1
+        yield {
+            "type": "result",
+            "result": {"content": "", "tool_calls": [], "usage": {}},
+        }
+
+    monkeypatch.setattr(chat, "_openai_dispatch", always_empty)
+    resp = client.post(
+        "/api/chat/stream",
+        json={
+            "messages": [{"role": "user", "content": "hi"}],
+            "conversation_id": "conv-empty",
+        },
+    )
+
+    assert calls["n"] == 2
+    assert chat._EMPTY_RESPONSE_MESSAGE in resp.text
+    history = client.get(
+        "/api/chat/history?conversation_id=conv-empty"
+    ).json()["messages"]
+    assert [m["role"] for m in history] == ["user"]
+
+
+def test_unresolved_edit_forces_repair_rounds_then_notice(client, monkeypatch):
+    """A failed edit cannot be papered over by a final answer."""
+    import routers.chat as chat
+
+    monkeypatch.setattr(chat, "_PEGASUS_BOT_CHAT_ENABLED", False)
+    monkeypatch.setattr(chat, "PEGASUS_BOT_SERVER_URL", "")
+    calls = {"n": 0}
+
+    async def fake_dispatch(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            yield {
+                "type": "result",
+                "result": {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "tc1",
+                        "name": "edit_blocks",
+                        "arguments": {"edits": [{
+                            "path": "workflows/a/wf.py",
+                            "old_string": "missing",
+                            "new_string": "x",
+                        }]},
+                    }],
+                    "usage": {},
+                },
+            }
+        else:
+            yield {
+                "type": "result",
+                "result": {
+                    "content": f"attempt {calls['n']}",
+                    "tool_calls": [],
+                    "usage": {},
+                },
+            }
+
+    async def fake_execute(name, arguments, scope=None):
+        return chat.ToolOutcome(
+            text="Error: no files were changed.",
+            failed_paths=["workflows/a/wf.py"],
+        )
+
+    monkeypatch.setattr(chat, "_openai_dispatch", fake_dispatch)
+    monkeypatch.setattr(chat, "_execute_tool", fake_execute)
+
+    resp = client.post(
+        "/api/chat/stream",
+        json={
+            "messages": [{"role": "user", "content": "edit it"}],
+            "conversation_id": "conv-repair",
+        },
+    )
+
+    assert calls["n"] == 4  # failed edit + two repairs + final attempt
+    assert '"kind": "edit_failure"' in resp.text
+    assert "Some edits could not be applied" in resp.text
+    history = client.get(
+        "/api/chat/history?conversation_id=conv-repair"
+    ).json()["messages"]
+    assert history[-1]["role"] == "assistant"
+    assert "attempt 4" in history[-1]["content"]
+
+
+def test_meta_reports_only_actually_changed_files(client, monkeypatch):
+    import routers.chat as chat
+
+    monkeypatch.setattr(chat, "_PEGASUS_BOT_CHAT_ENABLED", False)
+    monkeypatch.setattr(chat, "PEGASUS_BOT_SERVER_URL", "")
+    calls = {"n": 0}
+
+    async def fake_dispatch(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            yield {
+                "type": "result",
+                "result": {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "tc1",
+                        "name": "write_file",
+                        "arguments": {
+                            "path": "workflows/a/wf.py",
+                            "content": "x = 1\n",
+                        },
+                    }],
+                    "usage": {},
+                },
+            }
+        else:
+            yield {
+                "type": "result",
+                "result": {
+                    "content": "done",
+                    "tool_calls": [],
+                    "usage": {},
+                },
+            }
+
+    async def fake_execute(name, arguments, scope=None):
+        return chat.ToolOutcome(
+            text="Wrote 6 bytes",
+            applied_paths=["workflows/a/wf.py"],
+        )
+
+    monkeypatch.setattr(chat, "_openai_dispatch", fake_dispatch)
+    monkeypatch.setattr(chat, "_execute_tool", fake_execute)
+
+    resp = client.post(
+        "/api/chat/stream",
+        json={"messages": [{"role": "user", "content": "write it"}]},
+    )
+
+    assert '"changed_files": ["workflows/a/wf.py"]' in resp.text
