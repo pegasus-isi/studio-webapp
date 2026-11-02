@@ -111,8 +111,10 @@ function SiteOption({
       className={cn(
         "flex items-start gap-3 rounded-xl border p-3 transition-colors",
         ready ? "cursor-pointer" : "cursor-not-allowed opacity-70",
+        // A ring as well as the tint: the tint alone was too faint to tell
+        // the chosen option from the rest on a white panel.
         selected
-          ? "border-pegasus-400 bg-pegasus-50 dark:bg-pegasus-400/10"
+          ? "border-pegasus-600 bg-pegasus-50 ring-1 ring-pegasus-600 dark:border-pegasus-400 dark:bg-pegasus-400/10 dark:ring-pegasus-400"
           : ready
             ? "border-line hover:bg-base"
             : "border-dashed border-line"
@@ -690,7 +692,7 @@ export function RunFlowPanel({
                     className={cn(
                       "rounded-xl border bg-surface p-2.5 text-left transition-colors",
                       !placementForeign && placement === p.value
-                        ? "border-pegasus-500 ring-1 ring-pegasus-500"
+                        ? "border-pegasus-600 bg-pegasus-50 ring-1 ring-pegasus-600 dark:border-pegasus-400 dark:bg-pegasus-400/10 dark:ring-pegasus-400"
                         : "border-line hover:border-pegasus-300"
                     )}
                   >
@@ -800,7 +802,7 @@ export function RunFlowPanel({
                 href="/settings"
                 className="font-semibold underline"
               >
-                Settings → Pegasus Options → Workflow secrets
+                Application Settings → Pegasus Options → Workflow secrets
               </AppLink>
               . You can still run without{" "}
               {missingSecrets.length === 1 ? "it" : "them"} — some are only

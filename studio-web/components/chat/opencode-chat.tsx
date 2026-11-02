@@ -471,7 +471,7 @@ export function OpenCodeChat() {
               <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-300">
                 No AI provider is set up yet. Add one with your own API key in{" "}
                 <AppLink href="/settings?tab=providers" className="font-semibold underline">
-                  Settings → LLM Providers
+                  Application Settings → LLM Providers
                 </AppLink>
                 , then start a new chat.
               </div>
@@ -547,7 +547,7 @@ export function OpenCodeChat() {
               {/* Empty means "whatever the generated config says", which is the
                   provider the user activated in Settings — named here so the
                   user can see it without opening Settings. */}
-              <option value="" title="Set in Settings → AI providers">
+              <option value="" title="Set in Application Settings → AI providers">
                 {defaultLabel}
               </option>
               {(models ?? []).map((m) => (

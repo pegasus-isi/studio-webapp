@@ -55,13 +55,18 @@
    light-mode only, so those values are ours and should be judged on their own
    rather than assumed to match anything. */
 :root {
-  --c-base: #f3f6ff;
-  --c-surface: #fcfdff;
-  --c-muted: #eef2fd;
-  --c-line: #dde5f5;
+  /* The sampled ground and surface measured 1.06:1, so cards and panels
+     barely separated from the page, and the 1.24:1 line did little to help
+     (feedback on the paper's figures, 2026-11). The ground is a step deeper,
+     surfaces are white, and lines are dark enough to draw an edge. fgsubtle
+     was 2.86:1 on a surface and carries real labels; it now clears AA. */
+  --c-base: #e8edf8;
+  --c-surface: #ffffff;
+  --c-muted: #eef2fb;
+  --c-line: #c9d4ea;
   --c-fg: #131a2e;
   --c-fgmuted: #4d5875;
-  --c-fgsubtle: #8d97b2;
+  --c-fgsubtle: #6b7593;
   /* Not the sampled #6c9cde: white-on-#6c9cde measures 2.82:1, under both the
      4.5:1 AA text threshold and the 3:1 non-text floor, which is why the
      prototype's primary buttons read as disabled. Two steps darker clears AA

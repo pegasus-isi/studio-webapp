@@ -394,7 +394,7 @@ export function WorkflowProjectDetail({ projectId }: Props) {
             <button
               onClick={handleBuild}
               disabled={isBusy}
-              title="Build the project's Apptainer definition into a .sif beside it (and publish it if a registry is set in Settings → Pegasus Options)"
+              title="Build the project's Apptainer definition into a .sif beside it (and publish it if a registry is set in Application Settings → Pegasus Options)"
               className={SECONDARY_BTN}
             >
               {building ? "Building..." : "Build Image"}

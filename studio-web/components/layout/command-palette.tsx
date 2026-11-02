@@ -30,7 +30,7 @@ const DESTINATIONS: Hit[] = [
   { key: "go-data", title: "Data", detail: "Files in your workspace", group: "Go to", href: "/data" },
   { key: "go-mkt", title: "Examples", detail: "Ready-made workflows", group: "Go to", href: "/marketplace" },
   { key: "go-res", title: "Resources", detail: "Pool capacity", group: "Go to", href: "/provisioning" },
-  { key: "go-set", title: "Settings", detail: "Models, tools, preferences", group: "Go to", href: "/settings" },
+  { key: "go-set", title: "Application Settings", detail: "Models, tools, preferences", group: "Go to", href: "/settings" },
 ];
 
 export function CommandPalette({
