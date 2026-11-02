@@ -542,7 +542,7 @@ def _apply_placement(
             "\u201cBring Your Own Compute\u201d for this workflow.",
         )
     elif not after_generate:
-        where = "only your own nodes (Bring Your Own Compute)" if state["placement"] == rp.ANNEX else "Studio's compute resources"
+        where = "only your own nodes (Bring Your Own Compute)" if state["placement"] == rp.ANNEX else "Studio's Compute Resources"
         flow._line("plan", f"Steps run on {where} (this workflow's pegasus.properties).")
 
 
