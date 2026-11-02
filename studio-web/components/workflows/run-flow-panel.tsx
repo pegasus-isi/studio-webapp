@@ -853,7 +853,11 @@ export function RunFlowPanel({
             predict the consequences of a form they only half understand, and
             "it started something on a cluster" is a bad moment to find out.
             Values only — no flags, no command line. */}
-        {!running && summary.length > 0 && (
+        {/* Only when it says something the form doesn't show at a glance:
+            a changed setting (Settings start collapsed) or the GPU note. With
+            every default left, the one row left would repeat the choice
+            selected just above it (2026-11 feedback). */}
+        {!running && summary.length > 1 && (
           <div className="mt-5 rounded-xl border border-line bg-base p-4">
             <p className="text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
               What will happen
