@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Skills and agents are authored in pegasus-isi/claude-plugin-marketplace
-      # and installed as the pegasus-ai-knowledge package. A copy here is how the
+      # and checked out into the image at /opt/pegasus-ai/marketplace. A copy here is how the
       # two drifted apart before, so reintroducing one fails the build rather
       # than quietly diverging again. Studio-specific context goes in
       # knowledge/overlay/, which is composed on top of the shared guide.

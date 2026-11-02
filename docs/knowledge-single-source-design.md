@@ -7,6 +7,15 @@ adapters generate config into the user's workspace, and the CI guard that
 fails the build if a second copy reappears under `knowledge/{skills,agents,…}`
 is live in `.github/workflows/deploy.yml`. `CLAUDE.md` describes the shipped
 arrangement; this document is the reasoning behind it.
+**OOD, as it actually shipped (re-checked 2026-11-02):** the OOD parts of this
+design (the D8 first-run consent, the `"studio" | "ood"` profile and the
+Phase 5 launcher) were overtaken. The batch-connect app
+([pegasus-isi/bc_pegasus_ai_studio](https://github.com/pegasus-isi/bc_pegasus_ai_studio))
+runs the image with a Studio home of its own (`apptainer --home "$STUDIO_HOME"`,
+`~/pegasus-studio` by default, #482), so Studio never writes into the site's
+real home and needs no consent prompt. The deployment switch that exists is
+`services/site_config.deployment()`, returning `"hosted"` or `"ood"`, and it
+governs the Resources page and run placement, not knowledge paths.
 Scope: studio-webapp (`knowledge/`, `studio-api/knowledge/`), pegasus-isi/claude-plugin-marketplace, the prospective OOD app
 Goal: **exactly one authored copy** of the Pegasus AI skills/agents/reference
 content, consumable by Claude Code and by every other tool Studio supports, on

@@ -1,6 +1,11 @@
 # Designing Studio for Non-Computer-Scientists
 
-**Status:** proposed — tracking issue: [#241](https://github.com/pegasus-isi/studio-webapp/issues/241)
+**Status:** phases 0–7 shipped (#245–#275, 2026-08-26/27; see Appendix B); the
+Phase 0 terminology check and the Phase 8 task test have not been run
+(re-checked 2026-11-02). Much of the vocabulary has since been reworded by
+the September redesign and later product decisions, for example
+"Studio's Compute Resources" and "Bring Your Own Compute" in the Run panel
+(#627). Tracking issue: [#241](https://github.com/pegasus-isi/studio-webapp/issues/241)
 **Date:** 2026-08-26 (rev. 2 — adds data ingress, Chat vocabulary sync,
 baseline telemetry, run-flow orchestration/failure spec, rollout strategy)
 **Scope:** `studio-web/` UI copy, information architecture, and run flow;

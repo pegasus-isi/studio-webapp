@@ -1,5 +1,13 @@
 # Terminology validation protocol
 
+> **Status: written, not yet run** (re-checked 2026-11-02). The vocabulary it
+> was meant to gate shipped default-on without it (#269; see
+> [`UX-NON-SPECIALIST-DESIGN.md`](UX-NON-SPECIALIST-DESIGN.md), Rollout
+> strategy). The UI wording has moved on since: the execution-site choice is
+> now "Where Workflow Runs" with "Studio's Compute Resources" and "Bring Your
+> Own Compute" (#619, #627, #631). Refresh Part 1 and Part 2 against
+> `studio-web/lib/vocabulary.ts` and the current screens before running it.
+
 **Purpose:** decide the words in `studio-web/lib/vocabulary.ts` with evidence
 rather than taste, before Phases 1–7 build on them.
 **Effort:** ~45 minutes per participant, 3–4 participants, one session each.

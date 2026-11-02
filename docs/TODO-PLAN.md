@@ -1,9 +1,39 @@
 # studio-webapp TODO Plan
 
-> **Historical snapshot (July 13, 2026).** Kept for provenance. Much of the
-> "Absent today" list has since shipped (dashboard, Resources/OSPool panels,
-> runtime estimates), and PR references here predate PR #55. For current status
-> see `docs/CODE_REVIEW_2026-08.md`.
+> **Historical plan (July 13, 2026), with item status kept current.** The
+> plan text below is the July original and is kept for provenance: its
+> "Current state" section, line references and PR numbers describe July,
+> not today. What is current is the status marker on each item and the
+> table directly below, last verified against `git log` and the code on
+> 2026-11-02. For the state of the August review findings see
+> [`CODE_REVIEW_2026-08.md`](CODE_REVIEW_2026-08.md).
+
+Markers: ✅ done · ◐ partly done · ☐ not started.
+
+| # | Item | Status (2026-11-02) |
+|---|------|---------------------|
+| 1 | `run_command` posture | ✅ Per-command Approve/Deny in chat, on by default (#68); OpenCode's own permission prompts use the same cards; writes outside `~/workflows` and `~/data` also ask first (#597). |
+| 2 | S7 plaintext API keys | ✅ in code: keys write-only over the API (#64), encrypted at rest when `STUDIO_SECRET_KEY` is set (#136), key-bearing files 0600 (#601). Encryption is fail-open: it stays off on a deployment that does not inject the secret. |
+| 3 | S10 Dockerfile supply chain | ◐ Fixed in #66, then partly reverted on 2026-08-14 (`c50c700`) when the image went back to Pegasus nightlies: the Pegasus apt source is `[trusted=yes]` again. NodeSource is keyring'd and pip bootstraps from a pinned wheel (#569). |
+| 4 | Drop `test_user_storage_relocation.py` | ✅ |
+| 5 | Open OnDemand path | ◐ Shipped: the EL9 image (`ood-app/studio-el9.def`, #405) and the batch-connect app in [pegasus-isi/bc_pegasus_ai_studio](https://github.com/pegasus-isi/bc_pegasus_ai_studio), with a Studio home of its own and remote planning on the cluster (#483–#513). No `STUDIO_CONDOR=off` flag was built: under OOD runs go to the administrator's site catalog (`site_config.deployment()` = `ood`). |
+| 6 | `make dist` tarball + deployment recipes | ☐ |
+| 7 | FABRIC / Jetstream2 deployment | ◐ The hosted deployment runs on Jetstream2 (pegasus-isi/studio-system). No FABRIC recipe in this repo. |
+| 8 | Dashboard at `/` | ✅ #15, reshaped since (#16–#46, #314 redesign). |
+| 9 | Provisioning page | ✅ #15; renamed Resources (#39), OSPool section (#35), split into hosted and OOD pages with a section menu (#533, #536, #545). |
+| 10 | `_check_resources` | ✅ #15 (`services/notification_engine.py`). |
+| 11 | Remaining-time estimate | ◐ v1 ✅ (`services/runtime_estimate.py`); v2 PegasusOracle backend ☐. Slow-step warnings added separately (#587). |
+| 12 | Analyzer/diagnostics UI | ✅ Failure cards and run diagnosis (#263). |
+| 13 | Actionable resource notifications | ◐ Resource notifications link to Resources; no snooze or mark-handled actions. |
+| 14 | Resource-event audit trail | ☐ |
+| 15 | Provisioner adapters | ◐ HTCondor annex shipped on HTCondor 25.x as a guided manual flow, **Resources → Bring Your Own Compute** (#533–#585, #613, #627; see [`annex.md`](annex.md)). FABRIC/Chameleon/Jetstream2 adapters ☐ (shown as "Coming soon"). |
+| 16 | Manual approval for provisioning | ✅ Holds: the annex is started and released only by the user. |
+| 17 | Autonomy levels | ◐ Assist ✅; per-command approval ✅ (#68); an Approve mode that prepares generate/plan/submit/fix for review ☐; Autopilot ☐. |
+| 18 | Operator loop | ☐ |
+| 19 | Guardrails before Autopilot | ☐ |
+| 20 | Guided tour | ◐ An in-house app tour (#317, #323, #430, #455), not driver.js or react-joyride. The three task tours ☐. |
+| 21 | pegasus-statistics | ☐ |
+| 22 | Ensemble Manager | ☐ |
 
 
 Derived July 13, 2026 from the Studio Web App deck
@@ -16,7 +46,7 @@ deployable handoff artifacts, with agentic work after the foundations.
 Each item is tagged: **[blocker]** deployment blocker · **[demo]** demo
 commitment · **[spike]** research spike.
 
-## Current state (verified against the repo)
+## Current state (July 13, 2026; historical)
 
 - PRs #1–#13 all merged; no open PRs. Working tree is on
   `fix/chat-transient-retry` (already merged) — switch back to `main`.
@@ -35,25 +65,25 @@ commitment · **[spike]** research spike.
 
 ## Phase 0 — Carryover hygiene (do first, small)
 
-1. **Decide `run_command` posture** [blocker for agentic work]
+1. ✅ **Decide `run_command` posture** [blocker for agentic work]
    (`studio-api/routers/chat.py:202-221`). Currently arbitrary shell behind
    the chat endpoint; the deck (slide 8) claims "bounded by design".
    Decision: allowlist / policy-gate / per-call approval. Design the gate as
    a reusable **policy layer** — the same mechanism becomes the slide-13
    guardrail (policy-gated submit/provision/delete) later. Do not build it
    twice.
-2. **Finish S7** — stop storing LLM API keys plaintext in SQLite
+2. ✅ **Finish S7** — stop storing LLM API keys plaintext in SQLite
    (`studio-api/db.py:39-70`); at minimum keyring/file-permission hardening
    and stop echoing keys from `validate_provider`.
-3. **S10 Dockerfile supply chain** [blocker] — `deb [trusted=yes]`
+3. ◐ **S10 Dockerfile supply chain** [blocker] — `deb [trusted=yes]`
    (`Dockerfile:134`) etc. Rises in priority because the tarball handoff
    (Phase 1) means external sites will build/run this image.
-4. Close stale item: `test_user_storage_relocation.py` does not exist in the
+4. ✅ Close stale item: `test_user_storage_relocation.py` does not exist in the
    repo — dropped from the backlog.
 
 ## Phase 1 — Deployment paths (P0, UMass-driven)
 
-5. **Open OnDemand deployment path** [blocker]
+5. ◐ **Open OnDemand deployment path** [blocker]
    - Package Studio as an OOD interactive app (app manifest + form +
      submit template pointing at the container).
    - **Condor-optional mode**: today HTCondor is assumed present. Add a
@@ -62,12 +92,12 @@ commitment · **[spike]** research spike.
      non-condor site, hide submit/monitor affordances), notification engine
      skips condor polling.
    - Capture Berent's feedback as issues against this path.
-6. **Downloadable tarball + deployment instructions** [blocker]
+6. ☐ **Downloadable tarball + deployment instructions** [blocker]
    - `make dist` (or script) producing `docker save` tarball + versioned
      docs: JupyterHub, OOD, and native-on-existing-Condor-cluster recipes.
    - Native deployment doc covers the non-container case assumptions
      (ports, workspace dir, supervisord vs. systemd).
-7. **FABRIC / JetStream deployment paths** [spike] — validate the container
+7. ◐ **FABRIC / JetStream deployment paths** [spike] — validate the container
    under each; document image/flavor, ingress, and persistent-volume
    choices. (Deployment here is distinct from provisioning in Phase 3.)
 
@@ -77,70 +107,70 @@ commitment · **[spike]** research spike.
 > `feat/dashboard-resource-visibility` (items 8–12; item 11 is v1 only —
 > the PegasusOracle v2 backend remains open).
 
-8. **Landing page / dashboard at `/`** [demo]
+8. ✅ **Landing page / dashboard at `/`** [demo]
    (`studio-web/app/(studio)/page.tsx` currently redirects to Workflows).
    Panels: workflows summary (counts by state, recent runs), resources
    available, overview/quick actions, guided-tour entry point (hook for
    Phase 5). Backend: one new aggregate endpoint (`GET /api/dashboard`)
    composing existing workflow + health data.
-9. **Provisioning nav item + page (read-only first)** [demo]
+9. ✅ **Provisioning nav item + page (read-only first)** [demo]
    - Add "Provisioning" to `studio-web/components/layout/sidebar.tsx`.
    - New backend service polling `condor_status` for pool inventory:
      provisioned pool / OS pool / base Condor pool; total + idle CPUs and
      GPUs. Cache and expose via REST + SSE.
    - Supply/demand view: current workflow queue demand (from stampede/condor_q)
      vs. pool capacity.
-10. **Wire `_check_resources`** [demo] — replace the stub with real
+10. ✅ **Wire `_check_resources`** [demo] — replace the stub with real
     detection: idle/held jobs with unmatched requirements, queue wait past a
     configured threshold, demand gap vs. capacity. Emit `resource`-category
     notifications with the *reason* and required delta ("needs 8 CPUs / 1
     GPU"). Explainable thresholds only; no automation yet.
-11. **Remaining-time estimate** [demo, then spike]
+11. ◐ **Remaining-time estimate** [demo, then spike]
     - v1: historical per-transformation mean runtimes from the stampede DB
       (reader already exists) × remaining job counts — cheap and explainable.
     - v2 [spike]: integrate PegasusOracle (`pegasusai/Jobs-Runtime-Prediction`
       services, ports 8000/8001) as an optional predictor backend.
-12. **Analyzer/diagnostics UI panel** — analyzer runs via
+12. ✅ **Analyzer/diagnostics UI panel** — analyzer runs via
     `POST /api/workflows/{run_id}/analyze` but has no dedicated UI surface;
     the deck (slide 6) presents it as a first-class view. Small, high-value.
 
 ## Phase 3 — Resource add decision loop (Act + Verify)
 
-13. **Actionable resource notifications** — CTA set from slide 12: add
+13. ◐ **Actionable resource notifications** — CTA set from slide 12: add
     resources / view recommendation / snooze / mark handled manually.
-14. **Audit trail** — SQLite table recording decision, action, result,
+14. ☐ **Audit trail** — SQLite table recording decision, action, result,
     resolution for every resource event. Shared later by the agent (Phase 4).
-15. **Provisioner adapter interface** [spike] — one interface, three
+15. ◐ **Provisioner adapter interface** [spike] — one interface, three
     implementations arriving in order: FABRIC and JetStream adapters now (to
     validate UX/resource model), **HTCondor Annex adapter when Condor 26
     ships (~Aug 2026 — tracked external dependency, do not block on it)**.
-16. Manual approval remains mandatory for all provisioning actions until
+16. ✅ Manual approval remains mandatory for all provisioning actions until
     false-positive and failure rates are understood (deck slide 12 note).
 
 ## Phase 4 — Agentic workflow operator (north star)
 
-17. **Autonomy levels** — Assist (exists: chat), **Approve** (agent prepares
+17. ◐ **Autonomy levels** — Assist (exists: chat), **Approve** (agent prepares
     generate/plan/submit/fix actions, user approves diffs/commands before
     execution), Autopilot (later, policy-bounded). Approve mode is the next
     concrete deliverable.
-18. **Operator loop** — Plan → Run → Monitor → Diagnose → Fix → Retry,
+18. ☐ **Operator loop** — Plan → Run → Monitor → Diagnose → Fix → Retry,
     composed from existing pieces: workflows API (generate/plan/submit),
     SSE events + notifications (monitor), analyzer + exit codes + job
     metadata (diagnose), chat file tools (fix), bounded rerun (retry).
-19. **Guardrails before Autopilot** — policy-gated actions (reuse Phase 0
+19. ☐ **Guardrails before Autopilot** — policy-gated actions (reuse Phase 0
     gate), diff review + checkpoint (git snapshot of project dir) + rollback,
     bounded retry budget, escalation on low confidence/repeat failure, audit
     trail (reuse Phase 3 table).
 
 ## Phase 5 — Enablement + workflow intelligence
 
-20. **Guided tour framework** [demo] — pick driver.js or react-joyride;
+20. ◐ **Guided tour framework** [demo] — pick driver.js or react-joyride;
     attach to dashboard, Workflows, Workbench, Settings. Tours: new-workflow
     creation, script→workflow conversion, Variant Calling tutorial.
-21. **pegasus-statistics integration** [spike→demo] — "how did Pegasus
+21. ☐ **pegasus-statistics integration** [spike→demo] — "how did Pegasus
     improve the workflow": runtime, reliability, resource use per run;
     ties into the dashboard overview panel.
-22. **Ensemble Manager (pegasus-em) integration** [spike].
+22. ☐ **Ensemble Manager (pegasus-em) integration** [spike].
 
 ---
 

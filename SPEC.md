@@ -11,13 +11,16 @@ KubeSpawner, or Open OnDemand.
 - Provide workflow generation, planning, submission, monitoring, and diagnostics.
 - Let users install AI coding tools on demand while sharing the same Pegasus
   knowledge base across tools.
-- Keep authentication outside the container; the spawner or ingress authenticates
-  the user before the container is reachable.
+- Keep identity outside the container: the spawner (JupyterHub, Open OnDemand)
+  says who the user is. The container has no login or accounts of its own, but
+  it does check every request against that identity (see Authentication).
 
 ## Non-Goals For V1
 
 - Multi-user state inside one Studio process.
-- Built-in login, sessions, or authorization.
+- Built-in login, user accounts, or authorization rules. (Studio does keep a
+  session cookie under JupyterHub, issued only after the hub's OAuth says who
+  the user is.)
 - PostgreSQL/Redis/Helm-based platform services.
 - JupyterLab RTC collaboration or `jupyter-ai` inside the notebook server.
 
@@ -60,6 +63,29 @@ through supervisord's own `%(ENV_VAR)s` expansion.
 `supervisord` restarts crashed services and keeps logs on stdout/stderr for the
 container runtime.
 
+## Authentication
+
+Studio has no login page or user accounts. Who the user is comes from the
+spawner, and nginx checks it on every request, in one of two modes the
+entrypoint picks at start:
+
+| Deployment | Mode | How a request is checked |
+|---|---|---|
+| JupyterHub / KubeSpawner | `STUDIO_HUB_AUTH=1` (#592), on when the hub's OAuth variables (`JUPYTERHUB_API_TOKEN`, `JUPYTERHUB_CLIENT_ID`, `JUPYTERHUB_OAUTH_CALLBACK_URL`, `JUPYTERHUB_USER`) are set and the token gate is not | A server-level nginx `auth_request` (`docker/nginx/hub-auth-server.conf.tmpl`) asks studio-api's `/_hub_auth/check` about every request. Without a valid session cookie, a page load is sent through the hub's OAuth flow and anything else (API, WebSocket, non-GET) gets 401. The callback accepts only `JUPYTERHUB_USER` or a user holding one of `JUPYTERHUB_OAUTH_ACCESS_SCOPES` (an admin), then sets an HMAC-signed, `HttpOnly`, `SameSite=Lax` cookie scoped to the server's prefix, valid 8 hours, keyed from the pod's hub token |
+| Open OnDemand | Session token gate, `STUDIO_AUTH_TOKEN` (#218) | The proxy's cookie gate, loopback binds, a JupyterLab token, and an `X-Studio-Internal` secret studio-api demands (see Open OnDemand below) |
+| Local (`local-test-instance.sh`, dev) | Neither | Unauthenticated; for a single person's machine |
+
+This is what `jupyterhub-singleuser` does with HubOAuth, done with plain HTTP
+because the image has no `jupyterhub` package; the entrypoint runs
+supervisord instead of that server, so before #592 nothing checked. In every
+mode studio-api also refuses cross-origin writes (`CrossOriginWriteMiddleware`
+in `security.py`), since a cookie rides along on any request a page makes.
+
+All users of one hub share an origin (`/user/<name>/`), so one user's served
+page is same-origin with another's. That is a JupyterHub property fixed only
+by per-user subdomains, which this deployment does not use. `SECURITY.md`
+describes the security model per deployment.
+
 ## Container Stack
 
 - Base image: `debian:trixie-slim` — the same distro as the HTCondor access
@@ -67,9 +93,14 @@ container runtime.
   sides (#334). Override with `--build-arg DEBIAN_SUITE=`.
 - Supported platform: `linux/amd64`.
 - Python: single system Python 3.13 (whatever the suite ships). No
-  conda/Miniforge layer.
-- Node.js: 20.x for the Next.js server and npm-installed AI tools.
-- Pegasus WMS and HTCondor: installed from native DEB packages.
+  conda/Miniforge layer. pip is bootstrapped from a released wheel pinned by
+  version and sha256 (`PIP_VERSION`, `PIP_WHEEL_URL`, `PIP_WHEEL_SHA256`, #568),
+  not from `get-pip.py`, whose checksum changes with every pip release.
+- Node.js: 20.x for the Next.js server and npm-installed AI tools. The frontend
+  build runs with `NEXT_TELEMETRY_DISABLED=1`.
+- Pegasus WMS and HTCondor: installed from native DEB packages. Pegasus comes
+  from the 6.0 development channel, which republishes every nightly under one
+  version, so bumping `PEGASUS_REFRESH` is what pulls the current build.
 - Apptainer: installed from the upstream `.deb`, with `singularity` compatibility.
 - JupyterLab: installed via pip without `jupyter-ai` or collaboration extensions.
 - OpenCode: bundled in the image (pinned npm version) and registered as an
@@ -111,12 +142,14 @@ Three things are true of this deployment that are not (yet) true of K8s:
   serves the UI shell (HTML, JS, CSS) and nothing else: every byte of user
   data comes from `/api`, which 403s without the secret, and the `/api` and
   `/ws` rewrites in `next.config.ts` exist only in dev, so Next never
-  forwards a request onward. studio-web does hold the secret, because
-  `lib/server/ui-prefs.ts` calls studio-api on loopback for the app-root
-  redirect, so what a local user can learn through it is that one bit (show
-  the welcome page or not). Gating Next as well would widen `middleware.ts`
-  to every route on the K8s path, more risk than that bit is worth. If a
-  server component ever starts returning user data, gate it.
+  forwards a request onward. studio-web is still given the secret
+  (`STUDIO_INTERNAL_SECRET` in `supervisord.conf`) for server components that
+  call studio-api on loopback, but none does today: the one that did,
+  `lib/server/ui-prefs.ts` deciding whether the app root showed the welcome
+  page, went when Studio started opening on Home, so a local user learns
+  nothing through it. Gating Next as well would widen `middleware.ts` to every
+  route on the K8s path, more risk than nothing is worth. If a server
+  component ever starts calling studio-api or returning user data, gate it.
 - **The URL isn't served at the app root.** Open OnDemand's own reverse proxy
   assigns each session a path like `/node/compute-1/20153` (`STUDIO_URL_PREFIX`),
   a different shape from KubeSpawner's `/user/<name>` convention that the nginx
@@ -200,16 +233,17 @@ Primary routes:
 
 | Route | Nav label | Purpose |
 |-------|-----------|---------|
-| `/` | Home | Welcome, four ways in, an opener gallery, an attention strip for runs that need it, and the guided tour (every login until opted out) |
-| `/workflows` | Analyses | Workflow projects, runs, actions and details; the graph (click a step for its files; optional file nodes); Results with previews; rename/delete |
+| `/` → `/home` | Home | Where Studio opens: welcome, four ways in, an opener gallery, an attention strip for runs that need it, and the guided tour (every login until opted out). The former `/welcome` introduction moved to the JupyterHub login page; `/welcome` now redirects to Home |
+| `/workflows` | Analyses | Workflow projects, runs, actions and details; the Run panel (Where Workflow Runs, GPU notes); where each step ran; long-running-step warnings; the graph (click a step for its files; optional file nodes); Results with sandboxed previews; rename/delete |
 | `/data` | Data | Upload input files into the workspace |
 | `/marketplace` | Examples | Browse workflows sourced live from GitHub: repos in the configured orgs tagged `pegasus-studio-example`, enriched from the PegasusHub registry; "Add" git-clones one into the workspace |
-| `/provisioning` | Resources | Pool inventory, workflow demand, pressure findings, OSPool capacity (read-only) |
+| `/provisioning` | Resources | A section menu: Overview (pool inventory, workflow demand, pressure findings, every capacity number), OSPool (capacity and the user's OSPool project name), and per deployment either Bring Your Own Compute (hosted: create, download and shut down the user's HTCondor annex, cluster presets, GPU nodes) or Where workflows run (Open OnDemand: the cluster's catalog and the user's allocation) |
 | `/notebooks` | Notebooks | Opens JupyterLab at `/jupyter/lab` |
-| `/settings` | Settings | Notifications; Pegasus Options (Simplified Run, welcome page & tour, scan roots, container registry); Chat (engine, shell-command approval, chat-text sharing); Feedback & privacy; LLM providers and Tools under Advanced |
+| `/settings` | Settings (page title "Application Settings") | Notifications; Pegasus Options (Simplified Run, guided tour, where planning runs, workflow secrets, container registry, workflow discovery scan roots); Chat (engine, shell-command approval, chat-text sharing); Feedback & privacy; LLM Providers and Tools under Advanced |
 
 A chrome-less `/chat` page renders the same chat for embedding into JupyterLab
-(iframe, origin-checked postMessage handshake).
+(iframe, origin-checked postMessage handshake). The rail, the account menu and
+the command palette also link out to the PegasusAI website (`pegasus-ai.org`).
 
 The frontend consumes REST APIs, SSE chat streams, and WebSocket PTY sessions.
 
@@ -224,22 +258,23 @@ Router groups:
 | Router | Responsibility |
 |--------|----------------|
 | `health` | Basic and detailed container health |
-| `settings` | User settings summary/update |
+| `hub_auth` | JupyterHub OAuth gate (#592): `/_hub_auth/check`, `/login`, `/callback`, mounted outside `/api` and reached only through nginx (see Authentication) |
+| `settings` | User settings summary/update; UI preferences, telemetry consent, profile; container registry, workflow-scan roots, where planning runs, workflow secrets, and the compute site catalog and allocation |
 | `llm` | Provider config, validation, provider activation |
 | `knowledge` | Skills, agents, templates, examples |
 | `tools` | Tool install/uninstall/start/stop/status |
 | `files` | Workspace file operations |
 | `terminal` | Browser bash PTY |
 | `ai_terminal` | AI tool PTYs |
-| `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate; outputs and a job's files with previews; project rename |
+| `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate; per-workflow placement and GPU steps; where each step ran and slow steps; outputs and a job's files with previews; project rename |
 | `chat` | The builtin agent loop (direct provider calls with tool use; Anthropic, OpenAI-compatible and Responses API), still selectable per user. Per-turn shell-command approval |
 | `opencode` | Verbatim proxy of `/api/opencode/*`, SSE included, to the loopback `opencode serve` that backs the chat panel — the default engine since #403 (`chat_engine` UI preference) |
 | `mcp` | The Pegasus tools served to the OpenCode engine at `/api/mcp` (stateless Streamable HTTP), read from `services/chat_tools.py` |
-| `feedback` | 👍/👎 on chat replies (`message_feedback`; no message text) |
+| `feedback` | 👍/👎 on chat replies (`message_feedback`; no message text), also sent to the OTLP collector when one is configured (`services/rating_telemetry.py`, #608) |
 | `episodes` | "Did the AI help?" failure episodes: nudges, help cards, answers, give-ups |
 | `jupyter` | Status only (JupyterLab is always-on; the `/notebooks` page frames it) |
 | `dashboard` | Aggregate landing-page data (projects, runs, resources, versions) |
-| `provisioning` | HTCondor pool inventory + queue demand + pressure + OSPool capacity (read-only) |
+| `provisioning` | HTCondor pool inventory + queue demand + pressure + OSPool capacity, the deployment kind, and on hosted the user's annex: create the setup bundle, download it, close requests, shut it down |
 | `notifications` | Notification feed + prefs; SSE stream for live toasts |
 | `marketplace` | The Examples catalog: topic-tagged GitHub repos enriched from the PegasusHub registry; "Add" git-clones into the workspace |
 | `pegasus_bot` | Same-origin proxy to the cluster-internal PegasusAI Bot server (search/feedback) |
@@ -268,12 +303,39 @@ Before rendering action forms, Studio introspects each project's
 `workflow_generator.py` `argparse` definition and builds a parameter form for
 that project.
 
+The one-button Run (`services/run_flow.py`) asks **Where Workflow Runs**:
+
+- The site comes from what planning can resolve (`services/execution_sites.py`:
+  the project's `sites.yml`, a hosted catalog named in `~/.pegasusrc`, then the
+  deployment's default). On hosted, "This machine" (`local`) is not offered
+  unless a workflow already has it saved; under Open OnDemand it is labelled
+  "This Studio session's node".
+- On hosted, the default is **Studio's Compute Resources** (Studio's pool and,
+  for steps with a project name, the OSPool), and the alternative is **Bring
+  Your Own Compute** (only the user's annex nodes). The choice is per workflow,
+  written into the project's own `pegasus.properties` as a site
+  `condor.requirements` profile (`services/run_placement.py`), so a
+  `pegasus-plan` from a terminal plans the same thing as Run. See
+  [`docs/annex.md`](docs/annex.md).
+- GPUs are the workflow's to request, per job or transformation (a Pegasus
+  `gpus` or HTCondor `request_gpus` profile). The panel lists the steps that
+  ask (`services/workflow_gpus.py`) and says when no machine has a GPU free.
+- After generate and before plan, a run bound for an HTCondor pool is stopped
+  if the workflow assumes a shared filesystem the pool lacks (`sharedfs`,
+  bypassed input staging, a shared scratch dir, container mounts from the
+  home), with a message naming both sides (`services/shared_fs.py`, #520).
+
 Run monitoring is JSONL-driven:
 
-- On submit, Studio starts `workflow-monitor --serve`.
-- `workflow-monitor` writes `workflow-events.jsonl`.
-- Studio tails/parses that JSONL for run status, job tables, progress, and SSE
-  updates.
+- Studio reads `workflow-events.jsonl` (from `workflow-monitor --serve`) or
+  `wfevents.jsonl` (pegasus-monitord's `wfevents` plugin) for run status, job
+  tables, progress, and SSE updates. It does not start a monitor itself.
+- When neither file exists, it reads the run's stampede DB directly
+  (`services/stampede_reader.py`). That DB also says where each step ran (the
+  kickstart host), shown as "Ran on" and grouped as Studio pool, access point
+  or a cluster's domain.
+- A step running much longer than the same step usually takes, in this run or
+  earlier runs of the workflow, is flagged (`services/slow_steps.py`, #586).
 - Diagnostics use Pegasus CLI tools such as `pegasus-analyzer`.
 
 Jobs run in Apptainer/Singularity containers on the configured HTCondor site.
@@ -285,11 +347,15 @@ Tools are installed on demand, usually with `npm install -g` into
 
 | Tool | Type | Notes |
 |------|------|-------|
-| PegasusAI Chat | Built-in web chat | Always available |
-| Claude Code | Terminal | Anthropic CLI with Pegasus knowledge |
-| OpenCode | Terminal/web | Open-source coding assistant |
+| PegasusAI Chat | Built-in web chat | Always available; not an installable tool |
+| OpenCode | Terminal/web | Open-source coding assistant; bundled, and the chat's default engine |
+| Antigravity CLI | Terminal | Google's agentic coding CLI (installed by shell script, not npm) |
 | Codex CLI | Terminal | OpenAI terminal coding agent |
-| Antigravity | Terminal | Lightweight terminal assistant |
+| Crush | Terminal | Charmbracelet's multi-provider terminal agent |
+| Claude Code | Terminal | Anthropic CLI with Pegasus knowledge |
+
+Tools that run on the user's own LLM subscription or API tokens carry a "Your
+subscription" badge (#515).
 
 Tool lifecycle:
 
@@ -340,15 +406,17 @@ Adapters translate the shared knowledge into each tool's native format:
 |---------|--------|
 | Claude Code | `CLAUDE.md`, `.mcp.json`, Claude plugin/skill files |
 | OpenCode | `AGENTS.md`, `opencode.json`, `.opencode/skills`, `.opencode/agents` |
-| Codex CLI | `AGENTS.md` |
-| Antigravity | `.antigravity/context.md` |
+| Codex CLI | `AGENTS.md`, `~/.codex/config.toml`, `.agents/skills/`, `.codex/agents/` |
+| Crush | `AGENTS.md`, `~/.config/crush/crush.json` |
+| Antigravity | `.antigravity/context.md`, `settings.json` |
 | Web Chat | Server-side in-memory context |
 
 ## LLM Configuration
 
-Supported providers are `gateway` (the zero-config default — an internal
-OpenAI-compatible gateway, so chat/tools work with no keys), `anthropic`,
-`openai`, `google`, `fabric`, `nrp`, `custom`, and `ollama`.
+Provider presets are `gateway` (the zero-config default on the hosted
+deployment: an internal OpenAI-compatible gateway, so chat/tools work with no
+keys), `anthropic`, `openai`, `google`, `custom` (any OpenAI-compatible
+endpoint; several may coexist), and `ollama` (`studio-api/llm/providers.py`).
 
 Where there is no gateway (`STUDIO_LLM_GATEWAY_URL` set to empty, the Open
 OnDemand image's default unless a site names one), there is no default: each
@@ -359,6 +427,8 @@ injected into sessions (#498, #505).
 Configuration is done at runtime on the Settings page and stored in SQLite.
 Keys are write-only over the API — responses report only whether a key is set —
 and are encrypted at rest when `STUDIO_SECRET_KEY` is provided (see Database).
+The tool configs that carry keys (`opencode.json`, Codex's `config.toml`,
+`crush.json`) are written 0600 (#600).
 
 The built-in chat supports both OpenAI Chat Completions and the OpenAI Responses
 API and falls back when an endpoint requires Responses.
@@ -376,11 +446,16 @@ Tables:
 | `provider_configs` | Saved multi-provider configs (name, key, base URL, active flag) |
 | `workflow_runs` | Discovered workflow run metadata |
 | `chat_messages` | Built-in chat history + 👍/👎 feedback |
+| `message_feedback` | 👍/👎 on OpenCode replies, keyed by OpenCode session/message id; no message text |
 | `notifications` | Notification feed rows |
 | `notification_log` | Durable dedup-key ledger (survives clear, so fire-once guards hold) |
 | `app_settings` | Key/value app settings (e.g. container registry, chat engine) |
+| `workflow_secrets` | Credentials a workflow's generator needs; encrypted, never returned over the API |
+| `feedback_episodes`, `feedback_giveups` | "Did the AI help?" failure episodes and give-up tags |
 
-The DB is a single-user store protected by upstream authentication. Stored
+The DB is a single-user store behind the request authentication above.
+`~/.studio` is created 0700 and the DB 0600, and the entrypoint re-applies
+those modes on every start, since homes are 0755 under a 022 umask (#600). Stored
 secrets (LLM API keys, the registry password) are additionally encrypted at
 rest when `STUDIO_SECRET_KEY` is set — the key is derived from that
 operator-provided secret, which must live off the workspace PVC so a leak of
@@ -394,6 +469,7 @@ Common endpoints:
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/api/health` | Basic health |
+| `GET` | `/_hub_auth/check`, `/login`, `/callback` | JupyterHub OAuth gate, reached only through nginx (hub mode only) |
 | `GET` | `/api/health/detailed` | DB, Pegasus, and HTCondor health |
 | `GET/PUT` | `/api/llm/config` | Active LLM config |
 | `GET` | `/api/llm/providers` | Supported providers |
@@ -419,9 +495,15 @@ Common endpoints:
 | `GET` | `/api/workflows/projects/{id}/run-flow/events` | SSE: full replay of the flow, then live |
 | `DELETE` | `/api/workflows/projects/{id}` | **Destructive**: delete a workflow, its runs (cancelled first) and its files |
 | `GET/PUT` | `/api/settings/registry` | Container registry + credentials for Build |
-| `GET/PUT` | `/api/settings/ui` | Per-user interface preferences (Simplified Run, disclosure state, welcome, `tour_on_login`, chat engine) |
+| `GET/PUT` | `/api/settings/ui` | Per-user interface preferences (Simplified Run, disclosure state, `tour_on_login`, chat engine, Resources source) |
+| `GET/PUT` | `/api/settings/planning` | Where planning runs (automatic, submit host, or this workspace) |
+| `GET/PUT/DELETE` | `/api/settings/workflow-secrets` | Workflow credentials (names only are ever returned) |
+| `GET/PUT` | `/api/settings/compute-site` | The hosted site catalog and the user's allocation (`RESOURCE_*`), kept in `~/.pegasusrc`; edited on Resources under Open OnDemand |
 | `GET/PUT` | `/api/settings/telemetry` | Chat-text sharing consent, with a read-only `decided` |
 | `POST` | `/api/workflows/projects/{id}/rename` | Move a project's folder (refused while a run is in progress) |
+| `GET/PUT` | `/api/workflows/projects/{id}/placement` | Hosted: Studio's Compute Resources or Bring Your Own Compute for a site, read from and written to the project's `pegasus.properties` |
+| `GET` | `/api/workflows/projects/{id}/gpu-steps` | Steps whose job or transformation profiles ask for a GPU |
+| `GET` | `/api/workflows/{run_id}/slow-steps` | Steps running much longer than usual |
 | `GET` | `/api/workflows/{run_id}/jobs` | Job status |
 | `GET` | `/api/workflows/{run_id}/events` | Workflow event stream |
 | `POST` | `/api/workflows/{run_id}/analyze` | Run diagnostics |
@@ -435,14 +517,17 @@ Common endpoints:
 | `DELETE` | `/api/workflows/{run_id}` | **Destructive**: cancel if running, then remove the run's submit directory from disk |
 | `GET` | `/api/dashboard` | Aggregate landing-page snapshot |
 | `GET` | `/api/dashboard/onboarding` | Onboarding funnel (first seen → first workflow → first run → first success) |
-| `GET` | `/api/provisioning/status` | Pool inventory, demand, pressure findings, OSPool capacity |
+| `GET` | `/api/provisioning/status` | Pool inventory, demand, pressure findings, OSPool capacity, deployment kind, and (hosted) annex status |
+| `POST/GET` | `/api/provisioning/annex/bundle` | Hosted: create the annex setup bundle / download it (attachment only) |
+| `POST` | `/api/provisioning/annex/close`, `/annex/shutdown` | Hosted: remove leftover annex requests / release the annex's nodes |
+| `POST` | `/api/feedback/message` | Rate an OpenCode reply 👍/👎 |
 | `GET` | `/api/marketplace` | Workflow catalog sourced live from GitHub |
 | `POST` | `/api/marketplace/{id}/add` | git-clone a catalog workflow into the workspace |
 | `POST` | `/api/chat/stream` | Built-in SSE chat (engine-dispatched, brokered so a turn outlives the request) |
 | `GET` | `/api/chat/turn` | Whether a turn is in flight, so a reloaded panel can reattach |
 | `GET` | `/api/chat/turn/events` | SSE: replay the in-flight turn from its start, then follow live |
 | `POST` | `/api/chat/permission` | Approve/deny a pending shell command (per-turn gate) |
-| `GET/PUT` | `/api/chat/engine`, `/api/chat/command-approval` | Chat engine selection + approval posture |
+| `GET/PUT` | `/api/chat/command-approval` | Approval posture (the engine itself is the `chat_engine` field of `/api/settings/ui`) |
 | `GET` | `/api/notifications` | Notification feed (+ `/prefs`, `/stream` SSE) |
 | `GET` | `/api/jupyter/status` | JupyterLab status |
 | `WS` | `/ws/terminal` | Bash PTY |
@@ -456,12 +541,19 @@ Requirements:
 
 - Native `amd64` node or VM.
 - Persistent workspace volume.
-- Upstream authentication and routing.
+- A spawner that supplies identity and routing (JupyterHub's OAuth variables,
+  or Open OnDemand with the token gate); see Authentication.
 - Runtime privileges or cluster configuration sufficient for Apptainer user
   namespaces when workflows execute `docker://` containers.
 
 KubeSpawner should set the runtime UID and `$HOME`. The image does not create or
 depend on a named application user.
+
+Images are published by `.github/workflows/deploy.yml` to
+`ghcr.io/pegasus-isi/studio-webapp`, tagged by branch: pushes to `develop`
+publish `:develop` for testing, and a `develop` → `main` release PR publishes
+`:main`, which the hosted deployment pulls with `imagePullPolicy: Always`.
+Pull requests build without pushing.
 
 Open OnDemand deployment uses the second image built from
 [`ood-app/studio-el9.def`](ood-app/studio-el9.def) instead (see [Open OnDemand
@@ -476,7 +568,7 @@ V2 can move the same API and frontend concepts onto shared infrastructure:
 | V1 | V2 |
 |----|----|
 | SQLite in user workspace | PostgreSQL |
-| Upstream-only auth | CILogon/OIDC in Studio |
+| Identity from the spawner (hub OAuth or OOD token gate), checked per request | CILogon/OIDC in Studio |
 | Per-user container | Multi-service Kubernetes deployment |
 | Tools inside the user container | Tool sidecars or separate workloads |
 | Local `workflow-monitor` process | Shared workflow-monitor service |

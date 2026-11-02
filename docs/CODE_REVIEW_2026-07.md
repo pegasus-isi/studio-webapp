@@ -1,8 +1,13 @@
 # studio-webapp Code Review — July 2026
 
-> **Historical snapshot.** Line/citation references have drifted (~40+ commits
-> since) and most items are fixed. The current review is
-> `docs/CODE_REVIEW_2026-08.md`.
+> **Historical snapshot.** Line/citation references have drifted and the
+> markers below are July's. The three items July left open were carried into
+> the August review (re-checked 2026-11-02): `run_command` is mitigated by
+> per-command approval (SEC-4, #68); S7 is fixed by write-only keys (#64) and
+> encryption at rest when `STUDIO_SECRET_KEY` is set (#136); S10 was fixed in
+> #66 and then partly regressed (the Pegasus apt source is `[trusted=yes]`
+> again, see INF-4). The current review is
+> [`CODE_REVIEW_2026-08.md`](CODE_REVIEW_2026-08.md).
 
 
 Critical review focused on the AI chatbot, plus a full sweep of the rest of the

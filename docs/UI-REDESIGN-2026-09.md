@@ -2,6 +2,13 @@
 
 **Status:** revision 3 — shipped across #315, #320, #323, #326, #327, #330. The
 chat half (operable replies) is still not built.
+**Changed since (re-checked 2026-11-02, not reflected below or in the mocks):**
+the palette is now the sky blue shared with the hub and JupyterLab, not
+cornflower (#620, #623); a numbered step bar that was later added to the top
+bar is gone again (#543); Studio opens on Home, with the introduction moved to
+the JupyterHub login page and `/welcome` kept only as a redirect (#629); Home
+no longer repeats the logo above the welcome (#581); and the rail gained a
+Website cell above Feedback (#635). The rail still says "Resources".
 **Date:** 2026-09-02 (rev. 3 — records what shipped, and two reversals)
 **Issue:** [#314](https://github.com/pegasus-isi/studio-webapp/issues/314)
 **Mocks:** `docs/ui-redesign-2026-09-mocks.html` (open in a browser; it has a
@@ -36,7 +43,7 @@ Evidence:
 | Observation | Where |
 |---|---|
 | The chrome in the captures (top app bar, centered `1 Ask AI → 2 Run Jobs → 3 Notebooks → 4 Resources` stepper, icon-only left rail) exists nowhere in this repo | `git log --all -S"Ask AI" -- studio-web/` returns nothing; `app/(studio)/layout.tsx` renders sidebar + main + panels, no header |
-| Workflow paths read `/Users/haezasafri/wor…` | capture `1.29.49` |
+| Workflow paths read `/Users/<name>/wor…` | capture `1.29.49` |
 | The Catalog page is headed "Catalog"; ours is headed "Marketplace" | capture `1.32.05` vs `app/(studio)/marketplace/page.tsx:37` |
 | Project rows show "0 runs"; ours suppresses a zero count | capture `1.29.49` vs `workflow-list.tsx:92` |
 | Parameter labels are raw lowercase flags (`execution site`, `src path`, `s`); ours humanize from the author's help text | capture `1.29.49` vs `studio-api/introspect_argparse.py:109` (`_label_for`, shipped in #259) |

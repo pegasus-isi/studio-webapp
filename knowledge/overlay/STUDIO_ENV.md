@@ -12,6 +12,10 @@ what is specific to *this* environment, which the guide cannot know.
   is visible in the JupyterLab file browser.
 - **`/tmp` does not.** Files there are lost on restart and are invisible to the
   file browser. Never put workflow files in `/tmp`.
+- **Under Open OnDemand, `$HOME` is not the user's own home.** Studio runs there
+  as a batch job with a Studio directory chosen at launch as its `$HOME`, so
+  Studio's and the tools' settings stay out of the user's real setup. Work in
+  `$HOME` as usual; do not reach into the real home directory.
 
 ## Where a workflow goes — exactly one place
 
@@ -83,6 +87,13 @@ code in chat and report that files were created: the user is watching a file
 browser, and an empty directory is a failure regardless of how good the code in
 the transcript was. After writing, run `ls -R` and show the result.
 
+**Writes outside `$HOME/workflows/` and `$HOME/data/` ask the user first** in
+the Studio chat panel, as every shell command does, while command approval is
+on (the default). So do writes into a `.git` directory, even inside those two.
+Keep a workflow's files inside its project directory and the approval cards
+stay out of the user's way; when a write elsewhere is genuinely needed (a
+dotfile the user asked you to change, say), say why before making it.
+
 ## Python packages: never into this container's Python
 
 Do not `pip install` into this container's interpreter, neither the system
@@ -91,8 +102,8 @@ Three reasons, each enough on its own:
 
 - `$HOME` is NFS and outlives the pod. Packages installed into `~/.local`
   persist across every restart and accumulate; nothing cleans them.
-- The user site shadows the image. `/usr/bin/python3` puts `~/.local/lib/
-  python3.13/site-packages` ahead of the image's packages, so a different
+- The user site shadows the image. Python puts `~/.local/lib/
+  python3.<minor>/site-packages` ahead of the image's packages, so a different
   numpy, pydantic or fastapi installed "to test a step" breaks JupyterLab and
   Studio's own tooling on the next restart, with the cause in a directory
   nobody looks in.
@@ -128,7 +139,7 @@ it out of the deliverables:
 python3 -m venv .venv && . .venv/bin/activate && pip install <packages>
 ```
 
-`.venv/` goes in `.gitignore`. It is this pod's Python 3.13 with whatever you
+`.venv/` goes in `.gitignore`. It is this pod's Python with whatever you
 installed, not the container, so it is a convenience for editing, never the
 evidence that a step works.
 
@@ -148,17 +159,21 @@ ls -R $HOME/workflows/<workflow-name>
 ## Planning and running here
 
 **Prefer the user's Run button.** On the Analyses page, **Run** generates,
-builds the image if it is stale, plans and submits — and it does three things a
+builds the image if it is stale, plans and submits — and it does things a
 hand-typed `pegasus-plan` does not:
 
 - sets the generator's `-e/--execution-site-name` to the site chosen under
-  "Where it runs". The generator registers every transformation on that site,
+  "Where Workflow Runs". The generator registers every transformation on that site,
   so `-e` and the plan's `-s` must be the same name or planning cannot map the
   jobs;
 - plans with `--output-dir $HOME/workflows/<name>/output`, so results land in
   `output/` (without it Pegasus's built-in local site stages them to
   `wf-output/`);
-- checks the site exists before planning, instead of failing halfway through.
+- checks the site exists before planning, instead of failing halfway through;
+- stops before planning a workflow that assumes a shared filesystem the site
+  does not have (see "No shared filesystem on HTCondor pools" below);
+- writes the workflow's machine choice (see "Whose machines") into its
+  `pegasus.properties`, and puts it back if the generator rewrote that file.
 
 When you plan from a terminal yourself — to test a fix, or to check a workflow
 you just wrote before reporting it done — do the same by hand, from the
@@ -181,12 +196,89 @@ Pegasus's built-in `condorpool` only when none is named. Whatever it is, use
 the **same** name for `-e` and `-s`, and when you report a plan to the user,
 say which site it was for and that it is the one their Run will use.
 
-**Clusters and allocations are the user's choice, made once, on the Resources
-page** ("Where your workflows run"): a hosted site catalog and the allocation
-fields it needs, saved to `~/.pegasusrc`, after which their site is
-`compute`. Never put an execution site, a queue, an account or a
-`pegasus.catalog.site.repo.file` into the workflow, its generator or its
-`pegasus.properties` on the user's behalf — point them to Resources instead.
+**Where a workflow runs is the user's choice, made in the UI.** Never put an
+execution site, a queue, an account or a `pegasus.catalog.site.repo.file` into
+the workflow, its generator or its `pegasus.properties` on the user's behalf.
+How the choice is made depends on the deployment:
+
+- **Hosted Studio** (the default): the site is `compute`, Studio's own pool
+  (`condorpool` only if `~/.pegasusrc` names no catalog). There is no cluster
+  to choose. Under the Run panel's "Where Workflow Runs"
+  the user picks whose machines a workflow's steps use: **Studio's Compute
+  Resources** (the default: Studio's pool, plus the OSPool for steps that carry
+  the OSPool project name set on Resources → OSPool) or **Bring Your Own
+  Compute** (only nodes the user connects from their own cluster allocation,
+  which HTCondor calls an annex, set up on Resources → Bring Your Own Compute).
+  "This machine" (the `local` site) is not offered here.
+- **Open OnDemand**: `compute` is the cluster itself, described by the
+  administrator's site catalog, and the allocation fields it needs are set on
+  Resources → "Where workflows run", saved to `~/.pegasusrc`. The `local` site
+  is offered as "This Studio session's node": every step runs on the one
+  compute node the Studio session holds, inside its allocation. It suits a
+  small test, not a full analysis.
+
+### Whose machines (hosted)
+
+The Bring Your Own Compute choice is per workflow and is stored in the
+project's own `pegasus.properties`, so a `pegasus-plan` you run from a terminal
+plans the same thing as the Run button. Bring Your Own Compute is this line
+(for the `compute` or `condorpool` site):
+
+```
+pegasus.catalog.site.sites.compute.profiles.condor.requirements = TARGET.AnnexName =?= MY.Owner
+```
+
+Without that line the default comes from `~/.pegasusrc`, where Studio keeps
+`... = TARGET.AnnexName =?= undefined` (never an annex). Studio writes and
+removes the line itself when the user clicks; do not add, edit or remove it
+yourself, and do not copy it into a generator. If a generator writes
+`pegasus.properties` from scratch, a terminal plan loses the user's choice
+until they press Run again, so prefer a generator that leaves an existing
+`pegasus.properties` line it did not write alone. A requirements line the
+workflow sets on its own is left untouched by Studio, and the Run panel then
+says the workflow chooses its own machines.
+
+Steps sent to Bring Your Own Compute wait until the user's nodes join. A run
+that sits waiting with that choice is not broken; say so, and point the user to
+Resources → Bring Your Own Compute.
+
+### No shared filesystem on HTCondor pools
+
+Studio's own pool and the OSPool move files with HTCondor (`condorio`, the
+Pegasus 5 default): the workers do not see `$HOME`. On a site that is an
+HTCondor pool, Run refuses, before planning, a workflow that assumes they do:
+
+- `pegasus.data.configuration = sharedfs`;
+- `pegasus.transfer.bypass.input.staging` under `nonsharedfs`;
+- a site directory marked `sharedFileSystem: true` under `sharedfs` or
+  `nonsharedfs`;
+- a container bind mount whose source is under the home or the project.
+
+Write workflows that let Pegasus stage their inputs, and register input files
+in the replica catalog rather than reading them from a home-directory path
+inside a step. A site Studio does not know to be an HTCondor pool (a Slurm
+cluster under Open OnDemand, say) is not checked this way.
+
+### Credentials a workflow needs
+
+A generator that fetches data reads its API key from its own environment and
+passes it to the job with `add_env`; the job never sees the submit shell's
+environment. In Studio the user stores the key under Application Settings →
+Pegasus Options → Workflow secrets, and Studio adds it to the generator's
+environment when Run generates. Tell the user which variable name the generator
+reads; never write the key into the generator, `pegasus.properties` or chat. A
+generator you run from a terminal does not get these values unless the user
+exports them there.
+
+### GPUs
+
+A step that needs a GPU says so in the workflow: a Pegasus `gpus` profile or
+an HTCondor `request_gpus` profile, on that job or its transformation. HTCondor
+gives a GPU only to a job that asks, and Pegasus adds the container's GPU
+flag itself. Ask only on the steps that use one; a GPU request on every step
+wastes them. When no machine in Studio's pool or among the user's own nodes
+has a GPU, the Run panel warns that those steps will wait; on hosted Studio, GPU nodes come from Bring Your
+Own Compute.
 
 ## How to talk to the user
 
@@ -214,7 +306,8 @@ Use the same words the interface uses:
 | starting | submitted | describes what the run is doing, not what the user did |
 | ready to run | generated / planned | names the next action, not a Pegasus phase |
 | software environment | Apptainer image / `.sif` | the file format is not the point |
-| where it runs | execution site / `condorpool` | answers the question they actually have |
+| compute resources, where it runs | execution site / `condorpool` | answers the question they actually have |
+| Bring Your Own Compute, your own nodes | annex | the UI's name for it; "annex" is HTCondor's |
 | computing capacity | pool / slots | "slots" is HTCondor's word, not a concept they hold |
 
 Keep the Pegasus vocabulary when you are writing *code, filenames, or commands*
@@ -270,9 +363,14 @@ summary — those need OCR, which is not installed.
 
 ## Container base images
 
-This container runs **Debian 13 (trixie)** with glibc 2.41 and Python 3.13, and
-workflow containers are built here, unprivileged, with Apptainer. The submit
-host the jobs run through is the same release.
+On hosted Studio this container runs **Debian 13 (trixie)** with glibc 2.41
+and Python 3.13, and workflow containers are built here, unprivileged, with
+Apptainer. The submit host the jobs run through is the same release.
+
+Under Open OnDemand Studio runs from a different image, **Rocky Linux 9**
+(glibc 2.34), and the release names below do not apply as written. The rule
+does: read `/etc/os-release` and use a base of that same release, with the
+release in the tag. The rest of this section describes the hosted image.
 
 **Use a base of the same release, with the suite named: `python:3.13-slim-trixie`
 or `debian:trixie-slim`.** Not `python:3.13-slim` or `debian:stable-slim`: the
@@ -325,5 +423,9 @@ with `apptainer inspect <sif>` before referencing it from a workflow.
 - **MCP servers**: `pegasus-docs` (Pegasus WMS documentation and source) and
   `kiso-docs` (Kiso experiment configuration and deployment). Use them to look up
   API details, configuration properties and catalog formats rather than guessing.
-- **Pegasus, HTCondor and Apptainer** are installed and on `PATH`.
+  In the Studio chat panel a third server, `pegasus`, reads this Studio's own
+  workflows and runs (status, steps, failure diagnosis, outputs), read-only.
+- **Pegasus, HTCondor and Apptainer** are installed and on `PATH`. **Docker is
+  not**: workflow containers are Apptainer images, declared in the
+  transformation catalog as `Container.SINGULARITY`.
 - Skills and specialist subagents are listed below; invoke them by name.

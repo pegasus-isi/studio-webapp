@@ -451,13 +451,13 @@ def site_problem(
             f"{found['label'] or site} still needs "
             f"{', '.join(found['missing'])} before an analysis can run "
             "there. Fill that in on the Resources page, or pick another "
-            "place under “Where it runs”."
+            "place under “Where Workflow Runs”."
         )
     return (
         f"Nothing defines an execution site named \u201c{site}\u201d for this "
         "workflow: there is no site catalog for it in the project, in its "
         "pegasus.properties, or in ~/.pegasusrc. Pick another place under "
-        "\u201cWhere it runs\u201d, or choose your cluster and allocation on "
+        "\u201cWhere Workflow Runs\u201d, or choose your cluster and allocation on "
         "the Resources page."
     )
 

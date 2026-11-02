@@ -8,11 +8,17 @@ highest-severity items were re-checked by hand for this writeup.
 
 Reviewed at branch `refactor/sidebar-version` (`f4bc70c`).
 
-> **Fully remediated.** Every finding below carries a `**Status:** ✅ PR #NN`
-> line. Check those before assuming anything here is still open — including the
-> security items, which are closed. Line and file references are from August
-> and have drifted since; the September interface work in
-> `docs/UI-REDESIGN-2026-09.md` moved much of `studio-web/`.
+> **Status (re-checked 2026-11-02): backend, security and frontend findings
+> remediated; some infrastructure items still open.** Every BE, SEC and FE
+> finding carries a `**Status:** ✅ PR #NN` line. INF-1 to INF-3 and INF-7 are
+> fixed; INF-5, INF-6, INF-8 and INF-9 are open or partly open, and one fix
+> has since been partly undone: INF-4's removal of the unsigned Pegasus apt
+> source. Each INF item says which. S7 encryption at rest (SEC-3) is fail-open and
+> only active where the deployment injects `STUDIO_SECRET_KEY`. Line and file
+> references are from August and have drifted since; the September interface
+> work in [`UI-REDESIGN-2026-09.md`](UI-REDESIGN-2026-09.md) moved much of
+> `studio-web/`. Security issues found after this review are reported through
+> [`SECURITY.md`](../SECURITY.md).
 
 ## Gate results (run for this review)
 
@@ -425,6 +431,12 @@ failure/timeout.
 (upstream has no InRelease/Release.gpg, so `signed-by` was impossible); the
 pinned dev `.deb` is now sha256-verified and installed directly with deps from
 signed repos; get-pip.py sha256-pinned; NodeSource via keyring'd apt repo.
+**Re-checked 2026-11-02:** ◐ partly regressed. `c50c700` (2026-08-14) went back
+to Pegasus nightly builds, and the `Dockerfile` again writes the Pegasus
+development apt source with `[trusted=yes]` (the upstream channel still
+publishes no signed Release file), so the Pegasus package is installed without
+signature or checksum verification. pip now bootstraps from a sha256-pinned
+wheel instead of get-pip.py (#569); NodeSource is still keyring'd.
 - `Dockerfile:132-135` dearmors the Pegasus GPG key into
   `/usr/share/keyrings/pegasus.gpg` then writes the apt source with `[trusted=yes]`
   instead of `[signed-by=…]` — signature checking off for a root-installed package.
@@ -435,6 +447,10 @@ signed repos; get-pip.py sha256-pinned; NodeSource via keyring'd apt repo.
   keyring'd repo (like HTCondor at `:127-131`) and pin get-pip by commit + sha256.
 
 ### INF-5 · MEDIUM · Unpinned dependency floors ship latest into prod
+**Status (re-checked 2026-11-02):** ☐ open. `studio-api/requirements.txt` is still
+all `>=` floors, the image still installs `jupyterlab>=4.2`, and the chat
+labextension still builds against a fresh `touch yarn.lock`. Only OpenCode is
+pinned exactly (`opencode-ai@1.18.29`, matched to `@opencode-ai/sdk` in CI).
 All `studio-api/requirements.txt` are `>=`; `Dockerfile:88-96` has `jupyterlab>=4.2`
 and unpinned numpy/pandas; the chat labextension resolves fresh npm deps every build
 (`:248` literally `touch yarn.lock`, and `jupyter-pegasusai-chat/.gitignore` ignores
@@ -443,6 +459,9 @@ merge, with no test tripwire (INF-1). Pin at least jupyterlab/fastapi/pydantic/u
 and commit the extension lockfile.
 
 ### INF-6 · MEDIUM · A FATAL supervised program leaves a "healthy" half-dead pod
+**Status (re-checked 2026-11-02):** ◐ partly open. Only `[program:opencode]` sets
+`startretries=10`; the other programs keep the defaults, and there is still no
+`HEALTHCHECK` and no FATAL eventlistener.
 `docker/supervisor/supervisord.conf:19-63` uses default `startretries=3`/`startsecs=1`;
 after 3 fast failures a program goes FATAL permanently while supervisord (PID 1)
 keeps running, so the container stays "up" and there's no Docker HEALTHCHECK
@@ -452,6 +471,9 @@ Add `startsecs=5`/`startretries=10` (tolerate NFS warm-up) plus a FATAL
 eventlistener that SIGTERMs PID 1 so Kubernetes restarts the pod.
 
 ### INF-7 · MEDIUM · nginx caps API SSE at 300 s read-idle
+**Status (re-checked 2026-11-02):** ✅ fixed. Both `/api` locations in
+`docker/nginx/studio-proxy.conf.tmpl` (and the OOD `prefix-proxy.conf.tmpl`) now use
+`proxy_read_timeout 3600s`, matching `/ws/`.
 `docker/nginx/default.conf:39,118` — `proxy_read_timeout 300s` on both `/api`
 locations. A chat prompt whose agent/tool work produces no SSE bytes for >5 min (no
 heartbeat frames) gets its upstream read closed by nginx; the browser sees the stream
@@ -460,6 +482,11 @@ timeout already tuned to `0s` for SSE. Raise it on the SSE-serving `/api` locati
 (match the `/ws/` `3600s`) or emit `: ping` more often than 300 s.
 
 ### INF-8 · MEDIUM · Other build/CI items
+**Status (re-checked 2026-11-02):** ◐ partly open. CI has a `concurrency` group
+(#439). Still as described: the `npm ci … || npm install` fallback in the web
+build stage, `/opt/npm-global` world-writable (`chmod 777` plus `chmod -R a+rwX`
+after the baked `opencode` install) and first on PATH, and `build-essential` in
+the runtime image.
 - `Dockerfile:13` `npm ci --ignore-scripts 2>/dev/null || npm install` hides lockfile
   drift and silently falls back to a non-reproducible `npm install`. Use `RUN npm ci`.
 - `.github/workflows/deploy.yml:13-16` has no `concurrency:` group — two quick pushes
@@ -475,6 +502,10 @@ timeout already tuned to `0s` for SSE. Raise it on the SSE-serving `/api` locati
   per cold spawn. Build extensions in a dedicated stage and COPY only the artifacts.
 
 ### INF-9 · LOW
+**Status (re-checked 2026-11-02):** ◐ partly open. `local-test-instance.sh` now has
+`PRIVILEGED=1`, and the nginx locations forward `X-Forwarded-*`. The Dockerfile
+still cites a Makefile that does not exist. The entrypoint and supervisord
+items were not re-checked.
 - Missing forwarded headers on WS + prefixed-API nginx locations
   (`default.conf:42-52,122-131`) — backend sees 127.0.0.1 as client.
 - nginx site config relies on the Debian `sites-enabled → sites-available` symlink

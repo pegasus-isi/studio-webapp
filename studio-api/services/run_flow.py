@@ -671,7 +671,7 @@ async def _execute(
             flow.failure = Failure(
                 stage="plan",
                 cause=problem,
-                action="Choose another place under \u201cWhere it runs\u201d.",
+                action="Choose another place under \u201cWhere Workflow Runs\u201d.",
                 technical=f"pegasus-plan -s {site}: no catalog defines it",
             )
             flow.state = "failed"
@@ -727,7 +727,7 @@ async def _execute(
                 stage="plan",
                 cause=fs_problem,
                 action=(
-                    "Pick a cluster under \u201cWhere it runs\u201d, or ask the "
+                    "Choose another place under \u201cWhere Workflow Runs\u201d, or ask the "
                     "assistant to make the workflow stage its inputs."
                 ),
                 technical=f"pegasus-plan -s {site}: not run, shared-filesystem check",

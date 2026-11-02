@@ -797,8 +797,9 @@ function ChatTab() {
             <p className="mt-1 text-xs leading-relaxed text-fgmuted">
               When on, chat pauses for your Approve/Deny before running any
               shell command it wants to execute. Turn off to let commands run
-              automatically (the old behavior). File reads and writes inside
-              your workspace are never gated.
+              automatically (the old behavior). While it is on, chat also asks
+              before writing outside ~/workflows and ~/data. Reads are never
+              gated.
             </p>
           </div>
           <button
