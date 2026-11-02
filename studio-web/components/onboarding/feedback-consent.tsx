@@ -29,7 +29,7 @@ export function CollectionNotice({
   where: "tour" | "settings";
   className?: string;
 }) {
-  const there = where === "settings" ? "below" : "in Settings";
+  const there = where === "settings" ? "below" : "in Application Settings";
   return (
     <div className={cn("space-y-2 text-xs leading-relaxed text-fgmuted", className)}>
       <p>
@@ -393,7 +393,7 @@ export function ContentSharingChoice({ onDone }: { onDone: () => void }) {
   return (
     <div className="space-y-3">
       <p className="text-xs leading-relaxed text-fgmuted">
-        <ContentSharingExplainer /> You can change this in Settings at any
+        <ContentSharingExplainer /> You can change this in Application Settings at any
         time.
       </p>
       {consent.content_capture && (

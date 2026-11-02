@@ -30,8 +30,10 @@ const config: Config = {
         // that carries white text at AA. Everything filled lives at 600+,
         // everything decorative at 500-.
         pegasus: {
-          50: "#f3f6ff",
-          100: "#e7eefc",
+          // 50 and 100 are the selected/active tints. The sampled 50 matched
+          // the old page ground, so a selected card read as unselected.
+          50: "#e6edfc",
+          100: "#d9e4fa",
           200: "#cfdef7",
           300: "#aac4ee", // dark-mode text — 10.3:1 on the navy base
           400: "#84a9e4", // dark-mode accent
@@ -46,8 +48,13 @@ const config: Config = {
       // small uppercase group labels. There were ten- and eleven-pixel
       // arbitrary values side by side for the same jobs (#554). Body and
       // helper text never go below text-xs.
+      //
+      // xs is a pixel up from Tailwind's 12px: it carries most helper text
+      // and hints (it outnumbers text-sm), and at 12px in Outfit it read as
+      // too small on a laptop screen and in the paper's screenshots.
       fontSize: {
-        "2xs": ["11px", { lineHeight: "16px" }],
+        "2xs": ["12px", { lineHeight: "16px" }],
+        xs: ["13px", { lineHeight: "18px" }],
       },
       fontFamily: {
         sans: ["var(--font-outfit)", "system-ui", "sans-serif"],
