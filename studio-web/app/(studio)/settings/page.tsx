@@ -26,7 +26,6 @@ import {
 import { useToolStore } from "@/lib/stores/tool-store";
 import { usePanelStore } from "@/lib/stores/panel-store";
 import { cn } from "@/lib/utils";
-import { appRelativePath } from "@/lib/urls";
 import type { ProviderConfig } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 import * as oc from "@/lib/opencode/client";
@@ -1217,7 +1216,7 @@ function PegasusOptionsTab() {
       <SimpleRunSection />
 
       {/* Whether the app root shows the landing page or goes to Home (#370) */}
-      <WelcomePageSection />
+      <TourSection />
 
       {/* Where pegasus-plan runs — remote by default when the schedd is
           elsewhere, overridable to test local planning */}
@@ -1712,45 +1711,21 @@ function SimpleRunSection() {
 }
 
 /**
- * Whether opening Studio shows the welcome page first.
- *
- * The welcome page introduces the product; someone who opens Studio every day
- * does not need the introduction each time. The checkbox on the page itself
- * sets this, and this section is where it gets turned back off — a preference
- * that can only be set from the page it hides needs a second home.
+ * Whether Home runs the guided tour at each login. (This section also held
+ * "skip the welcome page" until that page's content moved to the login page.)
  */
-function WelcomePageSection() {
+function TourSection() {
   const { prefs } = useUIPreferences();
   const update = useUpdateUIPreferences();
 
   return (
     <div className="rounded-xl border border-line bg-surface p-4">
-      <h2 className="text-sm font-semibold text-fg">Welcome page &amp; tour</h2>
+      <h2 className="text-sm font-semibold text-fg">Guided tour</h2>
       <p className="mt-1 text-xs text-fgmuted">
-        Studio opens on a welcome page that introduces the product, and Home
-        runs a short guided tour each time you log in. Turn either off here;
-        &ldquo;Take a tour&rdquo; in the account menu always runs the tour. The
-        welcome page stays available at{" "}
-        <a
-          href={appRelativePath("/welcome")}
-          className="font-medium text-pegasus-600 hover:underline dark:text-pegasus-300"
-        >
-          Welcome
-        </a>
-        .
+        Home runs a short guided tour each time you log in. Turn it off here;
+        &ldquo;Take a tour&rdquo; in the account menu always runs it.
       </p>
       <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-fg">
-        <input
-          type="checkbox"
-          checked={prefs.skip_welcome}
-          disabled={update.isPending}
-          onChange={(e) =>
-            update.mutate({ skip_welcome: e.target.checked })
-          }
-        />
-        Skip the welcome page and open Home directly
-      </label>
-      <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-fg">
         <input
           type="checkbox"
           checked={prefs.tour_on_login}

@@ -303,7 +303,7 @@ def test_the_proxy_stamps_every_api_location_and_no_web_location(tmp_path):
 # a gateway that has nothing to do with it. Both therefore have to present the
 # secret themselves — and both fail *silently* if they do not. MCP tools return
 # 403 and the chat merely stops being able to answer questions about the user's
-# runs; the ui-prefs fetch falls back to "show the welcome page".
+# runs; a server component's fetch would fail just as quietly.
 
 
 def test_mcp_is_refused_without_the_header(client, monkeypatch):
