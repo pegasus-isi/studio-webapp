@@ -324,7 +324,7 @@ const WALKTHROUGH: TourStep[] = [
   },
   {
     anchor: "nav-settings",
-    title: "Settings",
+    title: "Application Settings",
     body: "Which model answers you, which tools are installed, and where Studio looks for your workflows.",
   },
   {
@@ -374,7 +374,7 @@ const declineProfile = () =>
 
 const PROFILE_STEP: TourStep = {
   title: "Tell us a little about you",
-  body: "Four optional questions, so we can tell whose experience is whose. Skip any or all; you can change them in Settings.",
+  body: "Four optional questions, so we can tell whose experience is whose. Skip any or all; you can change them in Application Settings.",
   width: 340,
   ownControls: true,
   render: ({ next }) => (

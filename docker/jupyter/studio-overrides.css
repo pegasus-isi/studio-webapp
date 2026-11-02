@@ -2,6 +2,12 @@
    PegasusAI Studio — JupyterLab homogeneous theme
    Sky-blue accent · slate text · clean surfaces · no Jupyter orange
 
+   The values are Studio's own (studio-web tailwind.config.ts `pegasus` and
+   globals.css), so the Notebooks frame matches the app around it. Buttons
+   use #0277b6, not #0ea5e9: white text on #0ea5e9 is 2.77:1, and next to
+   Studio's AA-safe #0277b6 it read as a different blue (2026-11). Keep the
+   two files in step. Syntax-highlighting colours are separate and unchanged.
+
    Applied by the Dockerfile on top of the default light theme: appended to
    <jupyter lab app dir>/themes/@jupyterlab/theme-light-extension/index.css
    (see "JupyterLab theme" in the Dockerfile). Light-theme variables only,
@@ -10,17 +16,17 @@
 
 :root {
   /* ── Backgrounds ── */
-  --jp-layout-color0:      #f5f8fd;
-  --jp-layout-color1:      #f5f8fd;
-  --jp-layout-color2:      #f0f6ff;
-  --jp-layout-color3:      #e0ebfc;
-  --jp-layout-color4:      #d1e0f5;
+  --jp-layout-color0:      #ffffff;
+  --jp-layout-color1:      #ffffff;
+  --jp-layout-color2:      #f1f5f9;
+  --jp-layout-color3:      #e0f2fe;
+  --jp-layout-color4:      #cdeafd;
 
   /* ── Borders ── */
-  --jp-border-color0:      #d1e0f5;
-  --jp-border-color1:      #d1e0f5;
-  --jp-border-color2:      #e0ebfc;
-  --jp-border-color3:      #f0f6ff;
+  --jp-border-color0:      #cbd5e1;
+  --jp-border-color1:      #cbd5e1;
+  --jp-border-color2:      #e2e8f0;
+  --jp-border-color3:      #f1f5f9;
   --jp-border-width:       1px;
   --jp-border-radius:      8px;
 
@@ -33,25 +39,25 @@
   --jp-content-font-color1: #475569;
   --jp-content-font-color2: #64748b;
   --jp-content-font-color3: rgba(15,23,42,.25);
-  --jp-content-link-color:  #0284c7;
+  --jp-content-link-color:  #0369a1;
 
   /* ── Brand / accent (sky blue) ── */
   --jp-brand-color0:        #0369a1;
-  --jp-brand-color1:        #0ea5e9;
-  --jp-brand-color2:        #38bdf8;
+  --jp-brand-color1:        #0277b6;
+  --jp-brand-color2:        #0ea5e9;
   --jp-brand-color3:        #bae6fd;
-  --jp-brand-color4:        #f0f9ff;
-  --jp-accent-color0:       #0284c7;
-  --jp-accent-color1:       #0ea5e9;
-  --jp-accent-color2:       #38bdf8;
+  --jp-brand-color4:        #e0f2fe;
+  --jp-accent-color0:       #0369a1;
+  --jp-accent-color1:       #0277b6;
+  --jp-accent-color2:       #0ea5e9;
   --jp-accent-color3:       #bae6fd;
-  --jp-focus-outline-color: #0ea5e9;
+  --jp-focus-outline-color: #0277b6;
   --jp-focus-outline-width: 2px;
 
   /* ── Action buttons ── */
-  --jp-accept-color-normal:  #0ea5e9;
-  --jp-accept-color-hover:   #0284c7;
-  --jp-accept-color-active:  #0369a1;
+  --jp-accept-color-normal:  #0277b6;
+  --jp-accept-color-hover:   #0369a1;
+  --jp-accept-color-active:  #075985;
   --jp-warn-color-normal:    #dc2626;
   --jp-warn-color-hover:     #b91c1c;
   --jp-warn-color-active:    #991b1b;
@@ -60,10 +66,10 @@
   --jp-reject-color-active:  #475569;
 
   /* ── Icons — replace orange Jupyter branding ── */
-  --jp-jupyter-icon-color:              #0ea5e9;
-  --jp-notebook-icon-color:             #0ea5e9;
+  --jp-jupyter-icon-color:              #0277b6;
+  --jp-notebook-icon-color:             #0277b6;
   --jp-json-icon-color:                 #f59e0b;
-  --jp-console-icon-background-color:   #0ea5e9;
+  --jp-console-icon-background-color:   #0277b6;
   --jp-console-icon-color:              #ffffff;
   --jp-terminal-icon-background-color:  #1e293b;
   --jp-terminal-icon-color:             #e2e8f0;
@@ -81,36 +87,36 @@
 
   /* ── Cells ── */
   --jp-cell-editor-background:          #ffffff;
-  --jp-cell-editor-border-color:        #d1e0f5;
+  --jp-cell-editor-border-color:        #cbd5e1;
   --jp-cell-editor-box-shadow:          none;
   --jp-cell-editor-active-background:   #ffffff;
-  --jp-cell-editor-active-border-color: #0ea5e9;
-  --jp-cell-inprompt-font-color:        #0ea5e9;
+  --jp-cell-editor-active-border-color: #0277b6;
+  --jp-cell-inprompt-font-color:        #0277b6;
   --jp-cell-outprompt-font-color:       #94a3b8;
-  --jp-cell-prompt-not-active-font-color: #d1e0f5;
+  --jp-cell-prompt-not-active-font-color: #cbd5e1;
   --jp-notebook-padding:                20px;
-  --jp-notebook-select-background:      #f0f6ff;
-  --jp-notebook-multiselected-color:    rgba(14,165,233,.08);
+  --jp-notebook-select-background:      #e0f2fe;
+  --jp-notebook-multiselected-color:    rgba(2,119,182,.08);
 
   /* ── Toolbar ── */
   --jp-toolbar-background:   transparent;
-  --jp-toolbar-border-color: #d1e0f5;
+  --jp-toolbar-border-color: #cbd5e1;
   --jp-toolbar-box-shadow:   none;
   --jp-toolbar-micro-height: 6px;
 
   /* ── Input fields ── */
-  --jp-input-background:              #f8fbff;
-  --jp-input-border-color:            #d1e0f5;
-  --jp-input-active-border-color:     #0ea5e9;
-  --jp-input-active-box-shadow-color: rgba(14,165,233,.18);
+  --jp-input-background:              #f8fafc;
+  --jp-input-border-color:            #cbd5e1;
+  --jp-input-active-border-color:     #0277b6;
+  --jp-input-active-box-shadow-color: rgba(2,119,182,.18);
   --jp-input-box-shadow:              none;
   --jp-input-active-background:       #ffffff;
   --jp-input-hover-background:        #ffffff;
 
   /* ── Code editor highlighting ── */
-  --jp-editor-selected-background:         #e0ebfc;
-  --jp-editor-selected-focused-background: rgba(14,165,233,.12);
-  --jp-editor-cursor-color:                #0ea5e9;
+  --jp-editor-selected-background:         #e0f2fe;
+  --jp-editor-selected-focused-background: rgba(2,119,182,.12);
+  --jp-editor-cursor-color:                #0277b6;
   --jp-mirror-editor-keyword-color:        #0369a1;
   --jp-mirror-editor-string-color:         #16a34a;
   --jp-mirror-editor-string-2-color:       #0891b2;
@@ -136,31 +142,31 @@
 
   /* ── Output / rendermime ── */
   --jp-rendermime-error-background:          rgba(220,38,38,.06);
-  --jp-rendermime-table-row-background:      #f0f6ff;
-  --jp-rendermime-table-row-hover-background:#e0ebfc;
+  --jp-rendermime-table-row-background:      #f1f5f9;
+  --jp-rendermime-table-row-hover-background:#e0f2fe;
   --jp-stderr-background-color:             rgba(245,158,11,.07);
 
   /* ── Status bar ── */
   --jp-statusbar-height: 22px;
 
   /* ── Search ── */
-  --jp-search-selected-match-background-color:   rgba(14,165,233,.25);
+  --jp-search-selected-match-background-color:   rgba(2,119,182,.25);
   --jp-search-selected-match-color:              #0f172a;
-  --jp-search-unselected-match-background-color: rgba(14,165,233,.10);
+  --jp-search-unselected-match-background-color: rgba(2,119,182,.10);
 
   /* ── Dialog ── */
   --jp-dialog-background: rgba(15,23,42,.35);
 
   /* ── Shadows — very subtle ── */
-  --jp-elevation-z1:  0 1px 3px rgba(14,165,233,.06);
-  --jp-elevation-z2:  0 2px 6px rgba(14,165,233,.08);
-  --jp-elevation-z4:  0 4px 12px rgba(14,165,233,.10);
-  --jp-elevation-z6:  0 6px 16px rgba(14,165,233,.10);
-  --jp-elevation-z8:  0 8px 20px rgba(14,165,233,.12);
-  --jp-elevation-z12: 0 12px 28px rgba(14,165,233,.12);
-  --jp-elevation-z16: 0 16px 32px rgba(14,165,233,.14);
-  --jp-elevation-z20: 0 20px 40px rgba(14,165,233,.14);
-  --jp-elevation-z24: 0 24px 48px rgba(14,165,233,.15);
+  --jp-elevation-z1:  0 1px 3px rgba(2,119,182,.06);
+  --jp-elevation-z2:  0 2px 6px rgba(2,119,182,.08);
+  --jp-elevation-z4:  0 4px 12px rgba(2,119,182,.10);
+  --jp-elevation-z6:  0 6px 16px rgba(2,119,182,.10);
+  --jp-elevation-z8:  0 8px 20px rgba(2,119,182,.12);
+  --jp-elevation-z12: 0 12px 28px rgba(2,119,182,.12);
+  --jp-elevation-z16: 0 16px 32px rgba(2,119,182,.14);
+  --jp-elevation-z20: 0 20px 40px rgba(2,119,182,.14);
+  --jp-elevation-z24: 0 24px 48px rgba(2,119,182,.15);
 }
 
 /* ── Global element resets ── */
@@ -169,8 +175,8 @@
 /* ── Thin scrollbars everywhere ── */
 ::-webkit-scrollbar            { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track      { background: transparent; }
-::-webkit-scrollbar-thumb      { background: #d1e0f5; border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover{ background: #38bdf8; }
+::-webkit-scrollbar-thumb      { background: #cbd5e1; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover{ background: #94a3b8; }
 
 /* ── Hide orange Jupyter main logo ── */
 .jp-MainLogo { display: none !important; }
@@ -187,7 +193,7 @@
 /* ── Top panel ── */
 #jp-top-panel {
   background: transparent !important;
-  border-bottom: 1px solid rgba(14,165,233,.12) !important;
+  border-bottom: 1px solid rgba(2,119,182,.12) !important;
   box-shadow: none !important;
 }
 
@@ -202,16 +208,16 @@
 .lm-MenuBar-item { border-radius: 5px !important; padding: 2px 8px !important; }
 .lm-MenuBar-item.lm-mod-active,
 .lm-MenuBar-item:hover {
-  background: #f0f6ff !important;
-  color: #0ea5e9 !important;
+  background: #e0f2fe !important;
+  color: #0277b6 !important;
 }
 
 /* ── Dropdown menus ── */
 .lm-Menu {
   background: #ffffff !important;
-  border: 1px solid #d1e0f5 !important;
+  border: 1px solid #cbd5e1 !important;
   border-radius: 12px !important;
-  box-shadow: 0 8px 24px rgba(14,165,233,.12), 0 2px 6px rgba(14,165,233,.08) !important;
+  box-shadow: 0 8px 24px rgba(2,119,182,.12), 0 2px 6px rgba(2,119,182,.08) !important;
   padding: 4px !important;
   font-family: var(--jp-ui-font-family) !important;
   font-size: 13px !important;
@@ -219,11 +225,11 @@
 }
 .lm-Menu-item { border-radius: 7px !important; margin: 1px 2px !important; }
 .lm-Menu-item.lm-mod-active {
-  background: #f0f6ff !important;
-  color: #0ea5e9 !important;
+  background: #e0f2fe !important;
+  color: #0277b6 !important;
 }
 .lm-Menu-item[data-type="separator"] {
-  border-top: 1px solid #e0ebfc !important;
+  border-top: 1px solid #e0f2fe !important;
   margin: 3px 6px !important;
 }
 
@@ -231,7 +237,7 @@
 .jp-Toolbar,
 .jp-NotebookPanel-toolbar {
   background: #ffffff !important;
-  border-bottom: 1px solid #e8f0fb !important;
+  border-bottom: 1px solid #e2e8f0 !important;
   box-shadow: none !important;
   padding: 0 8px !important;
   min-height: 40px !important;
@@ -253,27 +259,27 @@
   transition: background .12s, color .12s !important;
 }
 .jp-ToolbarButton .jp-ToolbarButtonComponent:hover {
-  background: #eef4fd !important;
-  color: #0ea5e9 !important;
+  background: #f1f5f9 !important;
+  color: #0277b6 !important;
 }
 .jp-ToolbarButton .jp-ToolbarButtonComponent.jp-mod-toggled {
-  background: rgba(14,165,233,.10) !important;
-  color: #0ea5e9 !important;
+  background: rgba(2,119,182,.10) !important;
+  color: #0277b6 !important;
 }
 .jp-Toolbar-kernelName,
 .jp-KernelName {
   color: #94a3b8 !important;
   font-size: 12px !important;
-  border: 1px solid #d1e0f5 !important;
+  border: 1px solid #cbd5e1 !important;
   border-radius: 6px !important;
   padding: 2px 8px !important;
-  background: #f8fbff !important;
+  background: #f8fafc !important;
 }
 
 /* ── Sidebar icon strip ── */
 .jp-SideBar {
-  background: #eef4fd !important;
-  border-right: 1px solid #d1e0f5 !important;
+  background: #f1f5f9 !important;
+  border-right: 1px solid #cbd5e1 !important;
 }
 .jp-SideBar .lm-TabBar-tab {
   border-radius: 10px !important;
@@ -291,16 +297,16 @@
   transition: background .15s, color .15s !important;
 }
 .jp-SideBar .lm-TabBar-tab:hover {
-  background: #e0ebfc !important;
+  background: #e0f2fe !important;
   color: #0f172a !important;
 }
 .jp-SideBar .lm-TabBar-tab.lm-mod-current {
-  background: rgba(14,165,233,.10) !important;
-  color: #0ea5e9 !important;
+  background: rgba(2,119,182,.10) !important;
+  color: #0277b6 !important;
 }
 .jp-SideBar .lm-TabBar-tab.lm-mod-current svg [fill],
 .jp-SideBar .lm-TabBar-tab.lm-mod-current svg [stroke] {
-  fill: #0ea5e9 !important;
+  fill: #0277b6 !important;
 }
 .jp-SideBar .lm-TabBar-tab svg,
 .jp-SideBar .lm-TabBar-tab .jp-ToolbarButtonComponent svg {
@@ -310,8 +316,8 @@
 
 /* ── Main tab bar ── */
 .lm-TabBar {
-  background: #f0f6ff !important;
-  border-bottom: 1px solid #e0ebfc !important;
+  background: #e0f2fe !important;
+  border-bottom: 1px solid #e0f2fe !important;
   min-height: 48px !important;
   display: flex !important;
   align-items: center !important;
@@ -334,11 +340,11 @@
   position: relative !important;
 }
 .lm-TabBar-tab:hover {
-  background: rgba(14,165,233,.08) !important;
+  background: rgba(2,119,182,.08) !important;
   color: #475569 !important;
 }
 .lm-TabBar-tab.lm-mod-current {
-  background: rgba(14,165,233,.18) !important;
+  background: rgba(2,119,182,.18) !important;
   color: #0369a1 !important;
   font-weight: 600 !important;
   box-shadow: none !important;
@@ -355,23 +361,23 @@
   border: 1px solid transparent !important;
   transition: border-color .15s !important;
 }
-.jp-Cell:hover { border-color: rgba(14,165,233,.18) !important; }
+.jp-Cell:hover { border-color: rgba(2,119,182,.18) !important; }
 .jp-Cell.jp-mod-active,
 .jp-Cell.jp-mod-selected {
-  border-color: rgba(14,165,233,.35) !important;
+  border-color: rgba(2,119,182,.35) !important;
   box-shadow: none !important;
 }
 .jp-Cell .jp-CellHeader { border-radius: 10px 10px 0 0 !important; }
 .jp-InputArea-editor {
   border-radius: 8px !important;
-  border: 1px solid #d1e0f5 !important;
+  border: 1px solid #cbd5e1 !important;
   background: #ffffff !important;
 }
-.jp-CodeCell.jp-mod-active .jp-InputArea-editor { border-color: #0ea5e9 !important; }
+.jp-CodeCell.jp-mod-active .jp-InputArea-editor { border-color: #0277b6 !important; }
 .jp-OutputArea-output {
   border-radius: 0 0 8px 8px !important;
-  background: #f8fbff !important;
-  border: 1px solid #e0ebfc !important;
+  background: #f8fafc !important;
+  border: 1px solid #e0f2fe !important;
   border-top: none !important;
   padding: 8px 12px !important;
 }
@@ -381,10 +387,10 @@
 }
 
 /* ── File browser ── */
-.jp-FileBrowser { background: #f8fbff !important; }
+.jp-FileBrowser { background: #f8fafc !important; }
 .jp-FileBrowser-crumbs {
-  background: #f8fbff !important;
-  border-bottom: 1px solid #e0ebfc !important;
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e0f2fe !important;
   padding: 6px 10px !important;
 }
 .jp-DirListing-item {
@@ -392,14 +398,14 @@
   margin: 1px 4px !important;
   transition: background .12s !important;
 }
-.jp-DirListing-item:hover { background: #f0f6ff !important; }
+.jp-DirListing-item:hover { background: #e0f2fe !important; }
 .jp-DirListing-item.jp-mod-selected {
-  background: rgba(14,165,233,.10) !important;
+  background: rgba(2,119,182,.10) !important;
   color: #0369a1 !important;
 }
 .jp-DirListing-header {
-  background: #f8fbff !important;
-  border-bottom: 1px solid #e0ebfc !important;
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e0f2fe !important;
   font-size: 11px !important;
   color: #94a3b8 !important;
   text-transform: uppercase !important;
@@ -407,26 +413,26 @@
 }
 
 /* ── Launcher ── */
-.jp-Launcher { background: #f8fbff !important; }
+.jp-Launcher { background: #f8fafc !important; }
 .jp-LauncherCard {
-  border: 1px solid #d1e0f5 !important;
+  border: 1px solid #cbd5e1 !important;
   border-radius: 12px !important;
   background: #ffffff !important;
   box-shadow: none !important;
   transition: border-color .15s, box-shadow .15s !important;
 }
 .jp-LauncherCard:hover {
-  border-color: #0ea5e9 !important;
-  box-shadow: 0 4px 12px rgba(14,165,233,.10) !important;
-  background: #f8fbff !important;
+  border-color: #0277b6 !important;
+  box-shadow: 0 4px 12px rgba(2,119,182,.10) !important;
+  background: #f8fafc !important;
 }
 .jp-LauncherCard-label { color: #475569 !important; font-size: 12px !important; }
 
 /* ── Dialogs ── */
 .jp-Dialog-content {
   border-radius: 16px !important;
-  border: 1px solid #e0ebfc !important;
-  box-shadow: 0 8px 32px rgba(14,165,233,.10), 0 2px 8px rgba(0,0,0,.06) !important;
+  border: 1px solid #e0f2fe !important;
+  box-shadow: 0 8px 32px rgba(2,119,182,.10), 0 2px 8px rgba(0,0,0,.06) !important;
   background: #ffffff !important;
   overflow: hidden !important;
   min-width: 320px !important;
@@ -464,14 +470,14 @@
   cursor: pointer !important;
 }
 .jp-Dialog-button.jp-mod-accept {
-  background: #0ea5e9 !important;
+  background: #0277b6 !important;
   color: #ffffff !important;
   border: none !important;
-  box-shadow: 0 1px 3px rgba(14,165,233,.30) !important;
+  box-shadow: 0 1px 3px rgba(2,119,182,.30) !important;
 }
 .jp-Dialog-button.jp-mod-accept:hover {
-  background: #0284c7 !important;
-  box-shadow: 0 2px 8px rgba(14,165,233,.40) !important;
+  background: #0369a1 !important;
+  box-shadow: 0 2px 8px rgba(2,119,182,.40) !important;
 }
 .jp-Dialog-button.jp-mod-reject {
   background: #ffffff !important;
@@ -489,9 +495,9 @@
 input[class*="jp-"],
 .jp-Dialog input,
 .jp-Dialog select {
-  border: 1px solid #d1e0f5 !important;
+  border: 1px solid #cbd5e1 !important;
   border-radius: 8px !important;
-  background: #f8fbff !important;
+  background: #f8fafc !important;
   padding: 6px 10px !important;
   font-family: var(--jp-ui-font-family) !important;
   font-size: 13px !important;
@@ -499,27 +505,27 @@ input[class*="jp-"],
   transition: border-color .15s !important;
   outline: none !important;
 }
-.jp-Dialog input:focus { border-color: #0ea5e9 !important; background: #ffffff !important; }
+.jp-Dialog input:focus { border-color: #0277b6 !important; background: #ffffff !important; }
 
 /* ── Status bar ── */
 #jp-bottom-panel,
 .jp-StatusBar {
-  background: #f0f6ff !important;
-  border-top: 1px solid #d1e0f5 !important;
+  background: #e0f2fe !important;
+  border-top: 1px solid #cbd5e1 !important;
   font-family: var(--jp-ui-font-family) !important;
   font-size: 11px !important;
   color: #94a3b8 !important;
   height: 22px !important;
 }
 .jp-StatusBar-item { padding: 0 8px !important; }
-.jp-StatusBar-item:hover { background: #e0ebfc !important; color: #475569 !important; }
+.jp-StatusBar-item:hover { background: #e0f2fe !important; color: #475569 !important; }
 
 /* ── Tooltips ── */
 .jp-Tooltip {
-  border: 1px solid #d1e0f5 !important;
+  border: 1px solid #cbd5e1 !important;
   border-radius: 8px !important;
   background: #ffffff !important;
-  box-shadow: 0 4px 12px rgba(14,165,233,.10) !important;
+  box-shadow: 0 4px 12px rgba(2,119,182,.10) !important;
   font-family: var(--jp-ui-font-family) !important;
   font-size: 12px !important;
   color: #475569 !important;
@@ -527,26 +533,26 @@ input[class*="jp-"],
 
 /* ── Completer (autocomplete) ── */
 .jp-Completer {
-  border: 1px solid #d1e0f5 !important;
+  border: 1px solid #cbd5e1 !important;
   border-radius: 10px !important;
   background: #ffffff !important;
-  box-shadow: 0 6px 16px rgba(14,165,233,.10) !important;
+  box-shadow: 0 6px 16px rgba(2,119,182,.10) !important;
   overflow: hidden !important;
 }
 .jp-Completer-item { font-size: 13px !important; padding: 4px 10px !important; border-radius: 5px !important; }
-.jp-Completer-item.jp-mod-active { background: #f0f6ff !important; color: #0ea5e9 !important; }
+.jp-Completer-item.jp-mod-active { background: #e0f2fe !important; color: #0277b6 !important; }
 
 /* ── Search widget ── */
 .jp-DocumentSearch-overlay {
-  border: 1px solid #d1e0f5 !important;
+  border: 1px solid #cbd5e1 !important;
   border-radius: 10px !important;
   background: #ffffff !important;
-  box-shadow: 0 4px 14px rgba(14,165,233,.10) !important;
+  box-shadow: 0 4px 14px rgba(2,119,182,.10) !important;
 }
 .jp-DocumentSearch-input {
-  border: 1px solid #d1e0f5 !important;
+  border: 1px solid #cbd5e1 !important;
   border-radius: 7px !important;
-  background: #f8fbff !important;
+  background: #f8fafc !important;
   font-family: var(--jp-code-font-family) !important;
 }
 
@@ -556,14 +562,14 @@ input[class*="jp-"],
 .jp-left-stack,
 .jp-stack-panel,
 .jp-stackedpanel {
-  background: #f8fbff !important;
+  background: #f8fafc !important;
 }
 
 /* ── File browser toolbar ── */
 .jp-FileBrowser .jp-Toolbar,
 .jp-FileBrowser-toolbar {
-  background: #f8fbff !important;
-  border-bottom: 1px solid #e0ebfc !important;
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e0f2fe !important;
   box-shadow: none !important;
   padding: 3px 6px !important;
 }
@@ -571,26 +577,26 @@ input[class*="jp-"],
 /* ── File browser filter box ── */
 .jp-FileBrowser-filterbox,
 .jp-FilterBox {
-  background: #f8fbff !important;
-  border-bottom: 1px solid #e0ebfc !important;
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e0f2fe !important;
   padding: 4px 8px !important;
 }
 .jp-FilterBox input,
 .jp-FileBrowser-filterbox input {
   background: #ffffff !important;
-  border: 1px solid #d1e0f5 !important;
+  border: 1px solid #cbd5e1 !important;
   border-radius: 7px !important;
   color: #0f172a !important;
   font-size: 12px !important;
   padding: 3px 8px !important;
   width: 100% !important;
 }
-.jp-FilterBox input:focus { border-color: #0ea5e9 !important; outline: none !important; }
+.jp-FilterBox input:focus { border-color: #0277b6 !important; outline: none !important; }
 
 /* ── Breadcrumb ── */
 .jp-FileBrowser-crumbs {
-  background: #f8fbff !important;
-  border-bottom: 1px solid #e0ebfc !important;
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e0f2fe !important;
   padding: 5px 10px !important;
   font-size: 12px !important;
 }
@@ -599,13 +605,13 @@ input[class*="jp-"],
   border-radius: 4px !important;
   padding: 1px 3px !important;
 }
-.jp-BreadCrumbs-item:hover { color: #0ea5e9 !important; background: #e0ebfc !important; }
+.jp-BreadCrumbs-item:hover { color: #0277b6 !important; background: #e0f2fe !important; }
 
 /* ── Left sidebar icon strip ── */
 #jp-left-stack > .lm-TabBar,
 .jp-SideBar.jp-mod-left {
-  background: #f0f6ff !important;
-  border-right: 1px solid #e0ebfc !important;
+  background: #e0f2fe !important;
+  border-right: 1px solid #e0f2fe !important;
   width: 62px !important;
   min-width: 62px !important;
   max-width: 62px !important;
@@ -614,8 +620,8 @@ input[class*="jp-"],
 /* ── Right sidebar ── */
 #jp-right-stack > .lm-TabBar,
 .jp-SideBar.jp-mod-right {
-  background: #f0f6ff !important;
-  border-left: 1px solid #e0ebfc !important;
+  background: #e0f2fe !important;
+  border-left: 1px solid #e0f2fe !important;
 }
 
 /* ── Main content area — keep white despite layout-color1 change ── */
@@ -634,32 +640,32 @@ input[class*="jp-"],
 .jp-NotebookPanel { border: none !important; }
 .jp-NotebookPanel-toolbar {
   background: #ffffff !important;
-  border-bottom: 1px solid #d1e0f5 !important;
+  border-bottom: 1px solid #cbd5e1 !important;
 }
 
 /* ── Side panel section headers ── */
 .jp-SidePanel .jp-Toolbar,
 .jp-PropertyInspector .jp-Toolbar {
-  background: #f8fbff !important;
-  border-bottom: 1px solid #e0ebfc !important;
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e0f2fe !important;
 }
 
 /* ── Extension / running sessions panels ── */
 .jp-extensionmanager-view,
 .jp-TableOfContents,
-.jp-running-view { background: #f8fbff !important; }
+.jp-running-view { background: #f8fafc !important; }
 .jp-extensionmanager-entry,
 .jp-RunningSessions-item {
   border-radius: 7px !important;
   margin: 1px 4px !important;
 }
-.jp-RunningSessions-item:hover { background: #f0f6ff !important; }
+.jp-RunningSessions-item:hover { background: #e0f2fe !important; }
 
 /* ── Split handles ── */
-.lm-SplitPanel-handle { background: #e0ebfc !important; }
+.lm-SplitPanel-handle { background: #e0f2fe !important; }
 .jp-ApplicationShell > .lm-SplitPanel > .lm-SplitPanel-handle {
   width: 1px !important;
-  background: #d1e0f5 !important;
+  background: #cbd5e1 !important;
 }
 
 /* ── Console panel ── */

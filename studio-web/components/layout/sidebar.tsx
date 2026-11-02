@@ -180,9 +180,11 @@ export function Sidebar() {
         : "text-fgsubtle hover:bg-muted hover:text-fg"
     );
 
-  // Short enough to sit under a 18px glyph in a 72px rail without wrapping.
+  // Sized to sit under an 18px glyph in a 72px rail. It was 9.5px, which
+  // read as too small in screenshots; at 11px every label still fits on one
+  // line.
   const cellLabel = (label: string) => (
-    <span className="text-[9.5px] font-semibold leading-none">{label}</span>
+    <span className="text-center text-[11px] font-semibold leading-tight">{label}</span>
   );
 
   const renderItem = (item: NavItem) => {
@@ -287,7 +289,10 @@ export function Sidebar() {
           {cellLabel("Feedback")}
         </FeedbackButton>
         {/* Settings is a place you go, not a property of your account, so it
-            gets a rail cell as well as its entry in the account menu. */}
+            gets a rail cell as well as its entry in the account menu. The
+            page, menu and palette say "Application Settings" so it is not
+            confused with a workflow's or a cluster's settings; the rail
+            keeps the short word. */}
         {renderItem({
           href: "/settings",
           label: "Settings",

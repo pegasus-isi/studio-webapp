@@ -100,7 +100,7 @@ export default function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-4xl p-6">
-      <h1 className="text-lg font-semibold text-fg">Settings</h1>
+      <h1 className="text-lg font-semibold text-fg">Application Settings</h1>
       <p className="mt-1 text-sm text-fgmuted">
         Notifications, how workflows run, and the chat assistant. Provider keys
         and tool installs are under Advanced.

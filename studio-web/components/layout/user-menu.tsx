@@ -150,7 +150,7 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
               onClick={() => setOpen(false)}
               className="block px-4 py-2 hover:bg-muted"
             >
-              ⚙️ Settings
+              ⚙️ Application Settings
             </AppLink>
             {/* The tour's only launcher used to be a link at the bottom of the
                 landing page, below the openers — findable if you already knew
