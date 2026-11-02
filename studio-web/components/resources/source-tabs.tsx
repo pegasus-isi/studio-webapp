@@ -55,13 +55,13 @@ export function SourceTabs({ annex }: { annex?: AnnexStatus }) {
 
   return (
     <section>
-      <h2 className="text-sm font-semibold text-fg">Add computing power</h2>
+      <h2 className="text-sm font-semibold text-fg">Bring Your Own Compute</h2>
       <p className="mt-0.5 text-xs text-fgmuted">
-        Studio&apos;s own pool is always available; its capacity is under Overview.
-        When you need more, bring your own.
+        Studio&apos;s compute resources are always available; their capacity is under
+        Overview. When you need more, or hardware Studio doesn&apos;t have, bring your own.
       </p>
 
-      <div role="tablist" aria-label="Source of extra computing" className="mt-3 flex gap-1 border-b border-line">
+      <div role="tablist" aria-label="Where your own compute comes from" className="mt-3 flex gap-1 border-b border-line">
         {tabs.map((t) => {
           const Icon = t.icon;
           const selected = t.id === tab;
@@ -93,13 +93,13 @@ export function SourceTabs({ annex }: { annex?: AnnexStatus }) {
             <p className="mb-4 text-sm text-fgmuted">
               Lease nodes from a campus cluster or an ACCESS allocation you already
               have. They join Studio and run only your work; when they leave,
-              Studio&apos;s own pool carries on. Studio calls these leased nodes your
-              annex.
+              Studio&apos;s own pool carries on. HTCondor calls these leased nodes an
+              annex, which is the word you will see in its commands below.
             </p>
             {annex ? (
               <AnnexPanel annex={annex} />
             ) : (
-              <p className="text-sm text-fgmuted">Annex status is not available.</p>
+              <p className="text-sm text-fgmuted">The status of your own nodes is not available.</p>
             )}
           </>
         ) : (
@@ -108,8 +108,8 @@ export function SourceTabs({ annex }: { annex?: AnnexStatus }) {
             <p className="mt-2 text-sm font-medium text-fg">Coming soon</p>
             <p className="mx-auto mt-1 max-w-md text-sm text-fgmuted">
               Cloud and testbed providers such as FABRIC, Chameleon or Jetstream2,
-              where Studio creates the machines first and they then join like an
-              annex.
+              where Studio creates the machines first and they then join the same
+              way.
             </p>
           </div>
         )}
