@@ -32,8 +32,8 @@ const FALLBACK: api.UIPreferences = {
   // moment late to someone genuinely new.
   welcome_dismissed: true,
   nav_advanced_open: false,
-  // Only read by the checkbox on the welcome page and in Settings; the
-  // redirect itself is decided server-side from the stored value.
+  // No longer read: the welcome page it skipped is gone (its content moved
+  // to the JupyterHub login page). Kept so the stored preference round-trips.
   skip_welcome: false,
   // Off until the fetch lands, so a slow request never pops a tour at someone
   // who turned it off; the server default is on.

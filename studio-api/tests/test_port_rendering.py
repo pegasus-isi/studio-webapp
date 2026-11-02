@@ -248,12 +248,9 @@ def test_supervisord_config_expands_the_port_environment(tmp_path, monkeypatch):
     # Next.js standalone takes its listener from the environment, not argv.
     assert commands["studio-web"].environment["PORT"] == "23333"
     assert commands["studio-web"].environment["HOSTNAME"] == "127.0.0.1"
-    # And it must be told where studio-api is. Server components fetch it
-    # directly (lib/server/ui-prefs.ts, the app-root redirect) and fall back to
-    # a literal localhost:8080 — which, once the API port is allocated, is a
-    # port nothing is listening on. That module's failure path returns "show
-    # the welcome page", so the symptom would be every user stuck on the
-    # welcome screen with nothing logged.
+    # And it must be told where studio-api is. Server-side code that calls it
+    # directly falls back to a literal localhost:8080, which once the API port
+    # is allocated is a port nothing is listening on, and fails silently.
     assert (
         commands["studio-web"].environment["API_URL"] == "http://127.0.0.1:22222"
     )
