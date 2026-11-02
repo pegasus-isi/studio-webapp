@@ -539,7 +539,7 @@ def _apply_placement(
         flow._line(
             "plan",
             "The generator rewrote pegasus.properties; Studio put back "
-            "\u201cOnly my annex\u201d for this workflow.",
+            "\u201cOnly my own computers\u201d for this workflow.",
         )
     elif not after_generate:
         where = "only your annex" if state["placement"] == rp.ANNEX else "everywhere except your annex"
