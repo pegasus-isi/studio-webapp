@@ -59,8 +59,11 @@ type Placement = api.Placement;
 const PLACEMENTS: { value: Placement; label: string; detail: string; setup?: boolean }[] = [
   {
     value: "elsewhere",
-    label: "Compute resources",
-    detail: "Studio's shared pool, ready to use.",
+    label: "Studio's Compute Resources",
+    // The default is said here, on the option, rather than in a note under
+    // both: the note also explained pegasus.properties, which is not the
+    // user's concern when choosing (2026-11 feedback).
+    detail: "The default for every workflow. Studio's shared pool, ready to use.",
   },
   {
     value: "annex",
@@ -290,8 +293,19 @@ export function RunFlowPanel({
   // main choice is the one the user made on Resources. If a saved value
   // points at one, that group opens so the selection is never invisible.
   const primarySites = useMemo(() => sites.filter((s) => !s.advanced), [sites]);
-  const advancedSites = useMemo(() => sites.filter((s) => s.advanced), [sites]);
   const chosenSite = String(values["site"] ?? defaultSite);
+  // "This machine" (local) is not offered on hosted: it runs every step
+  // inside the user's own container, a debugging escape hatch that read as a
+  // third kind of compute next to Studio's and Bring Your Own Compute
+  // (2026-11 feedback). A workflow that already has it saved still shows it,
+  // so the selection is never invisible.
+  const advancedSites = useMemo(
+    () =>
+      sites.filter(
+        (s) => s.advanced && !(hosted && s.value === "local" && chosenSite !== "local")
+      ),
+    [sites, hosted, chosenSite]
+  );
   // The workflow's own choice, from its pegasus.properties.
   const qc = useQueryClient();
   const placementKey = ["placement", projectId, chosenSite];
@@ -803,13 +817,6 @@ export function RunFlowPanel({
                 <code className="font-mono">{placementForeign}</code>), so Studio leaves it alone.
               </p>
             )}
-            {!placementForeign && (
-              <p className="mt-1.5 text-xs text-fgmuted">
-                {placementState?.source === "workflow"
-                  ? "Saved in this workflow\u2019s pegasus.properties, so running it from a terminal does the same."
-                  : "The default for every workflow. Choosing \u201cBring Your Own Compute\u201d saves it in this workflow\u2019s pegasus.properties."}
-              </p>
-            )}
             {savePlacement.error && (
               <p className="mt-1.5 text-xs text-rose-600 dark:text-rose-400">
                 Couldn&apos;t save: {(savePlacement.error as Error).message}
@@ -826,7 +833,7 @@ export function RunFlowPanel({
             )}
             {legacyPin.ready && legacyPin.on && placement === "elsewhere" && placementState?.source === "default" && (
               <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
-                An older setting in ~/.pegasusrc sends every workflow that doesn&rsquo;t choose to your own nodes only, so &ldquo;Compute resources&rdquo; isn&rsquo;t true here yet.{" "}
+                An older setting in ~/.pegasusrc sends every workflow that doesn&rsquo;t choose to your own nodes only, so &ldquo;Studio&rsquo;s Compute Resources&rdquo; isn&rsquo;t true here yet.{" "}
                 <button
                   type="button"
                   onClick={() =>

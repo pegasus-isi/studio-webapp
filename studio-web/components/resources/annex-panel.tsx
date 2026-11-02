@@ -434,7 +434,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     <span className="font-medium text-fg">Where Workflow Runs → Bring Your Own Compute</span>.
                     HTCondor brings your nodes in only while some of your steps are queued,
                     and a node with nothing to run leaves after 5 minutes. A run left on{" "}
-                    <span className="font-medium text-fg">Compute resources</span> (the
+                    <span className="font-medium text-fg">Studio&apos;s Compute Resources</span> (the
                     default) never uses your nodes.
                   </>
                 )}
