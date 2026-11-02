@@ -692,7 +692,7 @@ export function RunFlowPanel({
                     className={cn(
                       "rounded-xl border bg-surface p-2.5 text-left transition-colors",
                       !placementForeign && placement === p.value
-                        ? "border-pegasus-600 bg-pegasus-50 ring-1 ring-pegasus-600 dark:border-pegasus-400 dark:bg-pegasus-400/10 dark:ring-pegasus-400"
+                        ? "border-pegasus-500 ring-1 ring-pegasus-500"
                         : "border-line hover:border-pegasus-300"
                     )}
                   >
