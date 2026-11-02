@@ -7,6 +7,9 @@ import { NotificationCenter } from "@/components/notifications/notification-cent
 import { cn } from "@/lib/utils";
 import { AppLink } from "@/components/layout/app-link";
 
+/** The PegasusAI project site, linked from the account menu and the ⌘K palette. */
+export const PROJECT_SITE = "https://pegasus-ai.org/";
+
 /**
  * User menu: username + dropdown (theme, Settings, JupyterHub server control /
  * Stop server, Sign out). Identity and the hub URLs come from /api/whoami
@@ -173,6 +176,18 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
               className="block px-4 py-2 hover:bg-muted"
             >
               ❓ Help
+            </a>
+            {/* Back to the project's own site (launch feedback, 2026-11). A
+                new tab, like Help: leaving Studio in this one would drop the
+                user's place in the app. */}
+            <a
+              href={PROJECT_SITE}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2 hover:bg-muted"
+            >
+              🌐 PegasusAI website
             </a>
             {controlUrl && (
               <a

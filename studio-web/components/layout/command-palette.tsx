@@ -15,6 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
 import { appPushPath } from "@/lib/urls";
 import { cn } from "@/lib/utils";
+import { PROJECT_SITE } from "@/components/layout/user-menu";
 
 interface Hit {
   key: string;
@@ -31,6 +32,7 @@ const DESTINATIONS: Hit[] = [
   { key: "go-mkt", title: "Examples", detail: "Ready-made workflows", group: "Go to", href: "/marketplace" },
   { key: "go-res", title: "Resources", detail: "Pool capacity", group: "Go to", href: "/provisioning" },
   { key: "go-set", title: "Application Settings", detail: "Models, tools, preferences", group: "Go to", href: "/settings" },
+  { key: "go-site", title: "PegasusAI website", detail: "pegasus-ai.org, in a new tab", group: "Go to", href: PROJECT_SITE },
 ];
 
 export function CommandPalette({
@@ -104,6 +106,12 @@ export function CommandPalette({
   const go = (hit: Hit | undefined) => {
     if (!hit) return;
     onClose();
+    // An absolute URL leaves the app: open it beside Studio rather than
+    // through appPushPath, which would prefix it as an in-app route.
+    if (/^https?:\/\//.test(hit.href)) {
+      window.open(hit.href, "_blank", "noopener,noreferrer");
+      return;
+    }
     window.location.href = appPushPath(hit.href);
   };
 
