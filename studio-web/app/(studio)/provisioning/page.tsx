@@ -358,7 +358,7 @@ export default function ProvisioningPage() {
     });
   }
   if (hosted) {
-    items.push({ id: "compute", label: "Extra computing", icon: Server, tone: annexLive ? "ok" : undefined });
+    items.push({ id: "compute", label: "Bring Your Own Compute", icon: Server, tone: annexLive ? "ok" : undefined });
   } else if (deployment === "ood") {
     items.push({ id: "compute", label: "Where workflows run", icon: Server });
   }
@@ -381,7 +381,9 @@ export default function ProvisioningPage() {
           aria-label="Resources sections"
           className={cn(
             "flex shrink-0 gap-1 overflow-x-auto border-b border-line bg-surface px-3 py-2 md:flex-col md:overflow-visible md:border-b-0 md:border-r md:py-4",
-            collapsed ? "md:w-[60px] md:px-2" : "md:w-52"
+            // w-60, not w-52: "Bring Your Own Compute" with its icon and
+            // status dot overflowed 208px, and labels here never wrap.
+            collapsed ? "md:w-[60px] md:px-2" : "md:w-60"
           )}
         >
           {items.map((it) => {

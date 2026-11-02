@@ -133,7 +133,7 @@ export function JobSettingsCard() {
                 Your workflows are still set to run on the{" "}
                 <span className="font-mono">{data.catalogs[0]?.label ?? staleCatalog}</span>{" "}
                 site catalog, chosen in an earlier version of this page. Studio&apos;s
-                pool and your annex cannot see that cluster&apos;s directories, so
+                pool and your own nodes cannot see that cluster&apos;s directories, so
                 steps there fail with a missing directory.
               </p>
               <button
@@ -173,7 +173,7 @@ export function JobSettingsCard() {
               </a>{" "}
               when it is busy, but the OSPool only accepts jobs that name a
               project it knows. Leave this empty to keep your jobs on Studio&apos;s
-              pool and your annex.
+              pool and your own nodes.
             </span>
           </label>
 

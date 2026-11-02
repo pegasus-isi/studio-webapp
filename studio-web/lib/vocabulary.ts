@@ -74,10 +74,16 @@ export const TERMS = {
       "How many computers are available to run your steps, and how many are busy right now.",
   },
   executionSite: {
-    ui: "Where it runs",
+    ui: "Compute resources",
     pegasus: "execution site",
     definition:
-      "Whose resources run your analysis: Studio’s shared pool, or only resources you connect from your own cluster (an annex). With a cluster set up on Resources, it can also be that cluster’s scheduler.",
+      "The computers that run your analysis: Studio’s shared pool, or only nodes you bring from your own cluster (Bring Your Own Compute). With a cluster set up on Resources, it can also be that cluster’s scheduler.",
+  },
+  bringYourOwnCompute: {
+    ui: "Bring Your Own Compute",
+    pegasus: "HTCondor annex",
+    definition:
+      "Nodes leased from a campus cluster or an ACCESS allocation you already have. They join Studio for a while and run only your work. HTCondor calls this an annex.",
   },
   analyzerOutput: {
     ui: "What went wrong",
