@@ -89,7 +89,7 @@ export const TONE_BAR: Record<StatusTone, string> = {
 
 /** The same palette as raw colours, for inline styles and exported SVG. */
 export const TONE_HEX: Record<StatusTone, { bg: string; border: string; fg: string }> = {
-  active: { bg: "#e7eefc", border: "#6c9cde", fg: "#274a78" }, // pegasus 100 / 500 / 800
+  active: { bg: "#cdeafd", border: "#0ea5e9", fg: "#075985" }, // pegasus 100 / 500 / 800
   ok: { bg: "#d1fae5", border: "#10b981", fg: "#065f46" }, // emerald 100 / 500 / 800
   warn: { bg: "#fef3c7", border: "#f59e0b", fg: "#78350f" }, // amber 100 / 500 / 900
   error: { bg: "#fee2e2", border: "#ef4444", fg: "#7f1d1d" }, // red 100 / 500 / 900

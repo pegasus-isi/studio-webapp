@@ -46,33 +46,30 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
-/* PegasusAI palette — cornflower/periwinkle (#314).
-   Sampled from the interface redesign prototype: ground #f3f6ff, surfaces
-   #fcfdff, accent #6c9cde. Cooler and softer than the sky ramp it replaces.
-   Light is default; .dark on <html> flips to the periwinkle-navy dark theme.
-
-   The dark theme is *derived*, not sampled — the prototype captures are
-   light-mode only, so those values are ours and should be judged on their own
-   rather than assumed to match anything. */
+/* PegasusAI palette — sky blue, the same family as the JupyterHub login page
+   and Studio's JupyterLab theme (docker/jupyter/studio-overrides.css), so
+   the hub, the app and the Notebooks frame read as one product. The
+   cornflower ramp from the #314 prototype was replaced in 2026-11: next to
+   JupyterLab's sky it looked like a different app, and its pale ground and
+   surfaces (1.06:1 apart) were what made the paper's figures look faint.
+   Neutrals are slate, as in the JupyterLab theme.
+   Light is default; .dark on <html> flips to the navy dark theme. */
 :root {
-  /* The sampled ground and surface measured 1.06:1, so cards and panels
-     barely separated from the page, and the 1.24:1 line did little to help
-     (feedback on the paper's figures, 2026-11). The ground is a step deeper,
-     surfaces are white, and lines are dark enough to draw an edge. fgsubtle
-     was 2.86:1 on a surface and carries real labels; it now clears AA. */
-  --c-base: #e8edf8;
+  /* The ground is a visible step below white surfaces, and lines are dark
+     enough to draw an edge. fgsubtle carries real labels, so it clears AA
+     (4.76:1 on a surface). */
+  --c-base: #e9eff6;
   --c-surface: #ffffff;
-  --c-muted: #eef2fb;
-  --c-line: #c9d4ea;
-  --c-fg: #131a2e;
-  --c-fgmuted: #4d5875;
-  --c-fgsubtle: #6b7593;
-  /* Not the sampled #6c9cde: white-on-#6c9cde measures 2.82:1, under both the
-     4.5:1 AA text threshold and the 3:1 non-text floor, which is why the
-     prototype's primary buttons read as disabled. Two steps darker clears AA
-     at 5.03:1 and keeps the hue. #6c9cde survives as pegasus-500, for resting
-     fills and borders that are never the sole indicator. */
-  --c-accent: #3f6fb8;
+  --c-muted: #f1f5f9;
+  --c-line: #cbd5e1;
+  --c-fg: #0f172a;
+  --c-fgmuted: #475569;
+  --c-fgsubtle: #64748b;
+  /* Not JupyterLab's #0ea5e9: white on it measures 2.77:1, under AA, so a
+     button in that blue reads as disabled. #0277b6 is the nearest sky shade
+     that carries white text (4.86:1). #0ea5e9 stays as pegasus-500, for
+     rings, icons and fills that are never the sole indicator. */
+  --c-accent: #0277b6;
   --c-accent-fg: #ffffff;
 }
 
@@ -84,7 +81,7 @@
   --c-fg: #eef2fb;
   --c-fgmuted: #b3bdd6; /* lighter for readability on the navy base */
   --c-fgsubtle: #7c88a6;
-  --c-accent: #8fb4ee;
+  --c-accent: #38bdf8;
   --c-accent-fg: #0b1120;
 }
 
