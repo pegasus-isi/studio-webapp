@@ -151,6 +151,8 @@ async def list_workflows() -> WorkflowListResponse:
             total_jobs=detail.get("total_jobs", 0),
             completed_jobs=detail.get("completed_jobs", 0),
             failed_jobs=detail.get("failed_jobs", 0),
+            running_jobs=detail.get("running_jobs", 0),
+            queued_jobs=detail.get("queued_jobs", 0),
             exec_site=detail.get("exec_site"),
             created_at=run.get("timestamp") or "",
             updated_at="",
