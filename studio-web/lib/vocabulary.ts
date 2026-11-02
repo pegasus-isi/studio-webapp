@@ -77,7 +77,7 @@ export const TERMS = {
     ui: "Where it runs",
     pegasus: "execution site",
     definition:
-      "Whether your analysis runs on this machine, on Studio’s own pool, or on a cluster you set up.",
+      "Whose computers run your analysis: Studio’s shared pool, or only computers you connect from your own cluster (an annex). With a cluster set up on Resources, it can also be that cluster’s scheduler.",
   },
   analyzerOutput: {
     ui: "What went wrong",

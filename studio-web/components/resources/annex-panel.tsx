@@ -418,11 +418,10 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                   <>Your annex is up. Start a run and its steps can use it.</>
                 ) : queued > 0 ? (
                   <>
-                    A run is going: you can create the setup file now. Its steps run on
-                    Studio&apos;s pool for the moment, and your annex&apos;s nodes share the
-                    rest with the pool when they join. To keep a run for your nodes only,
-                    start it with{" "}
-                    <span className="font-medium text-fg">On which machines → Only my annex</span>.
+                    A run is going: you can create the setup file now. Only a run started
+                    with{" "}
+                    <span className="font-medium text-fg">Where it runs → Only my own computers</span>{" "}
+                    waits for your nodes; the rest stay on Studio&apos;s pool.
                   </>
                 ) : (
                   <>
@@ -430,12 +429,12 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     <AppLink href="/workflows" className="font-medium text-pegasus-600 underline dark:text-pegasus-300">
                       Run Jobs
                     </AppLink>
-                    . HTCondor creates an annex only while some of your steps are queued,
-                    and a node with nothing to run leaves after 5 minutes. With{" "}
-                    <span className="font-medium text-fg">Wherever is free first</span> (the
-                    default) its steps use Studio&apos;s pool and your annex together;{" "}
-                    <span className="font-medium text-fg">Only my annex</span> keeps them for
-                    your nodes.
+                    {" "}with{" "}
+                    <span className="font-medium text-fg">Where it runs → Only my own computers</span>.
+                    HTCondor creates an annex only while some of your steps are queued, and a
+                    node with nothing to run leaves after 5 minutes. A run left on{" "}
+                    <span className="font-medium text-fg">Studio&apos;s computers</span> (the
+                    default) never uses your annex.
                   </>
                 )}
               </Step>

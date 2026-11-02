@@ -48,19 +48,27 @@ type Placement = api.Placement;
  * project name) and the user's annex. The choice is per workflow and lives
  * in its pegasus.properties, so a pegasus-plan from a terminal does the same
  * as Run (services/run_placement.py). Saved as soon as it is clicked.
+ *
+ * Labelled by whose computers they are, not by Condor's terms: "annex" and
+ * "everywhere else" meant nothing to a first-time reader, and "everywhere
+ * else" read as the opposite of the Studio pool it actually is (2026-11
+ * feedback). "Annex" survives in the detail, as the word Resources uses.
  */
 const PLACEMENTS: { value: Placement; label: string; detail: string }[] = [
   {
     value: "elsewhere",
-    label: "Everywhere else",
-    detail: "Studio's pool and the OSPool. Never your annex.",
+    label: "Studio's computers",
+    detail: "Studio's shared pool, plus the OSPool for steps that name an OSPool project.",
   },
   {
     value: "annex",
-    label: "Only my annex",
-    detail: "Your nodes on your own cluster. Steps wait until they join: start the run, then the nodes.",
+    label: "Only my own computers",
+    detail: "Nodes you connect from your own cluster or allocation (an annex, set up on Resources). Steps wait until they join, so start the run first, then the nodes.",
   },
 ];
+
+/** The hosted sites whose jobs the placement choice routes (run_placement.HOSTED_SITES). */
+const PLACEMENT_SITES = ["compute", "condorpool"];
 
 interface Props {
   projectId: string;
@@ -148,6 +156,47 @@ function SiteOption({
   );
 }
 
+/** One placement, drawn like a SiteOption so the two read as one kind of choice. */
+function PlacementOption({
+  placement,
+  selected,
+  disabled,
+  onChoose,
+}: {
+  placement: (typeof PLACEMENTS)[number];
+  selected: boolean;
+  disabled: boolean;
+  onChoose: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      disabled={disabled}
+      onClick={onChoose}
+      className={cn(
+        "flex w-full items-start gap-3 rounded-xl border p-3 text-left transition-colors disabled:cursor-not-allowed",
+        selected
+          ? "border-pegasus-600 bg-pegasus-50 ring-1 ring-pegasus-600 dark:border-pegasus-400 dark:bg-pegasus-400/10 dark:ring-pegasus-400"
+          : "border-line hover:bg-base"
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "mt-1 h-3.5 w-3.5 shrink-0 rounded-full border",
+          selected ? "border-[4px] border-pegasus-600 dark:border-pegasus-400" : "border-fgsubtle"
+        )}
+      />
+      <span>
+        <span className="block text-sm font-medium text-fg">{placement.label}</span>
+        <span className="block text-xs text-fgmuted">{placement.detail}</span>
+      </span>
+    </button>
+  );
+}
+
 export function RunFlowPanel({
   projectId,
   params,
@@ -227,25 +276,43 @@ export function RunFlowPanel({
   const placementQuery = useQuery({
     queryKey: placementKey,
     queryFn: () => api.getPlacement(projectId, chosenSite),
-    enabled: hosted && !!chosenSite,
+    enabled: hosted && PLACEMENT_SITES.includes(chosenSite),
     staleTime: 10_000,
   });
   const placementState = placementQuery.data;
   const placement: Placement = placementState?.placement ?? "elsewhere";
   const placementForeign = placementState?.foreign ?? null;
+  const placesMachines = hosted && PLACEMENT_SITES.includes(chosenSite);
+  const poolSite =
+    hosted && primarySites.length === 1 && PLACEMENT_SITES.includes(primarySites[0].value)
+      ? primarySites[0]
+      : null;
+  // The site travels with the choice: a placement card can be clicked while
+  // "More places" has another site selected, and the save must go to the
+  // pool site the card stands for, not to whatever was chosen before.
+  // `fromSite` is that earlier site, so a failed save undoes the switch too.
   const savePlacement = useMutation({
-    mutationFn: (p: Placement) => api.setPlacement(projectId, chosenSite, p),
-    onMutate: (p: Placement) => {
-      const prev = qc.getQueryData<api.PlacementState>(placementKey);
-      qc.setQueryData<api.PlacementState>(placementKey, {
+    mutationFn: ({ site, p }: { site: string; p: Placement; fromSite?: string }) =>
+      api.setPlacement(projectId, site, p),
+    onMutate: ({ site, p }) => {
+      const key = ["placement", projectId, site];
+      const prev = qc.getQueryData<api.PlacementState>(key);
+      qc.setQueryData<api.PlacementState>(key, {
         placement: p, source: p === "annex" ? "workflow" : "default", foreign: null,
       });
-      return { prev };
+      return { prev, key };
     },
-    onError: (_e, _p, ctx) => {
-      if (ctx?.prev) qc.setQueryData(placementKey, ctx.prev);
+    onError: (_e, { fromSite }, ctx) => {
+      if (ctx) {
+        // Nothing cached means the query never ran for this site (it was not
+        // the chosen one): drop the optimistic row so the next read is the
+        // server's, rather than leave the failed choice looking saved.
+        if (ctx.prev) qc.setQueryData(ctx.key, ctx.prev);
+        else qc.removeQueries({ queryKey: ctx.key, exact: true });
+      }
+      if (fromSite) chooseSite(fromSite);
     },
-    onSuccess: (fresh) => qc.setQueryData(placementKey, fresh),
+    onSuccess: (fresh, { site }) => qc.setQueryData(["placement", projectId, site], fresh),
   });
   const chosenIsAdvanced = advancedSites.some((s) => s.value === chosenSite);
   // A cluster whose catalog wants allocation details that are not set is
@@ -375,14 +442,16 @@ export function RunFlowPanel({
     const site = String(values["site"] ?? defaultSite);
     const siteLabel =
       sites.find((s) => s.value === site)?.label ?? site;
-    rows.push({ label: "Where it runs", value: siteLabel });
-    if (hosted) {
+    if (hosted && PLACEMENT_SITES.includes(site)) {
+      // One answer, as the form asks one question: the site is implied.
       rows.push({
-        label: "Machines",
+        label: "Where it runs",
         value: placementForeign
-          ? "set by the workflow"
+          ? `${siteLabel}, machines set by the workflow`
           : PLACEMENTS.find((x) => x.value === placement)?.label ?? placement,
       });
+    } else {
+      rows.push({ label: "Where it runs", value: siteLabel });
     }
     if (gpuSteps.length > 0) {
       rows.push({
@@ -650,16 +719,106 @@ export function RunFlowPanel({
               Set up a cluster…
             </AppLink>
           </legend>
-          <div className="mt-2 space-y-2">
-            {primarySites.map((site) => (
-              <SiteOption
-                key={site.value}
-                site={site}
-                selected={chosenSite === site.value}
-                onChoose={chooseSite}
-              />
-            ))}
-          </div>
+          {poolSite ? (
+            // Hosted, with Studio's pool the only main site: picking the site
+            // is not a choice, so the question is only whose machines. Two
+            // headings for one decision ("Where it runs", then "On which
+            // machines") read as two decisions (2026-11 feedback).
+            <div role="radiogroup" aria-label="Where it runs" className="mt-2 space-y-2">
+              {PLACEMENTS.map((p) => (
+                <PlacementOption
+                  key={p.value}
+                  placement={p}
+                  selected={chosenSite === poolSite.value && !placementForeign && placement === p.value}
+                  disabled={(chosenSite === poolSite.value && !!placementForeign) || savePlacement.isPending}
+                  onChoose={() => {
+                    const fromSite = chosenSite !== poolSite.value ? chosenSite : undefined;
+                    if (fromSite) chooseSite(poolSite.value);
+                    savePlacement.mutate({ site: poolSite.value, p: p.value, fromSite });
+                  }}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {primarySites.map((site) => (
+                <SiteOption
+                  key={site.value}
+                  site={site}
+                  selected={chosenSite === site.value}
+                  onChoose={chooseSite}
+                />
+              ))}
+            </div>
+          )}
+          {placesMachines && !poolSite && (
+            // More than one main site and the pool is chosen: the machine
+            // choice qualifies that site, so it sits under it, not beside it.
+            <div className="mt-3 border-l-2 border-line pl-3">
+              <p className="text-xs font-medium text-fg">Which of the pool&apos;s computers</p>
+              <div role="radiogroup" aria-label="Which of the pool's computers" className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
+                {PLACEMENTS.map((p) => (
+                  <PlacementOption
+                    key={p.value}
+                    placement={p}
+                    selected={!placementForeign && placement === p.value}
+                    disabled={!!placementForeign || savePlacement.isPending}
+                    onChoose={() => savePlacement.mutate({ site: chosenSite, p: p.value })}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+          {placesMachines && (
+            <div>
+            {placementForeign && (
+              <p className="mt-1.5 text-xs text-fgmuted">
+                This workflow&apos;s pegasus.properties chooses its machines itself (
+                <code className="font-mono">{placementForeign}</code>), so Studio leaves it alone.
+              </p>
+            )}
+            {!placementForeign && (
+              <p className="mt-1.5 text-xs text-fgmuted">
+                {placementState?.source === "workflow"
+                  ? "Saved in this workflow\u2019s pegasus.properties, so running it from a terminal does the same."
+                  : "The default for every workflow. Choosing \u201cOnly my own computers\u201d saves it in this workflow\u2019s pegasus.properties."}
+              </p>
+            )}
+            {savePlacement.error && (
+              <p className="mt-1.5 text-xs text-rose-600 dark:text-rose-400">
+                Couldn&apos;t save: {(savePlacement.error as Error).message}
+              </p>
+            )}
+            {placement === "annex" && !placementForeign && !provisioning?.annex?.established && (
+              <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
+                No annex is up yet. Set one up under{" "}
+                <AppLink href="/provisioning#compute" className="underline">
+                  Resources → Extra computing
+                </AppLink>{" "}
+                once this run is waiting.
+              </p>
+            )}
+            {legacyPin.ready && legacyPin.on && placement === "elsewhere" && placementState?.source === "default" && (
+              <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
+                An older setting in ~/.pegasusrc sends every workflow that doesn&rsquo;t choose to your annex only, so &ldquo;Studio&rsquo;s computers&rdquo; isn&rsquo;t true here yet.{" "}
+                <button
+                  type="button"
+                  onClick={() =>
+                    legacyPin.set(false, {
+                      // The default row takes the old pin's place (the
+                      // placement GET writes it when it is missing).
+                      onSuccess: () => qc.invalidateQueries({ queryKey: ["placement", projectId] }),
+                    })
+                  }
+                  disabled={legacyPin.saving}
+                  className="font-medium underline disabled:opacity-50"
+                >
+                  Remove it
+                </button>
+              </p>
+            )}
+            </div>
+          )}
           {advancedSites.length > 0 && (
             <details className="mt-2" open={chosenIsAdvanced || undefined}>
               <summary className="cursor-pointer text-xs font-medium text-fgmuted hover:text-fg">
@@ -676,78 +835,6 @@ export function RunFlowPanel({
                 ))}
               </div>
             </details>
-          )}
-          {hosted && (
-            <div className="mt-4">
-              <p className="text-xs font-medium text-fg">On which machines</p>
-              <div role="radiogroup" aria-label="On which machines" className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
-                {PLACEMENTS.map((p) => (
-                  <button
-                    key={p.value}
-                    type="button"
-                    role="radio"
-                    aria-checked={!placementForeign && placement === p.value}
-                    disabled={!!placementForeign || savePlacement.isPending}
-                    onClick={() => savePlacement.mutate(p.value)}
-                    className={cn(
-                      "rounded-xl border bg-surface p-2.5 text-left transition-colors",
-                      !placementForeign && placement === p.value
-                        ? "border-pegasus-500 ring-1 ring-pegasus-500"
-                        : "border-line hover:border-pegasus-300"
-                    )}
-                  >
-                    <span className="block text-sm font-medium text-fg">{p.label}</span>
-                    <span className="mt-0.5 block text-xs text-fgmuted">{p.detail}</span>
-                  </button>
-                ))}
-              </div>
-              {placementForeign && (
-                <p className="mt-1.5 text-xs text-fgmuted">
-                  This workflow&apos;s pegasus.properties chooses its machines itself (
-                  <code className="font-mono">{placementForeign}</code>), so Studio leaves it alone.
-                </p>
-              )}
-              {!placementForeign && (
-                <p className="mt-1.5 text-xs text-fgmuted">
-                  {placementState?.source === "workflow"
-                    ? "Saved in this workflow\u2019s pegasus.properties, so running it from a terminal does the same."
-                    : "The default for every workflow. Choosing \u201cOnly my annex\u201d saves it in this workflow\u2019s pegasus.properties."}
-                </p>
-              )}
-              {savePlacement.error && (
-                <p className="mt-1.5 text-xs text-rose-600 dark:text-rose-400">
-                  Couldn&apos;t save: {(savePlacement.error as Error).message}
-                </p>
-              )}
-              {placement === "annex" && !placementForeign && !provisioning?.annex?.established && (
-                <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
-                  No annex is up yet. Set one up under{" "}
-                  <AppLink href="/provisioning#compute" className="underline">
-                    Resources → Extra computing
-                  </AppLink>{" "}
-                  once this run is waiting.
-                </p>
-              )}
-              {legacyPin.ready && legacyPin.on && placement === "elsewhere" && placementState?.source === "default" && (
-                <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
-                  An older setting in ~/.pegasusrc sends every workflow that doesn\u2019t choose to your annex only, so \u201cEverywhere else\u201d isn\u2019t true here yet.{" "}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      legacyPin.set(false, {
-                        // The default row takes the old pin's place (the
-                        // placement GET writes it when it is missing).
-                        onSuccess: () => qc.invalidateQueries({ queryKey: ["placement", projectId] }),
-                      })
-                    }
-                    disabled={legacyPin.saving}
-                    className="font-medium underline disabled:opacity-50"
-                  >
-                    Remove it
-                  </button>
-                </p>
-              )}
-            </div>
           )}
           {gpuSteps.length > 0 && provisioning && gpusAvailable === 0 && (
             <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
