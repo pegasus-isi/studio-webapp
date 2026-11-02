@@ -150,13 +150,13 @@ function loadForm(): ClusterForm {
 // condition and dropped the sentence, so the button was simply grey (#574).
 const NEEDS_JOBS =
   "None of your steps are in the queue right now (between runs, or between stages of one), and " +
-  "HTCondor only creates an annex while some are. Try again while a run is going.";
+  "HTCondor only brings your nodes in while some are. Try again while a run is going.";
 
 function verdict(a: AnnexStatus): { tone: Tone | "error"; headline: string; detail: string } {
   if (!a.available) {
     return {
       tone: "off",
-      headline: "Annex status is not available.",
+      headline: "The status of your own nodes is not available.",
       detail: a.error ?? "The access point did not answer.",
     };
   }
@@ -167,10 +167,10 @@ function verdict(a: AnnexStatus): { tone: Tone | "error"; headline: string; deta
     const left = a.oldest_retires_at ? Math.max(0, a.oldest_retires_at - now) : null;
     return {
       tone: "ok",
-      headline: `Your annex is up: ${a.nodes} node${a.nodes === 1 ? "" : "s"}, ${a.busy_cpus} of ${a.total_cpus} processors busy.`,
+      headline: `Your own nodes are up: ${a.nodes} node${a.nodes === 1 ? "" : "s"}, ${a.busy_cpus} of ${a.total_cpus} processors busy.`,
       detail:
         `${j.running} of your ${j.total} queued step${j.total === 1 ? "" : "s"} ${j.running === 1 ? "is" : "are"} running` +
-        (left != null ? `; the oldest part of the annex retires in ${formatDuration(left)}.` : ".") +
+        (left != null ? `; the oldest of them retires in ${formatDuration(left)}.` : ".") +
         ((a.untracked_nodes ?? 0) > 0
           ? ` ${a.untracked_nodes} node${a.untracked_nodes === 1 ? " comes" : "s come"} from a setup file whose request was closed, and may not run your steps; make a new setup file for the next nodes.`
           : ""),
@@ -179,7 +179,7 @@ function verdict(a: AnnexStatus): { tone: Tone | "error"; headline: string; deta
   if ((r.held ?? 0) > 0 && r.pending === 0) {
     return {
       tone: "error",
-      headline: "Your annex request is on hold.",
+      headline: "Your request for nodes is on hold.",
       detail:
         (a.hold_reason ? `HTCondor says: ${a.hold_reason} ` : "") +
         "Close it, then create a new setup file.",
@@ -188,19 +188,19 @@ function verdict(a: AnnexStatus): { tone: Tone | "error"; headline: string; deta
   if (r.pending > 0) {
     return {
       tone: "warn",
-      headline: "Your annex is requested but not up yet.",
+      headline: "Your nodes are requested but not up yet.",
       detail:
         `${r.pending} request${r.pending === 1 ? "" : "s"} waiting for the cluster's scheduler. ` +
-        "Until nodes arrive your steps run on Studio's own pool, or wait.",
+        "Runs set to Bring Your Own Compute wait until they arrive.",
     };
   }
   return {
     tone: "off",
-    headline: "No annex right now.",
+    headline: "None of your own nodes are connected.",
     detail:
       r.retired > 0
-        ? `Earlier annexes have retired (${r.retired}). Your steps run on Studio's own pool; start a new annex for more capacity.`
-        : "Your steps run on Studio's own pool. Add an annex when you need more capacity than it has.",
+        ? `Earlier requests have retired (${r.retired}). Your steps run on Studio's compute resources; connect your own nodes again for more capacity.`
+        : "Your steps run on Studio's compute resources. Bring your own when you need more capacity, or hardware Studio doesn't have.",
   };
 }
 
@@ -298,7 +298,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
               disabled={close.isPending}
               onClick={() => close.mutate()}
               className="rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-fg hover:bg-base disabled:opacity-50"
-              title="Removes this annex's old request jobs from the access point's queue"
+              title="Removes your old node requests from the access point's queue"
             >
               {close.isPending ? "Closing…" : `Close ${leftovers === 1 ? "old request" : `${leftovers} old requests`}`}
             </button>
@@ -324,7 +324,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                     : "border border-line bg-surface text-fg hover:bg-base"
                 )}
               >
-                {stop.isPending ? "Shutting down…" : confirmStop ? "Yes, release the nodes" : "Shut down annex"}
+                {stop.isPending ? "Shutting down…" : confirmStop ? "Yes, release the nodes" : "Release my nodes"}
               </button>
             </>
           )
@@ -368,8 +368,9 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
 
       {pin.on && (
         <p className="text-xs text-amber-700 dark:text-amber-400">
-          An older setting sends every run to your annex only, so runs wait when no
-          annex is up. Runs now choose this one at a time (Run → On which machines).{" "}
+          An older setting sends every run to your own nodes only, so runs wait when
+          none are up. Runs now choose this one at a time (Run → Choose your compute
+          resources).{" "}
           <button
             type="button"
             onClick={() => pin.set(false)}
@@ -383,7 +384,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
 
       {stale && !showHow && (
         <p className="text-xs text-amber-700 dark:text-amber-400">
-          Your setup file&apos;s request was closed. Make a new one before your next annex:{" "}
+          Your setup file&apos;s request was closed. Make a new one before you next connect nodes:{" "}
           <button type="button" onClick={() => setShowHow(true)} className="font-medium underline">
             open step 2
           </button>
@@ -400,7 +401,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
         >
           <span>
             <span className="block text-sm font-semibold text-fg">
-              {live ? "How your annex was set up" : "Set up your annex"}
+              {live ? "How your nodes were connected" : "Connect your own nodes"}
             </span>
             <span className="block text-xs text-fgmuted">
               Five steps, about ten minutes the first time. Studio ticks them off as it sees them happen.
@@ -413,14 +414,14 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
             <ol>
               <Step n={1} state={s1} title="Run a workflow">
                 {s1 === "done" && waiting > 0 ? (
-                  <>{`${waiting} step${waiting === 1 ? " is" : "s are"} waiting for your annex.`}</>
+                  <>{`${waiting} step${waiting === 1 ? " is" : "s are"} waiting for your nodes.`}</>
                 ) : s1 === "done" && annex.established && queued === 0 ? (
-                  <>Your annex is up. Start a run and its steps can use it.</>
+                  <>Your nodes are up. Start a run set to Bring Your Own Compute and its steps use them.</>
                 ) : queued > 0 ? (
                   <>
                     A run is going: you can create the setup file now. Only a run started
                     with{" "}
-                    <span className="font-medium text-fg">Where it runs → My own resources</span>{" "}
+                    <span className="font-medium text-fg">Choose your compute resources → Bring Your Own Compute</span>{" "}
                     waits for your nodes; the rest stay on Studio&apos;s pool.
                   </>
                 ) : (
@@ -430,11 +431,11 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       Run Jobs
                     </AppLink>
                     {" "}with{" "}
-                    <span className="font-medium text-fg">Where it runs → My own resources</span>.
-                    HTCondor creates an annex only while some of your steps are queued, and a
-                    node with nothing to run leaves after 5 minutes. A run left on{" "}
-                    <span className="font-medium text-fg">Studio&apos;s resources</span> (the
-                    default) never uses your annex.
+                    <span className="font-medium text-fg">Choose your compute resources → Bring Your Own Compute</span>.
+                    HTCondor brings your nodes in only while some of your steps are queued,
+                    and a node with nothing to run leaves after 5 minutes. A run left on{" "}
+                    <span className="font-medium text-fg">Compute resources</span> (the
+                    default) never uses your nodes.
                   </>
                 )}
               </Step>
@@ -623,7 +624,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       <label htmlFor="annex-cpus">CPUs per node</label>
                       <HelpPopover label="About CPUs per node">
                         <span className="block">
-                          An annex runs one HTCondor worker on each node, so the command always
+                          Studio runs one HTCondor worker on each of your nodes, so the command always
                           asks for one task per node, and that task gets this many CPUs.
                         </span>
                         <span className="block">
@@ -657,7 +658,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       <span className="font-normal text-fgsubtle">(only for workflows that run in containers)</span></label>
                       <HelpPopover label="About the container module">
                         <span className="block">
-                          Jobs on annex nodes do not see the cluster&apos;s modules, so a container
+                          Jobs on your nodes do not see the cluster&apos;s modules, so a container
                           workflow needs the module that provides Apptainer or Singularity.{" "}
                           <code className="font-mono">module avail apptainer singularity</code> on
                           the cluster lists them.
@@ -689,14 +690,14 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
 
               <Step n={5} state={s5} title="Wait for the nodes to join" last>
                 {annex.established ? (
-                  <>Your annex is up and running your steps.</>
+                  <>Your nodes are up and running your steps.</>
                 ) : (
                   <>
                     This page refreshes on its own. Once the cluster&apos;s
                     scheduler starts the job, the nodes appear above and your
                     waiting steps start on them. A node with nothing to run leaves
-                    after 5 minutes, so start the run before the nodes. Shut the
-                    annex down above when you are done, so it stops using your
+                    after 5 minutes, so start the run before the nodes. Release
+                    them above when you are done, so they stop using your
                     allocation; it also ends when its walltime runs out.
                   </>
                 )}

@@ -249,8 +249,8 @@ export function WorkflowDetail({ runId }: Props) {
             </ul>
             <p className="mt-1.5 text-xs">
               {slow.some((s) => !s.started)
-                ? "A step that holds a slot without starting is usually stuck on that machine. On an annex, ending that node's Slurm job (scancel on the cluster) evicts the step, and HTCondor runs it again on the next node."
-                : "Its log arrives when it finishes. On an annex, the cluster's own job directory shows it sooner."}
+                ? "A step that holds a slot without starting is usually stuck on that machine. On your own nodes (Bring Your Own Compute), ending that node's Slurm job (scancel on the cluster) evicts the step, and HTCondor runs it again on the next node."
+                : "Its log arrives when it finishes. On your own nodes, the cluster's own job directory shows it sooner."}
             </p>
           </div>
         )}

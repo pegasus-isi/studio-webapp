@@ -533,16 +533,16 @@ def _apply_placement(
             flow._line("plan", str(e))
         return
     except OSError as e:
-        flow._line("plan", f"Could not record where this workflow runs: {e}")
+        flow._line("plan", f"Could not record this workflow's compute resources: {e}")
         return
     if after_generate and before["placement"] != state["placement"]:
         flow._line(
             "plan",
             "The generator rewrote pegasus.properties; Studio put back "
-            "\u201cMy own resources\u201d for this workflow.",
+            "\u201cBring Your Own Compute\u201d for this workflow.",
         )
     elif not after_generate:
-        where = "only your annex" if state["placement"] == rp.ANNEX else "everywhere except your annex"
+        where = "only your own nodes (Bring Your Own Compute)" if state["placement"] == rp.ANNEX else "Studio's compute resources"
         flow._line("plan", f"Steps run on {where} (this workflow's pegasus.properties).")
 
 

@@ -49,21 +49,24 @@ type Placement = api.Placement;
  * in its pegasus.properties, so a pegasus-plan from a terminal does the same
  * as Run (services/run_placement.py). Saved as soon as it is clicked.
  *
- * Labelled by whose resources they are, not by Condor's terms: "annex" and
- * "everywhere else" meant nothing to a first-time reader, and "everywhere
- * else" read as the opposite of the Studio pool it actually is (2026-11
- * feedback). "Annex" survives in the detail, as the word Resources uses.
+ * Named in the words the team settled on (2026-11-02 meeting): "compute
+ * resources" for Studio's, "Bring Your Own Compute" for nodes the user
+ * connects, which HTCondor calls an annex. The default no longer names the
+ * OSPool: which pools stand behind Studio's resources is not the user's
+ * decision here, and naming them made the choice look bigger than it is.
+ * The OSPool is still described on Resources → OSPool.
  */
-const PLACEMENTS: { value: Placement; label: string; detail: string }[] = [
+const PLACEMENTS: { value: Placement; label: string; detail: string; setup?: boolean }[] = [
   {
     value: "elsewhere",
-    label: "Studio's resources",
-    detail: "Studio's shared pool, plus the OSPool for steps that name an OSPool project.",
+    label: "Compute resources",
+    detail: "Studio's shared pool, ready to use.",
   },
   {
     value: "annex",
-    label: "My own resources",
-    detail: "Nodes you connect from your own cluster or allocation (an annex, set up on Resources). Steps wait until they join, so start the run first, then the nodes.",
+    label: "Bring Your Own Compute",
+    detail: "Only nodes you connect from your own cluster or allocation. Steps wait until they join, so start the run first, then the nodes.",
+    setup: true,
   },
 ];
 
@@ -156,7 +159,12 @@ function SiteOption({
   );
 }
 
-/** One placement, drawn like a SiteOption so the two read as one kind of choice. */
+/**
+ * One placement, drawn like a SiteOption so the two read as one kind of
+ * choice. The card is a div, not the radio itself: Bring Your Own Compute
+ * carries a "Set up a cluster…" link inside it, and a link cannot sit
+ * inside a button.
+ */
 function PlacementOption({
   placement,
   selected,
@@ -169,31 +177,45 @@ function PlacementOption({
   onChoose: () => void;
 }) {
   return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      disabled={disabled}
-      onClick={onChoose}
+    <div
       className={cn(
-        "flex w-full items-start gap-3 rounded-xl border p-3 text-left transition-colors disabled:cursor-not-allowed",
+        "rounded-xl border transition-colors",
         selected
           ? "border-pegasus-600 bg-pegasus-50 ring-1 ring-pegasus-600 dark:border-pegasus-400 dark:bg-pegasus-400/10 dark:ring-pegasus-400"
           : "border-line hover:bg-base"
       )}
     >
-      <span
-        aria-hidden
-        className={cn(
-          "mt-1 h-3.5 w-3.5 shrink-0 rounded-full border",
-          selected ? "border-[4px] border-pegasus-600 dark:border-pegasus-400" : "border-fgsubtle"
-        )}
-      />
-      <span>
-        <span className="block text-sm font-medium text-fg">{placement.label}</span>
-        <span className="block text-xs text-fgmuted">{placement.detail}</span>
-      </span>
-    </button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={selected}
+        disabled={disabled}
+        onClick={onChoose}
+        className="flex w-full items-start gap-3 p-3 text-left disabled:cursor-not-allowed"
+      >
+        <span
+          aria-hidden
+          className={cn(
+            "mt-1 h-3.5 w-3.5 shrink-0 rounded-full border",
+            selected ? "border-[4px] border-pegasus-600 dark:border-pegasus-400" : "border-fgsubtle"
+          )}
+        />
+        <span>
+          <span className="block text-sm font-medium text-fg">{placement.label}</span>
+          <span className="block text-xs text-fgmuted">{placement.detail}</span>
+        </span>
+      </button>
+      {placement.setup && (
+        <div className="-mt-1 pb-3 pl-[2.375rem]">
+          <AppLink
+            href="/provisioning#compute"
+            className="text-xs font-medium text-pegasus-700 hover:underline dark:text-pegasus-300"
+          >
+            Set up a cluster…
+          </AppLink>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -445,13 +467,13 @@ export function RunFlowPanel({
     if (hosted && PLACEMENT_SITES.includes(site)) {
       // One answer, as the form asks one question: the site is implied.
       rows.push({
-        label: "Where it runs",
+        label: "Compute resources",
         value: placementForeign
           ? `${siteLabel}, machines set by the workflow`
           : PLACEMENTS.find((x) => x.value === placement)?.label ?? placement,
       });
     } else {
-      rows.push({ label: "Where it runs", value: siteLabel });
+      rows.push({ label: "Compute resources", value: siteLabel });
     }
     if (gpuSteps.length > 0) {
       rows.push({
@@ -611,8 +633,8 @@ export function RunFlowPanel({
             fill in sends them looking for the work. */}
         <p className={cn("text-sm text-fgmuted", !embedded && "mt-1")}>
           {collapsible
-            ? "This analysis already has everything it needs. Choose where it runs and press Run — Studio prepares the rest and starts it for you."
-            : "Fill in what your analysis needs, choose where it runs, then press Run. Studio prepares everything and starts it for you."}
+            ? "This analysis already has everything it needs. Choose your compute resources and press Run — Studio prepares the rest and starts it for you."
+            : "Fill in what your analysis needs, choose your compute resources, then press Run. Studio prepares everything and starts it for you."}
         </p>
 
         {/* The settings, collapsed when the workflow can already run without
@@ -708,23 +730,27 @@ export function RunFlowPanel({
 
         <fieldset className="mt-5">
           <legend className="flex w-full items-center text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
-            Where it runs
-            <GlossaryTerm term="Where it runs" />
+            Choose your compute resources
+            <GlossaryTerm term="Compute resources" />
             {/* A cluster and allocation are chosen once, on Resources
-                (#468); the sites below follow from that choice. */}
-            <AppLink
-              href="/provisioning"
-              className="ml-auto text-xs font-medium normal-case tracking-normal text-pegasus-700 hover:underline dark:text-pegasus-300"
-            >
-              Set up a cluster…
-            </AppLink>
+                (#468); the sites below follow from that choice. With the
+                placement cards, the link sits in Bring Your Own Compute,
+                the choice it sets up (2026-11-02 meeting). */}
+            {!poolSite && (
+              <AppLink
+                href="/provisioning"
+                className="ml-auto text-xs font-medium normal-case tracking-normal text-pegasus-700 hover:underline dark:text-pegasus-300"
+              >
+                Set up a cluster…
+              </AppLink>
+            )}
           </legend>
           {poolSite ? (
             // Hosted, with Studio's pool the only main site: picking the site
             // is not a choice, so the question is only whose machines. Two
             // headings for one decision ("Where it runs", then "On which
             // machines") read as two decisions (2026-11 feedback).
-            <div role="radiogroup" aria-label="Where it runs" className="mt-2 space-y-2">
+            <div role="radiogroup" aria-label="Choose your compute resources" className="mt-2 space-y-2">
               {PLACEMENTS.map((p) => (
                 <PlacementOption
                   key={p.value}
@@ -781,7 +807,7 @@ export function RunFlowPanel({
               <p className="mt-1.5 text-xs text-fgmuted">
                 {placementState?.source === "workflow"
                   ? "Saved in this workflow\u2019s pegasus.properties, so running it from a terminal does the same."
-                  : "The default for every workflow. Choosing \u201cMy own resources\u201d saves it in this workflow\u2019s pegasus.properties."}
+                  : "The default for every workflow. Choosing \u201cBring Your Own Compute\u201d saves it in this workflow\u2019s pegasus.properties."}
               </p>
             )}
             {savePlacement.error && (
@@ -791,16 +817,16 @@ export function RunFlowPanel({
             )}
             {placement === "annex" && !placementForeign && !provisioning?.annex?.established && (
               <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
-                No annex is up yet. Set one up under{" "}
+                None of your own nodes are up yet. Connect them under{" "}
                 <AppLink href="/provisioning#compute" className="underline">
-                  Resources → Extra computing
+                  Resources → Bring Your Own Compute
                 </AppLink>{" "}
                 once this run is waiting.
               </p>
             )}
             {legacyPin.ready && legacyPin.on && placement === "elsewhere" && placementState?.source === "default" && (
               <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
-                An older setting in ~/.pegasusrc sends every workflow that doesn&rsquo;t choose to your annex only, so &ldquo;Studio&rsquo;s resources&rdquo; isn&rsquo;t true here yet.{" "}
+                An older setting in ~/.pegasusrc sends every workflow that doesn&rsquo;t choose to your own nodes only, so &ldquo;Compute resources&rdquo; isn&rsquo;t true here yet.{" "}
                 <button
                   type="button"
                   onClick={() =>
@@ -839,10 +865,10 @@ export function RunFlowPanel({
           {gpuSteps.length > 0 && provisioning && gpusAvailable === 0 && (
             <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
               {gpuSteps.length === 1 ? `${gpuSteps[0]} asks` : `${gpuSteps.length} steps (${gpuSteps.slice(0, 3).join(", ")}${gpuSteps.length > 3 ? ", …" : ""}) ask`}{" "}
-              for a GPU, and no machine in Studio&apos;s pool or your annex has one right now. They
-              will wait until one joins: an annex with GPUs, from{" "}
+              for a GPU, and no machine in Studio&apos;s pool or among your own nodes has one
+              right now. They will wait until one joins: nodes with GPUs, from{" "}
               <AppLink href="/provisioning#compute" className="underline">
-                Resources → Extra computing
+                Resources → Bring Your Own Compute
               </AppLink>
               .
             </p>

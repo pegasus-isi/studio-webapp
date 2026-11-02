@@ -358,7 +358,7 @@ export default function ProvisioningPage() {
     });
   }
   if (hosted) {
-    items.push({ id: "compute", label: "Extra computing", icon: Server, tone: annexLive ? "ok" : undefined });
+    items.push({ id: "compute", label: "Bring Your Own Compute", icon: Server, tone: annexLive ? "ok" : undefined });
   } else if (deployment === "ood") {
     items.push({ id: "compute", label: "Where workflows run", icon: Server });
   }
