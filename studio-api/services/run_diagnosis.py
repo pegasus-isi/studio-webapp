@@ -1,6 +1,6 @@
 """What went wrong with a running workflow, in the user's terms.
 
-Phase 5 of docs/UX-NON-SPECIALIST-DESIGN.md (#241). Phase 1 gave the *pre-run*
+Phase 5 of the non-specialist redesign (#241). Phase 1 gave the *pre-run*
 stages (generate, build, plan, submit) plain-language failure cards. This does
 the same for the workflow itself once it is running, where the raw material is
 different: job stderr, exit codes, and HTCondor hold reasons rather than the

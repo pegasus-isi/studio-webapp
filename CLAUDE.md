@@ -332,28 +332,11 @@ writable by the injected uid, so **never bake a rendered config into the image**
   step with `annex-panel.tsx`, `services/annex.py` and `services/run_placement.py`.
 - `docs/llm-telemetry-design.md` — chat telemetry (Langfuse, OTLP), including
   reply ratings (`services/rating_telemetry.py`).
-- `docs/UI-REDESIGN-2026-09.md` — the September interface redesign (top bar,
-  icon rail, landing page). Later changes not in its mocks: the numbered step
-  bar is gone, the palette is the sky blue shared with the hub and JupyterLab,
-  Studio opens on Home (`/welcome` only redirects there), and the rail has a
-  Website cell.
-- `docs/UX-NON-SPECIALIST-DESIGN.md` — the redesign that made Studio usable
-  without Pegasus literacy (tracker issue #241). **All seven phases shipped**;
-  Appendix B is the status table and the Rollout section records one deviation:
-  the simplified interface was flipped on by default *ahead of* the terminology
-  check that was meant to gate it. `docs/ux-terminology-test.md` is that
-  protocol — written, runnable, and **still unrun**, so the vocabulary now in
-  front of every user has not been validated with anyone outside the team.
-- `docs/TODO-PLAN.md`, `docs/CODE_REVIEW_2026-07.md` — historical snapshots
-  (banners point to the Aug review).
-- `docs/CODE_REVIEW_2026-08.md` — the August full-repo review. Every BE, SEC
-  and FE finding is remediated (PRs #57/#60/#62/#64/#66/#68/#126/#128/#130/#132/#134/#136):
-  `run_command` has a per-turn approval gate (SEC-4, #68), LLM keys are
-  write-only over the API (SEC-3, #64) and encrypted at rest when
-  `STUDIO_SECRET_KEY` is set (S7, #136). Some INF items are still open or
-  partly open, notably INF-4: the Pegasus 6.0 nightly apt repo is installed
-  `trusted=yes` again (c50c700) because upstream publishes no signed Release.
-  Check the doc's Status lines (re-checked 2026-11-02) before assuming anything.
+- Design history (the July and August code reviews, the September UI
+  redesign, the non-specialist redesign #241, the knowledge single-source
+  design, the July roadmap) was removed from the tree before the public
+  release (#638) and lives in git history. Open infrastructure findings from
+  the August review are tracked in #639.
 
 ## Session usage logging
 
