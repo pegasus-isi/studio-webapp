@@ -288,8 +288,9 @@ export function RunFlowPanel({
   // The site travels with the choice: a placement card can be clicked while
   // "More places" has another site selected, and the save must go to the
   // pool site the card stands for, not to whatever was chosen before.
+  // `fromSite` is that earlier site, so a failed save undoes the switch too.
   const savePlacement = useMutation({
-    mutationFn: ({ site, p }: { site: string; p: Placement }) =>
+    mutationFn: ({ site, p }: { site: string; p: Placement; fromSite?: string }) =>
       api.setPlacement(projectId, site, p),
     onMutate: ({ site, p }) => {
       const key = ["placement", projectId, site];
@@ -299,8 +300,15 @@ export function RunFlowPanel({
       });
       return { prev, key };
     },
-    onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(ctx.key, ctx.prev);
+    onError: (_e, { fromSite }, ctx) => {
+      if (ctx) {
+        // Nothing cached means the query never ran for this site (it was not
+        // the chosen one): drop the optimistic row so the next read is the
+        // server's, rather than leave the failed choice looking saved.
+        if (ctx.prev) qc.setQueryData(ctx.key, ctx.prev);
+        else qc.removeQueries({ queryKey: ctx.key, exact: true });
+      }
+      if (fromSite) chooseSite(fromSite);
     },
     onSuccess: (fresh, { site }) => qc.setQueryData(["placement", projectId, site], fresh),
   });
@@ -722,8 +730,9 @@ export function RunFlowPanel({
                   selected={chosenSite === poolSite.value && !placementForeign && placement === p.value}
                   disabled={(chosenSite === poolSite.value && !!placementForeign) || savePlacement.isPending}
                   onChoose={() => {
-                    if (chosenSite !== poolSite.value) chooseSite(poolSite.value);
-                    savePlacement.mutate({ site: poolSite.value, p: p.value });
+                    const fromSite = chosenSite !== poolSite.value ? chosenSite : undefined;
+                    if (fromSite) chooseSite(poolSite.value);
+                    savePlacement.mutate({ site: poolSite.value, p: p.value, fromSite });
                   }}
                 />
               ))}
