@@ -21,27 +21,26 @@ const config: Config = {
           DEFAULT: "var(--c-accent)",
           fg: "var(--c-accent-fg)",
         },
-        // Pegasus brand scale — cornflower/periwinkle (#314), sampled from the
-        // redesign prototype. The scale name is unchanged so the ~250 existing
+        // Pegasus brand scale: Tailwind's sky ramp, matching the JupyterHub
+        // login page and Studio's JupyterLab theme (2026-11; it was
+        // cornflower from #314). The scale name is unchanged so the
         // `pegasus-*` utilities reskin without touching every component.
         //
-        // The 500→600 step is deliberately a cliff rather than an even
-        // interval: 500 is the sampled hero value and 600 is the first shade
-        // that carries white text at AA. Everything filled lives at 600+,
-        // everything decorative at 500-.
+        // Two steps differ from Tailwind's sky, both for contrast. 600 is
+        // the first shade that carries white text at AA (sky-600 #0284c7 is
+        // 4.10:1). 50 and 100 are the selected/active tints, a step deeper
+        // than sky-50/100, which were too faint to mark a choice on white.
         pegasus: {
-          // 50 and 100 are the selected/active tints. The sampled 50 matched
-          // the old page ground, so a selected card read as unselected.
-          50: "#e6edfc",
-          100: "#d9e4fa",
-          200: "#cfdef7",
-          300: "#aac4ee", // dark-mode text — 10.3:1 on the navy base
-          400: "#84a9e4", // dark-mode accent
-          500: "#6c9cde", // the sampled value; resting fills, non-critical borders
-          600: "#3f6fb8", // filled actions — white text at 5.03:1
-          700: "#35639f", // link/active text on light, and 600's hover
-          800: "#274a78",
-          900: "#1b3252",
+          50: "#e0f2fe",
+          100: "#cdeafd",
+          200: "#bae6fd",
+          300: "#7dd3fc", // dark-mode text
+          400: "#38bdf8", // dark-mode accent
+          500: "#0ea5e9", // JupyterLab's accent; rings, icons, non-critical borders
+          600: "#0277b6", // filled actions, white text at 4.86:1
+          700: "#0369a1", // link/active text on light, and 600's hover
+          800: "#075985",
+          900: "#0c4a6e",
         },
       },
       // One named size below text-xs, for badges, pills, keyboard hints and

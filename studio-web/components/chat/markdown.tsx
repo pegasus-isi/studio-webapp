@@ -38,7 +38,7 @@ function CodeBlock({ text }: { text: string }) {
           Tailwind Typography styles `pre` with `--tw-prose-pre-code`, a
           near-white tuned for its own dark `--tw-prose-pre-bg`. Overriding
           only the background — as this did — left that near-white text on a
-          near-white block: #e5e7eb on #f3f6ff measures 1.15:1 in light mode,
+          near-white block: #e5e7eb on the old #f3f6ff ground measured 1.15:1 in light mode,
           which is invisible rather than merely low-contrast. `pre code`
           inherits its colour from `pre`, so setting it here is enough.
 
