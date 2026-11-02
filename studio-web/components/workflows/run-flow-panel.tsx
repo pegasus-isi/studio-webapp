@@ -287,7 +287,26 @@ export function RunFlowPanel({
   // the deployment's default) — not a fixed local/condorpool pair, which
   // offers a site nothing defines on a Slurm or hosted-catalog install.
   const defaultSite = params?.sites?.default ?? "condorpool";
-  const sites = useMemo(() => siteChoices(params?.sites?.sites), [params]);
+  // Under Open OnDemand, Studio is itself a batch job on one compute node,
+  // so "This machine" read as the user's laptop or the whole cluster. It is
+  // neither: the local site runs every step on that one node, inside the
+  // session's allocation. The cluster's scheduler is offered separately as
+  // "HPC cluster" (2026-11 feedback).
+  const ood = provisioning?.deployment === "ood";
+  const sites = useMemo(() => {
+    const base = siteChoices(params?.sites?.sites);
+    return ood
+      ? base.map((s) =>
+          s.value === "local"
+            ? {
+                ...s,
+                label: "This Studio session's node",
+                hint: "Runs every step on the compute node your Studio session is using, within its allocation. Best for small tests; use the HPC cluster for a full analysis.",
+              }
+            : s
+        )
+      : base;
+  }, [params, ood]);
   // A site the backend demoted — a generator-written condorpool once a
   // cluster has been chosen (#518) — is offered under "More places", so the
   // main choice is the one the user made on Resources. If a saved value
