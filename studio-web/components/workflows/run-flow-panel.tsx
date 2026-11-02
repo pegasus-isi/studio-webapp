@@ -49,7 +49,7 @@ type Placement = api.Placement;
  * in its pegasus.properties, so a pegasus-plan from a terminal does the same
  * as Run (services/run_placement.py). Saved as soon as it is clicked.
  *
- * Labelled by whose computers they are, not by Condor's terms: "annex" and
+ * Labelled by whose resources they are, not by Condor's terms: "annex" and
  * "everywhere else" meant nothing to a first-time reader, and "everywhere
  * else" read as the opposite of the Studio pool it actually is (2026-11
  * feedback). "Annex" survives in the detail, as the word Resources uses.
@@ -57,12 +57,12 @@ type Placement = api.Placement;
 const PLACEMENTS: { value: Placement; label: string; detail: string }[] = [
   {
     value: "elsewhere",
-    label: "Studio's computers",
+    label: "Studio's resources",
     detail: "Studio's shared pool, plus the OSPool for steps that name an OSPool project.",
   },
   {
     value: "annex",
-    label: "Only my own computers",
+    label: "My own resources",
     detail: "Nodes you connect from your own cluster or allocation (an annex, set up on Resources). Steps wait until they join, so start the run first, then the nodes.",
   },
 ];
@@ -755,8 +755,8 @@ export function RunFlowPanel({
             // More than one main site and the pool is chosen: the machine
             // choice qualifies that site, so it sits under it, not beside it.
             <div className="mt-3 border-l-2 border-line pl-3">
-              <p className="text-xs font-medium text-fg">Which of the pool&apos;s computers</p>
-              <div role="radiogroup" aria-label="Which of the pool's computers" className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
+              <p className="text-xs font-medium text-fg">Which of the pool&apos;s resources</p>
+              <div role="radiogroup" aria-label="Which of the pool's resources" className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
                 {PLACEMENTS.map((p) => (
                   <PlacementOption
                     key={p.value}
@@ -781,7 +781,7 @@ export function RunFlowPanel({
               <p className="mt-1.5 text-xs text-fgmuted">
                 {placementState?.source === "workflow"
                   ? "Saved in this workflow\u2019s pegasus.properties, so running it from a terminal does the same."
-                  : "The default for every workflow. Choosing \u201cOnly my own computers\u201d saves it in this workflow\u2019s pegasus.properties."}
+                  : "The default for every workflow. Choosing \u201cMy own resources\u201d saves it in this workflow\u2019s pegasus.properties."}
               </p>
             )}
             {savePlacement.error && (
@@ -800,7 +800,7 @@ export function RunFlowPanel({
             )}
             {legacyPin.ready && legacyPin.on && placement === "elsewhere" && placementState?.source === "default" && (
               <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
-                An older setting in ~/.pegasusrc sends every workflow that doesn&rsquo;t choose to your annex only, so &ldquo;Studio&rsquo;s computers&rdquo; isn&rsquo;t true here yet.{" "}
+                An older setting in ~/.pegasusrc sends every workflow that doesn&rsquo;t choose to your annex only, so &ldquo;Studio&rsquo;s resources&rdquo; isn&rsquo;t true here yet.{" "}
                 <button
                   type="button"
                   onClick={() =>
