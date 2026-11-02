@@ -369,8 +369,8 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
       {pin.on && (
         <p className="text-xs text-amber-700 dark:text-amber-400">
           An older setting sends every run to your own nodes only, so runs wait when
-          none are up. Runs now choose this one at a time (Run → Choose your compute
-          resources).{" "}
+          none are up. Runs now choose this one at a time (Run → Where Workflow
+          Runs).{" "}
           <button
             type="button"
             onClick={() => pin.set(false)}
@@ -421,7 +421,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                   <>
                     A run is going: you can create the setup file now. Only a run started
                     with{" "}
-                    <span className="font-medium text-fg">Choose your compute resources → Bring Your Own Compute</span>{" "}
+                    <span className="font-medium text-fg">Where Workflow Runs → Bring Your Own Compute</span>{" "}
                     waits for your nodes; the rest stay on Studio&apos;s pool.
                   </>
                 ) : (
@@ -431,7 +431,7 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
                       Run Jobs
                     </AppLink>
                     {" "}with{" "}
-                    <span className="font-medium text-fg">Choose your compute resources → Bring Your Own Compute</span>.
+                    <span className="font-medium text-fg">Where Workflow Runs → Bring Your Own Compute</span>.
                     HTCondor brings your nodes in only while some of your steps are queued,
                     and a node with nothing to run leaves after 5 minutes. A run left on{" "}
                     <span className="font-medium text-fg">Compute resources</span> (the

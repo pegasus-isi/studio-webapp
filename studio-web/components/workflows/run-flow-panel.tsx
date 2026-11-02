@@ -633,8 +633,8 @@ export function RunFlowPanel({
             fill in sends them looking for the work. */}
         <p className={cn("text-sm text-fgmuted", !embedded && "mt-1")}>
           {collapsible
-            ? "This analysis already has everything it needs. Choose your compute resources and press Run — Studio prepares the rest and starts it for you."
-            : "Fill in what your analysis needs, choose your compute resources, then press Run. Studio prepares everything and starts it for you."}
+            ? "This analysis already has everything it needs. Choose where the workflow runs and press Run — Studio prepares the rest and starts it for you."
+            : "Fill in what your analysis needs, choose where the workflow runs, then press Run. Studio prepares everything and starts it for you."}
         </p>
 
         {/* The settings, collapsed when the workflow can already run without
@@ -730,7 +730,7 @@ export function RunFlowPanel({
 
         <fieldset className="mt-5">
           <legend className="flex w-full items-center text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
-            Choose your compute resources
+            Where Workflow Runs
             <GlossaryTerm term="Compute resources" />
             {/* A cluster and allocation are chosen once, on Resources
                 (#468); the sites below follow from that choice. With the
@@ -750,7 +750,7 @@ export function RunFlowPanel({
             // is not a choice, so the question is only whose machines. Two
             // headings for one decision ("Where it runs", then "On which
             // machines") read as two decisions (2026-11 feedback).
-            <div role="radiogroup" aria-label="Choose your compute resources" className="mt-2 space-y-2">
+            <div role="radiogroup" aria-label="Where Workflow Runs" className="mt-2 space-y-2">
               {PLACEMENTS.map((p) => (
                 <PlacementOption
                   key={p.value}
