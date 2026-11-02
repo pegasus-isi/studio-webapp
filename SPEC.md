@@ -234,7 +234,7 @@ Primary routes:
 | Route | Nav label | Purpose |
 |-------|-----------|---------|
 | `/` → `/home` | Home | Where Studio opens: welcome, four ways in, an opener gallery, an attention strip for runs that need it, and the guided tour (every login until opted out). The former `/welcome` introduction moved to the JupyterHub login page; `/welcome` now redirects to Home |
-| `/workflows` | Analyses | Workflow projects, runs, actions and details; the Run panel (Where Workflow Runs, GPU notes); where each step ran; long-running-step warnings; the graph (click a step for its files; optional file nodes); Results with sandboxed previews; rename/delete |
+| `/workflows` | Analyses | Workflow projects, runs, actions and details; the Run panel (Choose where to run the workflow, GPU notes); where each step ran; long-running-step warnings; the graph (click a step for its files; optional file nodes); Results with sandboxed previews; rename/delete |
 | `/data` | Data | Upload input files into the workspace |
 | `/marketplace` | Examples | Browse workflows sourced live from GitHub: repos in the configured orgs tagged `pegasus-studio-example`, enriched from the PegasusHub registry; "Add" git-clones one into the workspace |
 | `/provisioning` | Resources | A section menu: Overview (pool inventory, workflow demand, pressure findings, every capacity number), OSPool (capacity and the user's OSPool project name), and per deployment either Bring Your Own Compute (hosted: create, download and shut down the user's HTCondor annex, cluster presets, GPU nodes) or Where workflows run (Open OnDemand: the cluster's catalog and the user's allocation) |
@@ -303,7 +303,7 @@ Before rendering action forms, Studio introspects each project's
 `workflow_generator.py` `argparse` definition and builds a parameter form for
 that project.
 
-The one-button Run (`services/run_flow.py`) asks **Where Workflow Runs**:
+The one-button Run (`services/run_flow.py`) asks **Choose where to run the workflow**:
 
 - The site comes from what planning can resolve (`services/execution_sites.py`:
   the project's `sites.yml`, a hosted catalog named in `~/.pegasusrc`, then the

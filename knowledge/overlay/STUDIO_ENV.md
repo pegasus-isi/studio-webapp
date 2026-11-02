@@ -163,7 +163,7 @@ builds the image if it is stale, plans and submits — and it does things a
 hand-typed `pegasus-plan` does not:
 
 - sets the generator's `-e/--execution-site-name` to the site chosen under
-  "Where Workflow Runs". The generator registers every transformation on that site,
+  "Choose where to run the workflow". The generator registers every transformation on that site,
   so `-e` and the plan's `-s` must be the same name or planning cannot map the
   jobs;
 - plans with `--output-dir $HOME/workflows/<name>/output`, so results land in
@@ -203,7 +203,7 @@ How the choice is made depends on the deployment:
 
 - **Hosted Studio** (the default): the site is `compute`, Studio's own pool
   (`condorpool` only if `~/.pegasusrc` names no catalog). There is no cluster
-  to choose. Under the Run panel's "Where Workflow Runs"
+  to choose. Under the Run panel's "Choose where to run the workflow"
   the user picks whose machines a workflow's steps use: **Studio's Compute
   Resources** (the default: Studio's pool, plus the OSPool for steps that carry
   the OSPool project name set on Resources → OSPool) or **Bring Your Own

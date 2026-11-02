@@ -514,7 +514,7 @@ export interface ExecutionSite {
       ("Unity (UMass)", "Studio's own pool"); null otherwise, and absent on a
       backend that predates it. */
   label?: string | null;
-  /** Kept out of the main "Where it runs" choice (still selectable under
+  /** Kept out of the main "Choose where to run the workflow" choice (still selectable under
       "more places"): a generator-written condorpool once a cluster has been
       chosen (#518). Absent on a backend that predates it. */
   advanced?: boolean;

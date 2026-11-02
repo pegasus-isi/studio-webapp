@@ -241,6 +241,6 @@ def problem(
     return (
         f"This workflow expects a shared filesystem ({'; '.join(reasons)}), and "
         f"{where} does not have one: its jobs cannot see files in this "
-        "workspace. Choose a place that does, under “Where Workflow Runs”, "
+        "workspace. Pick a place that does, under “Choose where to run the workflow”, "
         "or change the workflow so its inputs are staged."
     )

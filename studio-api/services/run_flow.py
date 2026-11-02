@@ -1,6 +1,6 @@
 """Run-flow orchestration — the single "Run" action.
 
-Phase 1 of docs/UX-NON-SPECIALIST-DESIGN.md (#241). Studio's project page has
+Phase 1 of the non-specialist redesign (#241). Studio's project page has
 historically exposed Pegasus's four phases as four sibling buttons — Generate,
 Build Image, Plan, Run — with no ordering and no gating. That is a faithful
 rendering of Pegasus's model and an unusable one for a domain scientist, who
@@ -671,7 +671,7 @@ async def _execute(
             flow.failure = Failure(
                 stage="plan",
                 cause=problem,
-                action="Choose another place under \u201cWhere Workflow Runs\u201d.",
+                action="Pick another place under \u201cChoose where to run the workflow\u201d.",
                 technical=f"pegasus-plan -s {site}: no catalog defines it",
             )
             flow.state = "failed"
@@ -727,7 +727,7 @@ async def _execute(
                 stage="plan",
                 cause=fs_problem,
                 action=(
-                    "Choose another place under \u201cWhere Workflow Runs\u201d, or ask the "
+                    "Pick another place under \u201cChoose where to run the workflow\u201d, or ask the "
                     "assistant to make the workflow stage its inputs."
                 ),
                 technical=f"pegasus-plan -s {site}: not run, shared-filesystem check",

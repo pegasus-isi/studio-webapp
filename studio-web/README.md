@@ -53,7 +53,7 @@ All app routes live under `app/(studio)/` and share the studio chrome (left nav
 | Route | Rail label | Description |
 |-------|-----------|-------------|
 | `/` → `/home` | Home | Welcome, four ways in, an opener gallery that hands a prompt to the assistant, an attention strip for failed/running runs, and the guided tour |
-| `/workflows` | Analyses | Project list (resizable/collapsible), a workflow picker in the header, the collapsible "Set up your run" form with its "Where Workflow Runs" choice (`run-flow-panel.tsx`: "Studio's Compute Resources" or "Bring Your Own Compute", saved to the workflow's `pegasus.properties`; a warning when a GPU step has no free GPU), an always-visible graph pane with a run picker (full screen is resizable), Results + Steps tabs, "Where it ran", a slow-step warning, failure cards, Rename/Delete. `?project=` / `?run=` select on arrival |
+| `/workflows` | Analyses | Project list (resizable/collapsible), a workflow picker in the header, the collapsible "Set up your run" form with its "Choose where to run the workflow" choice (`run-flow-panel.tsx`: "Studio's Compute Resources" or "Bring Your Own Compute", saved to the workflow's `pegasus.properties`; a warning when a GPU step has no free GPU), an always-visible graph pane with a run picker (full screen is resizable), Results + Steps tabs, "Where it ran", a slow-step warning, failure cards, Rename/Delete. `?project=` / `?run=` select on arrival |
 | `/data` | Data | Drag-and-drop upload into the workspace, with copy-path and delete |
 | `/marketplace` | Examples | Browse & "Add" (git-clone) workflows sourced live from GitHub (repos tagged `pegasus-studio-example`, enriched from the PegasusHub registry), with search, subject chips, source filter and sort; cards already in the workspace show "In your workspace · Open" |
 | `/notebooks` | Notebooks | JupyterLab framed in Studio (served at `/jupyter/`), with "Open in new tab" and Reload; `?path=` opens a folder |
@@ -68,9 +68,7 @@ The Advanced grouping follows the **Simplified Run** preference
 (`GET/PUT /api/settings/ui`). Turning it off flattens the rail and opens the
 Advanced disclosure — the individual Pegasus steps — by default. It no longer
 *replaces* the run form: "Set up your run" owns the parameters in both modes,
-because rendering them in both places gave one value two editors. See
-[`docs/UX-NON-SPECIALIST-DESIGN.md`](../docs/UX-NON-SPECIALIST-DESIGN.md) and
-[`docs/UI-REDESIGN-2026-09.md`](../docs/UI-REDESIGN-2026-09.md).
+because rendering them in both places gave one value two editors (#241).
 
 **In-app links do not reload the page.** `components/layout/app-link.tsx`
 pushes through the client router so the chat panel, terminals and scroll

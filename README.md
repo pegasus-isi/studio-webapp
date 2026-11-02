@@ -165,7 +165,7 @@ steps remain individually available under "Advanced" on each workflow, and
 turning off **Simplified Run** in Settings restores them as the primary
 controls along with the full navigation.
 
-**Where Workflow Runs**, in the Run panel, is where a run goes. On the hosted
+**Choose where to run the workflow**, in the Run panel, is where a run goes. On the hosted
 deployment the choice is whose machines: **Studio's Compute Resources** (the
 default: Studio's pool, and the OSPool for workflows with a project name) or
 **Bring Your Own Compute** (only the annex nodes the user connects on
@@ -358,7 +358,7 @@ catalog is named in `~/.pegasusrc` (`pegasus.catalog.site.repo.file`):
 Either way the catalog is "hosted": a project's own `sites.yml` is merged over
 it, never replaced. The Run form offers the sites the project can plan against
 (its `sites.yml`, the catalog's sites, `STUDIO_EXEC_SITE`, and `local`, which
-hosted Studio hides; see **Where Workflow Runs** under
+hosted Studio hides; see **Choose where to run the workflow** under
 [Main Views](#main-views)), and Run passes the chosen one as the generator's
 `-e/--execution-site-name` (the template binds transformations to it, so it must equal the plan's `-s`),
 plans with `--output-dir <project>/output`, and refuses a site nothing defines

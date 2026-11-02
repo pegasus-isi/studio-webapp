@@ -3,7 +3,7 @@
 > **Status: shipped, hosted deployment only.** This page is the long form of
 > **Resources → Bring Your Own Compute** (`studio-web/components/resources/annex-panel.tsx`,
 > backed by `studio-api/services/annex.py`) and of the **Bring Your Own
-> Compute** choice under **Where Workflow Runs** in a workflow's Run panel
+> Compute** choice under **Choose where to run the workflow** in a workflow's Run panel
 > (`studio-web/components/workflows/run-flow-panel.tsx`,
 > `studio-api/services/run_placement.py`). Keep the three in step.
 > First drafted by Mats Rynge on 2026-10-15 for the command-line flow; rewritten
@@ -27,7 +27,7 @@ covering SSH keys and each cluster's OnDemand portal.
 
 ## How a run chooses your nodes
 
-Each workflow's Run panel asks **Where Workflow Runs**, with two choices:
+Each workflow's Run panel asks **Choose where to run the workflow**, with two choices:
 
 - **Studio's Compute Resources** (the default for every workflow): Studio's
   shared pool, plus the OSPool for steps that carry a project name. A run
