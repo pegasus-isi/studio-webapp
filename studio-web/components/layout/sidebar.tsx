@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { stripAppBasePath } from "@/lib/urls";
 import { AppLink } from "@/components/layout/app-link";
-import { UserMenu } from "@/components/layout/user-menu";
+import { PROJECT_SITE, UserMenu } from "@/components/layout/user-menu";
 import { FeedbackButton } from "@/components/layout/feedback-button";
 import { cn } from "@/lib/utils";
 import { usePanelStore } from "@/lib/stores/panel-store";
@@ -83,6 +83,12 @@ const ICON = {
     <>
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       <path d="M12 7v4M12 14h.01" />
+    </>
+  ),
+  website: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" />
     </>
   ),
   settings: (
@@ -284,6 +290,9 @@ export function Sidebar() {
             reach for early users reporting as they go, out of the way of the
             task cells above. Opens the form in a new tab. */}
         <div className="mx-auto my-1 h-px w-7 bg-line" />
+        {/* Back to the project site (2026-11 launch feedback), in a new tab
+            so the user keeps their place; also in the account menu and ⌘K. */}
+        {renderItem({ href: PROJECT_SITE, label: "Website", icon: "website", external: true })}
         <FeedbackButton className={cellClass(false)}>
           <Glyph name="feedback" />
           {cellLabel("Feedback")}
