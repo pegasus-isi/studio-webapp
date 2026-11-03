@@ -106,6 +106,10 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+# Stampede job states during which the job is on a worker, not waiting for one.
+_EXECUTING = frozenset({"EXECUTE", "PRE_SCRIPT_STARTED", "POST_SCRIPT_STARTED"})
+
+
 def _job_status(state: str | None, exitcode: Any) -> str:
     """Map a stampede job state + exitcode to succeeded/failed/running/pending."""
     code = _as_int(exitcode)
@@ -244,7 +248,18 @@ def workflow_detail(events: list[dict[str, Any]]) -> dict[str, Any]:
     if not done and not failed:
         done = sum(1 for j in job_list if j["status"] == "succeeded")
         failed = sum(1 for j in job_list if j["status"] == "failed")
-    running = max(0, total - done - failed)
+    # Running means executing on a worker. Everything else unfinished (in the
+    # HTCondor queue, held, or not yet released by DAGMan) is queued: counting
+    # it as running showed a 200-step run as "200 running" with one slot busy.
+    unfinished = max(0, total - done - failed)
+    running = min(
+        unfinished,
+        sum(
+            1 for j in job_list
+            if j["status"] == "running"
+            and (j.get("state") or "").upper() in _EXECUTING
+        ),
+    )
 
     return {
         "status": status,
@@ -252,5 +267,6 @@ def workflow_detail(events: list[dict[str, Any]]) -> dict[str, Any]:
         "completed_jobs": done,
         "failed_jobs": failed,
         "running_jobs": running,
+        "queued_jobs": unfinished - running,
         "exec_site": None,
     }

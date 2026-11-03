@@ -354,6 +354,8 @@ export interface WorkflowRun {
   total_jobs: number;
   completed_jobs: number;
   failed_jobs: number;
+  running_jobs?: number;
+  queued_jobs?: number;
   exec_site: string | null;
   created_at: string;
   updated_at: string;
