@@ -1,5 +1,10 @@
 # Spike: chat as a client of `opencode serve`
 
+> **Status: complete; its findings shipped.** The chat client built on them
+> landed in #374 (with #376, #378, #384) and became the default engine in
+> #404. The image and `@opencode-ai/sdk` are still pinned to 1.18.29
+> (re-checked 2026-11-02), so the version-specific notes below still apply.
+
 Findings from the spike that #367 names as blocking everything else. Run against
 `opencode-ai` **1.18.29** (and 1.18.8, the version the image pinned) with a real
 OpenAI-compatible gateway behind it, driving the HTTP API by hand.

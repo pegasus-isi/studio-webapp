@@ -1,6 +1,6 @@
 """Onboarding funnel — the baseline for the non-specialist redesign.
 
-Phase 0 of docs/UX-NON-SPECIALIST-DESIGN.md (#241). Phase 8 judges the whole
+Phase 0 of the non-specialist redesign (#241). Phase 8 judges the whole
 redesign on **time from first login to first successful run**, which means the
 measurement has to exist *before* the UI changes. Instrumented afterwards it
 would only ever describe the redesigned app, with nothing to compare against.

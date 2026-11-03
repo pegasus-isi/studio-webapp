@@ -26,7 +26,9 @@ when a fix ships.
 ## Supported versions
 
 Only `main` (published as `ghcr.io/pegasus-isi/studio-webapp:main`) is
-supported. There are no maintained release branches; fixes land on `main`.
+supported. There are no maintained release branches. Fixes land on `develop`
+first, whose `:develop` image is for testing and is not supported, and reach
+`main` with the next release.
 
 ## Scope and security model
 
@@ -43,6 +45,10 @@ relies on what runs in front of it:
   the front port, studio-api requires a proxy-stamped secret, and JupyterLab
   requires its own token. The Next.js upstream serves only the UI shell and
   is reachable by other local users by design (see `SPEC.md`).
+- **Local (`local-test-instance.sh`):** no authentication at all, and the
+  script publishes the port with a plain `docker run -p`, which listens on
+  every host interface. It is for testing on a machine you control; keep that
+  port off networks other people can reach.
 
 Inside the container the user already has a shell, so issues that need code
 execution as that same user are out of scope. Issues that let *someone else*

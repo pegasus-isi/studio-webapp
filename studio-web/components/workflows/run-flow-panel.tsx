@@ -264,7 +264,7 @@ export function RunFlowPanel({
    * Generator parameters that name the execution site.
    *
    * Most generators expose their own `--execution-site`, which is the same
-   * decision as the "Where it runs" radio below — and the two could disagree.
+   * decision as the "Choose where to run the workflow" radio below — and the two could disagree.
    * Picking "This machine" while the generator's field still said `condorpool`
    * wrote a site catalog for the cluster and then planned against `local`, a
    * contradiction whose failure names neither field.
@@ -763,7 +763,7 @@ export function RunFlowPanel({
 
         <fieldset className="mt-5">
           <legend className="flex w-full items-center text-2xs font-semibold uppercase tracking-wider text-fgsubtle">
-            Where Workflow Runs
+            Choose where to run the workflow
             <GlossaryTerm term="Compute resources" />
             {/* A cluster and allocation are chosen once, on Resources
                 (#468); the sites below follow from that choice. With the
@@ -783,7 +783,7 @@ export function RunFlowPanel({
             // is not a choice, so the question is only whose machines. Two
             // headings for one decision ("Where it runs", then "On which
             // machines") read as two decisions (2026-11 feedback).
-            <div role="radiogroup" aria-label="Where Workflow Runs" className="mt-2 space-y-2">
+            <div role="radiogroup" aria-label="Choose where to run the workflow" className="mt-2 space-y-2">
               {PLACEMENTS.map((p) => (
                 <PlacementOption
                   key={p.value}

@@ -4,7 +4,7 @@
  * Studio's UI grew up speaking Pegasus and HTCondor — generate/plan/submit,
  * DAG, job, site, held — which is precise for a workflow engineer and opaque
  * to the domain scientists Studio is for. This module is Phase 0 of the
- * non-specialist redesign (docs/UX-NON-SPECIALIST-DESIGN.md, #241): one place
+ * non-specialist redesign (#241): one place
  * where every user-facing term is decided, so a later change of mind is one
  * edit rather than a grep across 60 components.
  *
@@ -12,7 +12,7 @@
  *
  * Nothing imports this yet, deliberately. A merge here deploys to live user
  * pods, so the copy flip ships behind a per-user flag in Phases 1/2/7, after
- * the terminology is validated with real users (docs/ux-terminology-test.md).
+ * the terminology is validated with real users.
  * Landing the module first lets those phases consume a settled vocabulary
  * instead of inventing one per PR.
  *
@@ -152,7 +152,7 @@ const CLUSTER_HINT =
   "Best for a full analysis. Submits your steps to this cluster's scheduler, which may mean waiting in its queue.";
 
 /**
- * "Where it runs" choices for the sites a project can actually plan against
+ * "Choose where to run the workflow" choices for the sites a project can actually plan against
  * (from the backend). Keeps the plain-language labels: the default condor
  * pool is "Studio's own pool", a Slurm or other batch site the "HPC cluster"
  * — the scheduler's name is the answer to a question the user did not ask.

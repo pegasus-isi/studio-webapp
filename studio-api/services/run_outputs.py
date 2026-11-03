@@ -1,6 +1,6 @@
 """Where a run's results actually are, and what's in them.
 
-Phase 4 of docs/UX-NON-SPECIALIST-DESIGN.md (#241). Studio has never had a
+Phase 4 of the non-specialist redesign (#241). Studio has never had a
 concept of a run's *outputs*: no endpoint, no UI. A scientist runs an analysis
 in order to get files back, and today the only way to find them is to leave for
 JupyterLab and go hunting through the filesystem — which requires knowing that
