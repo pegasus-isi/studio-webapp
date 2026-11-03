@@ -165,7 +165,7 @@ function SiteOption({
 /**
  * One placement, drawn like a SiteOption so the two read as one kind of
  * choice. The card is a div, not the radio itself: Bring Your Own Compute
- * carries a "Set up a cluster…" link inside it, and a link cannot sit
+ * carries a "Connect your nodes…" link inside it, and a link cannot sit
  * inside a button.
  */
 function PlacementOption({
@@ -214,7 +214,7 @@ function PlacementOption({
             href="/provisioning#compute"
             className="text-xs font-medium text-pegasus-700 hover:underline dark:text-pegasus-300"
           >
-            Set up a cluster…
+            Connect your nodes…
           </AppLink>
         </div>
       )}
@@ -769,12 +769,17 @@ export function RunFlowPanel({
                 (#468); the sites below follow from that choice. With the
                 placement cards, the link sits in Bring Your Own Compute,
                 the choice it sets up (2026-11-02 meeting). */}
+            {/* Named for what the user does there, not "set up a cluster",
+                which they never do (#644): under Open OnDemand the cluster is
+                the administrator's and Resources asks only for the user's
+                allocation; on hosted, Resources connects nodes from an
+                allocation the user already has. */}
             {!poolSite && (
               <AppLink
-                href="/provisioning"
+                href="/provisioning#compute"
                 className="ml-auto text-xs font-medium normal-case tracking-normal text-pegasus-700 hover:underline dark:text-pegasus-300"
               >
-                Set up a cluster…
+                {ood ? "Set your allocation…" : "Connect your nodes…"}
               </AppLink>
             )}
           </legend>
