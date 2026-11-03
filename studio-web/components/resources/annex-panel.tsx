@@ -409,6 +409,18 @@ export function AnnexPanel({ annex }: { annex: AnnexStatus }) {
           </span>
           <span aria-hidden="true" className="text-fgsubtle">{showHow ? "−" : "+"}</span>
         </button>
+        <p className={`-mt-1 px-4 pb-3 ${HINT}`}>
+          Your nodes join through HTCondor Annex. See HTCondor&apos;s{" "}
+          <a
+            href="https://htcondor.readthedocs.io/en/latest/users-manual/bringing-your-own-resources.html"
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >
+            Bringing Your Own Resources
+          </a>{" "}
+          guide.
+        </p>
         {showHow && (
           <div className="border-t border-line px-4 py-4">
             <ol>
