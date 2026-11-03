@@ -1,10 +1,13 @@
 # LLM Interaction Telemetry
 
-Status: **built, not yet observed in production** (2026-09-09). The pod side and
-the cluster side both exist, in this repo and in `studio-system`, and nothing in
-them has yet processed a real turn in a live pod. Every claim below that says
-"verified" names how; everything else is unverified by design and listed in
-§8.
+Status: **built and running in production** (re-checked 2026-11-02). Until
+2026-10-07 the collector presented placeholder Langfuse keys and every trace
+batch was rejected; studio-system then sealed real keys (`f4f5196`) and added a
+"Studio telemetry" Grafana dashboard and alerts built against the live
+Prometheus series (`843d9d3`). Reply ratings were added on 2026-10-21 (§4a,
+#609, with a dashboard row in studio-system). The text below was written on
+2026-09-09, before any of that; §8 marks which of its open items have since
+closed. Every claim below that says "verified" names how.
 
 This replaces an earlier proposal that described a different platform. Two of
 its central assumptions were wrong by the time anyone read it: it routed
@@ -189,8 +192,7 @@ studio-webapp:
 
 studio-system:
 
-* `k8s/infrastructure/controllers/clickhouse-operator/` — the
-  `clickhouse.com/v1alpha1` CRDs, in the tier that Flux waits on.
+* `k8s/apps/clickhouse-operator/` — the `clickhouse.com/v1alpha1` CRDs.
 * `k8s/apps/monitoring/otel-collector.yaml` + `otel-collector-secret.yaml` —
   the collector, its ServiceMonitor, and the Langfuse project keys.
 * `k8s/apps/langfuse/` — the trace store.
@@ -203,7 +205,9 @@ maintainers a port-forward is the smaller surface.
 
 ## 8. Not done, in the order it matters
 
-1. **Nothing has been observed end to end.** The collector config renders
+1. **Nothing has been observed end to end.** *(2026-11-02: closed. The
+   dashboard's expressions were evaluated against live Prometheus series, and
+   traces export to Langfuse since the keys were sealed on 2026-10-07.)* The collector config renders
    (`helm template`, chart 0.172.1) and the OTTL functions and the plugin's
    own option parsing were both read rather than assumed, but no metric has
    made it to Prometheus and no span to Langfuse. First run should check, in
@@ -211,12 +215,14 @@ maintainers a port-forward is the smaller surface.
    collector received anything, `opencode_*` series appear in Prometheus with
    an `enduser_id` label, and a redacted span arrives with its content gone
    and its token counts intact.
-2. **The Langfuse project keys are placeholders.** They can only be created in
+2. **The Langfuse project keys are placeholders.** *(2026-11-02: closed,
+   sealed in studio-system on 2026-10-07.)* They can only be created in
    the Langfuse UI, which needs the release running. Until they are replaced,
    trace export fails auth.
 3. **Retention and RBAC are unset.** Langfuse has per-project retention; for a
    store of prompt text it should be set before the first opted-in user, not
    after.
 4. **No dashboard.** The metrics are useless until someone can see them.
+   *(2026-11-02: closed, the "Studio telemetry" Grafana dashboard.)*
 5. **Cost per §5.**
 6. **The gateway plane per §6.**

@@ -171,6 +171,8 @@ class WorkflowRunResponse(BaseModel):
     total_jobs: int = 0
     completed_jobs: int = 0
     failed_jobs: int = 0
+    running_jobs: int = 0  # executing on a worker
+    queued_jobs: int = 0  # unfinished and not executing (queued, held, waiting)
     exec_site: str | None = None
     created_at: str
     updated_at: str

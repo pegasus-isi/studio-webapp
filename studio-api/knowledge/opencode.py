@@ -439,9 +439,10 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 # session's actual state, which is what makes "why did this run
                 # fail?" answerable without the user pasting anything.
                 #
-                # Loopback, and read-only. On the hosted path studio-api has
-                # no auth of its own — an upstream ingress authenticates the
-                # browser — and the engine runs in this pod as this user.
+                # Loopback, and read-only. On the hosted path the hub gate
+                # (#592) is nginx's auth_request, which a loopback call
+                # straight to uvicorn never meets, and the engine runs in this
+                # pod as this user.
                 #
                 # On a gated session (#391) that stops being true: studio-api
                 # requires a proxy-stamped header, and this call does not go

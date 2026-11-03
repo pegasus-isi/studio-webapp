@@ -6,7 +6,7 @@ remaining wall-clock = sum of predicted durations for unfinished jobs,
 divided by the currently observed parallelism.
 
 A PegasusOracle-backed predictor can replace this later behind the same
-shape (see docs/TODO-PLAN.md item 11 v2).
+shape.
 """
 
 from __future__ import annotations

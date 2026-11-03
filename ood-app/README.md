@@ -44,8 +44,7 @@ for the Dockerfile's apt list.
   Pegasus's master database followed it there (#508), and the JVM is pointed
   at Studio's home (#489).
 - **Validated end to end (2026-10-13)** on a FABRIC test cluster
-  ([kthare10/fabric-slurm-test](https://github.com/kthare10/fabric-slurm-test):
-  Slurm + HTCondor access point + Open OnDemand 4.0, three users): sessions on
+  (Slurm + HTCondor access point + Open OnDemand 4.0, three users): sessions on
   Slurm compute nodes with the token gate and a dotted `/node/<fqdn>/<port>`
   prefix (#483); the user's real home unchanged by a session; chat on a
   provider the user added (#498, #505); in-session image builds (#485);
@@ -54,6 +53,12 @@ for the Dockerfile's apt list.
   (#496). Fixes it took: #485, #487, #491, #495, #501, #508.
 - **Site settings an administrator passes in** (catalog, LLM gateway,
   HTCondor access point); see [the table below](#site-settings-an-administrator-passes-in).
+- **The OOD shape of the UI.** A configured administrator catalog makes the
+  deployment `ood` (`STUDIO_DEPLOYMENT` overrides it), and the UI follows:
+  Resources shows **Where workflows run** (the cluster's catalog and the
+  user's allocation fields) instead of the hosted deployment's Bring Your Own
+  Compute, and the Run panel calls the `local` site **This Studio session's
+  node**, since it runs every step on the one compute node the session holds.
 
 **Not done / open:**
 - **Slurm from inside the session** (the original design for this image).
@@ -67,9 +72,9 @@ for the Dockerfile's apt list.
   `sbatch`/`squeue`/`scontrol` and munge socket/key only works if they run
   against compatible libraries. **This isn't built yet**:
   [`../docker/htcondor/90-studio.conf`](../docker/htcondor/90-studio.conf),
-  installed unmodified into this image too, is still the plain remote-AP
-  client config (`CONDOR_HOST = ap.pegasus-ai.org`) that the K8s deployment
-  uses. Until a local-pool config and the bind-mount list exist, an OOD
+  installed unmodified into this image too, is still the remote-AP client
+  config the K8s deployment uses (`CONDOR_HOST = ap.pegasus-ai.org`, plus the hosted
+  access point's annex settings). Until a local-pool config and the bind-mount list exist, an OOD
   session submits to the same remote AP as everywhere else, unless the site's
   `_CONDOR_SCHEDD_HOST`/`_CONDOR_COLLECTOR_HOST` point it at the cluster's own
   (fully qualified names) — the Rocky9 base is prerequisite, not sufficient,
@@ -169,7 +174,7 @@ them for every session. None needs any privilege the user lacks.
 | Env | Purpose |
 |---|---|
 | `STUDIO_SITE_CATALOG_FILE` | Path to the site's own Pegasus site catalog (#496). It replaces Studio's default `pegasus-studio.yml`, so site `compute` means this cluster, e.g. a Slurm partition through HTCondor BLAHP like the published `unity.yml`. Copied into each user's Studio directory every start, where the submit host can read it. |
-| `STUDIO_SITE_CATALOG_LABEL` | What the Resources page calls it (default "This cluster"). |
+| `STUDIO_SITE_CATALOG_LABEL` | What Resources → Where workflows run calls it (default "This cluster"). |
 | `STUDIO_SITE_CATALOG` | Alternatively, the name of a catalog published in `pegasushub/pegasus-site-catalogs`. |
 | `STUDIO_LLM_GATEWAY_URL`, `STUDIO_LLM_DEFAULT_MODEL` | An OpenAI-compatible gateway the site runs for the AI assistant. Without one, users add their own provider and key in Settings. |
 | `_CONDOR_SCHEDD_HOST`, `_CONDOR_COLLECTOR_HOST` | The HTCondor access point, by fully qualified name, when the session host is not it. |

@@ -1,8 +1,8 @@
-"""Provisioning endpoints — read-only pool inventory and supply/demand.
+"""Provisioning endpoints: pool inventory, supply/demand, and the annex.
 
-V1 of the provisioning surface (deck slide 11): show what the pool has, what
-the queue wants, and any pressure findings. Provisioning *actions* (Annex/
-FABRIC/JetStream adapters) come later in Phase 3.
+Shows what the pool has, what the queue wants, and any pressure findings. On
+the hosted deployment it also drives the user's own annex (Bring Your Own
+Compute): download its setup bundle, close the request, shut it down.
 """
 
 from __future__ import annotations

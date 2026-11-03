@@ -354,6 +354,8 @@ export interface WorkflowRun {
   total_jobs: number;
   completed_jobs: number;
   failed_jobs: number;
+  running_jobs?: number;
+  queued_jobs?: number;
   exec_site: string | null;
   created_at: string;
   updated_at: string;
@@ -514,7 +516,7 @@ export interface ExecutionSite {
       ("Unity (UMass)", "Studio's own pool"); null otherwise, and absent on a
       backend that predates it. */
   label?: string | null;
-  /** Kept out of the main "Where it runs" choice (still selectable under
+  /** Kept out of the main "Choose where to run the workflow" choice (still selectable under
       "more places"): a generator-written condorpool once a cluster has been
       chosen (#518). Absent on a backend that predates it. */
   advanced?: boolean;

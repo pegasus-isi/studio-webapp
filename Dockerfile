@@ -580,7 +580,7 @@ RUN STUDIO_RUNTIME_DIR=/tmp/nginx-validate-hub \
 
 # ---- Runtime workspace configuration ----
 # STUDIO_WORKSPACE_DIR: where the app stores the SQLite DB, tool configs, and
-# workflow projects.  Defaults to $HOME/work (KubeSpawner sets $HOME).
+# workflow projects.  Defaults to $HOME (KubeSpawner sets $HOME).
 # Override by setting STUDIO_WORKSPACE_DIR in the pod environment.
 # The directory is created at first use by the API; no build-time mkdir needed.
 

@@ -110,13 +110,22 @@ export function WorkflowDetail({ runId }: Props) {
 
       es.onmessage = (event) => {
         if (event.data === "[DONE]") {
-          es.close(); // run finished — no reconnect
+          es.close();
+          // The server also ends the stream at its polling cap (an hour), not
+          // only when the run finishes. Keeping the last snapshot then froze
+          // the header: it masks the 5s poll below for good. Drop it, and
+          // reconnect; if the run did finish, the poll flips isRunning and
+          // the cleanup cancels the timer.
+          setLiveStats(null);
+          reconnectTimer = setTimeout(connect, 5000);
           return;
         }
         try {
           const parsed = JSON.parse(event.data) as SSEEvent;
           attempts = 0; // stream healthy again
-          setLiveStats(parsed);
+          // Only a counts snapshot replaces the header's numbers; any other
+          // event (workflow_complete, an error) would read as all zeros.
+          if (parsed.type === "workflow_state") setLiveStats(parsed);
         } catch {
           // Ignore parse errors
         }
@@ -178,8 +187,8 @@ export function WorkflowDetail({ runId }: Props) {
   const totalJobs = liveStats?.total_jobs ?? run?.total_jobs ?? 0;
   const completedJobs = liveStats?.completed_jobs ?? run?.completed_jobs ?? 0;
   const failedJobs = liveStats?.failed_jobs ?? run?.failed_jobs ?? 0;
-  const runningJobs = liveStats?.running_jobs ?? 0;
-  const queuedJobs = liveStats?.queued_jobs ?? 0;
+  const runningJobs = liveStats?.running_jobs ?? run?.running_jobs ?? 0;
+  const queuedJobs = liveStats?.queued_jobs ?? run?.queued_jobs ?? 0;
   const progress = totalJobs > 0 ? Math.round((completedJobs / totalJobs) * 100) : 0;
 
   return (

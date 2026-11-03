@@ -65,7 +65,7 @@ def test_sharedfs_on_a_pool_is_blocked(project):
     (project / "pegasus.properties").write_text("pegasus.data.configuration=sharedfs\n")
     msg = _problem(project)
     assert msg and "pegasus.data.configuration = sharedfs" in msg
-    assert "Where it runs" in msg
+    assert "Choose where to run the workflow" in msg
 
 
 def test_bypass_under_nonsharedfs_on_a_pool_is_blocked(project):
