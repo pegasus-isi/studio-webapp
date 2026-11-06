@@ -177,14 +177,22 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             >
               🧭 Take a tour
             </AppLink>
-            <a
-              href={HELP_URL}
-              title={`Email ${SUPPORT_EMAIL}`}
-              onClick={() => setOpen(false)}
-              className="block px-4 py-2 hover:bg-muted"
-            >
-              ❓ Help
-            </a>
+            {/* The address is printed under the link, not only behind the
+                mailto:, because with no mail client registered with the
+                browser a mailto: click does nothing and the user never
+                learns where to write. */}
+            <div className="px-4 py-2">
+              <a
+                href={HELP_URL}
+                onClick={() => setOpen(false)}
+                className="block hover:underline"
+              >
+                ❓ Help
+              </a>
+              <p className="mt-0.5 select-all pl-6 text-xs text-fgmuted">
+                {SUPPORT_EMAIL}
+              </p>
+            </div>
             {/* Back to the project's own site (launch feedback, 2026-11). A
                 new tab: leaving Studio in this one would drop the
                 user's place in the app. */}
@@ -197,22 +205,6 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             >
               🌐 PegasusAI website
             </a>
-            {/* The address is printed, not only behind a mailto: link, because
-                hosted users often have no mail client registered with the
-                browser, and a mailto: that does nothing leaves them with no
-                way to find out where to write. */}
-            <div className="px-4 py-2">
-              <a
-                href={`mailto:${SUPPORT_EMAIL}`}
-                onClick={() => setOpen(false)}
-                className="block hover:underline"
-              >
-                ✉️ Contact us
-              </a>
-              <p className="mt-0.5 select-all pl-6 text-xs text-fgmuted">
-                {SUPPORT_EMAIL}
-              </p>
-            </div>
             {controlUrl && (
               <a
                 href={controlUrl}
