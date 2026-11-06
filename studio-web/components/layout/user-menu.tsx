@@ -10,6 +10,10 @@ import { AppLink } from "@/components/layout/app-link";
 /** The PegasusAI project site, linked from the account menu and the ⌘K palette. */
 export const PROJECT_SITE = "https://pegasus-ai.org/";
 
+/** Where users reach the Pegasus team; shown in the account menu and ⌘K. */
+export const SUPPORT_EMAIL = "pegasus-support@isi.edu";
+export const CONTACT_PAGE = "https://pegasus.isi.edu/contact/";
+
 /**
  * User menu: username + dropdown (theme, Settings, JupyterHub server control /
  * Stop server, Sign out). Identity and the hub URLs come from /api/whoami
@@ -189,6 +193,31 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             >
               🌐 PegasusAI website
             </a>
+            {/* The address is printed, not only behind a mailto: link, because
+                hosted users often have no mail client registered with the
+                browser, and a mailto: that does nothing leaves them with no
+                way to find out where to write. */}
+            <div className="px-4 py-2">
+              <a
+                href={`mailto:${SUPPORT_EMAIL}`}
+                onClick={() => setOpen(false)}
+                className="block hover:underline"
+              >
+                ✉️ Contact us
+              </a>
+              <p className="mt-0.5 select-all pl-6 text-xs text-fgmuted">
+                {SUPPORT_EMAIL}
+              </p>
+              <a
+                href={CONTACT_PAGE}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setOpen(false)}
+                className="block pl-6 text-xs text-accent hover:underline"
+              >
+                Other ways to reach us ↗
+              </a>
+            </div>
             {controlUrl && (
               <a
                 href={controlUrl}
