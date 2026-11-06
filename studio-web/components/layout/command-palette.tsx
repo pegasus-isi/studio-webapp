@@ -15,7 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
 import { appPushPath } from "@/lib/urls";
 import { cn } from "@/lib/utils";
-import { PROJECT_SITE } from "@/components/layout/user-menu";
+import { HELP_URL, PROJECT_SITE, SUPPORT_EMAIL } from "@/components/layout/user-menu";
 
 interface Hit {
   key: string;
@@ -33,6 +33,7 @@ const DESTINATIONS: Hit[] = [
   { key: "go-res", title: "Resources", detail: "Pool capacity", group: "Go to", href: "/provisioning" },
   { key: "go-set", title: "Application Settings", detail: "Models, tools, preferences", group: "Go to", href: "/settings" },
   { key: "go-site", title: "PegasusAI website", detail: "pegasus-ai.org, in a new tab", group: "Go to", href: PROJECT_SITE },
+  { key: "go-contact", title: "Help & contact", detail: `Email ${SUPPORT_EMAIL}`, group: "Go to", href: HELP_URL },
 ];
 
 export function CommandPalette({
@@ -110,6 +111,12 @@ export function CommandPalette({
     // through appPushPath, which would prefix it as an in-app route.
     if (/^https?:\/\//.test(hit.href)) {
       window.open(hit.href, "_blank", "noopener,noreferrer");
+      return;
+    }
+    // A mailto: hands off to the mail client and leaves the page where it
+    // is; through appPushPath it would become a broken in-app route.
+    if (hit.href.startsWith("mailto:")) {
+      window.location.href = hit.href;
       return;
     }
     window.location.href = appPushPath(hit.href);

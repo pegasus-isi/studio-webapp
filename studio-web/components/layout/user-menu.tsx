@@ -10,6 +10,15 @@ import { AppLink } from "@/components/layout/app-link";
 /** The PegasusAI project site, linked from the account menu and the ⌘K palette. */
 export const PROJECT_SITE = "https://pegasus-ai.org/";
 
+/** Where users reach the Pegasus team; shown in the account menu and ⌘K. */
+export const SUPPORT_EMAIL = "contact@pegasus-ai.org";
+
+/**
+ * Help emails the team. It used to open the studio-webapp README, which is
+ * written for people building the image, not for people using it.
+ */
+export const HELP_URL = `mailto:${SUPPORT_EMAIL}`;
+
 /**
  * User menu: username + dropdown (theme, Settings, JupyterHub server control /
  * Stop server, Sign out). Identity and the hub URLs come from /api/whoami
@@ -168,17 +177,24 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             >
               🧭 Take a tour
             </AppLink>
-            <a
-              href="https://github.com/pegasus-isi/studio-webapp#readme"
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => setOpen(false)}
-              className="block px-4 py-2 hover:bg-muted"
-            >
-              ❓ Help
-            </a>
+            {/* The address is printed under the link, not only behind the
+                mailto:, because with no mail client registered with the
+                browser a mailto: click does nothing and the user never
+                learns where to write. */}
+            <div className="px-4 py-2">
+              <a
+                href={HELP_URL}
+                onClick={() => setOpen(false)}
+                className="block hover:underline"
+              >
+                ❓ Help
+              </a>
+              <p className="mt-0.5 select-all pl-6 text-xs text-fgmuted">
+                {SUPPORT_EMAIL}
+              </p>
+            </div>
             {/* Back to the project's own site (launch feedback, 2026-11). A
-                new tab, like Help: leaving Studio in this one would drop the
+                new tab: leaving Studio in this one would drop the
                 user's place in the app. */}
             <a
               href={PROJECT_SITE}
