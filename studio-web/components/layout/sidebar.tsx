@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { stripAppBasePath } from "@/lib/urls";
 import { AppLink } from "@/components/layout/app-link";
-import { PROJECT_SITE, UserMenu } from "@/components/layout/user-menu";
+import { PROJECT_SITE, SUPPORT_EMAIL, UserMenu } from "@/components/layout/user-menu";
 import { FeedbackButton } from "@/components/layout/feedback-button";
 import { cn } from "@/lib/utils";
 import { usePanelStore } from "@/lib/stores/panel-store";
@@ -83,6 +83,12 @@ const ICON = {
     <>
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       <path d="M12 7v4M12 14h.01" />
+    </>
+  ),
+  contact: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3.5 6.5 12 13l8.5-6.5" />
     </>
   ),
   website: (
@@ -293,6 +299,17 @@ export function Sidebar() {
         {/* Back to the project site (2026-11 launch feedback), in a new tab
             so the user keeps their place; also in the account menu and ⌘K. */}
         {renderItem({ href: PROJECT_SITE, label: "Website", icon: "website", external: true })}
+        {/* A mailto:, so no new tab: target="_blank" on one leaves an empty
+            tab behind. The address is in the tooltip and printed in the
+            account menu for anyone whose browser has no mail client. */}
+        <a
+          href={`mailto:${SUPPORT_EMAIL}`}
+          title={`Contact us — email ${SUPPORT_EMAIL}`}
+          className={cellClass(false)}
+        >
+          <Glyph name="contact" />
+          {cellLabel("Contact")}
+        </a>
         <FeedbackButton className={cellClass(false)}>
           <Glyph name="feedback" />
           {cellLabel("Feedback")}

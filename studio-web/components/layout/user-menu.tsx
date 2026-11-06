@@ -15,6 +15,13 @@ export const SUPPORT_EMAIL = "pegasus-support@isi.edu";
 export const CONTACT_PAGE = "https://pegasus.isi.edu/contact/";
 
 /**
+ * The Studio walkthrough on the project site. Help used to open the
+ * studio-webapp README, which is written for people building the image, not
+ * for people using it.
+ */
+export const HELP_URL = "https://pegasus-ai.org/studio.html";
+
+/**
  * User menu: username + dropdown (theme, Settings, JupyterHub server control /
  * Stop server, Sign out). Identity and the hub URLs come from /api/whoami
  * (JUPYTERHUB_USER + JUPYTERHUB_BASE_URL); hidden if no identity.
@@ -173,7 +180,7 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
               🧭 Take a tour
             </AppLink>
             <a
-              href="https://github.com/pegasus-isi/studio-webapp#readme"
+              href={HELP_URL}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setOpen(false)}
