@@ -14,11 +14,10 @@ export const PROJECT_SITE = "https://pegasus-ai.org/";
 export const SUPPORT_EMAIL = "contact@pegasus-ai.org";
 
 /**
- * Help goes to the contact section of the project site. It used to open the
- * studio-webapp README, which is written for people building the image, not
- * for people using it.
+ * Help emails the team. It used to open the studio-webapp README, which is
+ * written for people building the image, not for people using it.
  */
-export const HELP_URL = `${PROJECT_SITE}#contact`;
+export const HELP_URL = `mailto:${SUPPORT_EMAIL}`;
 
 /**
  * User menu: username + dropdown (theme, Settings, JupyterHub server control /
@@ -180,15 +179,14 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             </AppLink>
             <a
               href={HELP_URL}
-              target="_blank"
-              rel="noopener noreferrer"
+              title={`Email ${SUPPORT_EMAIL}`}
               onClick={() => setOpen(false)}
               className="block px-4 py-2 hover:bg-muted"
             >
               ❓ Help
             </a>
             {/* Back to the project's own site (launch feedback, 2026-11). A
-                new tab, like Help: leaving Studio in this one would drop the
+                new tab: leaving Studio in this one would drop the
                 user's place in the app. */}
             <a
               href={PROJECT_SITE}
