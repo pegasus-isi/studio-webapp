@@ -10,6 +10,17 @@ import { AppLink } from "@/components/layout/app-link";
 /** The PegasusAI project site, linked from the account menu and the ⌘K palette. */
 export const PROJECT_SITE = "https://pegasus-ai.org/";
 
+/** Where users reach the Pegasus team; shown in the account menu and ⌘K. */
+export const SUPPORT_EMAIL = "pegasus-support@isi.edu";
+export const CONTACT_PAGE = "https://pegasus.isi.edu/contact/";
+
+/**
+ * Help goes to the Pegasus team's contact page (mailing lists, Slack, support
+ * address). It used to open the studio-webapp README, which is written for
+ * people building the image, not for people using it.
+ */
+export const HELP_URL = CONTACT_PAGE;
+
 /**
  * User menu: username + dropdown (theme, Settings, JupyterHub server control /
  * Stop server, Sign out). Identity and the hub URLs come from /api/whoami
@@ -169,7 +180,7 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
               🧭 Take a tour
             </AppLink>
             <a
-              href="https://github.com/pegasus-isi/studio-webapp#readme"
+              href={HELP_URL}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setOpen(false)}
@@ -189,6 +200,22 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             >
               🌐 PegasusAI website
             </a>
+            {/* The address is printed, not only behind a mailto: link, because
+                hosted users often have no mail client registered with the
+                browser, and a mailto: that does nothing leaves them with no
+                way to find out where to write. */}
+            <div className="px-4 py-2">
+              <a
+                href={`mailto:${SUPPORT_EMAIL}`}
+                onClick={() => setOpen(false)}
+                className="block hover:underline"
+              >
+                ✉️ Contact us
+              </a>
+              <p className="mt-0.5 select-all pl-6 text-xs text-fgmuted">
+                {SUPPORT_EMAIL}
+              </p>
+            </div>
             {controlUrl && (
               <a
                 href={controlUrl}
