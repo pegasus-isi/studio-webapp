@@ -15,7 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
 import { appPushPath } from "@/lib/urls";
 import { cn } from "@/lib/utils";
-import { CONTACT_PAGE, HELP_URL, PROJECT_SITE, SUPPORT_EMAIL } from "@/components/layout/user-menu";
+import { CONTACT_PAGE, PROJECT_SITE, SUPPORT_EMAIL } from "@/components/layout/user-menu";
 
 interface Hit {
   key: string;
@@ -33,8 +33,7 @@ const DESTINATIONS: Hit[] = [
   { key: "go-res", title: "Resources", detail: "Pool capacity", group: "Go to", href: "/provisioning" },
   { key: "go-set", title: "Application Settings", detail: "Models, tools, preferences", group: "Go to", href: "/settings" },
   { key: "go-site", title: "PegasusAI website", detail: "pegasus-ai.org, in a new tab", group: "Go to", href: PROJECT_SITE },
-  { key: "go-help", title: "Help", detail: "The Studio walkthrough, in a new tab", group: "Go to", href: HELP_URL },
-  { key: "go-contact", title: "Contact us", detail: `${SUPPORT_EMAIL}, or the contact page in a new tab`, group: "Go to", href: CONTACT_PAGE },
+  { key: "go-contact", title: "Help & contact", detail: `${SUPPORT_EMAIL}, or the contact page in a new tab`, group: "Go to", href: CONTACT_PAGE },
 ];
 
 export function CommandPalette({

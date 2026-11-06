@@ -15,11 +15,11 @@ export const SUPPORT_EMAIL = "pegasus-support@isi.edu";
 export const CONTACT_PAGE = "https://pegasus.isi.edu/contact/";
 
 /**
- * The Studio walkthrough on the project site. Help used to open the
- * studio-webapp README, which is written for people building the image, not
- * for people using it.
+ * Help goes to the Pegasus team's contact page (mailing lists, Slack, support
+ * address). It used to open the studio-webapp README, which is written for
+ * people building the image, not for people using it.
  */
-export const HELP_URL = "https://pegasus-ai.org/studio.html";
+export const HELP_URL = CONTACT_PAGE;
 
 /**
  * User menu: username + dropdown (theme, Settings, JupyterHub server control /
@@ -215,15 +215,6 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
               <p className="mt-0.5 select-all pl-6 text-xs text-fgmuted">
                 {SUPPORT_EMAIL}
               </p>
-              <a
-                href={CONTACT_PAGE}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setOpen(false)}
-                className="block pl-6 text-xs text-accent hover:underline"
-              >
-                Other ways to reach us ↗
-              </a>
             </div>
             {controlUrl && (
               <a
