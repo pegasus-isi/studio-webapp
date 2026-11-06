@@ -4,12 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { SUPPORT_EMAIL } from "@/components/layout/user-menu";
 
 /**
- * "Contact" cell for the left rail: opens a small card with the team's
- * address, a Copy button and a mailto: link.
+ * "Contact" cell for the left rail: starts an email to the team and opens a
+ * small card with the address, a Copy button and a mailto: link.
  *
- * Not a bare mailto: link. With no mail client registered with the browser —
- * the usual case for webmail users — clicking one does nothing at all, and
- * the user is left without the one thing they came for, the address.
+ * Both, not a bare mailto: link. With no mail client registered with the
+ * browser — the usual case for webmail users — a mailto: click does nothing
+ * at all, and the user is left without the one thing they came for, the
+ * address. The card is what they see then; with a mail client, the draft
+ * opens and the card is a harmless extra.
  *
  * The card is `position: fixed` beside the button rather than absolutely
  * positioned inside the rail, because the rail's nav scrolls
@@ -57,6 +59,9 @@ export function ContactButton({
     // like the account menu: the cell sits near the foot of the rail.
     setPos({ left: r.right + 8, bottom: Math.max(8, window.innerHeight - r.bottom) });
     setCopied(false);
+    // Assigning a mailto: hands it to the OS mail handler without leaving
+    // the page; with no handler registered, the browser ignores it.
+    window.location.href = `mailto:${SUPPORT_EMAIL}`;
   };
 
   const copy = async () => {
