@@ -11,7 +11,7 @@ import { AppLink } from "@/components/layout/app-link";
 export const PROJECT_SITE = "https://pegasus-ai.org/";
 
 /** Where users reach the Pegasus team; shown in the account menu and ⌘K. */
-export const SUPPORT_EMAIL = "pegasus-support@isi.edu";
+export const SUPPORT_EMAIL = "contact@pegasus-ai.org";
 export const CONTACT_PAGE = "https://pegasus.isi.edu/contact/";
 
 /**
