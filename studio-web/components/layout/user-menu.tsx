@@ -12,14 +12,13 @@ export const PROJECT_SITE = "https://pegasus-ai.org/";
 
 /** Where users reach the Pegasus team; shown in the account menu and ⌘K. */
 export const SUPPORT_EMAIL = "contact@pegasus-ai.org";
-export const CONTACT_PAGE = "https://pegasus.isi.edu/contact/";
 
 /**
- * Help goes to the Pegasus team's contact page (mailing lists, Slack, support
- * address). It used to open the studio-webapp README, which is written for
- * people building the image, not for people using it.
+ * Help goes to the contact section of the project site. It used to open the
+ * studio-webapp README, which is written for people building the image, not
+ * for people using it.
  */
-export const HELP_URL = CONTACT_PAGE;
+export const HELP_URL = `${PROJECT_SITE}#contact`;
 
 /**
  * User menu: username + dropdown (theme, Settings, JupyterHub server control /
