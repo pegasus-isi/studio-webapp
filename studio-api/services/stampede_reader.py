@@ -33,31 +33,154 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def _braindump(run_dir: str) -> dict[str, Any]:
+    """The run directory's braindump.yml, or {} if absent or unreadable."""
+    braindump = os.path.join(run_dir, "braindump.yml")
+    if not os.path.isfile(braindump):
+        return {}
+    try:
+        import yaml
+
+        with open(braindump) as f:
+            bd = yaml.safe_load(f)
+        return bd if isinstance(bd, dict) else {}
+    except Exception:
+        return {}
+
+
 def _candidate_dirs(run_dir: str) -> list[str]:
     """run_dir plus the braindump's submit_dir (where the DB actually lives)."""
     dirs = [run_dir]
-    braindump = os.path.join(run_dir, "braindump.yml")
-    if os.path.isfile(braindump):
-        try:
-            import yaml
-
-            with open(braindump) as f:
-                bd = yaml.safe_load(f) or {}
-            submit_dir = bd.get("submit_dir")
-            if submit_dir and submit_dir != run_dir:
-                dirs.append(submit_dir)
-        except Exception:
-            pass
+    submit_dir = _braindump(run_dir).get("submit_dir")
+    if submit_dir and submit_dir != run_dir:
+        dirs.append(submit_dir)
     return dirs
 
 
-def find_stampede_db(run_dir: str) -> str | None:
-    """Locate the *.stampede.db for a run dir (skips *.replicas.db)."""
+def _root_run_dir(run_dir: str, bd: dict[str, Any]) -> str | None:
+    """For a sub-workflow's directory, the top-level workflow's directory.
+
+    A hierarchical run has one stampede DB, in the root's submit directory;
+    the sub-workflow's own directory (nested under the root's) has only a
+    braindump naming the root in ``root_wf_uuid``. Walk up to the braindump
+    whose ``wf_uuid`` is that id, the way pegasus-monitor's locator does.
+    None for a top-level workflow or when no such directory is above this one.
+    """
+    root_uuid = bd.get("root_wf_uuid")
+    if not root_uuid or root_uuid == bd.get("wf_uuid"):
+        return None
+    d = os.path.dirname(os.path.abspath(run_dir))
+    while True:
+        if str(_braindump(d).get("wf_uuid") or "") == str(root_uuid):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+
+
+def _glob_db(directory: str) -> str | None:
+    matches = sorted(glob.glob(os.path.join(directory, "*.stampede.db")))
+    return matches[0] if matches else None
+
+
+def _locate(run_dir: str) -> tuple[str, str | None, bool] | None:
+    """(db path, this run's wf_uuid, whether the DB is the root workflow's).
+
+    The third value matters to :func:`workflow_id`: in a DB borrowed from the
+    root, a sub-workflow monitord has not recorded yet must read as "nothing
+    here", not as the root.
+    """
+    bd = _braindump(run_dir)
+    wf_uuid = str(bd["wf_uuid"]) if bd.get("wf_uuid") else None
     for d in _candidate_dirs(run_dir):
-        matches = sorted(glob.glob(os.path.join(d, "*.stampede.db")))
-        if matches:
-            return matches[0]
+        db = _glob_db(d)
+        if db:
+            return db, wf_uuid, False
+    root = _root_run_dir(run_dir, bd)
+    if root:
+        for d in _candidate_dirs(root):
+            db = _glob_db(d)
+            if db:
+                return db, wf_uuid, True
     return None
+
+
+def find_stampede_db(run_dir: str) -> str | None:
+    """Locate the *.stampede.db for a run dir (skips *.replicas.db).
+
+    For a sub-workflow's directory this is the root workflow's DB, which
+    holds every workflow of the hierarchy: read it through
+    :func:`open_stampede`, or the rows are the whole hierarchy's.
+    """
+    found = _locate(run_dir)
+    return found[0] if found else None
+
+
+def workflow_id(
+    con: sqlite3.Connection, wf_uuid: str | None, borrowed: bool = False
+) -> Any | None:
+    """The ``wf_id`` of the one workflow a run directory represents.
+
+    Root and sub-workflows share a stampede DB, and every table hangs off
+    ``wf_id``, so a query without it mixes them: the root took the
+    sub-workflow's WORKFLOW_TERMINATED for its own and listed its jobs.
+    The run's ``wf_uuid`` (braindump.yml, also Studio's run id) names the
+    row. A DB with no such row falls back to its top-level workflow, which
+    is what a single-workflow DB holds anyway, unless the DB was borrowed
+    from the root, where that fallback would show the root under the
+    sub-workflow's name. None when there is no workflow to read.
+    """
+    try:
+        if wf_uuid:
+            row = con.execute(
+                "SELECT wf_id FROM workflow WHERE wf_uuid = ?", (wf_uuid,)
+            ).fetchone()
+            if row is not None:
+                return row[0]
+        if borrowed:
+            return None
+        row = con.execute(
+            "SELECT wf_id FROM workflow "
+            "ORDER BY (parent_wf_id IS NOT NULL), wf_id LIMIT 1"
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    return row[0] if row is not None else None
+
+
+def open_stampede(run_dir: str) -> tuple[sqlite3.Connection, Any | None] | None:
+    """Open the run's stampede DB read-only: (connection, wf_id), or None.
+
+    ``wf_id`` is None when the DB has no ``workflow`` table (hand-built
+    databases) or no row in it yet; a caller then has nothing to scope by. A
+    sub-workflow that is not in its root's DB yet yields None outright.
+    """
+    found = _locate(run_dir)
+    if not found:
+        return None
+    db_path, wf_uuid, borrowed = found
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+    except sqlite3.Error as e:
+        log.warning("stampede_open_failed", run_dir=run_dir, error=str(e))
+        return None
+    wf_id = workflow_id(con, wf_uuid, borrowed)
+    if wf_id is None and borrowed:
+        con.close()
+        return None
+    return con, wf_id
+
+
+# Rows of each table that belong to one workflow. job_instance, jobstate,
+# invocation and task are reached through `job`, the one table whose wf_id
+# every stampede DB Studio has seen carries.
+_JOBS_OF_WF = "SELECT job_id FROM job WHERE wf_id = :wf"
+_INSTANCES_OF_WF = (
+    "SELECT job_instance_id FROM job_instance "
+    f"WHERE job_id IN ({_JOBS_OF_WF})"
+)
 
 
 def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
@@ -67,30 +190,35 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
     same ``event_type`` vocabulary as the JSONL log: workflow_start, jobs_init,
     job_state, workflow_end / workflow_state.
     """
-    db_path = find_stampede_db(run_dir)
-    if not db_path:
+    opened = open_stampede(run_dir)
+    if opened is None:
         return []
+    con, wf_id = opened
+    scope = {"wf": wf_id}
 
     try:
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
-    except sqlite3.Error as e:
-        log.warning("stampede_open_failed", run_dir=run_dir, error=str(e))
-        return []
-
-    try:
+        # wf_id None is a DB monitord has created and not yet written a
+        # workflow into: every query below then matches nothing, and the
+        # bare workflow_start that results reads "running" with no jobs, as
+        # it did before the queries were scoped.
         wf = con.execute(
             "SELECT dax_label, submit_dir, user, planner_version, timestamp "
-            "FROM workflow ORDER BY (parent_wf_id IS NOT NULL), wf_id LIMIT 1"
+            "FROM workflow WHERE wf_id = :wf",
+            scope,
         ).fetchone()
 
         job_rows = con.execute(
-            "SELECT job_id, exec_job_id, type_desc FROM job ORDER BY job_id"
+            "SELECT job_id, exec_job_id, type_desc FROM job "
+            "WHERE wf_id = :wf ORDER BY job_id",
+            scope,
         ).fetchall()
 
         # job_id -> transformation (from the abstract task)
         task_tx: dict[Any, str] = {}
-        for r in con.execute("SELECT job_id, transformation FROM task"):
+        for r in con.execute(
+            f"SELECT job_id, transformation FROM task WHERE job_id IN ({_JOBS_OF_WF})",
+            scope,
+        ):
             task_tx.setdefault(r["job_id"], r["transformation"])
 
         # job_id -> latest job_instance (highest job_submit_seq wins on retries)
@@ -98,14 +226,19 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
         for r in con.execute(
             "SELECT job_id, job_instance_id, site, exitcode, stdout_file, "
             "stderr_file, stderr_text, local_duration, cluster_duration "
-            "FROM job_instance ORDER BY job_submit_seq"
+            f"FROM job_instance WHERE job_id IN ({_JOBS_OF_WF}) "
+            "ORDER BY job_submit_seq",
+            scope,
         ):
             inst_by_job[r["job_id"]] = r
 
         # job_instance_id -> latest state
         state_by_inst: dict[Any, str] = {}
         for r in con.execute(
-            "SELECT job_instance_id, state FROM jobstate ORDER BY jobstate_submit_seq"
+            "SELECT job_instance_id, state FROM jobstate "
+            f"WHERE job_instance_id IN ({_INSTANCES_OF_WF}) "
+            "ORDER BY jobstate_submit_seq",
+            scope,
         ):
             state_by_inst[r["job_instance_id"]] = r["state"]
 
@@ -113,12 +246,19 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
         inv_by_inst: dict[Any, sqlite3.Row] = {}
         for r in con.execute(
             "SELECT job_instance_id, exitcode, maxrss, transformation, "
-            "remote_duration FROM invocation"
+            "remote_duration FROM invocation "
+            f"WHERE job_instance_id IN ({_INSTANCES_OF_WF})",
+            scope,
         ):
             inv_by_inst.setdefault(r["job_instance_id"], r)
 
+        # rowid breaks a tie between a TERMINATED and the restart's STARTED
+        # written in the same second: insertion order is the order they
+        # happened in.
         wfstates = con.execute(
-            "SELECT state, status, timestamp FROM workflowstate ORDER BY timestamp"
+            "SELECT state, status, timestamp FROM workflowstate "
+            "WHERE wf_id = :wf ORDER BY timestamp, rowid",
+            scope,
         ).fetchall()
     except sqlite3.Error as e:
         log.warning("stampede_read_failed", run_dir=run_dir, error=str(e))
@@ -157,9 +297,11 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
             continue
         jiid = inst["job_instance_id"]
         inv = inv_by_inst.get(jiid)
+        # The job's own exit code only. An invocation's is one task's (or the
+        # pre-script's: a sub-workflow job has a `dagman::pre` invocation,
+        # exit 0, from the moment pegasus-plan finishes), so falling back to
+        # it called a sub-workflow "succeeded" while it was still queued.
         exitcode = inst["exitcode"]
-        if exitcode is None and inv is not None:
-            exitcode = inv["exitcode"]
 
         # Wall-clock duration: prefer the job's local_duration, fall back to
         # cluster_duration, then the task's remote_duration.
@@ -194,8 +336,17 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
             or (inv["transformation"] if inv else None),
         })
 
-    terminated = next(
-        (w for w in wfstates if w["state"] == "WORKFLOW_TERMINATED"), None
+    # The LAST state decides. monitord appends a row per DAGMan session, so a
+    # run restarted by the schedd, or re-run from a rescue DAG, reads
+    # STARTED, TERMINATED 2, STARTED, TERMINATED 0: taking the first
+    # TERMINATED left it "failed" for good, live and after it succeeded. A
+    # STARTED after a TERMINATED is a run that is going again. If that
+    # session then dies without a trace the DB says "running" forever, which
+    # is the zombie case workflow_scanner.dagman_exit_status() exists for.
+    terminated = (
+        wfstates[-1]
+        if wfstates and wfstates[-1]["state"] == "WORKFLOW_TERMINATED"
+        else None
     )
     if terminated is not None:
         # done/failed are intentionally omitted so workflow_detail() derives
@@ -247,37 +398,42 @@ def read_stampede_job_details(run_dir: str) -> dict[str, dict[str, Any]]:
     events omit site/duration/stderr (and per-job transformation), but the
     stampede DB always has them. Returns {} if there's no DB.
     """
-    db_path = find_stampede_db(run_dir)
-    if not db_path:
+    opened = open_stampede(run_dir)
+    if opened is None:
         return {}
-    try:
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
-    except sqlite3.Error as e:
-        log.warning("stampede_open_failed", run_dir=run_dir, error=str(e))
-        return {}
+    con, wf_id = opened
+    scope = {"wf": wf_id}
 
     out: dict[str, dict[str, Any]] = {}
     try:
         task_tx: dict[Any, str] = {}
-        for r in con.execute("SELECT job_id, transformation FROM task"):
+        for r in con.execute(
+            f"SELECT job_id, transformation FROM task WHERE job_id IN ({_JOBS_OF_WF})",
+            scope,
+        ):
             task_tx.setdefault(r["job_id"], r["transformation"])
         inst_by_job: dict[Any, sqlite3.Row] = {}
         for r in con.execute(
             "SELECT job_id, job_instance_id, site, exitcode, stderr_text, "
             "local_duration, cluster_duration FROM job_instance "
-            "ORDER BY job_submit_seq"
+            f"WHERE job_id IN ({_JOBS_OF_WF}) "
+            "ORDER BY job_submit_seq",
+            scope,
         ):
             inst_by_job[r["job_id"]] = r
         inv_by_inst: dict[Any, sqlite3.Row] = {}
         for r in con.execute(
             "SELECT job_instance_id, maxrss, exitcode, transformation, "
-            "remote_duration FROM invocation"
+            "remote_duration FROM invocation "
+            f"WHERE job_instance_id IN ({_INSTANCES_OF_WF})",
+            scope,
         ):
             inv_by_inst.setdefault(r["job_instance_id"], r)
         host_by_inst = _hosts(con)
 
-        for jr in con.execute("SELECT job_id, exec_job_id FROM job"):
+        for jr in con.execute(
+            "SELECT job_id, exec_job_id FROM job WHERE wf_id = :wf", scope
+        ):
             detail: dict[str, Any] = {
                 "transformation": task_tx.get(jr["job_id"]),
                 "site": None,
@@ -290,8 +446,6 @@ def read_stampede_job_details(run_dir: str) -> dict[str, dict[str, Any]]:
             if inst is not None:
                 inv = inv_by_inst.get(inst["job_instance_id"])
                 exitcode = inst["exitcode"]
-                if exitcode is None and inv is not None:
-                    exitcode = inv["exitcode"]
                 duration = inst["local_duration"] or inst["cluster_duration"]
                 if duration is None and inv is not None:
                     duration = inv["remote_duration"]
