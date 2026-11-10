@@ -586,7 +586,8 @@ def get_run_status(run_dir: str) -> str:
     """Determine workflow status for a run directory.
 
     Resolution order (most authoritative first):
-      1. The workflow event log (workflow-events.jsonl / wfevents.jsonl).
+      1. The run's events: the stampede DB, or a legacy JSONL event log
+         when the run directory holds one (services/event_reader.py).
       2. jobstate.log DAGMAN_FINISHED — definitive terminal succeeded/failed.
       3. pegasus-status — authoritative live state for submitted-but-unfinished
          runs (also detects "not submitted").

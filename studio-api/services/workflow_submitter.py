@@ -93,8 +93,8 @@ async def submit_workflow(
                 run_dir=run_dir,
                 site=site,
             )
-            # The integrated pegasus-monitord writes workflow-events.jsonl on
-            # its own, so there's no separate monitor to start here.
+            # No monitor to start here: pegasus-monitord fills the run's
+            # stampede DB, and that is what the status views read.
             return {
                 "status": "submitted",
                 "run_dir": run_dir or "",

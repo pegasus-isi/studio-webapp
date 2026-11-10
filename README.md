@@ -71,9 +71,12 @@ JupyterLab is always on and opens in a separate browser tab.
 - JupyterLab runs in classic document mode. `jupyter-ai` and collaboration/RTC
   extensions are intentionally excluded because they break notebook loading
   behind the proxy.
-- Workflow status comes from a run's JSONL event log (`workflow-events.jsonl`
-  from `workflow-monitor --serve`, or `wfevents.jsonl` from pegasus-monitord's
-  `wfevents` plugin), falling back to the stampede DB when neither exists.
+- Workflow status comes from the run's stampede DB, which pegasus-monitord
+  writes for every run. A legacy JSONL event log in the run directory
+  (`workflow-events.jsonl` from the standalone `workflow-monitor --serve`, or
+  `wfevents.jsonl` from the monitord `wfevents` plugin) is read in preference
+  when one exists, but nothing in the image produces one. A log written by
+  Pegasus 6.0's native `pegasus-monitor` is a different format and is skipped.
 - The workspace root is `$HOME` (#401): projects live in `~/workflows`,
   uploads in `~/data`, Studio's own state in `~/.studio`, and generated tool
   config (`CLAUDE.md`, `AGENTS.md`, `.mcp.json`) at `$HOME`. Projects under the

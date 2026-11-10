@@ -85,8 +85,8 @@ async def tail_workflow_events(
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Yield a workflow_state snapshot whenever the run's counts change.
 
-    Every event source (workflow-events.jsonl, wfevents.jsonl, the stampede
-    DB) goes through get_workflow_detail, the same summary the runs list
+    Every event source (the stampede DB, or a legacy workflow-events.jsonl /
+    wfevents.jsonl) goes through get_workflow_detail, the same summary the runs list
     polls. Tailing workflow-events.jsonl directly used to forward its raw
     per-job events, which carry no counts, so the page's "running" read 0;
     and the file was looked for once, at connect, so one that appeared later
