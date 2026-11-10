@@ -5,8 +5,7 @@
  *
  * Transcript and composer in one component because the state they share lives
  * in `useOpenCodeChat`, not in a store: OpenCode is the source of truth and
- * this is a view of it. The builtin engine splits them (ChatPanel +
- * ChatInput) because its state does sit in a store.
+ * this is a view of it.
  *
  * What this component decides is *how to draw* OpenCode's data. What it must
  * never do is interpret it: parts go to the registry in opencode-parts.tsx,
@@ -1050,7 +1049,7 @@ function enqueueRating(messageID: string, run: () => Promise<unknown>) {
 }
 
 /**
- * 👍/👎 on one finished reply, in the builtin panel's style.
+ * 👍/👎 on one finished reply.
  *
  * Optimistic: the thumb flips at once and the store copy keeps it across
  * reloads. A failed save puts back whatever was shown before the click and

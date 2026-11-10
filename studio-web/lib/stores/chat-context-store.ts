@@ -1,6 +1,6 @@
 /**
  * Workflow/run scope for the chat — what the context chip above the input
- * shows and what rides along as `context` on every /chat/stream turn.
+ * shows and what rides along, as the Active Context block, on every turn.
  *
  * Scope is per conversation: switching conversations restores what each one
  * was about. Two ways a scope gets set:

@@ -120,10 +120,10 @@ studio's slide-in panel.
   `pegasus-600`+ and decoration at `pegasus-500`-, because 600 is the first
   shade that carries white text at AA.
 - **Terminal**: xterm.js over a WebSocket to a backend PTY (`/ws/terminal…`).
-- **Chat**: OpenCode by default (`components/chat/opencode-chat.tsx`, through
+- **Chat**: OpenCode (`components/chat/opencode-chat.tsx`, through
   `/api/opencode/*`), with permission cards for what the engine asks about,
-  including writes outside `~/workflows` and `~/data`. The builtin engine (SSE,
-  per-turn shell-command approval) stays selectable per user (`chat_engine`).
+  including writes outside `~/workflows` and `~/data`. Each conversation is its
+  own OpenCode session, so several can run at once.
 - **DAG viewer**: `@xyflow/react` + dagre, live-polling while a run is active.
   Renders inline (a pane on the analyses page) or as a modal. Siblings that
   share a transformation and the same parent groups collapse into one node

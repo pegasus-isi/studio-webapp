@@ -518,9 +518,9 @@ export function useOpenCodeChat() {
 
       // The focused notebook, when the panel is the one JupyterLab iframes and
       // the user ticked the context box. A synthetic part rather than an
-      // addition to their sentence: the builtin engine hides it by sending a
-      // separate API copy of the message, and this transcript has no such
-      // copy — the message stored is the message shown.
+      // addition to their sentence: this transcript has no separate API copy
+      // of the message to hide it in — the message stored is the message
+      // shown.
       const { activeNotebookPath, include } =
         useNotebookContextStore.getState();
       if (activeNotebookPath && include) {

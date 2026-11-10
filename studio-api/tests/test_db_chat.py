@@ -1,4 +1,4 @@
-"""Tests for chat-message persistence: conversation scoping + pruning."""
+"""Tests for the startup prunes of the chat_messages and workflow_runs tables."""
 
 from __future__ import annotations
 
@@ -11,42 +11,26 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_conversation_scoped_history(tmp_db):
-    async def go():
-        db = Database(db_path=tmp_db)
-        await db.connect()
-        try:
-            await db.add_chat_message("user", "a1", conversation_id="A")
-            await db.add_chat_message("assistant", "a2", conversation_id="A")
-            await db.add_chat_message("user", "b1", conversation_id="B")
-
-            a = await db.get_chat_history(conversation_id="A")
-            b = await db.get_chat_history(conversation_id="B")
-            allm = await db.get_chat_history()
-            return (
-                [m["content"] for m in a],
-                [m["content"] for m in b],
-                len(allm),
-            )
-        finally:
-            await db.close()
-
-    a, b, total = _run(go())
-    assert a == ["a1", "a2"]  # oldest-first
-    assert b == ["b1"]
-    assert total == 3
-
-
 def test_prune_caps_rows(tmp_db):
     async def go():
         db = Database(db_path=tmp_db)
         await db.connect()
         try:
+            # Nothing writes this table any more (#664); rows left by the
+            # removed builtin engine are what the prune still bounds.
             for i in range(20):
-                await db.add_chat_message("user", f"m{i}", conversation_id="C")
+                await db.db.execute(
+                    "INSERT INTO chat_messages (conversation_id, role, content,"
+                    " created_at) VALUES (?, ?, ?, ?)",
+                    ("C", "user", f"m{i}", "2026-01-01T00:00:00"),
+                )
+            await db.db.commit()
             deleted = await db.prune_chat_messages(max_rows=5)
-            remaining = await db.get_chat_history(limit=100)
-            return deleted, [m["content"] for m in remaining]
+            async with db.db.execute(
+                "SELECT content FROM chat_messages ORDER BY id"
+            ) as cur:
+                remaining = [row[0] async for row in cur]
+            return deleted, remaining
         finally:
             await db.close()
 
@@ -77,33 +61,3 @@ def test_prune_workflow_runs_caps_rows(tmp_db):
     deleted, remaining = _run(go())
     assert deleted == 7
     assert remaining == 3
-
-
-def test_set_chat_feedback(tmp_db):
-    async def go():
-        db = Database(db_path=tmp_db)
-        await db.connect()
-        try:
-            mid = await db.add_chat_message(
-                "assistant", "hello", conversation_id="A"
-            )
-            # Rate useful, then read it back via history.
-            assert await db.set_chat_feedback(mid, 1) is True
-            rows = await db.get_chat_history(conversation_id="A")
-            useful = rows[0]["feedback"]
-            # Flip to not-useful, then clear.
-            await db.set_chat_feedback(mid, -1)
-            rows2 = await db.get_chat_history(conversation_id="A")
-            await db.set_chat_feedback(mid, None)
-            rows3 = await db.get_chat_history(conversation_id="A")
-            # Unknown id returns False.
-            missing = await db.set_chat_feedback(999999, 1)
-            return useful, rows2[0]["feedback"], rows3[0]["feedback"], missing
-        finally:
-            await db.close()
-
-    useful, notuseful, cleared, missing = _run(go())
-    assert useful == 1
-    assert notuseful == -1
-    assert cleared is None
-    assert missing is False

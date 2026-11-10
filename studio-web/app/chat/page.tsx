@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { ChatEngine } from "@/components/chat/chat-engine";
+import { OpenCodeChat } from "@/components/chat/opencode-chat";
 import { ConversationBar } from "@/components/chat/conversation-bar";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 import { useThemeStore, applyTheme } from "@/lib/stores/theme-store";
@@ -75,7 +75,7 @@ export default function ChatEmbedPage() {
           </span>
         </div>
       )}
-      <ChatEngine />
+      <OpenCodeChat />
     </div>
   );
 }

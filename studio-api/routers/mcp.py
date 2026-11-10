@@ -1,22 +1,20 @@
 """The Pegasus tools, served to the chat engine over MCP (#367).
 
 The OpenCode engine runs its own agent loop, so it cannot call the tool
-functions in ``services/chat_tools.py`` the way the builtin loop does. MCP is
-how a tool reaches an agent Studio does not own, and this endpoint is the
+functions in ``services/chat_tools.py`` directly. MCP is how a tool reaches an
+agent Studio does not own, and this endpoint is the
 Pegasus half of what the chat knows: the user's workflow projects, their runs,
 live job status, a failure diagnosis and a run's outputs.
 
 Two decisions worth stating.
 
 **One source of truth for the tools.** The schemas are read from
-``chat_tools.TOOL_DEFINITIONS`` and translated to MCP shape here, rather than
-written out a second time. Adding a Pegasus tool therefore exposes it to both
-engines, and a description improved for one is improved for both — the
-alternative is two lists that drift, and the drifted one is always the one
-nobody is looking at.
+``chat_tools.TOOL_DEFINITIONS`` (OpenAI function shape, a holdover from the
+builtin loop removed in #664) and translated to MCP shape here. Add a Pegasus
+tool there and it is served here.
 
-**Read-only, and only the Pegasus tools.** The five generic file and shell
-tools the builtin loop carries are deliberately absent: OpenCode has its own,
+**Read-only, and only the Pegasus tools.** Generic file and shell tools are
+deliberately absent: OpenCode has its own,
 with its own permission system, and a second `run_command` reachable from the
 same session would be a second gate to keep honest. Nothing here writes.
 
@@ -126,9 +124,9 @@ async def _handle(message: dict[str, Any]) -> dict[str, Any] | None:
         if not isinstance(arguments, dict):
             return _error(request_id, _INVALID_REQUEST, "arguments must be an object")
         try:
-            # scope=None on purpose: the builtin loop defaults a tool's
-            # run/project id from the panel's context picker, but an MCP call
-            # arrives from an agent Studio is not driving. The Active Context
+            # scope=None on purpose: an MCP call arrives from an agent Studio
+            # is not driving, so there is no context picker to default a
+            # tool's run/project id from. The Active Context
             # block names the ids instead, and the model passes them.
             output = await chat_tools.execute(str(name), arguments, None)
         except Exception as e:

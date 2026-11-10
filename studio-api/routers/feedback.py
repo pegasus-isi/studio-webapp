@@ -1,6 +1,5 @@
 """Ratings on OpenCode assistant replies.
 
-The builtin chat rates its own `chat_messages` rows (`POST /api/chat/feedback`).
 OpenCode keeps its transcript in its own store, so its replies have no local row
 to rate; they are identified by OpenCode's (session id, message id) instead and
 rated here. Only the vote and which model/agent produced the reply are stored,

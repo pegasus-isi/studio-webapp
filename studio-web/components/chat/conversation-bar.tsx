@@ -12,7 +12,6 @@ export function ConversationBar() {
   const conversations = useChatStore((s) => s.conversations);
   const activeId = useChatStore((s) => s.activeId);
   const newConversation = useChatStore((s) => s.newConversation);
-  const clearMessages = useChatStore((s) => s.clearMessages);
   const switchConversation = useChatStore((s) => s.switchConversation);
   const renameConversation = useChatStore((s) => s.renameConversation);
   const deleteConversation = useChatStore((s) => s.deleteConversation);
@@ -52,12 +51,10 @@ export function ConversationBar() {
       <button
         onClick={() => {
           if (!window.confirm("Clear all messages in this conversation?")) return;
-          clearMessages();
-          // On the OpenCode engine the transcript is the session's, not this
-          // store's, so clearing only the local messages left the same
-          // conversation on screen and made the control look broken. The
-          // session itself is left on the server — it is the user's history,
-          // and clearing a Studio conversation is not a destructive act on it.
+          // The transcript is the OpenCode session's, so clearing means
+          // starting this conversation on a fresh session. The old session is
+          // left on the server: it is the user's history, and clearing a
+          // Studio conversation is not a destructive act on it.
           forgetOpenCodeSession(activeId);
         }}
         title="Clear conversation"

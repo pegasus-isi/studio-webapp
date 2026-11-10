@@ -572,47 +572,6 @@ def test_codex_startup_creates_skill_links(monkeypatch, tmp_path):
     assert (home / ".agents" / "skills" / "pegasus-scaffold" / "SKILL.md").is_file()
 
 
-def test_slash_commands_resolve_against_installed_skills(monkeypatch, tmp_path):
-    """The chat's skill table listed pre-plugin names, so every /command
-    expanded to nothing — on the opencode path as much as the builtin one."""
-    from routers.chat import _skill_for_command
-
-    root = tmp_path / "checkout"
-    for name in ("pegasus-scaffold", "pegasus-apptainer", "kiso"):
-        (root / "skills" / name).mkdir(parents=True)
-        (root / "skills" / name / "SKILL.md").write_text(f"---\nname: {name}\n---\n")
-    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
-
-    assert _skill_for_command("pegasus-scaffold") == "pegasus-scaffold"
-    assert _skill_for_command("scaffold") == "pegasus-scaffold"   # old spelling
-    assert _skill_for_command("kiso") == "kiso"                   # unprefixed skill
-    assert _skill_for_command("dockerfile") == "pegasus-apptainer"  # renamed skill
-    assert _skill_for_command("nonsense") is None
-
-
-def test_chat_system_prompt_uses_the_resolved_tree(monkeypatch, tmp_path):
-    """chat.py had its own KNOWLEDGE_ROOT pointing at the deleted tree, so the
-    system prompt, agent personas and skills all silently went missing."""
-    from routers.chat import _load_system_prompt
-
-    root = tmp_path / "checkout"
-    (root / "references").mkdir(parents=True)
-    (root / "references" / "PEGASUS.md").write_text("# THE GUIDE\n")
-    (root / "agents").mkdir()
-    (root / "agents" / "workflow-architect.md").write_text(
-        "---\nname: workflow-architect\n---\nPERSONA BODY\n"
-    )
-    (root / "skills").mkdir()
-    monkeypatch.setenv("KNOWLEDGE_ROOT", str(root))
-    monkeypatch.setenv("KNOWLEDGE_OVERLAY", str(tmp_path / "none"))
-
-    prompt = _load_system_prompt("workflow-architect")
-    assert "THE GUIDE" in prompt
-    assert "PERSONA BODY" in prompt
-    # And it says not to emit a tool-call object, which is what went wrong.
-    assert "no interactive question tool" in prompt
-
-
 def test_declared_deliverables_reach_the_always_on_context(monkeypatch, tmp_path):
     """The obligation must not live only inside a skill the model may not load.
 

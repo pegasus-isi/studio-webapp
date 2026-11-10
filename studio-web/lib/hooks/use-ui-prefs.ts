@@ -38,12 +38,6 @@ const FALLBACK: api.UIPreferences = {
   // Off until the fetch lands, so a slow request never pops a tour at someone
   // who turned it off; the server default is on.
   tour_on_login: false,
-  // Matches the server default (#367, flipped in #403). It has to, for the
-  // same reason as `simple_run` above: this is what renders between mount and
-  // the fetch landing, and `chat-engine.tsx` mounts an engine off it — the
-  // builtin one fetches history and can reattach to a running turn, so a
-  // mismatch here would start work on the wrong engine and then swap it.
-  chat_engine: "opencode",
   // Matches the server default; the Resources page renders the pool view
   // until the fetch lands either way.
   resource_source: "pool",

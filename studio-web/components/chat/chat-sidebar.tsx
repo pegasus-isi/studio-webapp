@@ -1,6 +1,6 @@
 "use client";
 
-import { ChatEngine } from "@/components/chat/chat-engine";
+import { OpenCodeChat } from "@/components/chat/opencode-chat";
 import { ConversationBar } from "@/components/chat/conversation-bar";
 import { PegasusLogo } from "@/components/ui/pegasus-logo";
 import { ResizablePane } from "@/components/layout/resizable-pane";
@@ -60,7 +60,7 @@ export function ChatSidebar({ onClose }: ChatSidebarProps) {
       </div>
 
       {/* Transcript and composer, from whichever engine is selected (#367) */}
-      <ChatEngine />
+      <OpenCodeChat />
     </div>
     </ResizablePane>
   );

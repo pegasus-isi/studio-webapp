@@ -174,9 +174,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 -- the index here would reference a missing column and abort the whole schema
 -- script.
 
--- 👍/👎 on OpenCode assistant replies. The builtin chat rates rows of its own
--- chat_messages table, but OpenCode keeps its transcript in its own store, so
--- there is no local row to hang a rating on: ratings are keyed by OpenCode's
+-- 👍/👎 on OpenCode assistant replies. OpenCode keeps its transcript in its own
+-- store, so there is no local row to hang a rating on: ratings are keyed by OpenCode's
 -- (session_id, message_id) instead. Deliberately holds no message text, only
 -- the vote and which model/agent produced the reply.
 -- rating: 1 = helpful, -1 = not helpful. Un-rating deletes the row.
@@ -784,73 +783,11 @@ class Database:
         return results
 
     # --- Chat Messages ---
-
-    async def add_chat_message(
-        self,
-        role: str,
-        content: str,
-        agent_id: str | None = None,
-        tool_calls: Any | None = None,
-        conversation_id: str | None = None,
-    ) -> int:
-        now = _now()
-        async with self.db.execute(
-            """INSERT INTO chat_messages
-                   (conversation_id, role, content, agent_id, tool_calls, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                conversation_id,
-                role,
-                content,
-                agent_id,
-                json.dumps(tool_calls) if tool_calls else None,
-                now,
-            ),
-        ) as cursor:
-            msg_id = cursor.lastrowid
-        await self.db.commit()
-        return msg_id or 0
-
-    async def get_chat_history(
-        self, limit: int = 100, conversation_id: str | None = None
-    ) -> list[dict[str, Any]]:
-        """Most-recent `limit` messages, oldest-first. Scoped to a conversation
-        when `conversation_id` is given."""
-        if conversation_id is not None:
-            query = (
-                "SELECT * FROM chat_messages WHERE conversation_id = ? "
-                "ORDER BY id DESC LIMIT ?"
-            )
-            params: tuple[Any, ...] = (conversation_id, limit)
-        else:
-            query = "SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?"
-            params = (limit,)
-
-        results = []
-        async with self.db.execute(query, params) as cursor:
-            async for row in cursor:
-                results.append({
-                    "id": row["id"],
-                    "role": row["role"],
-                    "content": row["content"],
-                    "agent_id": row["agent_id"],
-                    "tool_calls": json.loads(row["tool_calls"]) if row["tool_calls"] else None,
-                    "created_at": row["created_at"],
-                    "feedback": row["feedback"],
-                })
-        results.reverse()
-        return results
-
-    async def set_chat_feedback(self, message_id: int, value: int | None) -> bool:
-        """Rate an assistant reply: 1 = useful, -1 = not useful, None = clear.
-        Returns True if the message existed."""
-        async with self.db.execute(
-            "UPDATE chat_messages SET feedback = ? WHERE id = ?",
-            (value, message_id),
-        ) as cursor:
-            changed = (cursor.rowcount or 0) > 0
-        await self.db.commit()
-        return changed
+    #
+    # Only pruning is left. The builtin chat engine that wrote and read
+    # `chat_messages` was removed in #664; its rows are kept (deleting old
+    # transcripts is not something a code change should do silently) and the
+    # startup prune keeps the table bounded until someone decides to drop it.
 
     async def upsert_message_feedback(
         self,

@@ -165,26 +165,6 @@ def test_the_files_api_refuses_a_credential_directory(client):
     assert res.status_code == 403
 
 
-def test_the_chat_file_tools_refuse_one_too(monkeypatch, tmp_path):
-    """Reading is denied as well as writing: an assistant that can read the
-    Condor token can put it in a message."""
-    from routers import chat
-
-    root = os.path.realpath(str(tmp_path))
-    monkeypatch.setattr(chat, "WORKSPACE_ROOT", root)
-    os.makedirs(os.path.join(root, ".condor", "tokens.d"))
-
-    with pytest.raises(ValueError, match="credentials"):
-        chat._safe_path(".condor/tokens.d/studio")
-    with pytest.raises(ValueError, match="credentials"):
-        chat._safe_path(os.path.join(root, ".ssh", "id_rsa"))
-
-    # Still the ordinary case, unchanged.
-    assert chat._safe_path("workflows/a/workflow_generator.py") == os.path.join(
-        root, "workflows", "a", "workflow_generator.py"
-    )
-
-
 def test_config_left_in_the_old_workspace_is_still_pruned(tmp_path, monkeypatch):
     """The prune target had to move with the workspace.
 
