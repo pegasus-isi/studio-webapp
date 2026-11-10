@@ -96,8 +96,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "get_run_jobs",
             "description": (
                 "Job-level detail for one workflow run (id, transformation,"
-                " status, exit code, site, duration). run_id defaults to the"
-                " run in the active chat context."
+                " status, exit code, site, duration). exitcode is the job's;"
+                " app_exitcode, when set, is the failed program's own (a"
+                " negative value is the signal that killed it). run_id"
+                " defaults to the run in the active chat context."
             ),
             "parameters": {
                 "type": "object",
@@ -109,8 +111,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "status": {
                         "type": "string",
                         "description": (
-                            "Only jobs in this state, e.g. 'failed' or"
-                            " 'running' (optional)"
+                            "Only jobs with this status: pending, queued,"
+                            " held, running, succeeded or failed (optional)"
                         ),
                     },
                 },
@@ -338,6 +340,7 @@ async def _run_jobs(run_dir: str, status_filter: Any) -> str:
             "transformation": j.get("transformation"),
             "status": j.get("status"),
             "exitcode": j.get("exitcode"),
+            "app_exitcode": j.get("app_exitcode"),
             "site": j.get("site"),
             "duration": j.get("duration"),
         }

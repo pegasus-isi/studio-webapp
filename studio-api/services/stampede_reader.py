@@ -102,6 +102,8 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
         ):
             inst_by_job[r["job_id"]] = r
 
+        app_exit_by_inst = _app_exit_codes(con)
+
         # job_instance_id -> latest state
         state_by_inst: dict[Any, str] = {}
         for r in con.execute(
@@ -183,7 +185,8 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
             "exec_job_id": jr["exec_job_id"],
             "type_desc": jr["type_desc"],
             "state": state_by_inst.get(jiid),
-            "exitcode": exitcode,
+            "exitcode": decode_wait_status(exitcode),
+            "app_exitcode": app_exit_by_inst.get(jiid),
             "stdout_file": inst["stdout_file"],
             "stderr_file": inst["stderr_file"],
             "maxrss": inv["maxrss"] if inv else None,
@@ -215,6 +218,62 @@ def read_stampede_events(run_dir: str) -> list[dict[str, Any]]:
         })
 
     return events
+
+
+def decode_wait_status(raw: Any) -> Any:
+    """A stampede ``exitcode`` column's value as the exit code a person means.
+
+    monitord stores the raw POSIX wait status in every exitcode column
+    (job_instance and invocation alike; Pegasus reference guide, "Storing of
+    Exitcode in the database") and leaves decoding to whoever reads it, so a
+    job that exited 1 is stored as 256, which is what Studio used to show.
+    This is Pegasus's own ``raw_to_regular``:
+
+      0..255 in the high byte   the exit code
+      a signal in the low bits  minus the signal number (-9: killed by SIGKILL)
+      negative                  -128, "failed, no exit code to report"
+
+    Zero stays zero and non-zero stays non-zero, so succeeded-versus-failed
+    reads the same from either encoding: the one status Pegasus's rule would
+    turn into a 0 (128, a core-dump bit with no signal, which no wait() can
+    return) is handed back as it is. Anything not an int is returned
+    untouched.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return raw
+    if raw < 0:
+        return -128
+    if raw & 127:
+        return -(raw & 127)
+    return (raw >> 8) or raw
+
+
+def _app_exit_codes(con: sqlite3.Connection) -> dict[Any, int]:
+    """job_instance_id -> exit code of the first task of it that failed.
+
+    `job_instance.exitcode` is the job as DAGMan saw it, and once the
+    post-script has run it is that script's verdict: 1 for a failed job,
+    whatever the program returned. The program's own status is kickstart's,
+    in `invocation`: its exit code, or the signal that killed it. That is the
+    number that says *why* (137 and SIGKILL read as out of memory in
+    services/run_diagnosis.py). The pre- and post-script have invocation rows
+    too (`dagman::pre`, `dagman::post`); they are not the program. Read
+    separately, like the hosts, so a DB without the table costs nothing else.
+    """
+    out: dict[Any, int] = {}
+    try:
+        for r in con.execute(
+            "SELECT job_instance_id, exitcode, transformation FROM invocation "
+            "ORDER BY rowid"
+        ):
+            if str(r["transformation"] or "").startswith("dagman::"):
+                continue
+            code = decode_wait_status(_as_int(r["exitcode"]))
+            if code not in (None, 0):
+                out.setdefault(r["job_instance_id"], code)
+    except sqlite3.Error:
+        return {}
+    return out
 
 
 def _hosts(con: sqlite3.Connection) -> dict[Any, str]:
@@ -276,6 +335,7 @@ def read_stampede_job_details(run_dir: str) -> dict[str, dict[str, Any]]:
         ):
             inv_by_inst.setdefault(r["job_instance_id"], r)
         host_by_inst = _hosts(con)
+        app_exit_by_inst = _app_exit_codes(con)
 
         for jr in con.execute("SELECT job_id, exec_job_id FROM job"):
             detail: dict[str, Any] = {
@@ -285,6 +345,7 @@ def read_stampede_job_details(run_dir: str) -> dict[str, dict[str, Any]]:
                 "stderr": None,
                 "maxrss": None,
                 "host": None,
+                "app_exitcode": None,
             }
             inst = inst_by_job.get(jr["job_id"])
             if inst is not None:
@@ -306,6 +367,7 @@ def read_stampede_job_details(run_dir: str) -> dict[str, dict[str, Any]]:
                     "stderr": stderr,
                     "maxrss": inv["maxrss"] if inv else None,
                     "host": host_by_inst.get(inst["job_instance_id"]),
+                    "app_exitcode": app_exit_by_inst.get(inst["job_instance_id"]),
                     "transformation": task_tx.get(jr["job_id"])
                     or (inv["transformation"] if inv else None),
                 })

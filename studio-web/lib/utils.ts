@@ -40,6 +40,21 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
+ * An exit code as the backend sends it, for display. Codes arrive decoded
+ * the way Pegasus's own tools show them: a negative number is the signal
+ * that killed the step (-9 is SIGKILL), and -128 is "failed without an exit
+ * code". Shown bare, "-9" reads as a typo for 9.
+ */
+export function formatExitCode(code: unknown): string {
+  if (code == null || code === "") return "\u2014";
+  const n = typeof code === "number" ? code : Number(code);
+  if (!Number.isInteger(n)) return String(code);
+  if (n === -128) return "unknown";
+  if (n < 0) return `signal ${-n}`;
+  return String(n);
+}
+
+/**
  * Badge colour for a status string (light + dark), from the app-wide
  * palette in lib/tone.ts. "generated" (a workflow written but not yet
  * planned) keeps its own violet: it is a lifecycle step, not a health

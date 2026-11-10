@@ -35,7 +35,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { RenameProjectDialog } from "@/components/workflows/rename-project-dialog";
 import { apiUrl } from "@/lib/urls";
 import { usePaneSize } from "@/lib/hooks/use-pane-size";
-import { cn, formatDuration, statusColor } from "@/lib/utils";
+import { cn, formatDuration, formatExitCode, statusColor } from "@/lib/utils";
 import { TONE_TEXT } from "@/lib/tone";
 import { WhereItRan } from "@/components/workflows/where-it-ran";
 
@@ -1088,7 +1088,7 @@ function RunJobsPanel({
                   {job.duration != null ? formatDuration(Number(job.duration)) : "\u2014"}
                 </td>
                 <td className="py-1 text-right">
-                  {job.exitcode != null ? String(job.exitcode) : "\u2014"}
+                  {formatExitCode(job.exitcode)}
                 </td>
               </tr>
             ))}
