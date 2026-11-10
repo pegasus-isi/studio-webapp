@@ -167,6 +167,7 @@ that does not need them:
 | GET | `/api/workflows/{id}/jobs/{job}/files` | a job's inputs and outputs from `workflow.yml`, each located as `result` / `scratch` / `project` (or none) with size and previewability (#440) |
 | GET | `/api/workflows/{id}/files/info?lfn=…` `/files/content?location=&path=` | describe files by name (a clicked file node); serve one, confined to its location's directory, with `download` / `head` |
 | GET | `/api/workflows/{id}/diagnosis` | plain-language failure cards — cause, action, technical detail |
+| GET | `/api/workflows/{id}/waiting` | why jobs are held or idle, from `pegasus-monitor --json`; on demand, not for polling; `state: unavailable` when the tool is absent (#662) |
 | GET | `/api/workflows/{id}/slow-steps` | running steps well past their usual duration in this and earlier runs (#586) |
 | POST | `/api/workflows/{id}/analyze` | pegasus-analyzer |
 | DELETE | `/api/workflows/{id}` | **destructive** — cancels if running, then removes the run's submit directory from disk |

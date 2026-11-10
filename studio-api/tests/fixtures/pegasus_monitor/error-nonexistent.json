@@ -1,0 +1,28 @@
+{
+ "format": "pegasus-monitor-json",
+ "format_version": 1,
+ "monitor_version": "6.0.0.dev0",
+ "generated_at_epoch": 1794332298.3778987,
+ "generated_at": "2026-11-10T17:38:18.377Z",
+ "observed_at_epoch": null,
+ "modes": [
+  "once"
+ ],
+ "origin": "live",
+ "target": "/pmtrial/work/does-not-exist",
+ "exit_code": 1,
+ "error": {
+  "code": "workflow_location_error",
+  "message": "workflow path does not exist: /pmtrial/work/does-not-exist"
+ },
+ "workflow": null,
+ "sources": [],
+ "summary": null,
+ "snapshot": null,
+ "stats": null,
+ "diagnostics": null,
+ "stall": null,
+ "why_idle": null,
+ "stream": null,
+ "analysis_errors": []
+}

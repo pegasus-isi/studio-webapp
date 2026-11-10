@@ -1,0 +1,288 @@
+{
+ "format": "pegasus-monitor-json",
+ "format_version": 1,
+ "monitor_version": "6.0.0.dev0",
+ "generated_at_epoch": 1794333092.9458368,
+ "generated_at": "2026-11-10T17:51:32.945Z",
+ "observed_at_epoch": 1794333092.9414124,
+ "modes": [
+  "diagnose"
+ ],
+ "origin": "live",
+ "target": "/pmtrial/work/held/runs/submit/pegasus/pm-held/run0002",
+ "exit_code": 0,
+ "error": null,
+ "workflow": {
+  "wf_uuid": "25b6e5f6-c4a9-49f5-b581-a708d695d04b",
+  "root_wf_uuid": "25b6e5f6-c4a9-49f5-b581-a708d695d04b",
+  "is_sub_workflow": false,
+  "submit_dir": "/pmtrial/work/held/runs/submit/pegasus/pm-held/run0002",
+  "label": "pm-held",
+  "owner": "submit",
+  "dag_name": "pm-held-0.dag",
+  "planner_version": "6.0.0.dev0",
+  "sub_workflows": {
+   "count": 0,
+   "aggregated": false,
+   "exec_job_ids": [],
+   "exec_job_ids_omitted": 0
+  }
+ },
+ "sources": [
+  {
+   "source": "stampede",
+   "state": "healthy",
+   "checked_at_epoch": 1794333092.8850257,
+   "last_success_epoch": 1794333092.8850257,
+   "last_good_age": {
+    "seconds": 0.0,
+    "maximum_seconds": 2592000.0,
+    "capped": false
+   },
+   "stale_after_seconds": 10.0,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "live_tail",
+   "state": "healthy",
+   "checked_at_epoch": 1794333092.8898203,
+   "last_success_epoch": 1794333092.8898203,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_queue",
+   "state": "healthy",
+   "checked_at_epoch": 1794333092.8901515,
+   "last_success_epoch": 1794333092.8901515,
+   "last_good_age": null,
+   "stale_after_seconds": 10.0,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_history",
+   "state": "healthy",
+   "checked_at_epoch": 1794333092.9112523,
+   "last_success_epoch": 1794333092.9112523,
+   "last_good_age": null,
+   "stale_after_seconds": 60.0,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_pool",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_priority",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_negotiator",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  }
+ ],
+ "summary": {
+  "workflow_state": "WORKFLOW_STARTED",
+  "workflow_status": null,
+  "restart_count": 0,
+  "started_at": "1794332831",
+  "ended_at": null,
+  "provenance": "db_confirmed",
+  "authoritative_complete": false,
+  "removal_reason": null,
+  "job_counts": {
+   "total": 10,
+   "compute": 3,
+   "unsubmitted": 5,
+   "pre": 0,
+   "queued": 1,
+   "running": 1,
+   "held": 0,
+   "post": 0,
+   "succeeded": 3,
+   "failed": 0,
+   "other": 0
+  },
+  "pending_tail_events": 0
+ },
+ "snapshot": null,
+ "stats": {
+  "total_jobs": 10,
+  "compute_jobs": 3,
+  "infra_jobs": 7,
+  "succeeded": 3,
+  "failed": 0,
+  "held": 0,
+  "unsubmitted": 5,
+  "queued": 1,
+  "running": 1,
+  "wall_time": 261.94141244888306,
+  "total_compute_time": 3.014,
+  "parallelism": 0.011506389813745741,
+  "dur_min": 3.014,
+  "dur_max": 3.014,
+  "dur_mean": 3.014,
+  "dur_median": 3.014,
+  "longest_job_name": "proc",
+  "shortest_job_name": "proc",
+  "peak_maxrss_kb": 3268,
+  "peak_maxrss_job": "proc",
+  "mean_maxrss_kb": 3268.0,
+  "cpu_eff_min": 0.0,
+  "cpu_eff_max": 0.0,
+  "cpu_eff_mean": 0.0,
+  "mem_eff_min": 0.0,
+  "mem_eff_max": 0.0021457672119140625,
+  "mem_eff_mean": 0.0007152557373046875,
+  "wait_min": 4.0,
+  "wait_max": 6.0,
+  "wait_mean": 4.666666666666667,
+  "transfer_bytes": 11127880,
+  "hosts": [
+   "pmtrial (1)"
+  ],
+  "authoritative_final": false,
+  "workflow_provenance": "db_confirmed",
+  "db_confirmed_jobs": 10,
+  "tail_overlay_jobs": 0,
+  "tail_pending_jobs": 0,
+  "provisional_jobs": 0,
+  "pending_jobs": 0,
+  "scheduler_coverage": [
+   {
+    "kind": "history",
+    "health": "healthy",
+    "evidence_count": 3,
+    "matched_current_jobs": 3,
+    "eligible_current_jobs": 5,
+    "complete": false
+   },
+   {
+    "kind": "pool",
+    "health": "unavailable",
+    "evidence_count": 0,
+    "matched_current_jobs": 0,
+    "eligible_current_jobs": 0,
+    "complete": false
+   }
+  ]
+ },
+ "diagnostics": {
+  "available": true,
+  "reason": null,
+  "origin": "analysis",
+  "findings": [
+   {
+    "target": {
+     "workflow": {
+      "wf_uuid": "25b6e5f6-c4a9-49f5-b581-a708d695d04b",
+      "root_wf_uuid": "25b6e5f6-c4a9-49f5-b581-a708d695d04b"
+     },
+     "exec_job_id": "proc_holdme",
+     "job_provenance": "db_confirmed"
+    },
+    "category": "held",
+    "severity": "warning",
+    "code": "user_hold",
+    "summary": "Job was held by a user: via condor_hold (by user submit)",
+    "suggestions": [
+     "Confirm the reason for the manual hold before releasing the job."
+    ],
+    "evidence": [
+     {
+      "source": "stampede",
+      "code": "effective_job_state",
+      "payload": {
+       "provenance": "db_confirmed",
+       "state": "EXECUTE",
+       "state_timestamp": "1794332868"
+      }
+     },
+     {
+      "source": "condor_queue",
+      "code": "hold_reason",
+      "payload": {
+       "hold_reason_code": 1,
+       "reason_excerpt": "via condor_hold (by user submit)"
+      }
+     }
+    ]
+   }
+  ],
+  "errors": []
+ },
+ "stall": {
+  "assessed": true,
+  "stalled": true,
+  "reason": "running_plateau",
+  "kind": "running_plateau",
+  "summary": "1 running job(s) with no semantic progress for 216s",
+  "method": "snapshot_timestamps",
+  "confirmed": false,
+  "observed_at_epoch": 1794333092.9414124,
+  "last_progress_epoch": 1794332877.0,
+  "seconds_since_progress": 215.94141244888306,
+  "job_counts": {
+   "total": 10,
+   "succeeded": 3,
+   "failed": 0,
+   "held": 0,
+   "running": 1,
+   "queued": 1,
+   "unsubmitted": 5
+  },
+  "thresholds": {
+   "no_progress_seconds": 60.0,
+   "running_plateau_seconds": 120.0,
+   "idle_threshold_seconds": 120.0,
+   "startup_grace_seconds": 60.0
+  }
+ },
+ "why_idle": null,
+ "stream": null,
+ "analysis_errors": []
+}

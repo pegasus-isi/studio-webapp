@@ -514,6 +514,7 @@ Common endpoints:
 | `GET` | `/api/workflows/{run_id}/jobs/{job}/files` | A job's inputs and outputs, located (result / scratch / project) |
 | `GET` | `/api/workflows/{run_id}/files/info` `/files/content` | Describe files by name; serve one from its location |
 | `GET` | `/api/workflows/{run_id}/diagnosis` | Plain-language failure cards (cause, action, technical detail) |
+| `GET` | `/api/workflows/{run_id}/waiting` | Why jobs are held or idle, from native `pegasus-monitor --json`; on demand only (#662) |
 | `DELETE` | `/api/workflows/{run_id}` | **Destructive**: cancel if running, then remove the run's submit directory from disk |
 | `GET` | `/api/dashboard` | Aggregate landing-page snapshot |
 | `GET` | `/api/dashboard/onboarding` | Onboarding funnel (first seen → first workflow → first run → first success) |

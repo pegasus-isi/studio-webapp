@@ -1,0 +1,316 @@
+{
+ "format": "pegasus-monitor-json",
+ "format_version": 1,
+ "monitor_version": "6.0.0.dev0",
+ "generated_at_epoch": 1794332294.2982001,
+ "generated_at": "2026-11-10T17:38:14.298Z",
+ "observed_at_epoch": 1794332294.2571058,
+ "modes": [
+  "diagnose"
+ ],
+ "origin": "live",
+ "target": "/pmtrial/work/fail/runs/submit/pegasus/pm-fail/run0002",
+ "exit_code": 0,
+ "error": null,
+ "workflow": {
+  "wf_uuid": "5931c16e-a0bf-40f2-bd60-acf6ada9b204",
+  "root_wf_uuid": "5931c16e-a0bf-40f2-bd60-acf6ada9b204",
+  "is_sub_workflow": false,
+  "submit_dir": "/pmtrial/work/fail/runs/submit/pegasus/pm-fail/run0002",
+  "label": "pm-fail",
+  "owner": "submit",
+  "dag_name": "pm-fail-0.dag",
+  "planner_version": "6.0.0.dev0",
+  "sub_workflows": {
+   "count": 0,
+   "aggregated": false,
+   "exec_job_ids": [],
+   "exec_job_ids_omitted": 0
+  }
+ },
+ "sources": [
+  {
+   "source": "stampede",
+   "state": "healthy",
+   "checked_at_epoch": 1794332294.2007916,
+   "last_success_epoch": 1794332294.2007916,
+   "last_good_age": {
+    "seconds": 0.0,
+    "maximum_seconds": 2592000.0,
+    "capped": false
+   },
+   "stale_after_seconds": 10.0,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "live_tail",
+   "state": "healthy",
+   "checked_at_epoch": 1794332294.2063506,
+   "last_success_epoch": 1794332294.2063506,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_queue",
+   "state": "healthy",
+   "checked_at_epoch": 1794332294.2068572,
+   "last_success_epoch": 1794332294.2068572,
+   "last_good_age": null,
+   "stale_after_seconds": 10.0,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_history",
+   "state": "healthy",
+   "checked_at_epoch": 1794332294.2278564,
+   "last_success_epoch": 1794332294.2278564,
+   "last_good_age": null,
+   "stale_after_seconds": 60.0,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_pool",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_priority",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_negotiator",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  }
+ ],
+ "summary": {
+  "workflow_state": "WORKFLOW_TERMINATED",
+  "workflow_status": 1,
+  "restart_count": 0,
+  "started_at": "1794329517",
+  "ended_at": "1794329615",
+  "provenance": "db_confirmed",
+  "authoritative_complete": true,
+  "removal_reason": null,
+  "job_counts": {
+   "total": 16,
+   "compute": 3,
+   "unsubmitted": 9,
+   "pre": 0,
+   "queued": 0,
+   "running": 0,
+   "held": 0,
+   "post": 0,
+   "succeeded": 6,
+   "failed": 1,
+   "other": 0
+  },
+  "pending_tail_events": 0
+ },
+ "snapshot": null,
+ "stats": {
+  "total_jobs": 16,
+  "compute_jobs": 3,
+  "infra_jobs": 13,
+  "succeeded": 6,
+  "failed": 1,
+  "held": 0,
+  "unsubmitted": 9,
+  "queued": 0,
+  "running": 0,
+  "wall_time": 98.0,
+  "total_compute_time": 5.0169999999999995,
+  "parallelism": 0.0511938775510204,
+  "dur_min": 2.003,
+  "dur_max": 3.014,
+  "dur_mean": 2.5084999999999997,
+  "dur_median": 2.5084999999999997,
+  "longest_job_name": "proc",
+  "shortest_job_name": "proc",
+  "peak_maxrss_kb": 3160,
+  "peak_maxrss_job": "proc",
+  "mean_maxrss_kb": 3116.0,
+  "cpu_eff_min": 0.0,
+  "cpu_eff_max": 0.0,
+  "cpu_eff_mean": 0.0,
+  "mem_eff_min": 0.0,
+  "mem_eff_max": 57.220458984375,
+  "mem_eff_mean": 9.548664229256767,
+  "wait_min": 3.0,
+  "wait_max": 4.0,
+  "wait_mean": 3.7142857142857144,
+  "transfer_bytes": 22259911,
+  "hosts": [
+   "pmtrial (2)"
+  ],
+  "authoritative_final": true,
+  "workflow_provenance": "db_confirmed",
+  "db_confirmed_jobs": 16,
+  "tail_overlay_jobs": 0,
+  "tail_pending_jobs": 0,
+  "provisional_jobs": 0,
+  "pending_jobs": 0,
+  "scheduler_coverage": [
+   {
+    "kind": "history",
+    "health": "healthy",
+    "evidence_count": 10,
+    "matched_current_jobs": 7,
+    "eligible_current_jobs": 7,
+    "complete": true
+   },
+   {
+    "kind": "pool",
+    "health": "unavailable",
+    "evidence_count": 0,
+    "matched_current_jobs": 0,
+    "eligible_current_jobs": 0,
+    "complete": false
+   }
+  ]
+ },
+ "diagnostics": {
+  "available": true,
+  "reason": null,
+  "origin": "analysis",
+  "findings": [
+   {
+    "target": {
+     "workflow": {
+      "wf_uuid": "5931c16e-a0bf-40f2-bd60-acf6ada9b204",
+      "root_wf_uuid": "5931c16e-a0bf-40f2-bd60-acf6ada9b204"
+     },
+     "exec_job_id": "proc_bad",
+     "job_provenance": "db_confirmed"
+    },
+    "category": "failed",
+    "severity": "error",
+    "code": "exit_code_1",
+    "summary": "Job failed with exit code 1 (application exit code 1; recorded job exit code 1)",
+    "suggestions": [
+     "Exit code 1 indicates a general executable error; inspect stderr."
+    ],
+    "evidence": [
+     {
+      "source": "stampede",
+      "code": "effective_job_state",
+      "payload": {
+       "provenance": "db_confirmed",
+       "state": "POST_SCRIPT_FAILED",
+       "state_timestamp": "1794329614"
+      }
+     },
+     {
+      "source": "stampede",
+      "code": "current_attempt_exit",
+      "payload": {
+       "exit_code": 1,
+       "job_submit_seq": 9,
+       "raw_wait_status": 256
+      }
+     },
+     {
+      "source": "kickstart",
+      "code": "kickstart_parse",
+      "payload": {
+       "application_exit_code": 1,
+       "error_code": null,
+       "executable": "/pmtrial/bin/proc.sh",
+       "process_exit_code": 1,
+       "relative_path": "00/00/proc_bad.out.002",
+       "status": "available",
+       "stderr_excerpt": "pmtrial: deliberate failure",
+       "stdout_excerpt": "",
+       "transformation": "proc"
+      }
+     },
+     {
+      "source": "pegasus_lite",
+      "code": "pegasuslite_stderr",
+      "payload": {
+       "error_code": "summary_missing_or_ambiguous",
+       "excerpt": "",
+       "relative_path": "00/00/proc_bad.err.002",
+       "status": "available",
+       "tool_exit_code": null,
+       "wrapper_exit_code": null
+      }
+     }
+    ]
+   }
+  ],
+  "errors": []
+ },
+ "stall": {
+  "assessed": true,
+  "stalled": false,
+  "reason": "workflow_complete",
+  "kind": null,
+  "summary": "",
+  "method": "snapshot_timestamps",
+  "confirmed": false,
+  "observed_at_epoch": 1794332294.2571058,
+  "last_progress_epoch": 1794329615.0,
+  "seconds_since_progress": 2679.2571058273315,
+  "job_counts": {
+   "total": 16,
+   "succeeded": 6,
+   "failed": 1,
+   "held": 0,
+   "running": 0,
+   "queued": 0,
+   "unsubmitted": 9
+  },
+  "thresholds": {
+   "no_progress_seconds": 60.0,
+   "running_plateau_seconds": 120.0,
+   "idle_threshold_seconds": 120.0,
+   "startup_grace_seconds": 60.0
+  }
+ },
+ "why_idle": null,
+ "stream": null,
+ "analysis_errors": []
+}

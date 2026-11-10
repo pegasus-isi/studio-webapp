@@ -144,6 +144,32 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "explain_run_waiting",
+            "description": (
+                "Why a run is not progressing: each held job with a classified"
+                " cause, HTCondor's hold reason and a suggested action, and"
+                " why queued jobs are idle (pool capacity, resource requests"
+                " no slot can satisfy, user priority). The right call for"
+                " 'why is it stuck / held / still waiting?'; for jobs that"
+                " failed use diagnose_run. Queries HTCondor, so call it when"
+                " asked, not repeatedly. run_id defaults to the run in the"
+                " active chat context."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "run_id": {
+                        "type": "string",
+                        "description": "Workflow run id (optional with a run context)",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_run_outputs",
             "description": (
                 "The files a workflow run produced (name, size, path). run_id"
@@ -229,6 +255,8 @@ async def execute(
             return await _run_jobs(run_dir, arguments.get("status"))
         if name == "diagnose_run":
             return await _diagnose(run_dir)
+        if name == "explain_run_waiting":
+            return await _explain_waiting(run_dir)
         if name == "list_run_outputs":
             return await _outputs(run_dir)
     except Exception as e:  # noqa: BLE001 — a broken tool must answer, not raise
@@ -387,6 +415,30 @@ async def _diagnose(run_dir: str) -> str:
         },
         indent=1,
     )
+
+
+async def _explain_waiting(run_dir: str) -> str:
+    from services import native_monitor
+
+    result = await native_monitor.explain(run_dir)
+    hints = {
+        "ok": (
+            "'held' lists held jobs (code, summary, hold_reason, suggestions)."
+            " 'idle' explains queued jobs: 'mismatches' are jobs asking for"
+            " more than any slot has; 'pool' is null when the pool was not"
+            " queried. 'not_checked' names sources that could not be read, so"
+            " an empty 'held' there means unknown, not none."
+        ),
+        "starting": "The run is too new to have recorded state; try again shortly.",
+        "unavailable": (
+            "This tool cannot run here. Use get_run_jobs and diagnose_run"
+            " instead, and say that held and idle reasons are not available."
+        ),
+    }
+    hint = hints.get(str(result.get("state")))
+    if hint:
+        result = {**result, "hint": hint}
+    return json.dumps(result, indent=1)
 
 
 async def _outputs(run_dir: str) -> str:

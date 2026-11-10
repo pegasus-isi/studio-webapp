@@ -96,7 +96,7 @@ writable by the injected uid, so **never bake a rendered config into the image**
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
   migrations in `db.py`; `~/.studio` is 0700 and the DB 0600, and tool configs
   holding LLM keys are written 0600 via `knowledge/common.write_private()`, #600),
-  structlog JSON logging. 21 routers in `routers/`, 41 services
+  structlog JSON logging. 21 routers in `routers/`, 42 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
   notifications, terminal/PTY sessions, telemetry consent and rating telemetry, job files,
   project rename, run placement, the user's annex, GPU steps, shared-filesystem check,
@@ -109,6 +109,13 @@ writable by the injected uid, so **never bake a rendered config into the image**
   --serve`) or `wfevents.jsonl` (pegasus-monitord's `wfevents` plugin), and falls
   back to the run's stampede DB when neither exists (`services/event_reader.py`,
   `services/stampede_reader.py`). Studio does not start a monitor itself.
+  Pegasus 6.0's native `pegasus-monitor` is used for one thing only: on demand,
+  `services/native_monitor.py` runs `pegasus-monitor --json --diagnose --why-idle`
+  for the `/waiting` endpoint and the `explain_run_waiting` chat tool (#662). It
+  is inert when the tool is absent or has no `--json`. Status, counts and the
+  roster stay on the stampede reader, which is read for every run on every
+  poll; do not move them to a process per call, and keep HTCondor queries on
+  (`--no-condor` loses hold diagnosis).
 - **studio-web/** — Next.js 15 App Router, React 19, TS strict, Tailwind 3, Zustand,
   TanStack Query, xterm.js, `@xyflow/react` DAG viewer. Routes under `app/(studio)/`;
   `app/chat/page.tsx` is a standalone chrome-less page iframed into JupyterLab by the
