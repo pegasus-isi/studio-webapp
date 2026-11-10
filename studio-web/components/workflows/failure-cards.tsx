@@ -22,7 +22,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { DiagnosisCard } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 import { usePanelStore } from "@/lib/stores/panel-store";
-import { cn } from "@/lib/utils";
+import { cn, formatExitCode } from "@/lib/utils";
 
 // How much raw log to carry into the chat prompt. Enough for the assistant to
 // see the actual error, short enough not to bury the question in a wall of
@@ -86,7 +86,7 @@ function FailureCard({ card }: { card: DiagnosisCard }) {
         <p className="text-2xs font-semibold uppercase tracking-wider text-red-700/70 dark:text-rose-300/70">
           {card.step}
           {card.exitcode != null && card.exitcode !== "" && (
-            <span className="font-normal"> · exit {card.exitcode}</span>
+            <span className="font-normal"> · exit {formatExitCode(card.exitcode)}</span>
           )}
         </p>
       )}

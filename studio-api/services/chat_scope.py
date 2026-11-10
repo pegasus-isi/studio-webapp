@@ -189,6 +189,8 @@ async def _project_for_run_dir(run_dir: str) -> dict[str, Any] | None:
 
 
 def _format_failure_cards(cards: list[dict[str, Any]]) -> list[str]:
+    from services import run_diagnosis
+
     lines: list[str] = []
     for card in cards[:_MAX_FAILURE_CARDS]:
         step = card.get("step") or "(cluster)"
@@ -196,7 +198,9 @@ def _format_failure_cards(cards: list[dict[str, Any]]) -> list[str]:
         if card.get("action"):
             lines.append(f"  - Suggested action: {card['action']}")
         if card.get("exitcode") not in (None, ""):
-            lines.append(f"  - Exit code: {card['exitcode']}")
+            lines.append(
+                f"  - Exit code: {run_diagnosis.describe_exit(card['exitcode'])}"
+            )
         technical = str(card.get("technical") or "").strip()
         if technical:
             lines.append(

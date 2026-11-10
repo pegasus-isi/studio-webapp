@@ -50,8 +50,10 @@ def estimate_remaining(run_dir: str) -> dict[str, Any] | None:
         counts[tx] = counts.get(tx, 0) + 1
         all_durations.append(float(duration))
 
+    # Everything not finished: pending, queued, held and running alike. Named
+    # by what it is not, so a status added later is still work left to do.
     remaining = [
-        j for j in job_list if j.get("status") in ("pending", "running")
+        j for j in job_list if j.get("status") not in ("succeeded", "failed")
     ]
     if not remaining:
         return {

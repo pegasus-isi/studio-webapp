@@ -183,11 +183,52 @@ def _apply(
     return fallback
 
 
-def classify_job_failure(stderr: str, exitcode: Any = None) -> tuple[str, str]:
-    """Explain one failed job. `exitcode` is folded into the searched text so
-    the numeric-only signals (137 for the OOM killer) can match even when the
-    job wrote nothing to stderr."""
-    haystack = f"{stderr or ''}\nexitcode: {exitcode}"
+def _signal(exitcode: Any) -> int | None:
+    """The signal number when `exitcode` is a decoded "killed by signal N".
+
+    The stampede reader hands exit codes over decoded the way Pegasus's own
+    tools do: -N for a death by signal N (-128 is not a signal, it is "failed
+    with no exit code").
+    """
+    try:
+        code = int(exitcode)
+    except (TypeError, ValueError):
+        return None
+    return -code if -127 <= code <= -1 else None
+
+
+def describe_exit(exitcode: Any) -> str:
+    """An exit code in words where the number alone would mislead."""
+    sig = _signal(exitcode)
+    return f"killed by signal {sig}" if sig else str(exitcode)
+
+
+def _exit_text(*exitcodes: Any) -> str:
+    """Exit codes as text the rules can search.
+
+    A death by signal N is also written the way a shell reports it, 128 + N,
+    so one rule covers a program that was SIGKILLed (-9) and a wrapper script
+    that exited 137 because its child was.
+    """
+    lines = []
+    for code in exitcodes:
+        if code in (None, ""):
+            continue
+        lines.append(f"exitcode: {code}")
+        sig = _signal(code)
+        if sig:
+            lines.append(f"exitcode: {128 + sig}")
+    return "\n".join(lines) or "exitcode: None"
+
+
+def classify_job_failure(
+    stderr: str, exitcode: Any = None, app_exitcode: Any = None
+) -> tuple[str, str]:
+    """Explain one failed job. The exit codes are folded into the searched
+    text so the numeric-only signals (137 for the OOM killer) can match even
+    when the job wrote nothing to stderr. `app_exitcode` is the program's own
+    when the reader knows it: the job's is often just the post-script's 1."""
+    haystack = f"{stderr or ''}\n{_exit_text(exitcode, app_exitcode)}"
     return _apply(_JOB_RULES, haystack, _JOB_FALLBACK)
 
 
@@ -216,7 +257,7 @@ def categorize_jobs(jobs: list[dict[str, Any]]) -> str:
     or DAGMan-level failure), which is a different problem worth keeping apart.
     """
     for card in diagnose_jobs(jobs):
-        haystack = f"{card.get('technical') or ''}\nexitcode: {card.get('exitcode')}"
+        haystack = f"{card.get('technical') or ''}\n{_exit_text(card.get('exitcode'))}"
         for (pattern, _cause, _action), category in zip(_JOB_RULES, _JOB_CATEGORIES):
             if pattern.search(haystack):
                 return category
@@ -259,13 +300,16 @@ def diagnose_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not failed:
             continue
         stderr = str(job.get("stderr") or "")
-        cause, action = classify_job_failure(stderr, exitcode)
+        app_exitcode = job.get("app_exitcode")
+        cause, action = classify_job_failure(stderr, exitcode, app_exitcode)
         cards.append({
             "kind": "job",
             "step": _step_name(job),
             "cause": cause,
             "action": action,
-            "exitcode": exitcode,
+            # The program's own code when known: "exit 137" says something,
+            # the post-script's "exit 1" does not.
+            "exitcode": exitcode if app_exitcode in (None, "") else app_exitcode,
             # Kept, never led with.
             "technical": stderr,
         })

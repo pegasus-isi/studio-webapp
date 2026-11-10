@@ -106,25 +106,48 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
-# Stampede job states during which the job is on a worker, not waiting for one.
-_EXECUTING = frozenset({"EXECUTE", "PRE_SCRIPT_STARTED", "POST_SCRIPT_STARTED"})
+# Stampede job states during which the job is being worked on: on a worker, or
+# in its pre/post-script on the access point. The *_TERMINATED states are the
+# moment between one of those ending and its verdict being recorded.
+_EXECUTING = frozenset({
+    "EXECUTE", "PRE_SCRIPT_STARTED", "POST_SCRIPT_STARTED",
+    "JOB_TERMINATED", "PRE_SCRIPT_TERMINATED", "POST_SCRIPT_TERMINATED",
+})
+# In the HTCondor queue (or about to be), waiting for a machine. An evicted or
+# released job is back to waiting. PRE_SCRIPT_SUCCESS is here and not under
+# "succeeded": it is the pre-script that succeeded, and the job itself has
+# not been submitted yet.
+_QUEUED = frozenset({
+    "SUBMIT", "GRID_SUBMIT", "GLOBUS_SUBMIT", "JOB_EVICTED", "JOB_RELEASED",
+    "PRE_SCRIPT_SUCCESS",
+})
+
+#: Every value a job's ``status`` takes. ``pending`` is a job DAGMan has not
+#: released yet (no state at all); ``queued`` is one waiting in the queue;
+#: ``held`` is one HTCondor has stopped until someone acts. The run header's
+#: counts (workflow_detail) are sums over these, so the two cannot disagree:
+#: they did when SUBMIT and JOB_HELD were labelled "running" here and counted
+#: as queued there. The DAG viewer, lib/tone.ts and lib/vocabulary.ts in
+#: studio-web know all six; a value added here needs adding there.
+JOB_STATUSES = ("pending", "queued", "held", "running", "succeeded", "failed")
 
 
 def _job_status(state: str | None, exitcode: Any) -> str:
-    """Map a stampede job state + exitcode to succeeded/failed/running/pending."""
+    """Map a stampede job state + exitcode to one of JOB_STATUSES."""
     code = _as_int(exitcode)
     if code is not None:
         return "succeeded" if code == 0 else "failed"
     s = (state or "").upper()
+    if s in _QUEUED:
+        return "queued"
     if "SUCCESS" in s:
         return "succeeded"
     if "FAIL" in s:
         return "failed"
-    if s in (
-        "SUBMIT", "GRID_SUBMIT", "EXECUTE", "JOB_HELD",
-        "PRE_SCRIPT_STARTED", "POST_SCRIPT_STARTED",
-    ):
+    if s in _EXECUTING:
         return "running"
+    if s == "JOB_HELD":
+        return "held"
     return "pending"
 
 
@@ -178,6 +201,10 @@ def jobs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "type_desc": None,
                 "state": None,
                 "exitcode": None,
+                # The program's own exit code when a task failed (negative:
+                # killed by that signal). `exitcode` is the job's, which
+                # after the post-script is that script's verdict, usually 1.
+                "app_exitcode": None,
                 "status": "pending",
                 "stdout_file": None,
                 "stderr_file": None,
@@ -209,6 +236,8 @@ def jobs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             entry["state"] = ev["state"]
         if ev.get("exitcode") is not None:
             entry["exitcode"] = ev["exitcode"]
+        if ev.get("app_exitcode") is not None:
+            entry["app_exitcode"] = ev["app_exitcode"]
         if ev.get("stdout_file"):
             entry["stdout_file"] = ev["stdout_file"]
         if ev.get("stderr_file"):
@@ -251,14 +280,10 @@ def workflow_detail(events: list[dict[str, Any]]) -> dict[str, Any]:
     # Running means executing on a worker. Everything else unfinished (in the
     # HTCondor queue, held, or not yet released by DAGMan) is queued: counting
     # it as running showed a 200-step run as "200 running" with one slot busy.
+    # The per-job status draws the same line, so the rows add up to this.
     unfinished = max(0, total - done - failed)
     running = min(
-        unfinished,
-        sum(
-            1 for j in job_list
-            if j["status"] == "running"
-            and (j.get("state") or "").upper() in _EXECUTING
-        ),
+        unfinished, sum(1 for j in job_list if j["status"] == "running")
     )
 
     return {

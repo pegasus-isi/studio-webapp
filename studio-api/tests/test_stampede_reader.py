@@ -13,7 +13,8 @@ from services.stampede_reader import read_stampede_events
 
 def _make_stampede_db(run_dir: str) -> None:
     """Create a minimal stampede DB mirroring a failed csv-summary run:
-    8 abstract jobs, 3 succeeded, 1 compute failed (exit 256), 4 never ran.
+    8 abstract jobs, 3 succeeded, 1 compute failed (exit 1, which the DB
+    stores as the raw wait status 256), 4 never ran.
     """
     os.makedirs(run_dir, exist_ok=True)
     # braindump points submit_dir at run_dir so the reader finds the DB.
@@ -109,9 +110,12 @@ def test_stampede_fallback_reconstructs_jobs_and_status(tmp_path):
     assert len(jobs) == 8  # all abstract jobs listed
     by_name = {j["job_id"]: j for j in jobs}
 
-    # The compute job failed (exit 256), with site, duration, and stderr.
+    # The compute job failed (exit 1, stored as 256), with site, duration,
+    # and stderr.
     compute = by_name["summarize_csv_x"]
     assert compute["status"] == "failed"
+    assert compute["exitcode"] == 1
+    assert compute["app_exitcode"] == 1
     assert compute["transformation"] == "summarize_csv"
     assert compute["maxrss"] == 2048
     assert compute["site"] == "condorpool"

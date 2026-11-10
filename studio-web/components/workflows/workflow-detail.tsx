@@ -16,7 +16,13 @@ import { OutputsPanel } from "@/components/workflows/outputs-panel";
 import { FailureCards } from "@/components/workflows/failure-cards";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUrl } from "@/lib/urls";
-import { cn, formatCount, formatDuration, statusColor } from "@/lib/utils";
+import {
+  cn,
+  formatCount,
+  formatDuration,
+  formatExitCode,
+  statusColor,
+} from "@/lib/utils";
 import { TONE_BAR, TONE_TEXT } from "@/lib/tone";
 import { useEffect, useState, useRef } from "react";
 
@@ -393,7 +399,7 @@ export function WorkflowDetail({ runId }: Props) {
                     {job.duration != null ? formatDuration(Number(job.duration)) : "\u2014"}
                   </td>
                   <td className="py-2 text-right">
-                    {job.exitcode != null ? String(job.exitcode) : "\u2014"}
+                    {formatExitCode(job.exitcode)}
                   </td>
                 </tr>
               ))}
@@ -431,7 +437,7 @@ export function WorkflowDetail({ runId }: Props) {
                       {job.exitcode != null && (
                         <span className="font-normal">
                           {" "}
-                          — exit code {String(job.exitcode)}
+                          — exit code {formatExitCode(job.exitcode)}
                         </span>
                       )}
                     </p>
