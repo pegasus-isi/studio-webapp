@@ -10,9 +10,9 @@ anything that needs no preflight ran cross-site:
   deletes tool config under $HOME;
 * a POST whose Pydantic body is entirely defaulted — workflow generate, build,
   plan, submit;
-* a handler that reads `await request.json()` and so ignores Content-Type —
-  every mutating route in `chat.py`, including one that starts an agent turn
-  with attacker-supplied text.
+* a handler that forwards the body without looking at Content-Type — the
+  OpenCode proxy, whose `POST /api/opencode/session/{id}/prompt_async` starts
+  an agent turn with attacker-supplied text.
 
 The audit noted that no test asserted a cross-origin POST was rejected. These
 do, on the real routes rather than a synthetic one, because the property worth
@@ -59,7 +59,7 @@ def _post(
     [
         "/api/tools/claude-code/uninstall",
         "/api/tools/claude-code/start",
-        "/api/chat/stop",
+        "/api/opencode/session",
     ],
 )
 def test_cross_origin_write_is_rejected_on_real_routes(client, path):

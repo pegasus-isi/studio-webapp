@@ -53,7 +53,8 @@ async def _propagate_to_tools(db) -> None:
     """Propagate the active LLM config to installed tools.
 
     CLI tools (opencode, crush, …) read the generated config at launch, so the
-    next session picks the new provider up; the builtin chat reads it per turn.
+    next session picks the new provider up. The chat engine (opencode serve) is
+    restarted by the propagator so it does too.
     """
     try:
         await LLMPropagator().propagate(db)

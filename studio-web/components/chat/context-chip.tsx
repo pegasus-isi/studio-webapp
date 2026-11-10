@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api/client";
-import { genId, useChatStore } from "@/lib/stores/chat-store";
+import { useChatStore } from "@/lib/stores/chat-store";
 import {
   useChatContextStore,
   type ChatScope,
@@ -38,7 +38,6 @@ function runLabel(run: { name?: string; run_name?: string; run_id: string }) {
 
 export function ChatContextChip() {
   const activeId = useChatStore((s) => s.activeId);
-  const addMessage = useChatStore((s) => s.addMessage);
   const scope = useChatContextStore((s) => s.scopeByConv[activeId] ?? null);
   const pinned = useChatContextStore((s) => s.pinnedByConv[activeId] ?? false);
   const setScope = useChatContextStore((s) => s.setScope);
@@ -129,14 +128,6 @@ export function ChatContextChip() {
     setOpen((v) => !v);
   };
 
-  // Announce explicit context switches inside the transcript so a scroll-back
-  // reads correctly — answers above a divider were given under the old scope.
-  const announce = (label: string) => {
-    if (useChatStore.getState().messages.length > 0) {
-      addMessage({ id: genId(), role: "system", content: label });
-    }
-  };
-
   const pick = (next: ChatScope | null) => {
     setOpen(false);
     const same =
@@ -147,7 +138,6 @@ export function ChatContextChip() {
         next.id === scope.id);
     if (same) return;
     setScope(activeId, next);
-    announce(next ? `Context: ${next.label}` : "Context cleared");
   };
 
   // SSR renders no scope (localStorage is client-only); render the neutral

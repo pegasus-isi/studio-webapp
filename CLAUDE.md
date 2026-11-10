@@ -96,7 +96,7 @@ writable by the injected uid, so **never bake a rendered config into the image**
 - **studio-api/** — FastAPI + async SQLite (`~/.studio/studio.db`, hand-rolled
   migrations in `db.py`; `~/.studio` is 0700 and the DB 0600, and tool configs
   holding LLM keys are written 0600 via `knowledge/common.write_private()`, #600),
-  structlog JSON logging. 21 routers in `routers/`, 41 services
+  structlog JSON logging. 21 routers in `routers/`, 40 services
   in `services/` (workflow scan/submit/monitor, condor pool, image builder via Apptainer,
   notifications, terminal/PTY sessions, telemetry consent and rating telemetry, job files,
   project rename, run placement, the user's annex, GPU steps, shared-filesystem check,
@@ -242,26 +242,24 @@ writable by the injected uid, so **never bake a rendered config into the image**
   `condor.requirements` profile (`services/run_placement.py`), so a
   `pegasus-plan` from a terminal plans the same thing as Run.
 - **Work that outlives a request gets a broker.** `services/run_flow.py` (the
-  one-button Run) and `services/chat_turn.py` (an assistant turn) both run as a
-  background task with a buffered event log; subscribers replay from the start
-  and then follow live. That is what makes both survive a navigation, a closed
-  tab or a dropped connection — Studio's left nav used to be full page loads,
+  one-button Run) runs as a background task with a buffered event log;
+  subscribers replay from the start and then follow live. That is what makes it
+  survive a navigation, a closed tab or a dropped connection — Studio's left nav used to be full page loads,
   and anything owned by the request died with it. Reach for this shape rather
   than sequencing calls in the browser.
-- **Chat has two engines, chosen per user** by the `chat_engine` UI preference
-  (#367). `opencode` is the default since #403, which also clears a stored
-  `builtin` once (`db._migrate`) — the wholesale settings PUT means a flipped
-  model default moves nobody on its own. `builtin` is the in-process agent
-  loop in `routers/chat.py` (direct provider calls with tool use, Anthropic +
-  OpenAI-compatible + Responses API), still selectable so switching back is a
-  toggle rather than a rollback. `opencode` makes the panel a thin client of the
-  supervised `opencode serve` process in the same pod: `routers/opencode.py`
-  proxies `/api/opencode/*` to `127.0.0.1:4096` **verbatim**, including the SSE
-  stream, and `studio-web/lib/opencode/` + `components/chat/opencode-parts.tsx`
-  render OpenCode's own parts through a registry with a fallback. The intended
-  end state is one engine — the builtin loop and its tables go next, the rest
-  of #367 step 5 — so **do not add features to the builtin loop**; see #367 and
-  `docs/OPENCODE-CHAT-SPIKE.md`, which records what the spike established
+- **Chat runs on OpenCode, and only OpenCode.** The panel is a thin client of
+  the supervised `opencode serve` process in the same pod (#367):
+  `routers/opencode.py` proxies `/api/opencode/*` to `127.0.0.1:4096`
+  **verbatim**, including the SSE stream, and `studio-web/lib/opencode/` +
+  `components/chat/opencode-parts.tsx` render OpenCode's own parts through a registry with a fallback. The in-process
+  builtin agent loop, its turn broker and the `chat_engine` preference were
+  removed in #664 (it could run only one turn per container, so a second
+  conversation could not start while one was answering); its `chat_messages`
+  table is left in the DB, still pruned at startup. Each Studio conversation
+  is its own OpenCode session (`lib/stores/opencode-store.ts`), and sessions
+  run concurrently. What `routers/chat.py` still serves is Studio-only: the
+  Active Context block (`/scope-block`) and the command-approval setting. See
+  #367 and `docs/OPENCODE-CHAT-SPIKE.md`, which records what the spike established
   (config changes need a process restart, text streams as `message.part.delta`
   and not as whole parts, the plugin hook does receive the session id).
   Nothing on the Python side parses an OpenCode payload, and it must stay that
@@ -269,17 +267,15 @@ writable by the injected uid, so **never bake a rendered config into the image**
   reach that engine over MCP — `routers/mcp.py` serves them at `/api/mcp`
   (stateless Streamable HTTP) and the generated `opencode.json` registers it as
   a loopback remote server beside `pegasus-docs`/`kiso-docs`. Its tool list is
-  read from `services/chat_tools.py`, so **add a Pegasus tool in one place** and
-  both engines get it; the generic file/shell tools are deliberately not
+  read from `services/chat_tools.py`, so **add a Pegasus tool there**; the generic file/shell tools are deliberately not
   exposed, since OpenCode has its own behind its own permission gate. With
-  command approval on, both engines also ask before writing a file outside
+  command approval on, the engine also asks before writing a file outside
   `~/workflows` and `~/data` (and inside `.git`), because the workspace is `$HOME`
   and `~/.bashrc` or `~/opencode.json` are a delayed shell command (#596: the
-  generated OpenCode edit rules in `knowledge/opencode.py`, the builtin
-  `write_file` in `routers/chat.py`). `@opencode-ai/sdk`
+  generated OpenCode edit rules in `knowledge/opencode.py`). `@opencode-ai/sdk`
   and the `opencode-ai` pin in the Dockerfile must match, which
   `tests/test_opencode_version_pin.py` enforces. Anything reading the knowledge tree goes through
-  `knowledge/layout.py`; nothing should resolve it independently — `chat.py`
+  `knowledge/layout.py`; nothing should resolve it independently — the old builtin `chat.py`
   keeping its own `KNOWLEDGE_ROOT` after the knowledge base moved is how the
   chat lost its context, personas and skills at once (#179).
   The Examples page (route/API `marketplace`) lists, live from GitHub, every

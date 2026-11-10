@@ -27,7 +27,7 @@ studio-api/
 ├── services/               # workflow scan/submit/monitor, condor pool, image
 │                           # builder, notifications, terminals,
 │                           # chat_permissions, procutil, run_flow, run_outputs,
-│                           # run_diagnosis, chat_turn, onboarding_metrics,
+│                           # run_diagnosis, onboarding_metrics,
 │                           # job_files, project_rename, telemetry,
 │                           # remote_exec + schedd (planning on the
 │                           # submit host, condor_reschedule), site_config,
@@ -147,7 +147,7 @@ that does not need them:
 | GET/PUT/DELETE | `/api/settings/workflow-secrets` | credentials a generator reads from its environment, overlaid on it when Studio generates (never on planning); encrypted at rest. GET says which are set and when, never the value |
 | GET/PUT | `/api/settings/registry` | container registry for Build Image; the password is write-only and encrypted at rest (S7) |
 | GET/PUT | `/api/settings/workflow-scan` | user-added run-scan roots/excludes, merged with the env defaults (#306) |
-| GET/PUT | `/api/settings/ui` | interface preferences (Simplified Run, disclosures, `welcome_dismissed`, `skip_welcome`, `tour_on_login`, `chat_engine`). The PUT replaces the whole object; the client merges before sending |
+| GET/PUT | `/api/settings/ui` | interface preferences (Simplified Run, disclosures, `welcome_dismissed`, `skip_welcome`, `tour_on_login`, `resource_source`). The PUT replaces the whole object; the client merges before sending |
 | GET/PUT | `/api/settings/compute-site` | the user's hosted site catalog and allocation in `~/.pegasusrc` (`pegasus.catalog.site.repo.file`, `env.RESOURCE_*`), with the catalogs published for the running Pegasus series, which `RESOURCE_*` fields each references, and the user's Slurm accounts where `sacctmgr` exists. PUT keeps every other property in the file (#468). `overrides` rows `{site, namespace, key, value}` become `pegasus.catalog.site.sites.<site>.profiles.<ns>.<key>` properties; they are stored per catalog (`saved_overrides`) so switching cluster swaps the set, and GET returns `effective_site`, the execution site's YAML with them merged in (#478). `default_label` names the default catalog: "Studio's own pool", or the administrator's (`STUDIO_SITE_CATALOG_FILE`/`_LABEL`, #496) |
 | GET/PUT | `/api/settings/telemetry` | whether this user's traces may carry chat text, plus a read-only `decided` (the choice was made either way: "off" is also the default, so the tour keeps asking until it is, #454). Its own row, not a `UIPreferences` field, because that PUT replaces the bag wholesale and its GET substitutes defaults for invalid values — both wrong for a consent flag. Saving propagates, since the engine reads plugin options once at startup |
 | GET/PUT | `/api/settings/profile` | the optional four-question profile (research field, role, Pegasus/HTCondor experience, coding comfort 1–5) for the feedback program, stored in the `user_profile` setting with a server-stamped `answered_at`. Its own row for the same reasons as telemetry consent; the free-text field is never logged |
@@ -182,10 +182,9 @@ that does not need them:
 
 | Method | Path | Notes |
 |--------|------|-------|
-| POST | `/api/chat/stream` | SSE chat (builtin agent loop); brokered so a turn outlives the request |
-| GET | `/api/chat/turn` `/turn/events` | reattach to an in-flight turn after a reload — snapshot, then SSE replay-then-live |
-| POST | `/api/chat/permission` | approve/deny a pending shell command (per-turn gate) |
-| GET/PUT | `/api/chat/command-approval` | approval posture |
+| * | `/api/opencode/*` | verbatim proxy (SSE included) to the loopback `opencode serve` that runs the chat |
+| GET | `/api/chat/scope-block` | Active Context block for a workflow or run |
+| GET/PUT | `/api/chat/command-approval` | approval posture, written into the OpenCode permission rules |
 | * | `/api/tools/{id}/install|uninstall|start|stop` | AI-tool lifecycle |
 | * | `/api/files…` | workspace CRUD (path-confined) |
 | POST/GET | `/api/files/upload`, `/api/files/upload-limit` | streamed multipart upload; ceiling + free space so the UI can refuse before sending |

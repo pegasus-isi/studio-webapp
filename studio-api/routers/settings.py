@@ -317,27 +317,9 @@ class UIPreferences(BaseModel):
     # turns this off. Repeat tours include the consent and profile questions
     # only while they are unanswered (#454).
     tour_on_login: bool = True
-    # Which agent engine the chat panel talks to (#367, defaulted in #403).
-    #
-    # "opencode" makes the panel a client of the supervised `opencode serve`
-    # process, which brings context compaction, cross-session memory,
-    # subagents, MCP and skills — none of which the builtin loop has. It was
-    # opt-in while it was being tried in a real pod; the telemetry from that
-    # trial (studio-system#9) shows real sessions, tool calls and the Pegasus
-    # MCP tools succeeding in a live pod, which was the gate for flipping.
-    #
-    # "builtin" stays selectable, so switching back is a toggle rather than a
-    # rollback, until the loop is deleted (the rest of #367 step 5).
-    #
-    # Changing this default does not by itself move an existing user: the PUT
-    # is wholesale, so anyone who has ever saved a preference has a
-    # `chat_engine` stored. `db._migrate` clears a stored "builtin" once, so
-    # the value left over from *this* default does not outlive it.
-    #
-    # A string rather than a boolean because the intended end state is one
-    # engine, not two, and a retired value should read as a stale name rather
-    # than an inverted flag.
-    chat_engine: Literal["builtin", "opencode"] = "opencode"
+    # (`chat_engine`, which picked between OpenCode and the builtin loop, was
+    # removed with the builtin loop in #664. A stored value is dropped on read
+    # by the known-fields filter in `get_ui_preferences`, and on the next PUT.)
     # Where extra computing power comes from, on the hosted deployment's
     # Resources page (#532): Studio's own pool, or a cluster the user already
     # has an account on (an HTCondor annex). Chooses what the page explains
@@ -362,8 +344,8 @@ async def get_ui_preferences() -> UIPreferences:
     try:
         return UIPreferences(**known)
     except ValidationError:
-        # A stored *value* that no longer validates — a retired `chat_engine`
-        # name, a string where a bool belongs — must not 500 this endpoint and
+        # A stored *value* that no longer validates — a retired enum name, a
+        # string where a bool belongs — must not 500 this endpoint and
         # take every other preference down with it. Keep the fields that stand
         # on their own and default the rest.
         safe: dict[str, object] = {}

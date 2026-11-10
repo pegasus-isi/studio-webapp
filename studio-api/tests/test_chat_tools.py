@@ -183,16 +183,3 @@ def test_tool_errors_are_strings_not_raises(monkeypatch):
     monkeypatch.setattr("services.chat_scope._resolve_run_dir", resolve)
     result = _exec("get_run_status", scope=RUN_SCOPE)
     assert result.startswith("Error executing get_run_status")
-
-
-def test_tools_are_registered_with_chat():
-    """The Pegasus tools reach both provider formats and stay off the shell
-    approval gate (they're read-only)."""
-    import routers.chat as chat
-
-    openai_names = {t["function"]["name"] for t in chat.TOOL_DEFINITIONS}
-    anthropic_names = {t["name"] for t in chat.TOOL_DEFINITIONS_ANTHROPIC}
-    for name in chat_tools.TOOL_NAMES:
-        assert name in openai_names
-        assert name in anthropic_names
-        assert name not in chat._APPROVAL_REQUIRED_TOOLS

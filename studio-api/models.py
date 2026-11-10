@@ -287,26 +287,6 @@ class SettingsResponse(BaseModel):
     installed_tools: list[str] = Field(default_factory=list)
 
 
-# --- Chat models ---
-
-
-class ChatMessage(BaseModel):
-    id: int | None = None
-    role: str
-    content: str
-    agent_id: str | None = None
-    # Either a list of tool names (assistant turns) or a legacy dict; keep it
-    # permissive so history restores don't fail validation.
-    tool_calls: Any | None = None
-    created_at: str | None = None
-    # User rating of an assistant reply: 1 = useful, -1 = not useful.
-    feedback: int | None = None
-
-
-class ChatHistoryResponse(BaseModel):
-    messages: list[ChatMessage]
-
-
 # --- Jupyter models ---
 
 

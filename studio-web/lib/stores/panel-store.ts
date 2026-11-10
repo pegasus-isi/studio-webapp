@@ -7,7 +7,7 @@
  * runs under a dynamic per-user prefix and avoids Next's build-time basePath),
  * which would otherwise reset the in-memory store and snap an open chat shut on
  * every tab switch. The transient `chatDraft` is intentionally not persisted —
- * it is a one-shot the ChatInput consumes on open.
+ * it is a one-shot the chat composer consumes on open.
  */
 
 import { create } from "zustand";
@@ -19,7 +19,7 @@ interface PanelStore {
   sidebarCollapsed: boolean;
   resourcesNavCollapsed: boolean;
   // One-shot text to drop into the chat input (e.g. a "/scaffold " prefix from
-  // a dashboard capability card). ChatInput consumes it then clears it.
+  // a dashboard capability card). The chat composer consumes it then clears it.
   chatDraft: string | null;
 
   toggleChat: () => void;

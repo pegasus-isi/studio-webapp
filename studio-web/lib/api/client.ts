@@ -689,10 +689,9 @@ export async function getRunFlow(projectId: string) {
 /**
  * The Active Context block for a workflow or run, as text.
  *
- * The builtin loop appends this to its own system prompt server-side. The
- * OpenCode engine's loop is not ours, so the panel fetches the block and sends
- * it as a synthetic prompt part (#367) — same content, same per-turn
- * resolution, rendered as a collapsed context chip rather than prose.
+ * The OpenCode engine's loop is not ours, so the panel fetches the block and
+ * sends it as a synthetic prompt part (#367), resolved per turn and rendered
+ * as a collapsed context chip rather than prose.
  */
 export async function getChatScopeBlock(type: string, id: string) {
   return request<{ block: string | null }>(
@@ -718,13 +717,6 @@ export interface UIPreferences {
   skip_welcome: boolean;
   /** Open the guided tour on every login (once per browser session). */
   tour_on_login: boolean;
-  /**
-   * Which agent engine the chat panel talks to (#367). "opencode" makes the
-   * panel a client of the `opencode serve` process in this pod, which brings
-   * compaction, memory, subagents, MCP and skills; "builtin" is the in-process
-   * loop in studio-api. Opt-in while the OpenCode engine is being tried.
-   */
-  chat_engine: "builtin" | "opencode";
   /** Where extra computing power comes from, on the hosted Resources page
    *  (#532): Studio's own pool, or an annex from a cluster the user has. */
   resource_source: "pool" | "annex";
@@ -1326,29 +1318,10 @@ export async function writeFile(path: string, content: string) {
 
 // --- Chat ---
 
-export interface ChatMessage {
-  id?: number | null;
-  role: string;
-  content: string;
-  agent_id?: string | null;
-  tool_calls?: unknown;
-  created_at?: string | null;
-  feedback?: number | null; // 1 = useful, -1 = not useful
-}
-
-export async function setChatFeedback(messageId: number, value: 1 | -1 | 0) {
-  return request<{ status: string; message_id: number; value: number }>(
-    "/chat/feedback",
-    { method: "POST", body: JSON.stringify({ message_id: messageId, value }) }
-  );
-}
-
 /**
  * Rate an OpenCode assistant reply: 1 = helpful, -1 = not helpful, 0 = clear.
  *
- * Separate from `setChatFeedback`, which rates the builtin engine's own
- * message rows; OpenCode replies have no row there and are identified by
- * OpenCode's session and message ids instead. Never sends message text.
+ * Identified by OpenCode's session and message ids. Never sends message text.
  */
 export async function setMessageFeedback(body: {
   session_id: string;
@@ -1364,36 +1337,11 @@ export async function setMessageFeedback(body: {
   });
 }
 
-export async function getChatHistory(limit = 100, conversationId?: string) {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (conversationId) params.set("conversation_id", conversationId);
-  return request<{ messages: ChatMessage[] }>(`/chat/history?${params}`);
-}
-
-export async function stopChat(requestId?: string) {
-  return request<{ status: string }>("/chat/stop", {
-    method: "POST",
-    body: JSON.stringify({ request_id: requestId }),
-  });
-}
-
-// --- Command approval (SEC-4 per-turn confirmation) ---
-
-// Resolve a pending shell-command approval prompt mid-stream.
-export async function sendChatPermission(
-  requestId: string,
-  callId: string,
-  decision: "approve" | "deny"
-) {
-  return request<{ status: string; call_id: string }>("/chat/permission", {
-    method: "POST",
-    body: JSON.stringify({
-      request_id: requestId,
-      call_id: callId,
-      decision,
-    }),
-  });
-}
+// --- Command approval (SEC-4) ---
+//
+// One setting, read by the generated OpenCode permission rules: with it on,
+// the engine asks before running a shell command or writing outside
+// ~/workflows and ~/data.
 
 export async function getCommandApproval() {
   return request<{ require_approval: boolean }>("/chat/command-approval");

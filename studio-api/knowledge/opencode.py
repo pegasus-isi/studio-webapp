@@ -403,11 +403,10 @@ class OpenCodeAdapter(KnowledgeAdapter):
                 "models": models_cfg,
             }
 
-        # Studio's "Confirm shell commands" setting, expressed as OpenCode's own
-        # permission rules. The builtin loop implemented this itself
-        # (services/chat_permissions.py, a per-turn future resolved by an
-        # endpoint); OpenCode has a permission system, so the setting becomes
-        # configuration rather than a second implementation.
+        # Studio's "Confirm shell commands" setting
+        # (services/chat_permissions.py), expressed as OpenCode's own
+        # permission rules: OpenCode has a permission system, so the setting
+        # is configuration rather than a second implementation.
         require_approval = llm_config.get("require_command_approval", True)
         permission: dict[str, Any] = {"bash": "ask" if require_approval else "allow"}
         if require_approval:
