@@ -16,6 +16,7 @@
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { AssistantMessage } from "@opencode-ai/sdk";
+import { formatTokens, outputLimitInfo } from "@/lib/opencode/output-limit";
 import {
   MessageLiveContext,
   PartView,
@@ -906,6 +907,46 @@ function assistantError(message: RenderedMessage) {
     : undefined;
 }
 
+function outputLimit(message: RenderedMessage) {
+  return outputLimitInfo(message.info as AssistantMessage, message.parts);
+}
+
+/**
+ * Says that a step stopped at the provider's output-token cap (#665).
+ *
+ * Not an error box: nothing failed, and `info.error` is unset. Amber because
+ * the user has to do something (retry, or pick a model with more room), which
+ * is the difference between this and a silent empty bubble.
+ */
+function OutputLimitNotice({ message }: { message: RenderedMessage }) {
+  const limit = outputLimit(message);
+  if (!limit) return null;
+  const spent = limit.reasoning + limit.output;
+  const budget = spent > 0 ? ` (${formatTokens(spent)} tokens)` : "";
+  return (
+    <div
+      role="status"
+      className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-300"
+    >
+      {limit.kind === "empty" ? (
+        <>
+          <span className="font-semibold">No reply:</span> the model used its
+          whole output budget{budget}
+          {limit.reasoning > 0 && limit.output === 0 ? " thinking" : ""} and was
+          cut off before answering. Send the message again, or pick another
+          model.
+        </>
+      ) : (
+        <>
+          <span className="font-semibold">Cut off:</span> this reply reached the
+          model&apos;s output limit{budget}, so it may be incomplete. Ask it to
+          continue.
+        </>
+      )}
+    </div>
+  );
+}
+
 /**
  * True when two turns hold the same messages and the same parts.
  *
@@ -944,7 +985,7 @@ const TurnBubble = memo(function TurnBubble({
 }) {
   const isUser = turn.role === "user";
   const shown = turn.messages.filter(
-    (m) => hasRenderableContent(m) || assistantError(m)
+    (m) => hasRenderableContent(m) || assistantError(m) || outputLimit(m)
   );
   if (shown.length === 0) return null;
 
@@ -1002,6 +1043,7 @@ const TurnBubble = memo(function TurnBubble({
             {/* A stop the user asked for is not a failure. OpenCode records it
                 as MessageAbortedError, so without this a red "Error:" box is
                 the reward for pressing the Stop button. */}
+            <OutputLimitNotice message={message} />
             {assistantError(message) && isAbortError(assistantError(message)) && (
               <div className="text-xs text-fgsubtle">Stopped</div>
             )}
