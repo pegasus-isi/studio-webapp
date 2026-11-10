@@ -462,9 +462,11 @@ def _jobstate_terminal_status(run_dir: str) -> str | None:
     "succeeded"/"failed" if the DAG finished, "running" if it started but has
     not finished, or None if jobstate.log is absent/inconclusive.
 
-    The last DAGMAN_FINISHED wins (a re-run appends a fresh one). monitord.done
-    only means monitord finished parsing — a failed run writes it too — so it is
-    NOT used as a success signal.
+    The last DAGMAN_FINISHED wins (a re-run appends a fresh one), and only
+    while no DAGMAN_STARTED follows it: a DAGMan the schedd restarted, or a
+    rescue re-run, writes STARTED, FINISHED 2, STARTED, and that run is going
+    again, not failed. monitord.done only means monitord finished parsing — a
+    failed run writes it too — so it is NOT used as a success signal.
     """
     jobstate = os.path.join(run_dir, "jobstate.log")
     if not os.path.isfile(jobstate):
@@ -483,6 +485,7 @@ def _jobstate_terminal_status(run_dir: str) -> str | None:
                             pass
                 elif "DAGMAN_STARTED" in line:
                     started = True
+                    finished_code = None
     except OSError:
         return None
     if finished_code is not None:
@@ -504,6 +507,64 @@ _DAGMAN_EXITING_RE = re.compile(r"EXITING WITH STATUS\s+(-?\d+)")
 _DAGMAN_STARTUP_MARKER = "STARTING UP"
 
 
+# The DAGMan job's own HTCondor event log (`log =` in *.dag.condor.sub). Event
+# headers look like "005 (152.000.000) 2026-11-10 17:10:02 Job terminated.".
+_DAGMAN_JOB_EVENT_RE = re.compile(r"^(\d{3}) \(\d+\.\d+\.\d+\) ", re.MULTILINE)
+_DAGMAN_JOB_RETURN_RE = re.compile(r"return value\s+(-?\d+)")
+
+
+def dagman_job_log_status(run_dir: str) -> str | None:
+    """Terminal status from the schedd's event log for the DAGMan job, or
+    None while that job is, as far as the log shows, still in the queue.
+
+    This covers the death dagman.out cannot report. A SIGKILLed DAGMan (OOM
+    killer, `kill -9`) writes no EXITING line, so dagman_exit_status() saw
+    nothing in any kill case of the 2026-11-10 trial. The schedd, though,
+    logs what became of the job in ``*.dag.dagman.log``, whoever killed it:
+
+      004 evicted, "terminated and was requeued"  the schedd restarts DAGMan
+                                                  (a 001 follows): alive
+      005 terminated                              DAGMan exited for good
+      009 aborted                                 condor_rm / pegasus-remove
+
+    Only the last event counts, so a later submission in the same directory
+    (rescue re-run: a fresh 000) reads as alive again. Same cost as the
+    dagman.out check, one tail read, no condor query; the schedd writes the
+    file into the submit directory, which is where a hosted pod reads it
+    too. What it cannot see is a schedd that died with the job still in its
+    queue: nothing is written then, and the run reads "running" until the
+    schedd comes back. A sub-workflow's DAGMan is a node of its parent and
+    has no such log; that is a None here, as before.
+    """
+    candidates = glob.glob(os.path.join(run_dir, "*.dag.dagman.log"))
+    if not candidates:
+        return None
+    try:
+        path = max(candidates, key=lambda p: os.path.getmtime(p))
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > _DAGMAN_OUT_TAIL_BYTES:
+                f.seek(size - _DAGMAN_OUT_TAIL_BYTES)
+            tail = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+    last = None
+    for last in _DAGMAN_JOB_EVENT_RE.finditer(tail):
+        pass
+    if last is None:
+        return None
+    code = last.group(1)
+    if code == "009":
+        return "failed"
+    if code == "005":
+        # "(1) Normal termination (return value 0)"; a signal has no return
+        # value and is a failure.
+        m = _DAGMAN_JOB_RETURN_RE.search(tail, last.end())
+        return "succeeded" if m and m.group(1) == "0" else "failed"
+    return None
+
+
 def dagman_exit_status(run_dir: str) -> str | None:
     """Terminal status from the DAGMan session log, or None while DAGMan is
     (as far as its log shows) still alive.
@@ -521,10 +582,14 @@ def dagman_exit_status(run_dir: str) -> str | None:
     condor-querying subprocess. The *last* EXITING line wins, and only when no
     STARTING UP banner follows it — a later banner means a rescue/re-run is
     live in the same file.
+
+    A DAGMan killed outright writes no EXITING line at all, so when
+    dagman.out has no verdict the schedd's record of the DAGMan job is
+    consulted (dagman_job_log_status).
     """
     candidates = glob.glob(os.path.join(run_dir, "*.dag.dagman.out"))
     if not candidates:
-        return None
+        return dagman_job_log_status(run_dir)
     # A rescue DAG can leave several dagman.out files; the newest is the one
     # describing the current/last session.
     path = max(candidates, key=lambda p: os.path.getmtime(p))
@@ -535,7 +600,7 @@ def dagman_exit_status(run_dir: str) -> str | None:
                 f.seek(size - _DAGMAN_OUT_TAIL_BYTES)
             tail = f.read().decode("utf-8", errors="replace")
     except OSError:
-        return None
+        return dagman_job_log_status(run_dir)
 
     exit_code: int | None = None
     for line in tail.splitlines():
@@ -550,7 +615,7 @@ def dagman_exit_status(run_dir: str) -> str | None:
             exit_code = None
 
     if exit_code is None:
-        return None
+        return dagman_job_log_status(run_dir)
     # A clean exit (0) normally also wrote workflow_end/DAGMAN_FINISHED, so in
     # practice this path converts zombies to "failed"; handle 0 anyway.
     return "succeeded" if exit_code == 0 else "failed"

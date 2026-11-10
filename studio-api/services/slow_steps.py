@@ -35,7 +35,7 @@ from typing import Any
 
 import structlog
 
-from services.stampede_reader import find_stampede_db
+from services.stampede_reader import open_stampede
 
 log = structlog.get_logger()
 
@@ -46,16 +46,21 @@ EARLIER_RUNS = 5
 _RUN = re.compile(r"^run\d+$")
 
 
-def _connect(run_dir: str) -> sqlite3.Connection | None:
-    db = find_stampede_db(run_dir)
-    if not db:
+def _connect(run_dir: str) -> tuple[sqlite3.Connection, str, tuple[Any, ...]] | None:
+    """(connection, SQL restricting `job j` to this run's workflow, its args).
+
+    A hierarchical run keeps the root and its sub-workflows in one DB, and
+    exec job ids repeat across them (each has a register_local_0_0), so
+    every query here is scoped to the run directory's own workflow. A DB
+    with no workflow table has nothing to scope by and is read whole.
+    """
+    opened = open_stampede(run_dir)
+    if opened is None:
         return None
-    try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
-        return con
-    except sqlite3.Error:
-        return None
+    con, wf_id = opened
+    if wf_id is None:
+        return con, "", ()
+    return con, " WHERE j.wf_id = ?", (wf_id,)
 
 
 def _key(row: sqlite3.Row) -> str:
@@ -65,15 +70,17 @@ def _key(row: sqlite3.Row) -> str:
 
 def _durations(run_dir: str) -> dict[str, list[float]]:
     """Successful durations per step kind in one run."""
-    con = _connect(run_dir)
-    if con is None:
+    opened = _connect(run_dir)
+    if opened is None:
         return {}
+    con, where, args = opened
     out: dict[str, list[float]] = {}
     try:
         for r in con.execute(
             "SELECT t.transformation, j.type_desc, ji.local_duration, ji.exitcode "
             "FROM job_instance ji JOIN job j ON ji.job_id = j.job_id "
-            "LEFT JOIN task t ON t.job_id = j.job_id"
+            "LEFT JOIN task t ON t.job_id = j.job_id" + where,
+            args,
         ):
             d = r["local_duration"]
             if r["exitcode"] == 0 and isinstance(d, (int, float)) and d > 0:
@@ -95,7 +102,9 @@ def _earlier_runs(run_dir: str) -> list[str]:
     return [os.path.join(parent, n) for n in reversed(siblings[-EARLIER_RUNS:])]
 
 
-def _kinds(con: sqlite3.Connection) -> dict[str, tuple[str, str]]:
+def _kinds(
+    con: sqlite3.Connection, where: str = "", args: tuple[Any, ...] = ()
+) -> dict[str, tuple[str, str]]:
     """exec_job_id -> (kind, latest state) for every job in the run."""
     out: dict[str, tuple[str, str]] = {}
     for r in con.execute(
@@ -106,13 +115,16 @@ def _kinds(con: sqlite3.Connection) -> dict[str, tuple[str, str]]:
         "LEFT JOIN jobstate js ON js.job_instance_id = ji.job_instance_id "
         "AND js.jobstate_submit_seq = (SELECT MAX(jobstate_submit_seq) FROM jobstate "
         "WHERE job_instance_id = ji.job_instance_id) "
-        "LEFT JOIN task t ON t.job_id = j.job_id"
+        "LEFT JOIN task t ON t.job_id = j.job_id" + where,
+        args,
     ):
         out[str(r["exec_job_id"])] = (_key(r), str(r["state"] or ""))
     return out
 
 
-def _running(con: sqlite3.Connection) -> list[dict[str, Any]]:
+def _running(
+    con: sqlite3.Connection, where: str = "", args: tuple[Any, ...] = ()
+) -> list[dict[str, Any]]:
     """Steps whose latest instance's latest state is EXECUTE, with its time."""
     rows = con.execute(
         "SELECT j.exec_job_id, j.type_desc, t.transformation, js.state, js.timestamp "
@@ -122,7 +134,8 @@ def _running(con: sqlite3.Connection) -> list[dict[str, Any]]:
         "JOIN jobstate js ON js.job_instance_id = ji.job_instance_id "
         "AND js.jobstate_submit_seq = (SELECT MAX(jobstate_submit_seq) FROM jobstate "
         "WHERE job_instance_id = ji.job_instance_id) "
-        "LEFT JOIN task t ON t.job_id = j.job_id"
+        "LEFT JOIN task t ON t.job_id = j.job_id" + where,
+        args,
     ).fetchall()
     return [
         {"job_id": r["exec_job_id"], "kind": _key(r), "since": float(r["timestamp"])}
@@ -164,13 +177,14 @@ def slow_steps(
     ``queue`` is condor_q's rows for this run (see queue_query); None means
     the scheduler could not be asked, and monitord's EXECUTE times are used.
     """
-    con = _connect(run_dir)
-    if con is None:
+    opened = _connect(run_dir)
+    if opened is None:
         return []
+    con, where, args = opened
     try:
-        kinds = _kinds(con)
+        kinds = _kinds(con, where, args)
         if queue is None:
-            running = _running(con)
+            running = _running(con, where, args)
         else:
             running = []
             for row in queue:
