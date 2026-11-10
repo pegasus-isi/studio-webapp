@@ -1,0 +1,252 @@
+{
+ "format": "pegasus-monitor-json",
+ "format_version": 1,
+ "monitor_version": "6.0.0.dev0",
+ "generated_at_epoch": 1794332289.8704867,
+ "generated_at": "2026-11-10T17:38:09.870Z",
+ "observed_at_epoch": 1794332289.8669975,
+ "modes": [
+  "diagnose"
+ ],
+ "origin": "live",
+ "target": "/pmtrial/work/success/runs/submit/pegasus/pm-success/run0001",
+ "exit_code": 0,
+ "error": null,
+ "workflow": {
+  "wf_uuid": "7dac0e05-daf5-4466-b55b-d6d3f6ca2ca3",
+  "root_wf_uuid": "7dac0e05-daf5-4466-b55b-d6d3f6ca2ca3",
+  "is_sub_workflow": false,
+  "submit_dir": "/pmtrial/work/success/runs/submit/pegasus/pm-success/run0001",
+  "label": "pm-success",
+  "owner": "submit",
+  "dag_name": "pm-success-0.dag",
+  "planner_version": "6.0.0.dev0",
+  "sub_workflows": {
+   "count": 0,
+   "aggregated": false,
+   "exec_job_ids": [],
+   "exec_job_ids_omitted": 0
+  }
+ },
+ "sources": [
+  {
+   "source": "stampede",
+   "state": "healthy",
+   "checked_at_epoch": 1794332289.8081777,
+   "last_success_epoch": 1794332289.8081777,
+   "last_good_age": {
+    "seconds": 0.0,
+    "maximum_seconds": 2592000.0,
+    "capped": false
+   },
+   "stale_after_seconds": 10.0,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "live_tail",
+   "state": "healthy",
+   "checked_at_epoch": 1794332289.8149047,
+   "last_success_epoch": 1794332289.8149047,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_queue",
+   "state": "healthy",
+   "checked_at_epoch": 1794332289.815531,
+   "last_success_epoch": 1794332289.815531,
+   "last_good_age": null,
+   "stale_after_seconds": 10.0,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_history",
+   "state": "healthy",
+   "checked_at_epoch": 1794332289.8368406,
+   "last_success_epoch": 1794332289.8368406,
+   "last_good_age": null,
+   "stale_after_seconds": 60.0,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_pool",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_priority",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_negotiator",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  }
+ ],
+ "summary": {
+  "workflow_state": "WORKFLOW_TERMINATED",
+  "workflow_status": 0,
+  "restart_count": 0,
+  "started_at": "1794329328",
+  "ended_at": "1794329480",
+  "provenance": "db_confirmed",
+  "authoritative_complete": true,
+  "removal_reason": null,
+  "job_counts": {
+   "total": 17,
+   "compute": 4,
+   "unsubmitted": 0,
+   "pre": 0,
+   "queued": 0,
+   "running": 0,
+   "held": 0,
+   "post": 0,
+   "succeeded": 17,
+   "failed": 0,
+   "other": 0
+  },
+  "pending_tail_events": 0
+ },
+ "snapshot": null,
+ "stats": {
+  "total_jobs": 17,
+  "compute_jobs": 4,
+  "infra_jobs": 13,
+  "succeeded": 17,
+  "failed": 0,
+  "held": 0,
+  "unsubmitted": 0,
+  "queued": 0,
+  "running": 0,
+  "wall_time": 152.0,
+  "total_compute_time": 12.032,
+  "parallelism": 0.07915789473684211,
+  "dur_min": 3.006,
+  "dur_max": 3.014,
+  "dur_mean": 3.008,
+  "dur_median": 3.006,
+  "longest_job_name": "proc",
+  "shortest_job_name": "proc",
+  "peak_maxrss_kb": 3072,
+  "peak_maxrss_job": "proc",
+  "mean_maxrss_kb": 3037.0,
+  "cpu_eff_min": 0.0,
+  "cpu_eff_max": 0.3333333333333333,
+  "cpu_eff_mean": 0.07407407407407407,
+  "mem_eff_min": 0.0,
+  "mem_eff_max": 57.220458984375,
+  "mem_eff_mean": 7.899172278011546,
+  "wait_min": 2.0,
+  "wait_max": 8.0,
+  "wait_mean": 3.9411764705882355,
+  "cpu_seconds": 2.0,
+  "transfer_bytes": 44513098,
+  "hosts": [
+   "pmtrial (4)"
+  ],
+  "authoritative_final": true,
+  "workflow_provenance": "db_confirmed",
+  "db_confirmed_jobs": 17,
+  "tail_overlay_jobs": 0,
+  "tail_pending_jobs": 0,
+  "provisional_jobs": 0,
+  "pending_jobs": 0,
+  "scheduler_coverage": [
+   {
+    "kind": "history",
+    "health": "healthy",
+    "evidence_count": 18,
+    "matched_current_jobs": 17,
+    "eligible_current_jobs": 17,
+    "complete": true
+   },
+   {
+    "kind": "pool",
+    "health": "unavailable",
+    "evidence_count": 0,
+    "matched_current_jobs": 0,
+    "eligible_current_jobs": 0,
+    "complete": false
+   }
+  ]
+ },
+ "diagnostics": {
+  "available": true,
+  "reason": null,
+  "origin": "analysis",
+  "findings": [],
+  "errors": []
+ },
+ "stall": {
+  "assessed": true,
+  "stalled": false,
+  "reason": "workflow_complete",
+  "kind": null,
+  "summary": "",
+  "method": "snapshot_timestamps",
+  "confirmed": false,
+  "observed_at_epoch": 1794332289.8669975,
+  "last_progress_epoch": 1794329480.0,
+  "seconds_since_progress": 2809.8669974803925,
+  "job_counts": {
+   "total": 17,
+   "succeeded": 17,
+   "failed": 0,
+   "held": 0,
+   "running": 0,
+   "queued": 0,
+   "unsubmitted": 0
+  },
+  "thresholds": {
+   "no_progress_seconds": 60.0,
+   "running_plateau_seconds": 120.0,
+   "idle_threshold_seconds": 120.0,
+   "startup_grace_seconds": 60.0
+  }
+ },
+ "why_idle": null,
+ "stream": null,
+ "analysis_errors": []
+}

@@ -1547,6 +1547,23 @@ async def diagnose_run(run_id: str) -> dict:
     return {"run_id": run_id, "cards": cards, "total": len(cards)}
 
 
+@router.get("/{run_id}/waiting")
+async def explain_waiting(run_id: str) -> dict:
+    """Why this run's jobs are held or idle, from pegasus-monitor (#662).
+
+    Unlike `/diagnosis` this starts a process (`pegasus-monitor --json`, which
+    queries HTCondor), so it is for a user asking, not for polling: nothing
+    should call it on a timer. It always answers 200; `state` says whether the
+    tool is present (`unavailable`), the run is too young to have recorded
+    anything (`starting`), or the answer is in `held` and `idle` (`ok`).
+    """
+    from services import native_monitor
+
+    run_dir = await _resolve_run_dir(run_id)
+    result = await native_monitor.explain(run_dir)
+    return {"run_id": run_id, **result}
+
+
 @router.post("/{run_id}/cancel")
 async def cancel_workflow_run(run_id: str) -> dict:
     """Take a run out of the Condor queue, keeping its directory on disk.

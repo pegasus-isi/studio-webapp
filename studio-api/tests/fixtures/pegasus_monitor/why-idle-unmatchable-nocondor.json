@@ -1,0 +1,333 @@
+{
+ "format": "pegasus-monitor-json",
+ "format_version": 1,
+ "monitor_version": "6.0.0.dev0",
+ "generated_at_epoch": 1794333101.840784,
+ "generated_at": "2026-11-10T17:51:41.840Z",
+ "observed_at_epoch": 1794333101.8397233,
+ "modes": [
+  "why_idle"
+ ],
+ "origin": "live",
+ "target": "/pmtrial/work/held/runs/submit/pegasus/pm-held/run0002",
+ "exit_code": 0,
+ "error": null,
+ "workflow": {
+  "wf_uuid": "25b6e5f6-c4a9-49f5-b581-a708d695d04b",
+  "root_wf_uuid": "25b6e5f6-c4a9-49f5-b581-a708d695d04b",
+  "is_sub_workflow": false,
+  "submit_dir": "/pmtrial/work/held/runs/submit/pegasus/pm-held/run0002",
+  "label": "pm-held",
+  "owner": "submit",
+  "dag_name": "pm-held-0.dag",
+  "planner_version": "6.0.0.dev0",
+  "sub_workflows": {
+   "count": 0,
+   "aggregated": false,
+   "exec_job_ids": [],
+   "exec_job_ids_omitted": 0
+  }
+ },
+ "sources": [
+  {
+   "source": "stampede",
+   "state": "healthy",
+   "checked_at_epoch": 1794333101.834578,
+   "last_success_epoch": 1794333101.834578,
+   "last_good_age": {
+    "seconds": 0.0,
+    "maximum_seconds": 2592000.0,
+    "capped": false
+   },
+   "stale_after_seconds": 10.0,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "live_tail",
+   "state": "healthy",
+   "checked_at_epoch": 1794333101.8395963,
+   "last_success_epoch": 1794333101.8395963,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_queue",
+   "state": "disabled",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": "disabled",
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_history",
+   "state": "disabled",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": "disabled",
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_pool",
+   "state": "disabled",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": "disabled",
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_priority",
+   "state": "disabled",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": "disabled",
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_negotiator",
+   "state": "disabled",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": "disabled",
+   "detail": null,
+   "queried": false
+  }
+ ],
+ "summary": {
+  "workflow_state": "WORKFLOW_STARTED",
+  "workflow_status": null,
+  "restart_count": 0,
+  "started_at": "1794332831",
+  "ended_at": null,
+  "provenance": "db_confirmed",
+  "authoritative_complete": false,
+  "removal_reason": null,
+  "job_counts": {
+   "total": 10,
+   "compute": 3,
+   "unsubmitted": 5,
+   "pre": 0,
+   "queued": 1,
+   "running": 1,
+   "held": 0,
+   "post": 0,
+   "succeeded": 3,
+   "failed": 0,
+   "other": 0
+  },
+  "pending_tail_events": 0
+ },
+ "snapshot": null,
+ "stats": {
+  "total_jobs": 10,
+  "compute_jobs": 3,
+  "infra_jobs": 7,
+  "succeeded": 3,
+  "failed": 0,
+  "held": 0,
+  "unsubmitted": 5,
+  "queued": 1,
+  "running": 1,
+  "wall_time": 270.83972334861755,
+  "total_compute_time": 3.014,
+  "parallelism": 0.011128352823342905,
+  "dur_min": 3.014,
+  "dur_max": 3.014,
+  "dur_mean": 3.014,
+  "dur_median": 3.014,
+  "longest_job_name": "proc",
+  "shortest_job_name": "proc",
+  "peak_maxrss_kb": 3268,
+  "peak_maxrss_job": "proc",
+  "mean_maxrss_kb": 3268.0,
+  "authoritative_final": false,
+  "workflow_provenance": "db_confirmed",
+  "db_confirmed_jobs": 10,
+  "tail_overlay_jobs": 0,
+  "tail_pending_jobs": 0,
+  "provisional_jobs": 0,
+  "pending_jobs": 0,
+  "scheduler_coverage": [
+   {
+    "kind": "history",
+    "health": "unavailable",
+    "evidence_count": 0,
+    "matched_current_jobs": 0,
+    "eligible_current_jobs": 5,
+    "complete": false
+   },
+   {
+    "kind": "pool",
+    "health": "unavailable",
+    "evidence_count": 0,
+    "matched_current_jobs": 0,
+    "eligible_current_jobs": 0,
+    "complete": false
+   }
+  ]
+ },
+ "diagnostics": null,
+ "stall": {
+  "assessed": true,
+  "stalled": true,
+  "reason": "running_plateau",
+  "kind": "running_plateau",
+  "summary": "1 running job(s) with no semantic progress for 225s",
+  "method": "snapshot_timestamps",
+  "confirmed": false,
+  "observed_at_epoch": 1794333101.8397233,
+  "last_progress_epoch": 1794332877.0,
+  "seconds_since_progress": 224.83972334861755,
+  "job_counts": {
+   "total": 10,
+   "succeeded": 3,
+   "failed": 0,
+   "held": 0,
+   "running": 1,
+   "queued": 1,
+   "unsubmitted": 5
+  },
+  "thresholds": {
+   "no_progress_seconds": 60.0,
+   "running_plateau_seconds": 120.0,
+   "idle_threshold_seconds": 120.0,
+   "startup_grace_seconds": 60.0
+  }
+ },
+ "why_idle": {
+  "available": true,
+  "reason": null,
+  "workflow_owner": "submit",
+  "queued_jobs": 1,
+  "unsubmitted_jobs": 5,
+  "idle_jobs": [
+   {
+    "exec_job_id": "proc_idleme",
+    "state": "queued",
+    "type_desc": "compute",
+    "provenance": "db_confirmed"
+   },
+   {
+    "exec_job_id": "register_local_0_0",
+    "state": "unsubmitted",
+    "type_desc": "registration",
+    "provenance": "db_confirmed"
+   },
+   {
+    "exec_job_id": "clean_up_local_level_3_0",
+    "state": "unsubmitted",
+    "type_desc": "cleanup",
+    "provenance": "db_confirmed"
+   },
+   {
+    "exec_job_id": "stage_out_local_local_0_0",
+    "state": "unsubmitted",
+    "type_desc": "stage-out-tx",
+    "provenance": "db_confirmed"
+   },
+   {
+    "exec_job_id": "clean_up_local_level_4_0",
+    "state": "unsubmitted",
+    "type_desc": "cleanup",
+    "provenance": "db_confirmed"
+   },
+   {
+    "exec_job_id": "cleanup_pm-held_0_local",
+    "state": "unsubmitted",
+    "type_desc": "cleanup",
+    "provenance": "db_confirmed"
+   }
+  ],
+  "pool": {
+   "machines": null,
+   "total_slots": null,
+   "idle_slots": null,
+   "total_cpus": null,
+   "idle_cpus": null,
+   "total_memory_mb": null,
+   "idle_memory_mb": null,
+   "total_gpus": null,
+   "idle_gpus": null
+  },
+  "resource_fit": {
+   "mismatches": [],
+   "mismatches_omitted": 0
+  },
+  "priority": null,
+  "negotiator": {
+   "last_cycle_seconds": null,
+   "last_cycle_matches": null
+  },
+  "findings": [
+   "5 job(s) are unsubmitted and waiting on DAG dependencies.",
+   "1 job(s) are queued for HTCondor matching.",
+   "Queue observation is disabled for this monitor run.",
+   "Pool observation is disabled for this monitor run.",
+   "User-priority observation is disabled for this run."
+  ],
+  "suggestions": [
+   "If the jobs remain idle after another negotiation cycle, inspect requirements and fair-share priority."
+  ],
+  "sources": [
+   {
+    "kind": "queue",
+    "disposition": "disabled",
+    "evidence_count": 0,
+    "error_code": "disabled"
+   },
+   {
+    "kind": "pool",
+    "disposition": "disabled",
+    "evidence_count": 0,
+    "error_code": "disabled"
+   },
+   {
+    "kind": "priority",
+    "disposition": "disabled",
+    "evidence_count": 0,
+    "error_code": "disabled"
+   },
+   {
+    "kind": "negotiator",
+    "disposition": "disabled",
+    "evidence_count": 0,
+    "error_code": "disabled"
+   }
+  ],
+  "idle_jobs_omitted": 0
+ },
+ "stream": null,
+ "analysis_errors": []
+}

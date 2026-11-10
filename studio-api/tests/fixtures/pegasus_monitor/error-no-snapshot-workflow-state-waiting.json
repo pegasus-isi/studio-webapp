@@ -1,0 +1,158 @@
+{
+ "format": "pegasus-monitor-json",
+ "format_version": 1,
+ "monitor_version": "6.0.0.dev0",
+ "generated_at_epoch": 1794332351.5539494,
+ "generated_at": "2026-11-10T17:39:11.553Z",
+ "observed_at_epoch": 1794332351.5535169,
+ "modes": [
+  "once"
+ ],
+ "origin": "live",
+ "target": "/pmtrial/work/long/runs/submit/pegasus/pm-long/run0001",
+ "exit_code": 1,
+ "error": {
+  "code": "no_authoritative_snapshot",
+  "message": "no authoritative Stampede snapshot is available"
+ },
+ "workflow": {
+  "wf_uuid": "89b80615-0cd0-4c72-82c2-71d7f0ce2f07",
+  "root_wf_uuid": "89b80615-0cd0-4c72-82c2-71d7f0ce2f07",
+  "is_sub_workflow": false,
+  "submit_dir": "/pmtrial/work/long/runs/submit/pegasus/pm-long/run0001",
+  "label": "pm-long",
+  "owner": "submit",
+  "dag_name": "pm-long-0.dag",
+  "planner_version": "6.0.0.dev0",
+  "sub_workflows": null
+ },
+ "sources": [
+  {
+   "source": "stampede",
+   "state": "waiting",
+   "checked_at_epoch": 1794332351.5298595,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": 10.0,
+   "consecutive_failures": 1,
+   "pending_count": 0,
+   "error_code": "workflow_state_waiting",
+   "detail": "selected workflow has no authoritative workflowstate row yet",
+   "queried": true
+  },
+  {
+   "source": "live_tail",
+   "state": "healthy",
+   "checked_at_epoch": 1794332351.53295,
+   "last_success_epoch": 1794332351.53295,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_queue",
+   "state": "healthy",
+   "checked_at_epoch": 1794332351.5331266,
+   "last_success_epoch": 1794332351.5331266,
+   "last_good_age": null,
+   "stale_after_seconds": 10.0,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": true
+  },
+  {
+   "source": "condor_history",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_pool",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_priority",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  },
+  {
+   "source": "condor_negotiator",
+   "state": "not_queried",
+   "checked_at_epoch": null,
+   "last_success_epoch": null,
+   "last_good_age": null,
+   "stale_after_seconds": null,
+   "consecutive_failures": 0,
+   "pending_count": 0,
+   "error_code": null,
+   "detail": null,
+   "queried": false
+  }
+ ],
+ "summary": null,
+ "snapshot": null,
+ "stats": null,
+ "diagnostics": null,
+ "stall": {
+  "assessed": false,
+  "stalled": null,
+  "reason": "authoritative_snapshot_unavailable",
+  "kind": null,
+  "summary": "",
+  "method": "snapshot_timestamps",
+  "confirmed": false,
+  "observed_at_epoch": 1794332351.5535169,
+  "last_progress_epoch": null,
+  "seconds_since_progress": null,
+  "job_counts": {
+   "total": 0,
+   "succeeded": 0,
+   "failed": 0,
+   "held": 0,
+   "running": 0,
+   "queued": 0,
+   "unsubmitted": 0
+  },
+  "thresholds": {
+   "no_progress_seconds": 60.0,
+   "running_plateau_seconds": 120.0,
+   "idle_threshold_seconds": 120.0,
+   "startup_grace_seconds": 60.0
+  }
+ },
+ "why_idle": null,
+ "stream": null,
+ "analysis_errors": [
+  "authoritative Stampede snapshot unavailable"
+ ]
+}
