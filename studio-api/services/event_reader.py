@@ -1,11 +1,20 @@
-"""Reader for workflow-monitor JSONL event logs.
+"""Reader for a run's event list: a legacy JSONL log, or the stampede DB.
 
-The studio drives all workflow status / job / stats displays from the
-``workflow-events.jsonl`` file produced by ``workflow-monitor --serve`` instead
-of parsing the Pegasus stampede DB directly. This keeps a single, maintained
-parser (the workflow-monitor tool) as the source of truth.
+Every status / job / count display is derived from one list of events. In a
+Studio pod that list comes from the run's stampede DB
+(:mod:`services.stampede_reader`): nothing Studio ships writes a JSONL log.
+The JSONL path below is kept for run directories that already hold one, from
+the standalone ``workflow-monitor --serve`` or the pegasus-monitord
+``wfevents`` plugin, both of which predate the monitor that Pegasus 6.0 ships.
 
-Event schema (one JSON object per line), produced by
+That native ``pegasus-monitor`` writes ``workflow-events.jsonl`` too, by
+default and into the submit directory, in a different format: its records are
+keyed by ``record_type`` and never carry ``event_type``. Read as the schema
+below, such a file is a non-empty list with nothing recognisable in it, so the
+run reads "planning" with zero jobs and the stampede DB is never consulted.
+``find_events_file`` therefore skips it (#656).
+
+Legacy event schema (one JSON object per line), as written by
 workflow_monitor.event_log.EventLogger:
 
   workflow_start  {dax_label, user, planner_version, submit_dir, wf_start}
@@ -33,18 +42,50 @@ import structlog
 
 log = structlog.get_logger()
 
-# Event-log filenames, in priority order. Both share the same schema:
-#   workflow-events.jsonl — from `workflow-monitor --serve`
-#   wfevents.jsonl        — from the pegasus-monitord `wfevents` plugin (emitted
-#                           automatically for every run; see studio-system VM)
+# Legacy event-log filenames, in priority order. Both share the same schema:
+#   workflow-events.jsonl — from the standalone `workflow-monitor --serve`
+#   wfevents.jsonl        — from the pegasus-monitord `wfevents` plugin
+# Neither is installed or enabled by anything in this repo; a run only has one
+# if something outside Studio wrote it.
 EVENTS_FILENAMES = ("workflow-events.jsonl", "wfevents.jsonl")
 EVENTS_FILENAME = EVENTS_FILENAMES[0]
 
 
+def is_native_monitor_log(path: str) -> bool:
+    """Whether ``path`` is a native ``pegasus-monitor`` log, not a legacy one.
+
+    Decided from the first record alone, which in the native format is always
+    its ``header``: a JSON object with ``record_type`` and no ``event_type``.
+    Anything else (an unreadable file, a torn or non-JSON first line, a legacy
+    record) is left to the tolerant legacy parser, as before.
+    """
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    return False
+                return (
+                    isinstance(record, dict)
+                    and "record_type" in record
+                    and "event_type" not in record
+                )
+    except (OSError, UnicodeDecodeError):
+        return False
+    return False
+
+
 def find_events_file(run_dir: str) -> str | None:
-    """Locate a workflow event log for a run dir (or its submit_dir).
+    """Locate a legacy workflow event log for a run dir (or its submit_dir).
 
     Prefers workflow-events.jsonl, then the wfevents plugin's wfevents.jsonl.
+    A native pegasus-monitor log is skipped per candidate rather than once for
+    the run, so it neither hides a valid wfevents.jsonl beside it nor stops the
+    caller falling back to the stampede DB (#656).
     """
     candidate_dirs = [run_dir]
     braindump = os.path.join(run_dir, "braindump.yml")
@@ -63,7 +104,7 @@ def find_events_file(run_dir: str) -> str | None:
     for d in candidate_dirs:
         for fname in EVENTS_FILENAMES:
             path = os.path.join(d, fname)
-            if os.path.isfile(path):
+            if os.path.isfile(path) and not is_native_monitor_log(path):
                 return path
     return None
 
@@ -71,10 +112,9 @@ def find_events_file(run_dir: str) -> str | None:
 def read_events(run_dir: str) -> list[dict[str, Any]]:
     """Read and parse all events for a run.
 
-    Prefers the JSONL log (workflow-monitor / wfevents plugin). When no JSONL
-    exists, falls back to synthesizing events from the Pegasus stampede DB,
-    which monitord writes for every run — so jobs/status/DAG still populate
-    even if the monitor never ran.
+    Uses a legacy JSONL log (workflow-monitor / wfevents plugin) when the run
+    has one. Otherwise, which is every run a Studio pod produces, synthesizes
+    the events from the Pegasus stampede DB that monitord writes for every run.
     """
     path = find_events_file(run_dir)
     if not path:

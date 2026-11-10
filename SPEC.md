@@ -325,15 +325,20 @@ The one-button Run (`services/run_flow.py`) asks **Choose where to run the workf
   bypassed input staging, a shared scratch dir, container mounts from the
   home), with a message naming both sides (`services/shared_fs.py`, #520).
 
-Run monitoring is JSONL-driven:
+Run monitoring reads the stampede DB:
 
-- Studio reads `workflow-events.jsonl` (from `workflow-monitor --serve`) or
-  `wfevents.jsonl` (pegasus-monitord's `wfevents` plugin) for run status, job
-  tables, progress, and SSE updates. It does not start a monitor itself.
-- When neither file exists, it reads the run's stampede DB directly
-  (`services/stampede_reader.py`). That DB also says where each step ran (the
-  kickstart host), shown as "Ran on" and grouped as Studio pool, access point
-  or a cluster's domain.
+- Studio reads the run's stampede DB (`services/stampede_reader.py`), which
+  pegasus-monitord writes for every run, for run status, job tables, progress,
+  and SSE updates. It does not start a monitor itself. That DB also says where
+  each step ran (the kickstart host), shown as "Ran on" and grouped as Studio
+  pool, access point or a cluster's domain.
+- A legacy JSONL event log already in the run directory
+  (`workflow-events.jsonl` from the standalone `workflow-monitor --serve`, or
+  `wfevents.jsonl` from the monitord `wfevents` plugin) is read in preference,
+  but nothing in the image produces one. Pegasus 6.0's native
+  `pegasus-monitor` writes a `workflow-events.jsonl` in a different format;
+  the reader recognises and skips it, or the run would read "planning" with
+  zero jobs (`services/event_reader.py`, #656).
 - A step running much longer than the same step usually takes, in this run or
   earlier runs of the workflow, is flagged (`services/slow_steps.py`, #586).
 - Diagnostics use Pegasus CLI tools such as `pegasus-analyzer`.

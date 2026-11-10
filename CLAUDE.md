@@ -105,10 +105,15 @@ writable by the injected uid, so **never bake a rendered config into the image**
   discovered by globbing `**/braindump.yml` under `$HOME` (`STUDIO_SCAN_DIR`),
   plus user-added scan roots/excludes from Settings → Pegasus Options
   (`/api/settings/workflow-scan`, merged in `workflow_scanner`'s async
-  wrappers); monitoring reads `workflow-events.jsonl` (from `workflow-monitor
-  --serve`) or `wfevents.jsonl` (pegasus-monitord's `wfevents` plugin), and falls
-  back to the run's stampede DB when neither exists (`services/event_reader.py`,
-  `services/stampede_reader.py`). Studio does not start a monitor itself.
+  wrappers); monitoring reads the run's stampede DB
+  (`services/stampede_reader.py`), which is the only source a Studio pod
+  produces: nothing here installs or enables a JSONL emitter. A legacy
+  `workflow-events.jsonl` (standalone `workflow-monitor --serve`) or
+  `wfevents.jsonl` (monitord `wfevents` plugin) already in a run directory is
+  still preferred (`services/event_reader.py`), but a `workflow-events.jsonl`
+  from Pegasus 6.0's native `pegasus-monitor` is a different format and is
+  skipped, or the run would read "planning" with zero jobs (#656). Studio does
+  not start a monitor itself.
 - **studio-web/** — Next.js 15 App Router, React 19, TS strict, Tailwind 3, Zustand,
   TanStack Query, xterm.js, `@xyflow/react` DAG viewer. Routes under `app/(studio)/`;
   `app/chat/page.tsx` is a standalone chrome-less page iframed into JupyterLab by the

@@ -1,10 +1,11 @@
-"""Fallback reader for the Pegasus stampede SQLite DB.
+"""Reader for the Pegasus stampede SQLite DB.
 
-The studio normally drives its job/status/DAG views from a ``workflow-events.jsonl``
-log (see :mod:`services.event_reader`). That log only exists if ``workflow-monitor
---serve`` or the monitord ``wfevents`` plugin ran. When neither did, the
-authoritative data is still present in ``<submit_dir>/<label>-N.stampede.db`` —
-``pegasus-monitord`` writes it for every run.
+This is where a Studio pod's job/status/DAG views actually come from:
+``pegasus-monitord`` writes ``<submit_dir>/<label>-N.stampede.db`` for every
+run. :mod:`services.event_reader` prefers a legacy ``workflow-events.jsonl`` /
+``wfevents.jsonl`` when a run directory holds one, but nothing Studio ships
+produces either, and a native ``pegasus-monitor`` log of the same name is
+skipped (#656).
 
 This module reads that DB (read-only) and synthesizes the **same event list**
 ``event_reader`` produces, so all downstream consumers (jobs table, DAG colors,

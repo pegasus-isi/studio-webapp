@@ -340,13 +340,15 @@ RUN curl -fsSL "https://github.com/apptainer/apptainer/releases/download/v${APPT
 # container, so it failed every build. The setting now belongs in the definition
 # file's %post, where /etc/apt/apt.conf.d exists.
 
-# ---- workflow event log ----
-# The studio drives workflow status/job/stats views from the JSONL event log
-# (workflow-events.jsonl). That log is now produced by the integrated
-# pegasus-monitord build (workflow-monitor is bundled with monitord), so the
-# standalone workflow-monitor package is no longer installed explicitly here.
-# As a safety net, the studio also reads the stampede DB directly when no JSONL
-# is present (see services/stampede_reader.py).
+# ---- workflow monitoring ----
+# No monitor is installed or started here. The status/job/count views read the
+# run's stampede DB, which pegasus-monitord writes for every run (see
+# services/stampede_reader.py). A run directory that already holds a legacy
+# workflow-events.jsonl / wfevents.jsonl is still read from that, but nothing
+# in this image produces one: the standalone workflow-monitor is not installed
+# and no monitord plugin is enabled. Pegasus 6.0's native pegasus-monitor
+# writes a workflow-events.jsonl in a different format, which the reader skips
+# (services/event_reader.py, #656).
 
 # ---- Node.js runtime (for Next.js standalone server) ----
 # Keyring'd apt repo instead of `curl | bash` of NodeSource's setup script as
