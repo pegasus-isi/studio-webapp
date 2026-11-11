@@ -51,6 +51,22 @@ WORKSPACE="${STUDIO_WORKSPACE_DIR:-${ROOT}}"
 mkdir -p "${WORKSPACE}"
 cd "${WORKSPACE}"
 
+# OpenCode's bash tool tells the model to use os.tmpdir()/opencode for
+# "temporary work outside the workspace", and says that directory already
+# exists and needs no approval. With the default TMPDIR that is /tmp/opencode,
+# a single shared path: an image layer that ran opencode as root left it
+# root-owned, and on a shared host (Open OnDemand, where Apptainer binds the
+# host /tmp) whichever user creates it first owns it. Either way the model's
+# `mkdir -p` fails, a `cd` into it fails too, and the script carries on in the
+# session directory, which is $HOME, so its output files end up there. Point
+# TMPDIR at a directory this user owns inside the private, uid-suffixed
+# runtime dir the entrypoint already checked. Commands the model runs inherit
+# it too, so `mktemp` stays private as well.
+RUNTIME="${STUDIO_RUNTIME_DIR:-/tmp/studio-runtime-$(id -u)}"
+export TMPDIR="${RUNTIME}/tmp"
+mkdir -p "${TMPDIR}"
+chmod 700 "${TMPDIR}"
+
 # The npm prefix that `npm install -g` writes to for this user comes first, so
 # a user-upgraded opencode wins over the image-baked one — same precedence the
 # interactive shells get from /etc/profile.d/10-studio-tools.sh.
