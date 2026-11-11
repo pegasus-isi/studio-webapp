@@ -609,6 +609,44 @@ if ! grep -qs '^pegasus\.catalog\.site\.repo\.file' "${PEGASUSRC}"; then
     chmod 600 "${PEGASUSRC}" 2>/dev/null || true
 fi
 
+# ---- Pegasus system properties (#668) ----
+# The image's pegasus.properties (monitord JSON encoding, the AMQP workflow
+# catalog that reports runs to msgs.pegasus.isi.edu) is installed at
+# /etc/pegasus, as on ACCESS Pegasus, but nothing plans with it there. These
+# packages put Pegasus in a venv, so its sysconfdir is
+# venv/.../Pegasus/data/etc, not /etc/pegasus. Planning also usually runs on
+# the submit host, which has none of this image's files. ~/.pegasusrc is in
+# the shared home and is read by every plan, wherever it runs, so each
+# property is copied there. A key the user has already set in ~/.pegasusrc is
+# left alone, so it can be overridden, or turned off with an empty value. Runs
+# on every start, so an image update reaches existing homes.
+PEGASUS_SYSTEM_PROPS="${PEGASUS_SYSTEM_PROPS:-/etc/pegasus/pegasus.properties}"
+if [ -r "${PEGASUS_SYSTEM_PROPS}" ]; then
+    _added=0
+    while IFS= read -r _line || [ -n "${_line}" ]; do
+        case "${_line}" in ''|'#'*|'!'*) continue ;; esac
+        _key="${_line%%=*}"
+        _key="${_key%"${_key##*[![:space:]]}"}"
+        _key="${_key#"${_key%%[![:space:]]*}"}"
+        [ -n "${_key}" ] && [ "${_key}" != "${_line}" ] || continue
+        # Fixed-string match on "key" then optional spaces and "=": property
+        # names are full of dots, which a regex would read as wildcards.
+        if ! awk -v k="${_key}" '
+                { sub(/^[ \t]+/, "") }
+                index($0, k) == 1 { r = substr($0, length(k) + 1); sub(/^[ \t]+/, "", r)
+                                    if (r ~ /^[=:]/) { found = 1; exit } }
+                END { exit !found }' "${PEGASUSRC}" 2>/dev/null; then
+            echo "${_line}" >> "${PEGASUSRC}"
+            _added=$((_added + 1))
+        fi
+    done < "${PEGASUS_SYSTEM_PROPS}"
+    if [ "${_added}" -gt 0 ]; then
+        chmod 600 "${PEGASUSRC}" 2>/dev/null || true
+        echo "[studio] Added ${_added} Pegasus system propert$([ "${_added}" -eq 1 ] && echo y || echo ies) to ${PEGASUSRC}"
+    fi
+    unset _added _line _key
+fi
+
 # ---- Private state ----
 # Homes are created 0755 and the umask is 022, so every file Studio and the AI
 # tools write is readable by any other account that can reach the home: other
