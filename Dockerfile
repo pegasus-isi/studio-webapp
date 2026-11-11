@@ -274,6 +274,12 @@ RUN echo "pegasus channel refresh: ${PEGASUS_REFRESH}" && \
     # this at runtime because the AP can move independently of this image.
     test -d "/usr/lib/pegasus/venv/lib/python${AP_PYTHON}/site-packages/Pegasus/data"
 
+# The packaged planner reads pegasus.properties from its venv, not from
+# /etc/pegasus, so link the system file to where it looks. Remove once Pegasus
+# resolves sysconfdir to /etc/pegasus (the script already no-ops then).
+COPY docker/pegasus/link-system-properties.sh /usr/local/lib/studio/link-pegasus-system-properties.sh
+RUN sh /usr/local/lib/studio/link-pegasus-system-properties.sh
+
 # Pin Pegasus's CLI tools (pegasus-preflight-check, etc.) to /usr/bin/python3 —
 # the same interpreter the packaged venv points at (`venv/bin/python3` is a
 # symlink to it), so the tools get the venv's Pegasus deps rather than whatever
