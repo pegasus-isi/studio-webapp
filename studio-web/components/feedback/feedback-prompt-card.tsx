@@ -19,7 +19,6 @@ import {
   useFeedbackStore,
 } from "@/lib/feedback/feedback";
 import { usePanelStore } from "@/lib/stores/panel-store";
-import { useUIPreferences } from "@/lib/hooks/use-ui-prefs";
 import { cn } from "@/lib/utils";
 
 const HELP_CHOICES: { answer: api.FeedbackAnswer; label: string }[] = [
@@ -48,7 +47,6 @@ export function FeedbackPromptCard({
   const prompt = useFeedbackStore((s) => s.prompt);
   const handle = useFeedbackStore((s) => s.handle);
   const chatOpen = usePanelStore((s) => s.chatOpen);
-  const { prefs } = useUIPreferences();
   const [phase, setPhase] = useState<Phase>({ step: "ask" });
   const [comment, setComment] = useState("");
 
@@ -59,10 +57,9 @@ export function FeedbackPromptCard({
     return () => clearTimeout(t);
   }, [phase]);
 
-  // The dashboard is the fallback for when the chat cannot show the card:
-  // closed, or on the builtin engine, whose panel does not host it.
-  const chatCanShow = chatOpen && prefs.chat_engine === "opencode";
-  if (placement === "dashboard" && chatCanShow) return null;
+  // The dashboard is the fallback for when the chat cannot show the card,
+  // which is when the chat is closed.
+  if (placement === "dashboard" && chatOpen) return null;
 
   if (phase.step === "thanks") {
     return (

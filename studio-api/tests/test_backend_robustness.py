@@ -6,50 +6,6 @@ from __future__ import annotations
 # --- BE-4: _trim_history keeps a provider-valid boundary ---
 
 
-def test_trim_history_short_is_unchanged():
-    from routers.chat import _trim_history
-
-    msgs = [{"role": "user", "content": "hi"}]
-    assert _trim_history(msgs) == msgs
-
-
-def test_trim_history_starts_on_a_genuine_user_turn():
-    from routers.chat import _MAX_HISTORY_MESSAGES, _trim_history
-
-    # Alternating u/a, ending on the new user ask. A blind tail slice would
-    # start on an assistant message (Anthropic 400s); the trim must advance to
-    # a user turn.
-    msgs = []
-    for i in range(_MAX_HISTORY_MESSAGES + 5):
-        role = "user" if i % 2 == 0 else "assistant"
-        msgs.append({"role": role, "content": f"m{i}"})
-    msgs.append({"role": "user", "content": "current ask"})
-
-    out = _trim_history(msgs)
-    assert out[0]["role"] == "user"
-    assert isinstance(out[0]["content"], str)
-    assert out[-1]["content"] == "current ask"
-    assert len(out) <= _MAX_HISTORY_MESSAGES
-
-
-def test_trim_history_skips_tool_result_carrier_at_boundary():
-    from routers.chat import _MAX_HISTORY_MESSAGES, _trim_history
-
-    # Fill so the raw tail would begin on an Anthropic tool-result carrier
-    # (role user, list content) whose matching assistant tool_use is trimmed.
-    msgs = [{"role": "user", "content": f"pad{i}"} for i in range(_MAX_HISTORY_MESSAGES)]
-    msgs += [
-        {"role": "assistant", "content": [{"type": "tool_use", "id": "t1"}]},
-        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1"}]},
-        {"role": "user", "content": "current ask"},
-    ]
-    out = _trim_history(msgs)
-    # First kept message must be a plain-string user turn, never the list-content
-    # tool-result carrier.
-    assert out[0]["role"] == "user"
-    assert isinstance(out[0]["content"], str)
-
-
 # --- BE-8: run graph workflow_status derived from node statuses ---
 
 

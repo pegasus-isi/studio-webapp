@@ -267,8 +267,8 @@ Router groups:
 | `terminal` | Browser bash PTY |
 | `ai_terminal` | AI tool PTYs |
 | `workflows` | Project discovery, params, generate, plan, submit, monitor, analyze, estimate; per-workflow placement and GPU steps; where each step ran and slow steps; outputs and a job's files with previews; project rename |
-| `chat` | The builtin agent loop (direct provider calls with tool use; Anthropic, OpenAI-compatible and Responses API), still selectable per user. Per-turn shell-command approval |
-| `opencode` | Verbatim proxy of `/api/opencode/*`, SSE included, to the loopback `opencode serve` that backs the chat panel — the default engine since #403 (`chat_engine` UI preference) |
+| `chat` | What the chat panel still needs from studio-api: the Active Context block (`/scope-block`) and the command-approval setting. The builtin agent loop that lived here was removed in #664 |
+| `opencode` | Verbatim proxy of `/api/opencode/*`, SSE included, to the loopback `opencode serve` that backs the chat panel, the only chat engine since #664 |
 | `mcp` | The Pegasus tools served to the OpenCode engine at `/api/mcp` (stateless Streamable HTTP), read from `services/chat_tools.py` |
 | `feedback` | 👍/👎 on chat replies (`message_feedback`; no message text), also sent to the OTLP collector when one is configured (`services/rating_telemetry.py`, #608) |
 | `episodes` | "Did the AI help?" failure episodes: nudges, help cards, answers, give-ups |
@@ -430,9 +430,6 @@ and are encrypted at rest when `STUDIO_SECRET_KEY` is provided (see Database).
 The tool configs that carry keys (`opencode.json`, Codex's `config.toml`,
 `crush.json`) are written 0600 (#600).
 
-The built-in chat supports both OpenAI Chat Completions and the OpenAI Responses
-API and falls back when an endpoint requires Responses.
-
 ## Database
 
 SQLite lives at `$HOME/.studio/studio.db`, outside the workspace.
@@ -445,7 +442,7 @@ Tables:
 | `llm_config` | Active LLM provider, model, key, base URL |
 | `provider_configs` | Saved multi-provider configs (name, key, base URL, active flag) |
 | `workflow_runs` | Discovered workflow run metadata |
-| `chat_messages` | Built-in chat history + 👍/👎 feedback |
+| `chat_messages` | Transcripts left by the removed builtin engine (#664); nothing writes it, the startup prune still bounds it |
 | `message_feedback` | 👍/👎 on OpenCode replies, keyed by OpenCode session/message id; no message text |
 | `notifications` | Notification feed rows |
 | `notification_log` | Durable dedup-key ledger (survives clear, so fire-once guards hold) |
@@ -523,11 +520,8 @@ Common endpoints:
 | `POST` | `/api/feedback/message` | Rate an OpenCode reply 👍/👎 |
 | `GET` | `/api/marketplace` | Workflow catalog sourced live from GitHub |
 | `POST` | `/api/marketplace/{id}/add` | git-clone a catalog workflow into the workspace |
-| `POST` | `/api/chat/stream` | Built-in SSE chat (engine-dispatched, brokered so a turn outlives the request) |
-| `GET` | `/api/chat/turn` | Whether a turn is in flight, so a reloaded panel can reattach |
-| `GET` | `/api/chat/turn/events` | SSE: replay the in-flight turn from its start, then follow live |
-| `POST` | `/api/chat/permission` | Approve/deny a pending shell command (per-turn gate) |
-| `GET/PUT` | `/api/chat/command-approval` | Approval posture (the engine itself is the `chat_engine` field of `/api/settings/ui`) |
+| `GET` | `/api/chat/scope-block` | The Active Context block for a workflow or run, sent by the panel as a synthetic prompt part |
+| `GET/PUT` | `/api/chat/command-approval` | Approval posture, written into the generated OpenCode permission rules |
 | `GET` | `/api/notifications` | Notification feed (+ `/prefs`, `/stream` SSE) |
 | `GET` | `/api/jupyter/status` | JupyterLab status |
 | `WS` | `/ws/terminal` | Bash PTY |

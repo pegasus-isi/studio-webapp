@@ -1,4 +1,4 @@
-"""Pegasus-aware tools for the builtin chat.
+"""Pegasus-aware tools for the chat, served to OpenCode by ``routers/mcp.py``.
 
 Read-only wrappers over the same services the Workflows UI uses
 (workflow_scanner, workflow_monitor, run_diagnosis, run_outputs), exposed to
@@ -6,11 +6,10 @@ the model as tools. Before these, answering "what's the status?" meant the
 model shelling out to `pegasus-status` through run_command and parsing text;
 now it reads the same structured data the UI shows.
 
-Scope defaulting is the point: with an active chat context (see chat_scope),
-`run_id`/`project_id` fall back to the scoped entity, so "why did it fail?"
-becomes `diagnose_run()` with no arguments. Without a scope the tools ask for
-an explicit id in their error text — the model relays that instead of
-guessing.
+`execute()` takes an optional scope: given one, `run_id`/`project_id` fall
+back to the scoped entity. The MCP endpoint passes none (the Active Context
+block in the prompt names the ids instead), so the tools ask for an explicit
+id in their error text, and the model relays that instead of guessing.
 
 Everything here is read-only and confined to what the run/project directories
 already expose, so none of it goes through the shell-approval gate.
@@ -26,8 +25,7 @@ import structlog
 
 log = structlog.get_logger()
 
-# Bounds so one tool result can't flood the model context. chat.py clips again
-# on top of these; the caps here keep the *structure* useful (drop rows, not
+# Bounds so one tool result can't flood the model context. The caps here keep the *structure* useful (drop rows, not
 # the closing brace).
 _MAX_RUNS = 50
 _MAX_JOBS = 100

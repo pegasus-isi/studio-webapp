@@ -15,7 +15,6 @@ import {
   useUIPreferences,
   useUpdateUIPreferences,
 } from "@/lib/hooks/use-ui-prefs";
-import { announceEngineChange } from "@/lib/chat-engine-channel";
 import { ToolCard } from "@/components/tools/tool-card";
 import {
   CollectionNotice,
@@ -978,18 +977,11 @@ function FeedbackTab() {
 /* ─── Chat engine (#367) ─── */
 
 /**
- * Which agent loop answers the chat.
- *
- * Opt-in, and the builtin loop stays the default, because this replaces the
- * engine under an existing conversation rather than adding a feature beside
- * it: everything a user has learned about how the panel behaves is about the
- * builtin loop. The switch is per user and takes effect on the next render of
- * the panel, so trying it and going back costs a toggle rather than a
- * rollback.
+ * The OpenCode server behind the chat: whether it is up, and a way to restart
+ * it. There is no engine to choose any more (#664); this is what is left of
+ * the switch, and the part of it a user still needs when chat stops answering.
  */
 function ChatEngineSection() {
-  const { prefs } = useUIPreferences();
-  const update = useUpdateUIPreferences();
   const [status, setStatus] = useState<oc.EngineStatus | null>(null);
   const [restarting, setRestarting] = useState(false);
 
@@ -1016,75 +1008,37 @@ function ChatEngineSection() {
     }
   };
 
-  const onOpenCode = prefs.chat_engine === "opencode";
-
   return (
     <div className="rounded-xl border border-line bg-surface p-4">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h3 className="text-sm font-semibold text-fg">Chat engine</h3>
-          <p className="mt-1 text-xs leading-relaxed text-fgmuted">
-            OpenCode runs the conversation inside your session: it summarizes
-            older context instead of forgetting it, remembers across chats, and
-            can use subagents, MCP servers and skills. The built-in engine is
-            the simpler loop Studio has always used.
-          </p>
-        </div>
-        <select
-          value={prefs.chat_engine}
-          disabled={update.isPending}
-          onChange={(e) => {
-            update.mutate(
-              { chat_engine: e.target.value as "builtin" | "opencode" },
-              {
-                // Announced only once the save has landed. Another document
-                // responds by refetching the preference, so announcing first
-                // raced the PUT: it could read the old value and then never
-                // hear again, leaving the notebook chat on the engine the user
-                // had just switched away from. This document doesn't wait —
-                // its cache is updated optimistically by the hook.
-                onSuccess: () => announceEngineChange(),
-              }
-            );
-          }}
-          className="mt-0.5 shrink-0 rounded border border-line px-2 py-1 text-xs text-fg focus:border-pegasus-500 focus:ring-pegasus-500 disabled:opacity-50"
+      <h3 className="text-sm font-semibold text-fg">Chat engine</h3>
+      <p className="mt-1 text-xs leading-relaxed text-fgmuted">
+        Chat runs on OpenCode inside your session: it summarizes older context
+        instead of forgetting it, remembers across chats, and can use subagents,
+        MCP servers and skills.
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-xs">
+        <span className="text-fgmuted">Engine:</span>
+        {status === null ? (
+          <span className="text-fgsubtle">checking…</span>
+        ) : status.running ? (
+          <span className="text-emerald-600 dark:text-emerald-400">
+            running{status.version ? ` (${status.version})` : ""}
+          </span>
+        ) : (
+          <span className="text-amber-600 dark:text-amber-400">
+            {status.detail || status.reason || "not running"}
+          </span>
+        )}
+        <button
+          onClick={restart}
+          disabled={restarting}
+          title="Restart the OpenCode server in this session"
+          className="ml-auto rounded-md border border-line px-2.5 py-1 font-medium text-fgmuted hover:bg-muted disabled:opacity-50"
         >
-          {/* Default first (#403). */}
-          <option value="opencode">OpenCode</option>
-          <option value="builtin">Built-in</option>
-        </select>
+          {restarting ? "Restarting…" : "Restart"}
+        </button>
       </div>
-
-      {onOpenCode && (
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-xs">
-          <span className="text-fgmuted">Engine:</span>
-          {status === null ? (
-            <span className="text-fgsubtle">checking…</span>
-          ) : status.running ? (
-            <span className="text-emerald-600 dark:text-emerald-400">
-              running{status.version ? ` (${status.version})` : ""}
-            </span>
-          ) : (
-            <span className="text-amber-600 dark:text-amber-400">
-              {status.detail || status.reason || "not running"}
-            </span>
-          )}
-          <button
-            onClick={restart}
-            disabled={restarting}
-            title="Restart the OpenCode server in this session"
-            className="ml-auto rounded-md border border-line px-2.5 py-1 font-medium text-fgmuted hover:bg-muted disabled:opacity-50"
-          >
-            {restarting ? "Restarting…" : "Restart"}
-          </button>
-        </div>
-      )}
-
-      {update.isError && (
-        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">
-          Could not save that preference. Try again.
-        </p>
-      )}
     </div>
   );
 }
