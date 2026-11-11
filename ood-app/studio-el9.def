@@ -202,6 +202,9 @@ dnf install -y pegasus
 pegasus-version
 install -Dm644 /opt/build/docker/pegasus/pegasus.properties \
     /etc/pegasus/pegasus.properties
+# The packaged planner reads pegasus.properties from its venv, not from
+# /etc/pegasus; see the script.
+sh /opt/build/docker/pegasus/link-system-properties.sh
 # Studio's own pool as a hosted-style site catalog (#474); see the Dockerfile.
 install -Dm644 /opt/build/docker/pegasus/site-catalogs/pegasus-studio.yml \
     "/opt/studio/site-catalogs/$(pegasus-version | cut -d. -f1,2)/conf/pegasus-studio.yml"
