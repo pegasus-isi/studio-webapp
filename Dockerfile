@@ -383,6 +383,15 @@ RUN npm install -g opencode-ai@1.18.29 && opencode --version \
     # so an unprivileged notebook can't `npm install -g` Codex/Claude into it
     # (EACCES). Re-open the whole tree so any injected UID can install here.
     && chmod -R a+rwX /opt/npm-global \
+    # `opencode --version` creates its scratch dir, os.tmpdir()/opencode, and
+    # running it as root leaves /tmp/opencode root:root 0755 in this layer.
+    # OpenCode's bash tool tells the model that dir "already exists" and is
+    # where temporary work goes, so the model's `mkdir -p` fails, a following
+    # `cd` fails with it, and the test script runs in $HOME instead, leaving
+    # its output files there. opencode.sh points TMPDIR at a per-user dir
+    # anyway; this keeps a terminal-launched opencode from hitting the same
+    # root-owned dir.
+    && rm -rf /tmp/opencode \
     # npm keeps a content-addressed cache of everything it downloaded, which is
     # of no use once the package is installed.
     && npm cache clean --force
