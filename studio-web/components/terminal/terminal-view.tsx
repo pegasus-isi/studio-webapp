@@ -76,10 +76,39 @@ export function TerminalView({ tabId, toolId }: Props) {
           cursor: "#ededed",
         },
         cursorBlink: true,
+        // TUIs (opencode, claude, vim, htop) turn on mouse tracking, which
+        // hands every drag to the program and leaves nothing selectable.
+        // Shift+drag overrides that everywhere; on macOS Option+drag only
+        // does with this set.
+        macOptionClickForcesSelection: true,
       });
       const fitAddon = new FitAddon();
       t.loadAddon(fitAddon);
       t.open(containerRef.current!);
+
+      // Terminal-style clipboard keys. Ctrl+C has to stay SIGINT, so on
+      // Linux/Windows copy and paste are Ctrl+Shift+C / Ctrl+Shift+V, as in
+      // every desktop terminal; without this xterm sent both to the shell as
+      // ^C / ^V and there was no way to copy at all. Cmd+C / Cmd+V on macOS
+      // already work through the browser's own copy/paste events.
+      t.attachCustomKeyEventHandler((ev) => {
+        if (ev.type !== "keydown" || !ev.ctrlKey || !ev.shiftKey) return true;
+        const key = ev.key.toLowerCase();
+        if (key === "c") {
+          // preventDefault also stops Chrome's Ctrl+Shift+C (DevTools inspect).
+          ev.preventDefault();
+          if (t.hasSelection()) copyText(t.getSelection());
+          return false;
+        }
+        if (key === "v") {
+          // Let the browser's native paste event through to xterm's textarea
+          // (Ctrl+Shift+V is "paste" in Chrome and Firefox). Reading the
+          // clipboard ourselves would need a permission prompt and a secure
+          // context; this needs neither.
+          return false;
+        }
+        return true;
+      });
       fitAddon.fit();
       term = t;
 
@@ -162,4 +191,34 @@ export function TerminalView({ tabId, toolId }: Props) {
   }, [tabId, toolId]);
 
   return <div ref={containerRef} className="h-full w-full bg-[#0a0a0a]" />;
+}
+
+/**
+ * Copy to the clipboard. navigator.clipboard exists only in a secure context
+ * (https or localhost), and a plain-http deployment is not one, so fall back
+ * to execCommand on a throwaway textarea, which still works inside the
+ * keydown that triggered it.
+ */
+function copyText(text: string) {
+  const fallback = () => {
+    const active = document.activeElement as HTMLElement | null;
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
+    } catch {
+      /* nothing left to try; the selection is still on screen */
+    }
+    ta.remove();
+    active?.focus(); // give the keyboard back to the terminal
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(fallback);
+  } else {
+    fallback();
+  }
 }
