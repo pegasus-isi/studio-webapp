@@ -12,7 +12,10 @@ block in the prompt names the ids instead), so the tools ask for an explicit
 id in their error text, and the model relays that instead of guessing.
 
 Everything here is read-only and confined to what the run/project directories
-already expose, so none of it goes through the shell-approval gate.
+already expose, so none of it goes through the shell-approval gate. The one
+write is `prepare_rerun`'s replica file, in the project's own `.studio/reuse/`;
+it starts nothing. The run itself is a `pegasus-plan` the model types into the
+shell, which is gated like any other command.
 """
 
 from __future__ import annotations
@@ -161,6 +164,45 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     },
 ]
 
+TOOL_DEFINITIONS.append(
+    {
+        "type": "function",
+        "function": {
+            "name": "prepare_rerun",
+            "description": (
+                "Prepare a re-run of a workflow from one step, reusing what"
+                " earlier runs left in its output folder for every step before"
+                " it — use this instead of re-running the whole workflow when"
+                " only a step and what follows it changed (say, the plot at the"
+                " end). Regenerate workflow.yml first if the generator changed."
+                " Writes a replica file and returns which steps will run, which"
+                " are reused, inputs nobody kept, and the pegasus-plan command"
+                " to run from the project directory."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {
+                        "type": "string",
+                        "description": (
+                            "The workflow project (optional with a workflow"
+                            " context; list_workflow_projects shows them)"
+                        ),
+                    },
+                    "from_step": {
+                        "type": "string",
+                        "description": (
+                            "The step to start from: a job name (the"
+                            " transformation, e.g. 'plot_results') or a job id"
+                        ),
+                    },
+                },
+                "required": ["from_step"],
+            },
+        },
+    }
+)
+
 TOOL_NAMES = {t["function"]["name"] for t in TOOL_DEFINITIONS}
 
 
@@ -212,6 +254,9 @@ async def execute(
         if name == "list_workflow_runs":
             project_id = arguments.get("project_id") or _scoped(scope, "workflow")
             return await _list_runs(project_id)
+        if name == "prepare_rerun":
+            project_id = arguments.get("project_id") or _scoped(scope, "workflow")
+            return await _prepare_rerun(project_id, arguments.get("from_step"))
 
         # Everything below is per-run.
         run_id = arguments.get("run_id") or _scoped(scope, "run")
@@ -258,6 +303,65 @@ async def _list_projects() -> str:
         for p in projects
     ]
     return json.dumps({"projects": rows}, indent=1)
+
+
+async def _prepare_rerun(project_id: str | None, from_step: Any) -> str:
+    import os
+
+    from services import rerun
+    from services.execution_sites import plan_output_dir
+    from services.workflow_scanner import discover_projects_async
+    from services.workflow_submitter import SUBMIT_BASE, _find_workflow_file
+
+    if not project_id:
+        return (
+            "Error: no project_id given and no workflow is selected in the chat"
+            " context. Pass project_id (list_workflow_projects shows them)."
+        )
+    if not isinstance(from_step, str) or not from_step.strip():
+        return "Error: from_step is required: the name of the step to start from."
+    project = next(
+        (p for p in await discover_projects_async() if p.get("project_id") == project_id),
+        None,
+    )
+    if not project:
+        return f"Error: no workflow project found with project_id {project_id!r}."
+    project_dir = project["project_dir"]
+    wf_file = _find_workflow_file(project_dir)
+    if not wf_file:
+        return "Error: this project has no workflow.yml yet; run its generator first."
+    wf_path = os.path.join(project_dir, wf_file)
+
+    def work() -> tuple[Any, str]:
+        plan = rerun.prepare(project_dir, from_step.strip(), wf_path)
+        return plan, rerun.write_rc(project_dir, plan)
+
+    try:
+        plan, rc = await asyncio.get_event_loop().run_in_executor(None, work)
+    except rerun.RerunError as e:
+        return f"Error: {e}"
+
+    output_dir = plan_output_dir(project_dir) or ""
+    command = (
+        f'pegasus-plan --dir {SUBMIT_BASE} -s "$SITE" -o local'
+        + (f' --output-dir "{output_dir}"' if output_dir else "")
+        + f' --inherited-rc-files "{rc}" --submit "{wf_path}"'
+    )
+    payload = plan.summary()
+    payload.update(
+        {
+            "project_dir": project_dir,
+            "replica_file": rc,
+            "command": command,
+            "note": (
+                "Run the command from project_dir with $SITE set as for any"
+                " plan here. 'run' and 'reused' are an estimate; the planned"
+                " DAG is the final word. Steps listed under 'missing' run again"
+                " because their outputs weren't copied to the output folder."
+            ),
+        }
+    )
+    return json.dumps(payload, indent=1)
 
 
 async def _list_runs(project_id: str | None) -> str:

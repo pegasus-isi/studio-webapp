@@ -18,9 +18,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   ProjectParams,
+  RerunPreview,
   RunFlowSnapshot,
   RunFlowStage,
   WorkflowParam,
+  WorkflowStep,
 } from "@/lib/api/client";
 import * as api from "@/lib/api/client";
 import { apiUrl } from "@/lib/urls";
@@ -222,6 +224,46 @@ function PlacementOption({
   );
 }
 
+function stepList(steps: WorkflowStep[]): string {
+  return steps.map((s) => (s.count > 1 ? `${s.name} (${s.count})` : s.name)).join(", ");
+}
+
+/** What a re-run from a step would do, in plain words. An estimate: the run's
+ *  own plan stage reports what Pegasus actually planned. */
+function RerunPreviewNote({ preview }: { preview: RerunPreview }) {
+  const nothingReused = preview.reused.length === 0;
+  return (
+    <div className="mt-2 space-y-1 text-xs">
+      <p className="text-fg">
+        <span className="text-fgmuted">Runs:</span> {stepList(preview.run)}
+      </p>
+      {nothingReused ? (
+        <p className="text-amber-700 dark:text-amber-400">
+          No results from earlier runs were found for the other steps, so every
+          step will run.
+        </p>
+      ) : (
+        <p className="text-fg">
+          <span className="text-fgmuted">Reuses:</span> {stepList(preview.reused)}
+          {preview.sources.length > 0 && (
+            <span className="text-fgmuted"> (from {preview.sources.join(", ")})</span>
+          )}
+        </p>
+      )}
+      {preview.missing.length > 0 && (
+        <p className="text-amber-700 dark:text-amber-400">
+          {preview.missing.length === 1
+            ? `${preview.missing[0].file} wasn't kept`
+            : `${preview.missing.length} files these steps need weren't kept`}{" "}
+          (only files copied to the output folder are), so{" "}
+          {Array.from(new Set(preview.missing.map((m) => m.step))).join(", ")} runs
+          again too.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function RunFlowPanel({
   projectId,
   params,
@@ -246,6 +288,28 @@ export function RunFlowPanel({
   }).data?.steps ?? [];
   const gpusAvailable =
     (provisioning?.pool?.total_gpus ?? 0) + (provisioning?.annex?.total_gpus ?? 0);
+  // Re-run from a step (#680): "" runs every step. Per run, not saved — the
+  // next Run after a partial one should not silently be partial too.
+  const [startFrom, setStartFrom] = useState("");
+  const workflowSteps = useQuery({
+    queryKey: ["workflow-steps", projectId],
+    queryFn: () => api.getWorkflowSteps(projectId),
+    staleTime: 30_000,
+    // 404 until the workflow is generated; nothing to offer then.
+    retry: false,
+  }).data?.steps ?? [];
+  const rerunPreview = useQuery({
+    queryKey: ["rerun-preview", projectId, startFrom],
+    queryFn: () => api.getRerunPreview(projectId, startFrom),
+    enabled: !!startFrom,
+    retry: false,
+  });
+  // A regenerated workflow may no longer have the step that was picked.
+  useEffect(() => {
+    if (startFrom && workflowSteps.length > 0 && !workflowSteps.some((s) => s.name === startFrom)) {
+      setStartFrom("");
+    }
+  }, [startFrom, workflowSteps]);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [showTechnical, setShowTechnical] = useState(false);
@@ -514,6 +578,9 @@ export function RunFlowPanel({
         value: `asked for by ${gpuSteps.length === 1 ? gpuSteps[0] : `${gpuSteps.length} steps`}`,
       });
     }
+    if (startFrom) {
+      rows.push({ label: "Starts from", value: `${startFrom}, reusing earlier results` });
+    }
 
     for (const p of primaryParams) {
       if (p.is_flag) {
@@ -528,7 +595,7 @@ export function RunFlowPanel({
       rows.push({ label: paramLabel(p), value: current });
     }
     return rows;
-  }, [primaryParams, values, sites, defaultSite, hosted, placement, placementForeign, gpuSteps]);
+  }, [primaryParams, values, sites, defaultSite, hosted, placement, placementForeign, gpuSteps, startFrom]);
 
   // ── attach to the server-side flow ──────────────────────────────────────
 
@@ -639,7 +706,11 @@ export function RunFlowPanel({
         site: String(values["site"] ?? defaultSite),
         output_site: String(values["output_site"] ?? "local"),
         ...(hosted && !placementForeign ? { placement } : {}),
+        ...(startFrom ? { rerun_from: startFrom } : {}),
       });
+      // Back to "the beginning" for the next Run: a partial run should be
+      // asked for each time, not inherited.
+      setStartFrom("");
       setFlow(snapshot);
       attach();
     } catch (e) {
@@ -905,6 +976,48 @@ export function RunFlowPanel({
             </p>
           )}
         </fieldset>
+
+        {/* Re-run from a step (#680). Changing the plot at the end of a
+            workflow used to cost a full re-run; this reuses what earlier runs
+            left in the output folder for every step before the chosen one. */}
+        {!running && workflowSteps.length > 1 && (
+          <div className="mt-5">
+            <label htmlFor="rerun-from" className="block text-sm font-medium text-fg">
+              Start from
+            </label>
+            <select
+              id="rerun-from"
+              value={startFrom}
+              onChange={(e) => setStartFrom(e.target.value)}
+              className="mt-1 block w-full rounded-md border border-line bg-surface px-2 py-1.5 text-sm text-fg"
+            >
+              <option value="">The beginning: run every step</option>
+              {workflowSteps.map((s) => (
+                <option key={s.name} value={s.name}>
+                  {s.name}
+                  {s.count > 1 ? ` (${s.count} jobs)` : ""}
+                </option>
+              ))}
+            </select>
+            {!startFrom && (
+              <p className="mt-1 text-xs text-fgmuted">
+                Changed only a later step, like a plot? Start there to run it and
+                what follows, reusing earlier results for the rest.
+              </p>
+            )}
+            {startFrom && rerunPreview.isPending && (
+              <p className="mt-1 text-xs text-fgmuted">Checking earlier runs…</p>
+            )}
+            {startFrom && rerunPreview.isError && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                {(rerunPreview.error as Error).message}
+              </p>
+            )}
+            {startFrom && rerunPreview.data && (
+              <RerunPreviewNote preview={rerunPreview.data} />
+            )}
+          </div>
+        )}
 
         {/* What pressing Run will actually do. A non-specialist has no way to
             predict the consequences of a form they only half understand, and

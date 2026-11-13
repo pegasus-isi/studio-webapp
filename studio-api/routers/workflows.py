@@ -95,6 +95,10 @@ class RunFlowRequest(BaseModel):
     # pegasus.properties. None leaves the workflow's setting as it is.
     # "any"/"pool" are older clients' values and mean "elsewhere".
     placement: Literal["annex", "elsewhere", "any", "pool"] | None = None
+    # Re-run from this step (a job name, or a job id), reusing what earlier
+    # runs left in the output folder for every step before it
+    # (services/rerun.py, #680). None runs every step.
+    rerun_from: str | None = None
 
 log = structlog.get_logger()
 
@@ -525,12 +529,65 @@ async def start_run_flow(project_id: str, req: RunFlowRequest) -> dict:
             output_site=req.output_site,
             force_build=req.force_build,
             placement=_placement(req),
+            rerun_from=(req.rerun_from or "").strip() or None,
         )
     except RuntimeError as e:
         # 409, not 400: the request is well-formed, the project is just busy.
         raise HTTPException(status_code=409, detail=str(e)) from e
 
     return flow.snapshot()
+
+
+async def _rerun_workflow(project_dir: str) -> str:
+    from services.workflow_submitter import _find_workflow_file
+
+    wf_file = _find_workflow_file(project_dir)
+    if not wf_file:
+        raise HTTPException(
+            status_code=404,
+            detail="This workflow hasn't been generated yet, so it has no steps to pick from.",
+        )
+    return os.path.join(project_dir, wf_file)
+
+
+@router.get("/projects/{project_id}/steps")
+async def get_steps(project_id: str) -> dict:
+    """The steps a run can start from, upstream first (#680).
+
+    From the workflow as last generated; a Run regenerates it first, so the
+    step the user picks is looked up again by name in the new one.
+    """
+    from services import rerun
+
+    project_dir = await _project_dir_or_404(project_id)
+    wf = await _rerun_workflow(project_dir)
+    loop = asyncio.get_event_loop()
+    try:
+        jobs = await loop.run_in_executor(None, rerun.load_workflow, wf)
+    except rerun.RerunError as e:
+        return {"steps": [], "unavailable": str(e)}
+    return {"steps": rerun.steps(jobs), "unavailable": None}
+
+
+@router.get("/projects/{project_id}/rerun-preview")
+async def get_rerun_preview(project_id: str, from_step: str = Query(...)) -> dict:
+    """What a re-run from `from_step` would run and reuse (#680).
+
+    An estimate from the workflow as last generated and the files earlier runs
+    left; the Run flow reports what Pegasus actually planned. Writes nothing.
+    """
+    from services import rerun
+
+    project_dir = await _project_dir_or_404(project_id)
+    wf = await _rerun_workflow(project_dir)
+    loop = asyncio.get_event_loop()
+    try:
+        plan = await loop.run_in_executor(
+            None, lambda: rerun.prepare(project_dir, from_step, wf)
+        )
+    except rerun.RerunError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return plan.summary()
 
 
 class PlacementRequest(BaseModel):
