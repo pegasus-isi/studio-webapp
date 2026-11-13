@@ -15,7 +15,9 @@
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { AssistantMessage } from "@opencode-ai/sdk";
+import { ArrowDown } from "lucide-react";
 import { formatTokens, outputLimitInfo } from "@/lib/opencode/output-limit";
+import { nextFollowing } from "@/lib/opencode/scroll-follow";
 import {
   MessageLiveContext,
   PartView,
@@ -176,9 +178,33 @@ export function OpenCodeChat() {
     };
   }, [chat.connection, chat.error]);
 
-  // Only follow the tail when already near it, so a burst of tool output
-  // doesn't yank someone away from what they were reading.
-  //
+  // Follow the tail only while the reader is following it. Whether they are
+  // is decided from their scroll events (lib/opencode/scroll-follow.ts), not
+  // from distance-to-bottom on each streamed update: that used to scroll a
+  // reader who had just moved up one wheel notch straight back down.
+  const followingRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
+  const [following, setFollowing] = useState(true);
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const next = nextFollowing(followingRef.current, lastScrollTopRef.current, el);
+    lastScrollTopRef.current = el.scrollTop;
+    followingRef.current = next;
+    setFollowing(next);
+  };
+  const jumpToLatest = () => {
+    const el = scrollRef.current;
+    followingRef.current = true;
+    setFollowing(true);
+    if (el) el.scrollTop = el.scrollHeight;
+  };
+  // A new conversation, or a message just sent, starts at the bottom.
+  useEffect(() => {
+    followingRef.current = true;
+    setFollowing(true);
+  }, [chat.sessionID]);
+
   // Coalesced to one scroll per frame, and instant rather than smooth while a
   // reply streams: a long answer produces hundreds of state updates, and
   // restarting a smooth animation on each one meant the proximity test below
@@ -191,9 +217,7 @@ export function OpenCodeChat() {
       followRef.current = null;
       const el = scrollRef.current;
       if (!el) return;
-      if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
-        el.scrollTop = el.scrollHeight;
-      }
+      if (followingRef.current) el.scrollTop = el.scrollHeight;
     });
   }, [chat.messages, chat.busy]);
   useEffect(
@@ -233,6 +257,7 @@ export function OpenCodeChat() {
     const text = input.trim();
     if (!text || chat.busy) return;
     setInput("");
+    jumpToLatest();
     void chat.send(
       text,
       model,
@@ -340,7 +365,7 @@ export function OpenCodeChat() {
 
   return (
     <>
-      <div ref={scrollRef} className="flex-1 overflow-auto p-4">
+      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-auto p-4">
         {engineDown && (
           <div className="mx-auto mb-3 max-w-3xl rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-xs">
             <div className="font-medium text-amber-700 dark:text-amber-400">
@@ -494,6 +519,20 @@ export function OpenCodeChat() {
               />
             )}
             <div ref={bottomRef} />
+          </div>
+        )}
+        {!following && chat.messages.length > 0 && (
+          // Sticky inside the scroller, so it sits at the bottom of the
+          // visible area without a positioned wrapper around the panel.
+          <div className="pointer-events-none sticky bottom-0 flex justify-center">
+            <button
+              type="button"
+              onClick={jumpToLatest}
+              className="pointer-events-auto flex items-center gap-1 rounded-full border border-line bg-surface px-3 py-1 text-xs text-fgmuted shadow-md hover:text-fg"
+            >
+              <ArrowDown className="h-3 w-3" />
+              {chat.busy ? "Follow the reply" : "Jump to latest"}
+            </button>
           </div>
         )}
       </div>
