@@ -466,6 +466,7 @@ class RunFlowManager:
         force_build: bool = False,
         plan_properties: dict[str, str] | None = None,
         placement: str | None = None,
+        rerun_from: str | None = None,
     ) -> RunFlow:
         """Begin a flow as a background task and return it immediately.
 
@@ -500,11 +501,13 @@ class RunFlowManager:
                 force_build=force_build,
                 plan_properties=plan_properties or {},
                 placement=placement,
+                rerun_from=rerun_from,
             )
         )
         log.info(
             "run_flow_started",
             flow_id=flow.flow_id, project_id=project_id, site=site,
+            rerun_from=rerun_from,
         )
         return flow
 
@@ -557,6 +560,7 @@ async def _execute(
     force_build: bool,
     plan_properties: dict[str, str] | None = None,
     placement: str | None = None,
+    rerun_from: str | None = None,
 ) -> None:
     """Run the stages in order, stopping at the first failure.
 
@@ -735,6 +739,16 @@ async def _execute(
             log.warning("run_flow_blocked_shared_fs", flow_id=flow.flow_id, site=site)
             return
 
+        # Re-run from a step (#680): after Generate, because the replica file
+        # is computed from the workflow that will actually be planned.
+        rerun_plan = None
+        rerun_rc = None
+        if rerun_from:
+            prepared = await _prepare_rerun(flow, project_dir, rerun_from)
+            if prepared is None:
+                return
+            rerun_plan, rerun_rc = prepared
+
         if not await _run_plan(
             flow,
             project_dir=project_dir,
@@ -742,8 +756,11 @@ async def _execute(
             output_site=output_site,
             plan_mode=plan_mode,
             plan_properties=plan_properties,
+            rerun_rc=rerun_rc,
         ):
             return
+        if rerun_plan is not None:
+            _report_planned(flow, rerun_plan)
 
         await _run_submit(
             flow, project_dir=project_dir, site=site, output_site=output_site
@@ -1028,6 +1045,7 @@ async def _run_plan(
     output_site: str,
     plan_mode: str | None = None,
     plan_properties: dict[str, str] | None = None,
+    rerun_rc: str | None = None,
 ) -> bool:
     from services.workflow_submitter import SUBMIT_BASE, _find_workflow_file
 
@@ -1053,6 +1071,10 @@ async def _run_plan(
 
         argv += plan_args(plan_properties)
         flow._line("plan", "This run: " + ", ".join(f"{k.rsplit('.', 1)[-1]} = {v}" for k, v in sorted(plan_properties.items())))
+    if rerun_rc:
+        # Lower priority than the workflow's own replica catalog: it can add
+        # locations for earlier outputs, never override one the user wrote.
+        argv += ["--inherited-rc-files", rerun_rc]
     argv.append(wf_file)
     code, output = await _plan_capture(
         flow, argv, project_dir=project_dir, mode=plan_mode
@@ -1067,6 +1089,85 @@ async def _run_plan(
     flow.run_dir = _extract_run_dir(output) or _newest_run_dir(project_dir) or ""
     flow._finish("plan", "done", "The plan checks out.")
     return True
+
+
+async def _prepare_rerun(
+    flow: RunFlow, project_dir: str, from_step: str
+) -> tuple[Any, str] | None:
+    """Work out which earlier outputs to reuse and write the replica file.
+
+    None after failing the flow: the user asked for a partial run, and quietly
+    running everything instead is exactly the complaint #680 came from.
+    """
+    from services import rerun
+    from services.workflow_submitter import _find_workflow_file
+
+    flow._begin("plan")
+    wf_file = _find_workflow_file(project_dir)
+    if not wf_file:
+        flow._fail("plan", "No workflow YAML file found in the project.")
+        return None
+    loop = asyncio.get_event_loop()
+
+    def work() -> tuple[Any, str]:
+        plan = rerun.prepare(project_dir, from_step, os.path.join(project_dir, wf_file))
+        return plan, rerun.write_rc(project_dir, plan)
+
+    try:
+        plan, rc = await loop.run_in_executor(None, work)
+    except rerun.RerunError as e:
+        flow._fail("plan", str(e))
+        flow.failure = Failure(
+            stage="plan",
+            cause=str(e),
+            action="Pick another step, or run the workflow from the beginning.",
+            technical=f"re-run from {from_step!r}",
+        )
+        return None
+
+    summary = plan.summary()
+    flow._line("plan", f"Re-running from step {from_step}.")
+    if summary["files"]:
+        flow._line(
+            "plan",
+            f"Reusing {summary['files']} file(s) from "
+            f"{', '.join(summary['sources'])} for: {rerun.describe(summary['reused'])}.",
+        )
+    else:
+        flow._line(
+            "plan",
+            "No earlier outputs of the other steps were found, so every step "
+            "will run.",
+        )
+    for m in summary["missing"]:
+        flow._line(
+            "plan",
+            f"{m['file']} from step {m['step']} wasn't kept (only files "
+            "copied to the output folder are), so that step runs again too.",
+        )
+    log.info(
+        "run_flow_rerun_prepared",
+        flow_id=flow.flow_id, from_step=from_step, files=summary["files"],
+        run=summary["run"], reused=summary["reused"],
+    )
+    return plan, rc
+
+
+def _report_planned(flow: RunFlow, plan: Any) -> None:
+    """Say what Pegasus actually planned, which is the final word."""
+    from services import rerun
+
+    planned = rerun.planned_steps(flow.run_dir, plan.jobs) if flow.run_dir else None
+    if planned is None:
+        return
+    reused = len(plan.jobs) - sum(g["count"] for g in planned)
+    detail = f"Running {rerun.describe(planned)}"
+    if reused > 0:
+        detail += f"; {reused} step(s) reused from earlier runs."
+    else:
+        detail += "; nothing could be reused."
+    flow._line("plan", detail)
+    flow._finish("plan", "done", detail)
 
 
 async def _run_submit(

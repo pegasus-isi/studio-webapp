@@ -638,9 +638,43 @@ export interface RunFlowOptions {
   /** Which machines this workflow's steps may use, recorded in its
    *  pegasus.properties (services/run_placement.py). */
   placement?: Placement;
+  /** Re-run from this step, reusing earlier outputs for the steps before it
+   *  (studio-api services/rerun.py, #680). Omitted runs every step. */
+  rerun_from?: string;
 }
 
 export type Placement = "annex" | "elsewhere";
+
+/** A step of a workflow, by job name; `count` jobs share it. */
+export interface WorkflowStep {
+  name: string;
+  count: number;
+}
+
+/** What a re-run from a step would run and reuse — an estimate made before
+ *  Generate; the Run flow reports what Pegasus actually planned. */
+export interface RerunPreview {
+  from_step: string;
+  run: WorkflowStep[];
+  reused: WorkflowStep[];
+  /** Inputs of re-run steps no earlier run kept, and the step that makes them. */
+  missing: { file: string; step: string }[];
+  /** Run directory names the reused files came from. */
+  sources: string[];
+  files: number;
+}
+
+export async function getWorkflowSteps(projectId: string) {
+  return request<{ steps: WorkflowStep[]; unavailable: string | null }>(
+    `/workflows/projects/${encodeURIComponent(projectId)}/steps`
+  );
+}
+
+export async function getRerunPreview(projectId: string, fromStep: string) {
+  return request<RerunPreview>(
+    `/workflows/projects/${encodeURIComponent(projectId)}/rerun-preview?from_step=${encodeURIComponent(fromStep)}`
+  );
+}
 
 export interface PlacementState {
   /** null when the workflow sets its own requirements (`foreign`). */

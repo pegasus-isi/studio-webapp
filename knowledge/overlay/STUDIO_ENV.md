@@ -217,6 +217,29 @@ How the choice is made depends on the deployment:
   compute node the Studio session holds, inside its allocation. It suits a
   small test, not a full analysis.
 
+### Re-running only what changed
+
+When the user asks for a change to one step — usually the last, such as a plot's
+colours or labels — **do not re-run the whole workflow.** Pegasus can skip steps
+whose results already exist, but only if it is told where they are, and a plain
+`pegasus-plan` never is: every step runs again, fetches and all.
+
+1. Make the change (the step's script under `bin/`, or the generator).
+2. If you changed the generator, regenerate `workflow.yml` the usual way.
+3. Call the `prepare_rerun` tool with the project and the step to start from
+   (its job name, as in `workflow.yml`). It writes a replica file listing
+   earlier results of every *other* step and returns which steps will run,
+   which are reused, and the `pegasus-plan` command (with
+   `--inherited-rc-files`).
+4. Tell the user what it reports before running, including any `missing`
+   inputs: those steps run again because their outputs were never copied to
+   the output folder, and that is expected, not an error.
+5. Run the returned command from the project directory, with `$SITE` set as
+   above.
+
+The user can do the same from the Run panel ("Start from"). Don't hand-edit
+`replicas.yml` or add `--force`/`--reuse` to get this effect.
+
 ### Whose machines (hosted)
 
 The Bring Your Own Compute choice is per workflow and is stored in the

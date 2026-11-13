@@ -470,3 +470,54 @@ def test_placement_is_recorded_in_the_workflow_and_survives_generate(tmp_path, m
     assert not any(a.startswith("-D") and "requirements" in a for a in seen[0])
     lines = [e["line"] for e in flow._events if e.get("type") == "line"]
     assert any("rewrote pegasus.properties" in l for l in lines)
+
+
+_TWO_STEP_WORKFLOW = (
+    "import yaml\n"
+    "wf = {'pegasus': '5.0', 'jobs': [\n"
+    "  {'type': 'job', 'id': 'make', 'name': 'make', 'uses': [\n"
+    "    {'lfn': 'data.csv', 'type': 'output', 'stageOut': True}]},\n"
+    "  {'type': 'job', 'id': 'plot', 'name': 'plot', 'uses': [\n"
+    "    {'lfn': 'data.csv', 'type': 'input'},\n"
+    "    {'lfn': 'plot.png', 'type': 'output', 'stageOut': True}]}],\n"
+    "  'jobDependencies': [{'id': 'make', 'children': ['plot']}]}\n"
+    "yaml.safe_dump(wf, open('workflow.yml', 'w'))\n"
+)
+
+
+def test_rerun_from_a_step_hands_the_planner_a_replica_file(tmp_path, monkeypatch):
+    """#680: a re-run plans with Studio's replica file, after Generate."""
+    seen: list[list[str]] = []
+
+    async def fake_plan_capture(flow, argv, *, project_dir, mode=None):
+        seen.append(list(argv))
+        return 1, "stubbed planner"
+
+    monkeypatch.setattr(rf, "_plan_capture", fake_plan_capture)
+    project_dir = _project(tmp_path, _TWO_STEP_WORKFLOW)
+    flow = _drive(project_dir, rerun_from="plot")
+
+    argv = seen[0]
+    rc = os.path.join(project_dir, ".studio", "reuse", "rerun.rc")
+    assert argv[argv.index("--inherited-rc-files") + 1] == rc
+    assert argv[-1].endswith("workflow.yml")
+    assert os.path.isfile(rc)
+    lines = [e.get("line", "") for e in flow._events if e.get("type") == "line"]
+    # No earlier run: say so instead of implying something was reused.
+    assert any("every step will run" in line for line in lines)
+
+
+def test_rerun_from_an_unknown_step_fails_instead_of_running_everything(tmp_path, monkeypatch):
+    called = []
+
+    async def fake_plan_capture(flow, argv, *, project_dir, mode=None):
+        called.append(argv)
+        return 0, ""
+
+    monkeypatch.setattr(rf, "_plan_capture", fake_plan_capture)
+    project_dir = _project(tmp_path, _TWO_STEP_WORKFLOW)
+    flow = _drive(project_dir, rerun_from="histogram")
+
+    assert called == []
+    assert flow.state == "failed"
+    assert flow.failure is not None and "make, plot" in flow.failure.cause
